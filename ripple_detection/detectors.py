@@ -11,7 +11,8 @@ from .core import (exclude_movement, gaussian_smooth, get_envelope,
 def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
                         speed_threshold=4.0, minimum_duration=0.015,
                         zscore_threshold=2.0, smoothing_sigma=0.004):
-    '''
+    '''Find start and end times of sharp wave ripple events (150-250 Hz)
+    based on Kay et al. 2016 [1].
 
     Parameters
     ----------
@@ -65,7 +66,8 @@ def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
 def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
                              speed_threshold=4.0, minimum_duration=0.015,
                              zscore_threshold=3.0, smoothing_sigma=0.004):
-    '''
+    '''Find start and end times of sharp wave ripple events (150-250 Hz)
+    based on Karlsson et al. 2009 [1].
 
     Parameters
     ----------
