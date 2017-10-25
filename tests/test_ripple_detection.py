@@ -1,14 +1,11 @@
 import numpy as np
 import pandas as pd
-import pytest
 
-from src.ripple_detection.core import (_extend_segment,
-                                       _find_containing_interval,
-                                       _get_series_start_end_times,
-                                       merge_overlapping_ranges,
-                                       segment_boolean_series,
-                                       threshold_by_zscore,
-                                       exclude_movement)
+import pytest
+from ripple_detection.core import (_extend_segment, _find_containing_interval,
+                                   _get_series_start_end_times,
+                                   exclude_movement, merge_overlapping_ranges,
+                                   segment_boolean_series, threshold_by_zscore)
 
 
 @pytest.mark.parametrize('series, expected_segments', [
