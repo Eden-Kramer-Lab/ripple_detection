@@ -17,7 +17,7 @@ conda install -c edeno ripple_detection
 + scipy
 + pandas
 
-### Example Useage ###
+### Example Usage ###
 ```python
 from ripple_detection import Kay_ripple_detector
 
