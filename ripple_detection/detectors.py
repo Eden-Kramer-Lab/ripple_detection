@@ -121,28 +121,3 @@ def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
                      name='ripple_number')
     return pd.DataFrame(ripple_times, columns=['start_time', 'end_time'],
                         index=index)
-
-
-def Tao_ripple_detector(time, LFPs, speed, spikes=None,
-                        sampling_frequency=None):
-    '''
-
-    Parameters
-    ----------
-    time : array_like, shape (n_time,)
-    LFPs : array_like, shape (n_time, n_signals)
-        Time series of electric potentials
-    speed : array_like, shape (n_time,)
-        Running speed of animal
-    spikes : array_like, optional, shape (n_time, n_units)
-    sampling_frequency : float
-        Number of samples per second.
-
-    Returns
-    -------
-    ripple_times : pandas DataFrame
-
-    '''
-    candidate_ripple_times = Karlsson_ripple_detector(
-        time, LFPs, speed, sampling_frequency)
-    pass
