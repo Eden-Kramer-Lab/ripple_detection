@@ -7,14 +7,14 @@ TESTS_REQUIRE = ['pytest >= 2.7.1']
 
 setup(
     name='ripple_detection',
-    version='0.1.0.dev0',
+    version='0.1.1.dev0',
     license='MIT',
     description=('Tools for finding sharp-wave ripple events (150-250 Hz) '
                  'from local field potentials.'),
     author='Eric Denovellis',
     author_email='edeno@bu.edu',
     url='https://github.com/Eden-Kramer-Lab/ripple_detection',
-    packages=find_packages('ripple_detection'),
+    packages=find_packages(),
     package_data={'': ['*.mat']},
     install_requires=INSTALL_REQUIRES,
     tests_require=TESTS_REQUIRE,
