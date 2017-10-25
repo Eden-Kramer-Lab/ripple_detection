@@ -93,6 +93,12 @@ def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
     -------
     ripple_times : pandas DataFrame
 
+    References
+    ----------
+    .. [1] Karlsson, M.P., and Frank, L.M. (2009). Awake replay of remote
+    experiences in the hippocampus. Nature Neuroscience 12, 913-918.
+
+
     '''
     candidate_ripple_times = []
     for lfp in LFPs.T:
