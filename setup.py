@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+
+from setuptools import setup, find_packages
+
+INSTALL_REQUIRES = ['numpy >= 1.11', 'pandas >= 0.18.0', 'scipy']
+TESTS_REQUIRE = ['pytest >= 2.7.1']
+
+setup(
+    name='ripple_detection',
+    version='0.1.0.dev0',
+    license='MIT',
+    description=('Tools for finding sharp-wave ripple events (150-250 Hz) '
+                 'from local field potentials.'),
+    author='Eric Denovellis',
+    author_email='edeno@bu.edu',
+    url='https://github.com/Eden-Kramer-Lab/ripple_detection',
+    packages=find_packages('ripple_detection'),
+    package_data={'': ['*.mat']},
+    install_requires=INSTALL_REQUIRES,
+    tests_require=TESTS_REQUIRE,
+)

@@ -1,0 +1,13 @@
+name: ripple_detection
+channels:
+- defaults
+dependencies:
+- "python >= 3.5"
+- "numpy >= 1.11"
+- scipy
+- "pandas >= 0.18.0"
+- jupyter
+- setuptools
+- "pytest >= 2.7.1"
+- pytest-cov
+- coveralls
