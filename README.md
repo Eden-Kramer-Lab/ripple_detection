@@ -2,7 +2,7 @@
 ![](https://travis-ci.org/Eden-Kramer-Lab/ripple_detection.svg?branch=master)
 [![Coverage Status](https://coveralls.io/repos/github/Eden-Kramer-Lab/ripple_detection/badge.svg?branch=master)](https://coveralls.io/github/Eden-Kramer-Lab/ripple_detection?branch=master)
 
-`ripple_detection` is a python package for finding sharp-wave ripple events (150-250 Hz) from local field potentials.
+`ripple_detection` is a python package for finding [sharp-wave ripple](https://en.wikipedia.org/wiki/Sharp_waves_and_ripples) events (150-250 Hz) from local field potentials.
 
 The package implements ripple detection methods from Karlsson et al. 2009 (`Karlsson_ripple_detector`) and Kay et al. 2016 (`Kay_ripple_detector`).
 
