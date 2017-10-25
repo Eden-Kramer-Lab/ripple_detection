@@ -15,6 +15,6 @@ install:
   - conda env create -f environment.yml
   - source activate ripple_detection
   - python setup.py develop
-script: pytest --cov=src tests/
+script: pytest --cov=ripple_detection tests/
 after_success:
     - coveralls
