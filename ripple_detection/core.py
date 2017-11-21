@@ -145,10 +145,13 @@ def exclude_movement(candidate_ripple_times, speed, time,
 
     '''
     candidate_ripple_times = np.array(candidate_ripple_times)
-    ripple_start_time = candidate_ripple_times[:, 0]
-    speed_at_ripple_start = speed[np.in1d(time, ripple_start_time)]
-    is_below_speed_threshold = speed_at_ripple_start <= speed_threshold
-    return candidate_ripple_times[is_below_speed_threshold]
+    try:
+        ripple_start_time = candidate_ripple_times[:, 0]
+        speed_at_ripple_start = speed[np.in1d(time, ripple_start_time)]
+        is_below_speed_threshold = speed_at_ripple_start <= speed_threshold
+        return candidate_ripple_times[is_below_speed_threshold]
+    except IndexError:
+        return []
 
 
 def _find_containing_interval(interval_candidates, target_interval):
