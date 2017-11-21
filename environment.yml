@@ -8,6 +8,7 @@ dependencies:
 - scipy
 - "pandas >= 0.18.0"
 - jupyter
+- matplotlib
 - nb_conda
 - setuptools
 - "pytest >= 2.7.1"
