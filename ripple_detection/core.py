@@ -8,15 +8,13 @@ import numpy as np
 import pandas as pd
 from scipy.io import loadmat
 from scipy.ndimage.filters import gaussian_filter1d
-from scipy.signal import filtfilt, hilbert, butter
+from scipy.signal import lfilter, hilbert, firwin
 from scipy.stats import zscore
 
 
-def butter_bandpass(band, sampling_frequency, order=5):
-    '''http://scipy-cookbook.readthedocs.io/items/ButterworthBandpass.html'''
+def fir(band, sampling_frequency, order=25):
     nyquist = 0.5 * sampling_frequency
-    normalized_band = np.array(band) / nyquist
-    return butter(order, normalized_band, btype='bandpass')
+    return firwin(order, band, pass_zero=False, nyq=nyquist)
 
 
 def _get_series_start_end_times(series):
@@ -83,12 +81,10 @@ def ripple_bandpass_filter(data, band=[150, 250], sampling_frequency=1500,
     filtered_data : array_like, shape (n_time,)
 
     '''
-    filter_numerator, filter_denominator = butter_bandpass(
-        band, sampling_frequency, order)
+    kernel = fir(band, sampling_frequency)
     is_nan = np.isnan(data)
     filtered_data = np.full_like(data, np.nan)
-    filtered_data[~is_nan] = filtfilt(
-        filter_numerator, filter_denominator, data[~is_nan], axis=0)
+    filtered_data[~is_nan] = lfilter(kernel, 1.0, data[~is_nan], axis=0)
     return filtered_data
 
 
