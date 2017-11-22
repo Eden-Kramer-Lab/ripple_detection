@@ -89,8 +89,8 @@ NOISE_FUNCTION = {
 }
 
 
-def simulate_LFP(time, ripple_times, ripple_amplitude=5,
-                 ripple_width=0.025, noise_type='brown', noise_amplitude=1):
+def simulate_LFP(time, ripple_times, ripple_amplitude=2,
+                 ripple_width=0.025, noise_type='brown', noise_amplitude=1.3):
     '''Simulate a LFP with a ripple at ripple times
     '''
     noise = noise_amplitude * NOISE_FUNCTION[noise_type](time.size)
