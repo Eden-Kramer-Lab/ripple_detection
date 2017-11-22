@@ -10,8 +10,7 @@ from .core import (exclude_movement, gaussian_smooth, get_envelope,
 
 def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
                         speed_threshold=4.0, minimum_duration=0.015,
-                        zscore_threshold=2.0, smoothing_sigma=0.004,
-                        filter_order=4):
+                        zscore_threshold=2.0, smoothing_sigma=0.004):
     '''Find start and end times of sharp wave ripple events (150-250 Hz)
     based on Kay et al. 2016 [1].
 
@@ -36,7 +35,6 @@ def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
     smoothing_sigma : float, optional
         Amount to smooth the time series over time. The default is
         given assuming time is in units of seconds.
-    filter_order : int, optional
 
     Returns
     -------
@@ -51,8 +49,7 @@ def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
     '''
     filtered_lfps = [
         ripple_bandpass_filter(lfp[~np.isnan(lfp)].squeeze(),
-                               sampling_frequency=sampling_frequency,
-                               order=filter_order)
+                               sampling_frequency=sampling_frequency)
         for lfp in LFPs.T]
 
     combined_filtered_lfps = np.sqrt(
@@ -72,8 +69,7 @@ def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
 
 def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
                              speed_threshold=4.0, minimum_duration=0.015,
-                             zscore_threshold=3.0, smoothing_sigma=0.004,
-                             filter_order=4):
+                             zscore_threshold=3.0, smoothing_sigma=0.004):
     '''Find start and end times of sharp wave ripple events (150-250 Hz)
     based on Karlsson et al. 2009 [1].
 
@@ -98,7 +94,6 @@ def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
     smoothing_sigma : float, optional
         Amount to smooth the time series over time. The default is
         given assuming time is in units of seconds.
-    filter_order : int, optional
 
     Returns
     -------
@@ -115,8 +110,7 @@ def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
     for lfp in LFPs.T:
         is_nan = np.isnan(lfp)
         filtered_lfp = ripple_bandpass_filter(
-            lfp[~is_nan].squeeze(), sampling_frequency=sampling_frequency,
-            order=filter_order)
+            lfp[~is_nan].squeeze(), sampling_frequency=sampling_frequency)
         filtered_lfp = gaussian_smooth(
             get_envelope(filtered_lfp), sigma=smoothing_sigma,
             sampling_frequency=sampling_frequency)
