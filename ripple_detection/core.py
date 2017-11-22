@@ -223,7 +223,8 @@ def gaussian_smooth(data, sigma, sampling_frequency, axis=0, truncate=8):
 
     '''
     return gaussian_filter1d(
-        data, sigma * sampling_frequency, truncate=truncate, axis=axis)
+        data, sigma * sampling_frequency, truncate=truncate, axis=axis,
+        mode='constant')
 
 
 def threshold_by_zscore(data, time, minimum_duration=0.015,
