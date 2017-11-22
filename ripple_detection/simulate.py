@@ -94,7 +94,7 @@ def simulate_LFP(time, ripple_times, ripple_amplitude=5,
     '''Simulate a LFP with a ripple at ripple times
     '''
     noise = noise_amplitude * NOISE_FUNCTION[noise_type](time.size)
-    ripple_power = np.sin(2 * np.pi * time * RIPPLE_FREQUENCY)
+    ripple_signal = np.sin(2 * np.pi * time * RIPPLE_FREQUENCY)
     signal = []
 
     try:
