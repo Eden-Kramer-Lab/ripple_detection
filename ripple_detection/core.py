@@ -12,7 +12,7 @@ from scipy.signal import lfilter, hilbert, firwin
 from scipy.stats import zscore
 
 
-def fir(band, sampling_frequency, order=25):
+def fir(band, sampling_frequency, order=125):
     nyquist = 0.5 * sampling_frequency
     return firwin(order, band, pass_zero=False, nyq=nyquist)
 
