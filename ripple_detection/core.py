@@ -67,8 +67,7 @@ def segment_boolean_series(series, minimum_duration=0.015):
             if end_time >= (start_time + minimum_duration)]
 
 
-def ripple_bandpass_filter(data, band=[150, 250], sampling_frequency=1500,
-                           order=4):
+def ripple_bandpass_filter(data, band=[150, 250], sampling_frequency=1500):
     '''Returns a bandpass filtered signal between 150-250 Hz using the
     Frank lab filter.
 
