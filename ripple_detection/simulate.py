@@ -105,6 +105,6 @@ def simulate_LFP(time, ripple_times, ripple_amplitude=5,
     for ripple_time in ripple_times:
         carrier = norm(loc=ripple_time, scale=ripple_width).pdf(time)
         carrier /= carrier.max()
-        signal.append(ripple_amplitude * (ripple_power * carrier))
+        signal.append((ripple_amplitude / 2) * (ripple_signal * carrier))
 
     return np.sum(signal, axis=0) + noise
