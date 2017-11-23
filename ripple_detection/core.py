@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from scipy.io import loadmat
 from scipy.ndimage.filters import gaussian_filter1d
-from scipy.signal import lfilter, hilbert, firwin
+from scipy.signal import filtfilt, firwin, hilbert
 from scipy.stats import zscore
 
 
@@ -83,7 +83,7 @@ def ripple_bandpass_filter(data, band=[150, 250], sampling_frequency=1500):
     kernel = fir(band, sampling_frequency)
     is_nan = np.isnan(data)
     filtered_data = np.full_like(data, np.nan)
-    filtered_data[~is_nan] = lfilter(kernel, 1.0, data[~is_nan], axis=0)
+    filtered_data[~is_nan] = filtfilt(kernel, 1.0, data[~is_nan], axis=0)
     return filtered_data
 
 
