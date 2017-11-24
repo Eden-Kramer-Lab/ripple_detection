@@ -15,7 +15,11 @@ from scipy.stats import zscore
 def ripple_bandpass_filter(sampling_frequency):
     ORDER = 101
     nyquist = 0.5 * sampling_frequency
-    return firwin(order, band, pass_zero=False, nyq=nyquist)
+    TRANSITION_BAND = 25
+    RIPPLE_BAND = [150, 250]
+    desired = [0, RIPPLE_BAND[0] - TRANSITION_BAND, RIPPLE_BAND[0],
+               RIPPLE_BAND[1], RIPPLE_BAND[1] + TRANSITION_BAND, nyquist]
+    return remez(ORDER, desired, [0, 1, 0], Hz=sampling_frequency), 1.0
 
 
 def _get_series_start_end_times(series):
