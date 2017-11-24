@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 
 from .core import (exclude_movement, gaussian_smooth, get_envelope,
-                   merge_overlapping_ranges, ripple_bandpass_filter,
+                   merge_overlapping_ranges, filter_ripple_band,
                    threshold_by_zscore)
 
 
@@ -48,8 +48,8 @@ def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
 
     '''
     filtered_lfps = [
-        ripple_bandpass_filter(lfp[~np.isnan(lfp)].squeeze(),
-                               sampling_frequency=sampling_frequency)
+        filter_ripple_band(lfp[~np.isnan(lfp)].squeeze(),
+                           sampling_frequency=sampling_frequency)
         for lfp in LFPs.T]
 
     combined_filtered_lfps = np.sqrt(
@@ -109,7 +109,7 @@ def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
     candidate_ripple_times = []
     for lfp in LFPs.T:
         is_nan = np.isnan(lfp)
-        filtered_lfp = ripple_bandpass_filter(
+        filtered_lfp = filter_ripple_band(
             lfp[~is_nan].squeeze(), sampling_frequency=sampling_frequency)
         filtered_lfp = gaussian_smooth(
             get_envelope(filtered_lfp), sigma=smoothing_sigma,

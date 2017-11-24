@@ -8,11 +8,12 @@ import numpy as np
 import pandas as pd
 from scipy.io import loadmat
 from scipy.ndimage.filters import gaussian_filter1d
-from scipy.signal import filtfilt, firwin, hilbert
+from scipy.signal import filtfilt, remez, hilbert
 from scipy.stats import zscore
 
 
-def fir(band, sampling_frequency, order=125):
+def ripple_bandpass_filter(sampling_frequency):
+    ORDER = 101
     nyquist = 0.5 * sampling_frequency
     return firwin(order, band, pass_zero=False, nyq=nyquist)
 
@@ -67,9 +68,8 @@ def segment_boolean_series(series, minimum_duration=0.015):
             if end_time >= (start_time + minimum_duration)]
 
 
-def ripple_bandpass_filter(data, band=[150, 250], sampling_frequency=1500):
-    '''Returns a bandpass filtered signal between 150-250 Hz using the
-    Frank lab filter.
+def filter_ripple_band(data, sampling_frequency=1500):
+    '''Returns a bandpass filtered signal between 150-250 Hz
 
     Parameters
     ----------
@@ -80,10 +80,12 @@ def ripple_bandpass_filter(data, band=[150, 250], sampling_frequency=1500):
     filtered_data : array_like, shape (n_time,)
 
     '''
-    kernel = fir(band, sampling_frequency)
+    filter_numerator, filter_denominator = ripple_bandpass_filter(
+        sampling_frequency)
     is_nan = np.isnan(data)
     filtered_data = np.full_like(data, np.nan)
-    filtered_data[~is_nan] = filtfilt(kernel, 1.0, data[~is_nan], axis=0)
+    filtered_data[~is_nan] = filtfilt(
+        filter_numerator, filter_denominator, data[~is_nan], axis=0)
     return filtered_data
 
 
