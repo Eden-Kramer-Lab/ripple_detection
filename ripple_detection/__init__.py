@@ -1,2 +1,3 @@
 # flake8: noqa
-from .detectors import Karlsson_ripple_detector, Kay_ripple_detector
+from .detectors import (Karlsson_ripple_detector, Kay_ripple_detector,
+                        filter_ripple_band)
