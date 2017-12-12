@@ -47,13 +47,12 @@ def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
     immobility and sleep. Nature 531, 185-190.
 
     '''
-    filtered_lfps = [filter_ripple_band(lfp, sampling_frequency)
-                     for lfp in LFPs.T]
-
-    combined_filtered_lfps = np.sqrt(
-        gaussian_smooth(np.nansum(filtered_lfps, axis=0) ** 2,
-                        sigma=smoothing_sigma,
-                        sampling_frequency=sampling_frequency))
+    filtered_lfps = np.stack(
+        [filter_ripple_band(lfp, sampling_frequency) for lfp in LFPs.T])
+    combined_filtered_lfps = np.sum(filtered_lfps ** 2, axis=0)
+    combined_filtered_lfps = gaussian_smooth(
+        combined_filtered_lfps, smoothing_sigma, sampling_frequency)
+    combined_filtered_lfps = np.sqrt(combined_filtered_lfps)
     candidate_ripple_times = threshold_by_zscore(
         combined_filtered_lfps, time, minimum_duration, zscore_threshold)
     ripple_times = exclude_movement(
