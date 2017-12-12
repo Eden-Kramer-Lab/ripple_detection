@@ -7,7 +7,7 @@ TESTS_REQUIRE = ['pytest >= 2.7.1']
 
 setup(
     name='ripple_detection',
-    version='0.1.3.dev0',
+    version='0.1.4.dev0',
     license='MIT',
     description=('Tools for finding sharp-wave ripple events (150-250 Hz) '
                  'from local field potentials.'),
