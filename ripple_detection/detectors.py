@@ -125,3 +125,57 @@ def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
                      name='ripple_number')
     return pd.DataFrame(ripple_times, columns=['start_time', 'end_time'],
                         index=index)
+
+
+def Roumis_ripple_detector(time, LFPs, speed, sampling_frequency,
+                           speed_threshold=4.0, minimum_duration=0.015,
+                           zscore_threshold=2.0, smoothing_sigma=0.004):
+    '''Find start and end times of sharp wave ripple events (150-250 Hz)
+    based on [1].
+
+    Parameters
+    ----------
+    time : array_like, shpe (n_time,)
+    LFPs : array_like, shape (n_time, n_signals)
+        Time series of electric potentials
+    speed : array_like, shape (n_time,)
+        Running speed of animal
+    sampling_frequency : float
+        Number of samples per second.
+    speed_threshold : float, optional
+        Maximum running speed of animal for a ripple
+    minimum_duration : float, optional
+        Minimum time the z-score has to stay above threshold to be
+        considered a ripple. The default is given assuming time is in
+        units of seconds.
+    zscore_threshold : float, optional
+        Number of standard deviations the ripple power must exceed to
+        be considered a ripple
+    smoothing_sigma : float, optional
+        Amount to smooth the time series over time. The default is
+        given assuming time is in units of seconds.
+
+    Returns
+    -------
+    ripple_times : pandas DataFrame
+
+    References
+    ----------
+    [1] https://bitbucket.org/franklab/trodes2ff_shared/src/b156c8d5fef3a2f89e15a678046c52919638162e/extractEventConsensus.m?at=develop&fileviewer=file-view-default
+
+    '''
+    filtered_lfps = [filter_ripple_band(lfp, sampling_frequency)
+                     for lfp in LFPs.T]
+    filtered_lfps = [np.sqrt(gaussian_smooth(
+        filtered_lfp ** 2, smoothing_sigma, sampling_frequency))
+        for filtered_lfp in filtered_lfps]
+    combined_filtered_lfps = np.mean(filtered_lfps, axis=0)
+    candidate_ripple_times = threshold_by_zscore(
+        combined_filtered_lfps, time, minimum_duration, zscore_threshold)
+    ripple_times = exclude_movement(
+        candidate_ripple_times, speed, time,
+        speed_threshold=speed_threshold)
+    index = pd.Index(np.arange(len(ripple_times)) + 1,
+                     name='ripple_number')
+    return pd.DataFrame(ripple_times, columns=['start_time', 'end_time'],
+                        index=index)
