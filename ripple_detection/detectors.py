@@ -47,6 +47,10 @@ def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
     immobility and sleep. Nature 531, 185-190.
 
     '''
+    not_null = np.all(pd.notnull(LFPs), axis=1) & pd.notnull(speed)
+    LFPs, speed, time = (
+        LFPs.copy()[not_null], speed.copy()[not_null], time.copy()[not_null])
+
     filtered_lfps = np.stack(
         [filter_ripple_band(lfp, sampling_frequency) for lfp in LFPs.T])
     combined_filtered_lfps = np.sum(filtered_lfps ** 2, axis=0)
@@ -103,6 +107,10 @@ def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
 
 
     '''
+    not_null = np.all(pd.notnull(LFPs), axis=1) & pd.notnull(speed)
+    LFPs, speed, time = (
+        LFPs.copy()[not_null], speed.copy()[not_null], time.copy()[not_null])
+
     candidate_ripple_times = []
     for lfp in LFPs.T:
         is_nan = np.isnan(lfp)
@@ -164,6 +172,9 @@ def Roumis_ripple_detector(time, LFPs, speed, sampling_frequency,
     [1] https://bitbucket.org/franklab/trodes2ff_shared/src/b156c8d5fef3a2f89e15a678046c52919638162e/extractEventConsensus.m?at=develop&fileviewer=file-view-default
 
     '''
+    not_null = np.all(pd.notnull(LFPs), axis=1) & pd.notnull(speed)
+    LFPs, speed, time = (
+        LFPs.copy()[not_null], speed.copy()[not_null], time.copy()[not_null])
     filtered_lfps = [filter_ripple_band(lfp, sampling_frequency)
                      for lfp in LFPs.T]
     filtered_lfps = [np.sqrt(gaussian_smooth(
