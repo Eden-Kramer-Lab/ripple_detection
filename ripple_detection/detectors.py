@@ -36,6 +36,9 @@ def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
     smoothing_sigma : float, optional
         Amount to smooth the time series over time. The default is
         given assuming time is in units of seconds.
+    close_ripple_threshold : float, optional
+        Exclude ripples that occur within `close_ripple_threshold` of a
+        previously detected ripple.
 
     Returns
     -------
@@ -99,6 +102,9 @@ def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
     smoothing_sigma : float, optional
         Amount to smooth the time series over time. The default is
         given assuming time is in units of seconds.
+    close_ripple_threshold : float, optional
+        Exclude ripples that occur within `close_ripple_threshold` of a
+        previously detected ripple.
 
     Returns
     -------
@@ -169,6 +175,9 @@ def Roumis_ripple_detector(time, LFPs, speed, sampling_frequency,
     smoothing_sigma : float, optional
         Amount to smooth the time series over time. The default is
         given assuming time is in units of seconds.
+    close_ripple_threshold : float, optional
+        Exclude ripples that occur within `close_ripple_threshold` of a
+        previously detected ripple.
 
     Returns
     -------
