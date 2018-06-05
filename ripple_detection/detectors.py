@@ -3,14 +3,15 @@ from itertools import chain
 import numpy as np
 import pandas as pd
 
-from .core import (exclude_movement, gaussian_smooth, get_envelope,
-                   merge_overlapping_ranges, filter_ripple_band,
+from .core import (exclude_close_ripples, exclude_movement, filter_ripple_band,
+                   gaussian_smooth, get_envelope, merge_overlapping_ranges,
                    threshold_by_zscore)
 
 
 def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
                         speed_threshold=4.0, minimum_duration=0.015,
-                        zscore_threshold=2.0, smoothing_sigma=0.004):
+                        zscore_threshold=2.0, smoothing_sigma=0.004,
+                        close_ripple_threshold=0.0):
     '''Find start and end times of sharp wave ripple events (150-250 Hz)
     based on Kay et al. 2016 [1].
 
@@ -62,6 +63,8 @@ def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
     ripple_times = exclude_movement(
         candidate_ripple_times, speed, time,
         speed_threshold=speed_threshold)
+    ripple_times = exclude_close_ripples(
+        ripple_times, close_ripple_threshold)
     index = pd.Index(np.arange(len(ripple_times)) + 1,
                      name='ripple_number')
     return pd.DataFrame(ripple_times, columns=['start_time', 'end_time'],
@@ -70,7 +73,8 @@ def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
 
 def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
                              speed_threshold=4.0, minimum_duration=0.015,
-                             zscore_threshold=3.0, smoothing_sigma=0.004):
+                             zscore_threshold=3.0, smoothing_sigma=0.004,
+                             close_ripple_threshold=0.0):
     '''Find start and end times of sharp wave ripple events (150-250 Hz)
     based on Karlsson et al. 2009 [1].
 
@@ -129,6 +133,8 @@ def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
     ripple_times = exclude_movement(
         candidate_ripple_times, speed, time,
         speed_threshold=speed_threshold)
+    ripple_times = exclude_close_ripples(
+        ripple_times, close_ripple_threshold)
     index = pd.Index(np.arange(len(ripple_times)) + 1,
                      name='ripple_number')
     return pd.DataFrame(ripple_times, columns=['start_time', 'end_time'],
@@ -137,7 +143,8 @@ def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
 
 def Roumis_ripple_detector(time, LFPs, speed, sampling_frequency,
                            speed_threshold=4.0, minimum_duration=0.015,
-                           zscore_threshold=2.0, smoothing_sigma=0.004):
+                           zscore_threshold=2.0, smoothing_sigma=0.004,
+                           close_ripple_threshold=0.0):
     '''Find start and end times of sharp wave ripple events (150-250 Hz)
     based on [1].
 
@@ -186,6 +193,8 @@ def Roumis_ripple_detector(time, LFPs, speed, sampling_frequency,
     ripple_times = exclude_movement(
         candidate_ripple_times, speed, time,
         speed_threshold=speed_threshold)
+    ripple_times = exclude_close_ripples(
+        ripple_times, close_ripple_threshold)
     index = pd.Index(np.arange(len(ripple_times)) + 1,
                      name='ripple_number')
     return pd.DataFrame(ripple_times, columns=['start_time', 'end_time'],

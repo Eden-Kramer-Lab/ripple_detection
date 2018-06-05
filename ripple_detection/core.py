@@ -297,3 +297,21 @@ def merge_overlapping_ranges(ranges):
             # Segments adjacent or overlapping: merge.
             current_stop = max(current_stop, stop)
     yield current_start, current_stop
+
+
+def exclude_close_ripples(candidate_ripple_times, close_ripple_threshold=1.0):
+    candidate_ripple_times = np.array(candidate_ripple_times)
+    n_ripples = candidate_ripple_times.shape[0]
+
+    new_ripple_index = np.arange(n_ripples)
+    new_ripple_times = candidate_ripple_times.copy()
+
+    for ind, (start_time, end_time) in enumerate(candidate_ripple_times):
+        if np.isin(ind, new_ripple_index):
+            is_too_close = (
+                (end_time + close_ripple_threshold > new_ripple_times[:, 0])
+                & (new_ripple_index > ind))
+            new_ripple_index = new_ripple_index[~is_too_close]
+            new_ripple_times = new_ripple_times[~is_too_close]
+
+    return new_ripple_times if new_ripple_times.size > 0 else []
