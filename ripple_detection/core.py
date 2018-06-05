@@ -1,6 +1,5 @@
 '''Finding sharp-wave ripple events (150-250 Hz) from local field
-potentials
-
+potentials.
 '''
 from os.path import abspath, dirname, join
 
