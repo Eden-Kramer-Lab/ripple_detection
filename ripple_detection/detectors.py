@@ -52,8 +52,7 @@ def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
 
     '''
     not_null = np.all(pd.notnull(LFPs), axis=1) & pd.notnull(speed)
-    LFPs, speed, time = (
-        LFPs.copy()[not_null], speed.copy()[not_null], time.copy()[not_null])
+    LFPs, speed, time = LFPs[not_null], speed[not_null], time[not_null]
 
     filtered_lfps = np.stack(
         [filter_ripple_band(lfp, sampling_frequency) for lfp in LFPs.T])
@@ -118,8 +117,7 @@ def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
 
     '''
     not_null = np.all(pd.notnull(LFPs), axis=1) & pd.notnull(speed)
-    LFPs, speed, time = (
-        LFPs.copy()[not_null], speed.copy()[not_null], time.copy()[not_null])
+    LFPs, speed, time = LFPs[not_null], speed[not_null], time[not_null]
 
     candidate_ripple_times = []
     for lfp in LFPs.T:
@@ -189,8 +187,7 @@ def Roumis_ripple_detector(time, LFPs, speed, sampling_frequency,
 
     '''
     not_null = np.all(pd.notnull(LFPs), axis=1) & pd.notnull(speed)
-    LFPs, speed, time = (
-        LFPs.copy()[not_null], speed.copy()[not_null], time.copy()[not_null])
+    LFPs, speed, time = LFPs[not_null], speed[not_null], time[not_null]
     filtered_lfps = [filter_ripple_band(lfp, sampling_frequency)
                      for lfp in LFPs.T]
     filtered_lfps = [np.sqrt(gaussian_smooth(
