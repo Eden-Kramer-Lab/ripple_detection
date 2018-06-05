@@ -74,9 +74,10 @@ def brown(N, state=None):
     """
     state = np.random.RandomState() if state is None else state
     uneven = N % 2
-    X = state.randn(N // 2+1+uneven) + 1j * state.randn(N // 2 + 1 + uneven)
+    X = (state.randn(N // 2 + 1 + uneven) + 1j *
+         state.randn(N // 2 + 1 + uneven))
     S = np.arange(len(X)) + 1
-    y = np.fft.irfft(X/S).real
+    y = np.fft.irfft(X / S).real
     if uneven:
         y = y[:-1]
     return normalize(y)

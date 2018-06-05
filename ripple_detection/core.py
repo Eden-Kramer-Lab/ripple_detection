@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from scipy.io import loadmat
 from scipy.ndimage.filters import gaussian_filter1d
-from scipy.signal import filtfilt, remez, hilbert
+from scipy.signal import filtfilt, hilbert, remez
 from scipy.stats import zscore
 
 
@@ -156,9 +156,13 @@ def exclude_movement(candidate_ripple_times, speed, time,
     '''
     candidate_ripple_times = np.array(candidate_ripple_times)
     try:
-        ripple_start_time = candidate_ripple_times[:, 0]
-        speed_at_ripple_start = speed[np.in1d(time, ripple_start_time)]
-        is_below_speed_threshold = speed_at_ripple_start <= speed_threshold
+        speed_at_ripple_start = speed[
+            np.in1d(time, candidate_ripple_times[:, 0])]
+        speed_at_ripple_end = speed[
+            np.in1d(time, candidate_ripple_times[:, 1])]
+        is_below_speed_threshold = (
+            (speed_at_ripple_start <= speed_threshold)
+            & (speed_at_ripple_end <= speed_threshold))
         return candidate_ripple_times[is_below_speed_threshold]
     except IndexError:
         return []
@@ -203,7 +207,7 @@ def _extend_segment(segments_to_extend, containing_segments):
 
 def get_envelope(data, axis=0):
     '''Extracts the instantaneous amplitude (envelope) of an analytic
-     signal using the Hilbert transform'''
+    signal using the Hilbert transform'''
     return np.abs(hilbert(data, axis=axis))
 
 
