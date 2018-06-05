@@ -5,6 +5,7 @@ from os.path import abspath, dirname, join
 
 import numpy as np
 import pandas as pd
+from scipy.fftpack import next_fast_len
 from scipy.io import loadmat
 from scipy.ndimage.filters import gaussian_filter1d
 from scipy.signal import filtfilt, hilbert, remez
@@ -207,7 +208,10 @@ def _extend_segment(segments_to_extend, containing_segments):
 def get_envelope(data, axis=0):
     '''Extracts the instantaneous amplitude (envelope) of an analytic
     signal using the Hilbert transform'''
-    return np.abs(hilbert(data, axis=axis))
+    n_samples = data.shape[axis]
+    instantaneous_amplitude = np.abs(
+        hilbert(data, N=next_fast_len(n_samples), axis=axis))
+    return np.take(instantaneous_amplitude, np.arange(n_samples), axis=axis)
 
 
 def gaussian_smooth(data, sigma, sampling_frequency, axis=0, truncate=8):
