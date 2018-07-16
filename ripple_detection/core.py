@@ -306,19 +306,58 @@ def merge_overlapping_ranges(ranges):
     yield current_start, current_stop
 
 
-def exclude_close_ripples(candidate_ripple_times, close_ripple_threshold=1.0):
-    candidate_ripple_times = np.array(candidate_ripple_times)
-    n_ripples = candidate_ripple_times.shape[0]
+def exclude_close_events(candidate_event_times, close_event_threshold=1.0):
+    '''Excludes successive events that occur within  a `close_event_threshold`
+    of a previously occuring event.
 
-    new_ripple_index = np.arange(n_ripples)
-    new_ripple_times = candidate_ripple_times.copy()
+    Parameters
+    ----------
+    candidate_event_times : ndarray or list, shape (n_events, 2)
+        Start and end times of possible events
+    close_event_threshold : float or np.timedelta
 
-    for ind, (start_time, end_time) in enumerate(candidate_ripple_times):
-        if np.isin(ind, new_ripple_index):
+
+    Returns
+    -------
+    candidate_event_times : ndarray, shape (n_events - too_close_events, 2)
+
+    '''
+    candidate_event_times = np.array(candidate_event_times)
+    n_events = candidate_event_times.shape[0]
+
+    new_event_index = np.arange(n_events)
+    new_event_times = candidate_event_times.copy()
+
+    for ind, (start_time, end_time) in enumerate(candidate_event_times):
+        if np.isin(ind, new_event_index):
             is_too_close = (
-                (end_time + close_ripple_threshold > new_ripple_times[:, 0])
-                & (new_ripple_index > ind))
-            new_ripple_index = new_ripple_index[~is_too_close]
-            new_ripple_times = new_ripple_times[~is_too_close]
+                (end_time + close_event_threshold > new_event_times[:, 0])
+                & (new_event_index > ind))
+            new_event_index = new_event_index[~is_too_close]
+            new_event_times = new_event_times[~is_too_close]
 
-    return new_ripple_times if new_ripple_times.size > 0 else []
+    return new_event_times if new_event_times.size > 0 else []
+
+
+def get_multiunit_population_firing_rate(multiunit, sampling_frequency,
+                                         smoothing_sigma=0.015):
+    '''Calculates the multiunit population firing rate.
+
+    Parameters
+    ----------
+    multiunit : ndarray, shape (n_time, n_signals)
+        Binary array of multiunit spike times.
+    sampling_frequency : float
+        Number of samples per second.
+    smoothing_sigma : float or np.timedelta
+        Amount to smooth the firing rate over time. The default is
+        given assuming time is in units of seconds.
+
+
+    Returns
+    -------
+    multiunit_population_firing_rate : ndarray, shape (n_time,)
+
+    '''
+    return gaussian_smooth(multiunit.mean(axis=1) * sampling_frequency,
+                           smoothing_sigma, sampling_frequency)
