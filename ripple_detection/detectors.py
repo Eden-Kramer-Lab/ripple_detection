@@ -244,8 +244,8 @@ def multiunit_HSE_detector(time, multiunit, speed, sampling_frequency,
     high_synchrony_event_times : pandas.DataFrame, shape (n_events, 2)
 
     '''
-    firing_rate = get_multiunit_population_firing_rate(
-        multiunit, sampling_frequency, smoothing_sigma)
+    firing_rate = np.log(get_multiunit_population_firing_rate(
+        multiunit, sampling_frequency, smoothing_sigma)) + np.spacing(1)
     candidate_high_synchrony_events = threshold_by_zscore(
         firing_rate, time, minimum_duration, zscore_threshold)
     high_synchrony_events = exclude_movement(
