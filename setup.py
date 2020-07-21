@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from setuptools import setup, find_packages
+from setuptools import find_packages, setup
 
 INSTALL_REQUIRES = ['numpy >= 1.11', 'pandas >= 0.18.0', 'scipy']
 TESTS_REQUIRE = ['pytest >= 2.7.1']
