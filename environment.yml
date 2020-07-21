@@ -7,8 +7,9 @@ dependencies:
 - "numpy >= 1.11"
 - scipy
 - "pandas >= 0.18.0"
-- jupyter
 - matplotlib
+- jupyter
+- jupyterlab
 - nb_conda
 - setuptools
 - "pytest >= 2.7.1"
