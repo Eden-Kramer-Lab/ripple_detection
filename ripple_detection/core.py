@@ -40,10 +40,10 @@ def _get_series_start_end_times(series):
 
     '''
     is_start_time = (~series.shift(1).fillna(False)) & series
-    start_times = series.index[is_start_time].get_values()
+    start_times = np.asarray(series.index[is_start_time])
 
     is_end_time = series & (~series.shift(-1).fillna(False))
-    end_times = series.index[is_end_time].get_values()
+    end_times = np.asarray(series.index[is_end_time])
 
     return start_times, end_times
 
