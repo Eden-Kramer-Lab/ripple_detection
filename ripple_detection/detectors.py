@@ -56,7 +56,9 @@ def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
     LFPs, speed, time = LFPs[not_null], speed[not_null], time[not_null]
 
     filtered_lfps = np.stack(
-        [filter_ripple_band(lfp, sampling_frequency) for lfp in LFPs.T])
+        [get_envelope(filter_ripple_band(lfp, sampling_frequency))
+         for lfp in LFPs.T])
+
     combined_filtered_lfps = np.sum(filtered_lfps ** 2, axis=0)
     combined_filtered_lfps = gaussian_smooth(
         combined_filtered_lfps, smoothing_sigma, sampling_frequency)
@@ -192,7 +194,7 @@ def Roumis_ripple_detector(time, LFPs, speed, sampling_frequency,
     filtered_lfps = [filter_ripple_band(lfp, sampling_frequency)
                      for lfp in LFPs.T]
     filtered_lfps = [np.sqrt(gaussian_smooth(
-        filtered_lfp ** 2, smoothing_sigma, sampling_frequency))
+        get_envelope(filtered_lfp) ** 2, smoothing_sigma, sampling_frequency))
         for filtered_lfp in filtered_lfps]
     combined_filtered_lfps = np.mean(filtered_lfps, axis=0)
     candidate_ripple_times = threshold_by_zscore(
