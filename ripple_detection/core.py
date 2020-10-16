@@ -279,11 +279,11 @@ def merge_overlapping_ranges(ranges):
         Element 1 is the start of the merged range.
         Element 2 is the end of the merged range.
 
-    >>> list(_merge_overlapping_ranges([(5,7), (3,5), (-1,3)]))
+    >>> list(merge_overlapping_ranges([(5, 7), (3, 5), (-1, 3)]))
     [(-1, 7)]
-    >>> list(_merge_overlapping_ranges([(5,6), (3,4), (1,2)]))
+    >>> list(merge_overlapping_ranges([(5, 6), (3, 4), (1, 2)]))
     [(1, 2), (3, 4), (5, 6)]
-    >>> list(_merge_overlapping_ranges([]))
+    >>> list(merge_overlapping_ranges([]))
     []
 
     References
@@ -293,7 +293,10 @@ def merge_overlapping_ranges(ranges):
 
     '''
     ranges = iter(sorted(ranges))
-    current_start, current_stop = next(ranges)
+    try:
+        current_start, current_stop = next(ranges)
+    except StopIteration:
+        return None
     for start, stop in ranges:
         if start > current_stop:
             # Gap between segments: output current segment and start a new
