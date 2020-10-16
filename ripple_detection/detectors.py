@@ -184,10 +184,6 @@ def Roumis_ripple_detector(time, LFPs, speed, sampling_frequency,
     -------
     ripple_times : pandas DataFrame
 
-    References
-    ----------
-    [1] https://bitbucket.org/franklab/trodes2ff_shared/src/b156c8d5fef3a2f89e15a678046c52919638162e/extractEventConsensus.m?at=develop&fileviewer=file-view-default
-
     '''
     not_null = np.all(pd.notnull(LFPs), axis=1) & pd.notnull(speed)
     LFPs, speed, time = LFPs[not_null], speed[not_null], time[not_null]
