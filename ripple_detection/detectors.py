@@ -9,7 +9,7 @@ from .core import (exclude_close_events, exclude_movement, filter_ripple_band,
                    merge_overlapping_ranges, threshold_by_zscore)
 
 
-def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
+def Kay_ripple_detector(time, lfps, speed, sampling_frequency,
                         speed_threshold=4.0, minimum_duration=0.015,
                         zscore_threshold=2.0, smoothing_sigma=0.004,
                         close_ripple_threshold=0.0):
@@ -19,7 +19,7 @@ def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
     Parameters
     ----------
     time : array_like, shape (n_time,)
-    LFPs : array_like, shape (n_time, n_signals)
+    lfps : array_like, shape (n_time, n_signals)
         Time series of electric potentials
     speed : array_like, shape (n_time,)
         Running speed of animal
@@ -52,12 +52,12 @@ def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
     immobility and sleep. Nature 531, 185-190.
 
     '''
-    not_null = np.all(pd.notnull(LFPs), axis=1) & pd.notnull(speed)
-    LFPs, speed, time = LFPs[not_null], speed[not_null], time[not_null]
+    not_null = np.all(pd.notnull(lfps), axis=1) & pd.notnull(speed)
+    lfps, speed, time = lfps[not_null], speed[not_null], time[not_null]
 
     filtered_lfps = np.stack(
         [get_envelope(filter_ripple_band(lfp, sampling_frequency))
-         for lfp in LFPs.T])
+         for lfp in lfps.T])
 
     combined_filtered_lfps = np.sum(filtered_lfps ** 2, axis=0)
     combined_filtered_lfps = gaussian_smooth(
@@ -76,7 +76,7 @@ def Kay_ripple_detector(time, LFPs, speed, sampling_frequency,
                         index=index)
 
 
-def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
+def Karlsson_ripple_detector(time, lfps, speed, sampling_frequency,
                              speed_threshold=4.0, minimum_duration=0.015,
                              zscore_threshold=3.0, smoothing_sigma=0.004,
                              close_ripple_threshold=0.0):
@@ -86,7 +86,7 @@ def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
     Parameters
     ----------
     time : array_like, shpe (n_time,)
-    LFPs : array_like, shape (n_time, n_signals)
+    lfps : array_like, shape (n_time, n_signals)
         Time series of electric potentials
     speed : array_like, shape (n_time,)
         Running speed of animal
@@ -119,11 +119,11 @@ def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
 
 
     '''
-    not_null = np.all(pd.notnull(LFPs), axis=1) & pd.notnull(speed)
-    LFPs, speed, time = LFPs[not_null], speed[not_null], time[not_null]
+    not_null = np.all(pd.notnull(lfps), axis=1) & pd.notnull(speed)
+    lfps, speed, time = lfps[not_null], speed[not_null], time[not_null]
 
     candidate_ripple_times = []
-    for lfp in LFPs.T:
+    for lfp in lfps.T:
         is_nan = np.isnan(lfp)
         filtered_lfp = filter_ripple_band(
             lfp, sampling_frequency=sampling_frequency)
@@ -148,7 +148,7 @@ def Karlsson_ripple_detector(time, LFPs, speed, sampling_frequency,
                         index=index)
 
 
-def Roumis_ripple_detector(time, LFPs, speed, sampling_frequency,
+def Roumis_ripple_detector(time, lfps, speed, sampling_frequency,
                            speed_threshold=4.0, minimum_duration=0.015,
                            zscore_threshold=2.0, smoothing_sigma=0.004,
                            close_ripple_threshold=0.0):
@@ -158,7 +158,7 @@ def Roumis_ripple_detector(time, LFPs, speed, sampling_frequency,
     Parameters
     ----------
     time : array_like, shpe (n_time,)
-    LFPs : array_like, shape (n_time, n_signals)
+    lfps : array_like, shape (n_time, n_signals)
         Time series of electric potentials
     speed : array_like, shape (n_time,)
         Running speed of animal
@@ -185,10 +185,10 @@ def Roumis_ripple_detector(time, LFPs, speed, sampling_frequency,
     ripple_times : pandas DataFrame
 
     '''
-    not_null = np.all(pd.notnull(LFPs), axis=1) & pd.notnull(speed)
-    LFPs, speed, time = LFPs[not_null], speed[not_null], time[not_null]
+    not_null = np.all(pd.notnull(lfps), axis=1) & pd.notnull(speed)
+    lfps, speed, time = lfps[not_null], speed[not_null], time[not_null]
     filtered_lfps = [filter_ripple_band(lfp, sampling_frequency)
-                     for lfp in LFPs.T]
+                     for lfp in lfps.T]
     filtered_lfps = [np.sqrt(gaussian_smooth(
         get_envelope(filtered_lfp) ** 2, smoothing_sigma, sampling_frequency))
         for filtered_lfp in filtered_lfps]
