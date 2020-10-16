@@ -91,7 +91,7 @@ NOISE_FUNCTION = {
 
 
 def simulate_LFP(time, ripple_times, ripple_amplitude=2,
-                 ripple_width=0.025, noise_type='brown', noise_amplitude=1.3):
+                 ripple_duration=0.100, noise_type='brown', noise_amplitude=1.3):
     '''Simulate a LFP with a ripple at ripple times
     '''
     noise = (noise_amplitude / 2) * NOISE_FUNCTION[noise_type](time.size)
@@ -104,7 +104,7 @@ def simulate_LFP(time, ripple_times, ripple_amplitude=2,
         ripple_times = [ripple_times]
 
     for ripple_time in ripple_times:
-        carrier = norm(loc=ripple_time, scale=ripple_width / 6).pdf(time)
+        carrier = norm(loc=ripple_time, scale=ripple_duration / 6).pdf(time)
         carrier /= carrier.max()
         signal.append((ripple_amplitude / 2) * (ripple_signal * carrier))
 
