@@ -241,6 +241,11 @@ def multiunit_HSE_detector(time, multiunit, speed, sampling_frequency,
     -------
     high_synchrony_event_times : pandas.DataFrame, shape (n_events, 2)
 
+    References
+    ----------
+    .. [1] Davidson, T.J., Kloosterman, F., and Wilson, M.A. (2009).
+    Hippocampal Replay of Extended Experience. Neuron 63, 497–507.
+
     '''
     firing_rate = get_multiunit_population_firing_rate(
         multiunit, sampling_frequency, smoothing_sigma)
