@@ -204,7 +204,7 @@ def Roumis_ripple_detector(time, filtered_lfps, speed, sampling_frequency,
 
 def multiunit_HSE_detector(time, multiunit, speed, sampling_frequency,
                            speed_threshold=4.0, minimum_duration=0.015,
-                           zscore_threshold=3.0, smoothing_sigma=0.015,
+                           zscore_threshold=2.0, smoothing_sigma=0.015,
                            close_event_threshold=0.0):
     '''Multiunit High Synchrony Event detector. Finds times when the multiunit
     population spiking activity is high relative to the average.
