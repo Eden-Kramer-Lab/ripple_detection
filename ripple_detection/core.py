@@ -72,7 +72,7 @@ def segment_boolean_series(series, minimum_duration=0.015):
             if end_time >= (start_time + minimum_duration)]
 
 
-def filter_ripple_band(data, sampling_frequency=1500):
+def filter_ripple_band(data):
     '''Returns a bandpass filtered signal between 150-250 Hz
 
     Parameters
@@ -84,9 +84,8 @@ def filter_ripple_band(data, sampling_frequency=1500):
     filtered_data : array_like, shape (n_time,)
 
     '''
-    filter_numerator, filter_denominator = ripple_bandpass_filter(
-        sampling_frequency)
-    is_nan = np.isnan(data)
+    filter_numerator, filter_denominator = _get_ripplefilter_kernel()
+    is_nan = np.any(np.isnan(data), axis=-1)
     filtered_data = np.full_like(data, np.nan)
     filtered_data[~is_nan] = filtfilt(
         filter_numerator, filter_denominator, data[~is_nan], axis=0)
@@ -96,7 +95,7 @@ def filter_ripple_band(data, sampling_frequency=1500):
 def _get_ripplefilter_kernel():
     '''Returns the pre-computed ripple filter kernel from the Frank lab.
     The kernel is 150-250 Hz bandpass with 40 db roll off and 10 Hz
-    sidebands.
+    sidebands. Sampling frequency is 1500 Hz.
     '''
     filter_file = join(abspath(dirname(__file__)), 'ripplefilter.mat')
     ripplefilter = loadmat(filter_file)
