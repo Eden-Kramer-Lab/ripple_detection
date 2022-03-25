@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from scipy.fftpack import next_fast_len
 from scipy.io import loadmat
-from scipy.ndimage.filters import gaussian_filter1d
+from scipy.ndimage import gaussian_filter1d
 from scipy.signal import filtfilt, hilbert, remez
 from scipy.stats import zscore
 
