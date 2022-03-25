@@ -254,7 +254,7 @@ def threshold_by_zscore(data, time, minimum_duration=0.015,
     candidate_ripple_times : pandas Dataframe
 
     '''
-    zscored_data = zscore(data)
+    zscored_data = zscore(data, nan_policy='omit')
     is_above_mean = zscored_data >= 0
     is_above_threshold = zscored_data >= zscore_threshold
 
