@@ -65,6 +65,9 @@ def Kay_ripple_detector(time, filtered_lfps, speed, sampling_frequency,
 
     '''
     filtered_lfps = np.asarray(filtered_lfps)
+    speed = np.asarray(speed)
+    time = np.asarray(time)
+
     not_null = np.all(pd.notnull(filtered_lfps), axis=1) & pd.notnull(speed)
     filtered_lfps, speed, time = (
         filtered_lfps[not_null], speed[not_null], time[not_null])
@@ -130,6 +133,9 @@ def Karlsson_ripple_detector(time, filtered_lfps, speed, sampling_frequency,
 
     '''
     filtered_lfps = np.asarray(filtered_lfps)
+    speed = np.asarray(speed)
+    time = np.asarray(time)
+
     not_null = np.all(pd.notnull(filtered_lfps), axis=1) & pd.notnull(speed)
     filtered_lfps, speed, time = (
         filtered_lfps[not_null], speed[not_null], time[not_null])
@@ -192,6 +198,9 @@ def Roumis_ripple_detector(time, filtered_lfps, speed, sampling_frequency,
 
     '''
     filtered_lfps = np.asarray(filtered_lfps)
+    speed = np.asarray(speed)
+    time = np.asarray(time)
+
     not_null = np.all(pd.notnull(filtered_lfps), axis=1) & pd.notnull(speed)
     filtered_lfps, speed, time = (
         filtered_lfps[not_null], speed[not_null], time[not_null])
@@ -255,6 +264,10 @@ def multiunit_HSE_detector(time, multiunit, speed, sampling_frequency,
     Hippocampal Replay of Extended Experience. Neuron 63, 497–507.
 
     '''
+    multiunit = np.asarray(multiunit)
+    speed = np.asarray(speed)
+    time = np.asarray(time)
+
     firing_rate = get_multiunit_population_firing_rate(
         multiunit, sampling_frequency, smoothing_sigma)
     candidate_high_synchrony_events = threshold_by_zscore(
