@@ -8,6 +8,19 @@ from .core import (exclude_close_events, exclude_movement, gaussian_smooth,
                    merge_overlapping_ranges, threshold_by_zscore)
 
 
+def get_Kay_ripple_consensus_trace(ripple_filtered_lfps, sampling_frequency,
+                                   smoothing_sigma=0.004):
+    ripple_consensus_trace = np.full_like(ripple_filtered_lfps, np.nan)
+    not_null = np.all(pd.notnull(ripple_filtered_lfps), axis=1)
+
+    ripple_consensus_trace[not_null] = get_envelope(
+        np.asarray(ripple_filtered_lfps)[not_null])
+    ripple_consensus_trace = np.sum(ripple_consensus_trace ** 2, axis=1)
+    ripple_consensus_trace[not_null] = gaussian_smooth(
+        ripple_consensus_trace[not_null], smoothing_sigma, sampling_frequency)
+    return np.sqrt(ripple_consensus_trace)
+
+
 def Kay_ripple_detector(time, filtered_lfps, speed, sampling_frequency,
                         speed_threshold=4.0, minimum_duration=0.015,
                         zscore_threshold=2.0, smoothing_sigma=0.004,
@@ -56,11 +69,10 @@ def Kay_ripple_detector(time, filtered_lfps, speed, sampling_frequency,
     filtered_lfps, speed, time = (
         filtered_lfps[not_null], speed[not_null], time[not_null])
 
-    filtered_lfps = get_envelope(filtered_lfps)
-    combined_filtered_lfps = np.sum(filtered_lfps ** 2, axis=1)
-    combined_filtered_lfps = gaussian_smooth(
-        combined_filtered_lfps, smoothing_sigma, sampling_frequency)
-    combined_filtered_lfps = np.sqrt(combined_filtered_lfps)
+    combined_filtered_lfps = get_Kay_ripple_consensus_trace(
+        filtered_lfps, sampling_frequency,
+        smoothing_sigma=smoothing_sigma)
+
     candidate_ripple_times = threshold_by_zscore(
         combined_filtered_lfps, time, minimum_duration, zscore_threshold)
     ripple_times = exclude_movement(
