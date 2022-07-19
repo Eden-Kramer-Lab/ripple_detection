@@ -5,6 +5,7 @@ from ripple_detection.core import (_extend_segment, _find_containing_interval,
                                    _get_series_start_end_times,
                                    exclude_movement, merge_overlapping_ranges,
                                    segment_boolean_series, threshold_by_zscore)
+from scipy.stats import zscore
 
 
 @pytest.mark.parametrize('series, expected_segments', [
@@ -94,6 +95,7 @@ def test_threshold_by_zscore():
     data = np.array([0, 0, 10, 10, 0, 0, 0, 1, 5,
                      10, 10, 10, 10, 10, 5, 1, 0])
     time = np.arange(len(data)) / 1000
+    data = zscore(data)
     segments = threshold_by_zscore(
         data, time, zscore_threshold=1, minimum_duration=0.004)
     assert np.allclose(segments, [(0.008, 0.014)])
