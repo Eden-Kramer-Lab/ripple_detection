@@ -2,10 +2,12 @@ from itertools import chain
 
 import numpy as np
 import pandas as pd
-
-from .core import (exclude_close_events, exclude_movement, gaussian_smooth,
-                   get_envelope, get_multiunit_population_firing_rate,
-                   merge_overlapping_ranges, threshold_by_zscore)
+from ripple_detection.core import (exclude_close_events, exclude_movement,
+                                   gaussian_smooth, get_envelope,
+                                   get_multiunit_population_firing_rate,
+                                   merge_overlapping_ranges,
+                                   threshold_by_zscore)
+from scipy.stats import zscore
 
 
 def get_Kay_ripple_consensus_trace(ripple_filtered_lfps, sampling_frequency,
@@ -75,7 +77,7 @@ def Kay_ripple_detector(time, filtered_lfps, speed, sampling_frequency,
     combined_filtered_lfps = get_Kay_ripple_consensus_trace(
         filtered_lfps, sampling_frequency,
         smoothing_sigma=smoothing_sigma)
-
+    combined_filtered_lfps = zscore(combined_filtered_lfps, nan_policy='omit')
     candidate_ripple_times = threshold_by_zscore(
         combined_filtered_lfps, time, minimum_duration, zscore_threshold)
     ripple_times = exclude_movement(
@@ -144,6 +146,7 @@ def Karlsson_ripple_detector(time, filtered_lfps, speed, sampling_frequency,
     filtered_lfps = gaussian_smooth(
         filtered_lfps, sigma=smoothing_sigma,
         sampling_frequency=sampling_frequency)
+    filtered_lfps = zscore(filtered_lfps, nan_policy='omit')
     candidate_ripple_times = [threshold_by_zscore(
         filtered_lfp, time, minimum_duration,
         zscore_threshold) for filtered_lfp in filtered_lfps.T]
@@ -210,6 +213,7 @@ def Roumis_ripple_detector(time, filtered_lfps, speed, sampling_frequency,
         filtered_lfps, sigma=smoothing_sigma,
         sampling_frequency=sampling_frequency)
     combined_filtered_lfps = np.mean(np.sqrt(filtered_lfps), axis=1)
+    combined_filtered_lfps = zscore(combined_filtered_lfps, nan_policy='omit')
     candidate_ripple_times = threshold_by_zscore(
         combined_filtered_lfps, time, minimum_duration, zscore_threshold)
     ripple_times = exclude_movement(
@@ -270,6 +274,10 @@ def multiunit_HSE_detector(time, multiunit, speed, sampling_frequency,
 
     firing_rate = get_multiunit_population_firing_rate(
         multiunit, sampling_frequency, smoothing_sigma)
+    firing_rate = ((
+        firing_rate -
+        np.nanmean(firing_rate[speed < speed_threshold])) /
+        np.nanstd(firing_rate[speed < speed_threshold]))
     candidate_high_synchrony_events = threshold_by_zscore(
         firing_rate, time, minimum_duration, zscore_threshold)
     high_synchrony_events = exclude_movement(

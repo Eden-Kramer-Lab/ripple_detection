@@ -9,7 +9,6 @@ from scipy.fftpack import next_fast_len
 from scipy.io import loadmat
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import filtfilt, hilbert, remez
-from scipy.stats import zscore
 
 
 def ripple_bandpass_filter(sampling_frequency):
@@ -239,7 +238,7 @@ def gaussian_smooth(data, sigma, sampling_frequency, axis=0, truncate=8):
         mode='constant')
 
 
-def threshold_by_zscore(data, time, minimum_duration=0.015,
+def threshold_by_zscore(zscored_data, time, minimum_duration=0.015,
                         zscore_threshold=2):
     '''Standardize the data and determine whether it is above a given
     number.
@@ -254,7 +253,6 @@ def threshold_by_zscore(data, time, minimum_duration=0.015,
     candidate_ripple_times : pandas Dataframe
 
     '''
-    zscored_data = zscore(data, nan_policy='omit')
     is_above_mean = zscored_data >= 0
     is_above_threshold = zscored_data >= zscore_threshold
 
