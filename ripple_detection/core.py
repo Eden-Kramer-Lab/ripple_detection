@@ -1,6 +1,6 @@
-'''Finding sharp-wave ripple events (150-250 Hz) from local field
+"""Finding sharp-wave ripple events (150-250 Hz) from local field
 potentials.
-'''
+"""
 from os.path import abspath, dirname, join
 
 import numpy as np
@@ -16,13 +16,19 @@ def ripple_bandpass_filter(sampling_frequency):
     nyquist = 0.5 * sampling_frequency
     TRANSITION_BAND = 25
     RIPPLE_BAND = [150, 250]
-    desired = [0, RIPPLE_BAND[0] - TRANSITION_BAND, RIPPLE_BAND[0],
-               RIPPLE_BAND[1], RIPPLE_BAND[1] + TRANSITION_BAND, nyquist]
+    desired = [
+        0,
+        RIPPLE_BAND[0] - TRANSITION_BAND,
+        RIPPLE_BAND[0],
+        RIPPLE_BAND[1],
+        RIPPLE_BAND[1] + TRANSITION_BAND,
+        nyquist,
+    ]
     return remez(ORDER, desired, [0, 1, 0], Hz=sampling_frequency), 1.0
 
 
 def _get_series_start_end_times(series):
-    '''Extracts the start and end times of segements defined by a boolean
+    """Extracts the start and end times of segements defined by a boolean
     pandas Series.
 
     Parameters
@@ -37,7 +43,7 @@ def _get_series_start_end_times(series):
     end_times : ndarray, shape (n_segments,)
         End time of each segment based on the index of the series.
 
-    '''
+    """
     is_start_time = (~series.shift(1).fillna(False)) & series
     start_times = np.asarray(series.index[is_start_time])
 
@@ -48,31 +54,33 @@ def _get_series_start_end_times(series):
 
 
 def segment_boolean_series(series, minimum_duration=0.015):
-    '''Returns a list of tuples where each tuple contains the start time of
-     segement and end time of segment. It takes a boolean pandas series as
-     input where the index is time.
+    """Returns a list of tuples where each tuple contains the start time of
+    segement and end time of segment. It takes a boolean pandas series as
+    input where the index is time.
 
-     Parameters
-     ----------
-     series : pandas boolean Series (n_time,)
-         Consecutive Trues define each segement.
-     minimum_duration : float, optional
-         Segments must be at least this duration to be included.
+    Parameters
+    ----------
+    series : pandas boolean Series (n_time,)
+        Consecutive Trues define each segement.
+    minimum_duration : float, optional
+        Segments must be at least this duration to be included.
 
-     Returns
-     -------
-     segments : list of 2-element tuples
+    Returns
+    -------
+    segments : list of 2-element tuples
 
-     '''
+    """
     start_times, end_times = _get_series_start_end_times(series)
 
-    return [(start_time, end_time)
-            for start_time, end_time in zip(start_times, end_times)
-            if end_time >= (start_time + minimum_duration)]
+    return [
+        (start_time, end_time)
+        for start_time, end_time in zip(start_times, end_times)
+        if end_time >= (start_time + minimum_duration)
+    ]
 
 
 def filter_ripple_band(data):
-    '''Returns a bandpass filtered signal between 150-250 Hz
+    """Returns a bandpass filtered signal between 150-250 Hz
 
     Parameters
     ----------
@@ -82,28 +90,30 @@ def filter_ripple_band(data):
     -------
     filtered_data : array_like, shape (n_time,)
 
-    '''
+    """
     filter_numerator, filter_denominator = _get_ripplefilter_kernel()
     is_nan = np.any(np.isnan(data), axis=-1)
     filtered_data = np.full_like(data, np.nan)
     filtered_data[~is_nan] = filtfilt(
-        filter_numerator, filter_denominator, data[~is_nan], axis=0)
+        filter_numerator, filter_denominator, data[~is_nan], axis=0
+    )
     return filtered_data
 
 
 def _get_ripplefilter_kernel():
-    '''Returns the pre-computed ripple filter kernel from the Frank lab.
+    """Returns the pre-computed ripple filter kernel from the Frank lab.
     The kernel is 150-250 Hz bandpass with 40 db roll off and 10 Hz
     sidebands. Sampling frequency is 1500 Hz.
-    '''
-    filter_file = join(abspath(dirname(__file__)), 'ripplefilter.mat')
+    """
+    filter_file = join(abspath(dirname(__file__)), "ripplefilter.mat")
     ripplefilter = loadmat(filter_file)
-    return ripplefilter['ripplefilter']['kernel'][0][0].flatten(), 1
+    return ripplefilter["ripplefilter"]["kernel"][0][0].flatten(), 1
 
 
-def extend_threshold_to_mean(is_above_mean, is_above_threshold, time,
-                             minimum_duration=0.015):
-    '''Extract segments above threshold if they remain above the threshold
+def extend_threshold_to_mean(
+    is_above_mean, is_above_threshold, time, minimum_duration=0.015
+):
+    """Extract segments above threshold if they remain above the threshold
     for a minimum amount of time and extend them to the mean.
 
     Parameters
@@ -121,20 +131,20 @@ def extend_threshold_to_mean(is_above_mean, is_above_threshold, time,
     candidate_ripple_times : list of 2-element tuples
         Each tuple is the start and end time of the candidate ripple.
 
-    '''
+    """
     is_above_threshold = pd.Series(is_above_threshold, index=time)
     is_above_mean = pd.Series(is_above_mean, index=time)
     above_mean_segments = segment_boolean_series(
-        is_above_mean, minimum_duration=minimum_duration)
+        is_above_mean, minimum_duration=minimum_duration
+    )
     above_threshold_segments = segment_boolean_series(
-        is_above_threshold, minimum_duration=minimum_duration)
-    return sorted(
-        _extend_segment(above_threshold_segments, above_mean_segments))
+        is_above_threshold, minimum_duration=minimum_duration
+    )
+    return sorted(_extend_segment(above_threshold_segments, above_mean_segments))
 
 
-def exclude_movement(candidate_ripple_times, speed, time,
-                     speed_threshold=4.0):
-    '''Removes candidate ripples if the animal is moving.
+def exclude_movement(candidate_ripple_times, speed, time, speed_threshold=4.0):
+    """Removes candidate ripples if the animal is moving.
 
     Parameters
     ----------
@@ -151,39 +161,38 @@ def exclude_movement(candidate_ripple_times, speed, time,
     ripple_times : ndarray, shape (n_ripples, 2)
         Ripple times where the animal is not moving.
 
-    '''
+    """
     candidate_ripple_times = np.array(candidate_ripple_times)
     try:
-        speed_at_ripple_start = speed[
-            np.in1d(time, candidate_ripple_times[:, 0])]
-        speed_at_ripple_end = speed[
-            np.in1d(time, candidate_ripple_times[:, 1])]
-        is_below_speed_threshold = (
-            (speed_at_ripple_start <= speed_threshold)
-            & (speed_at_ripple_end <= speed_threshold))
+        speed_at_ripple_start = speed[np.in1d(time, candidate_ripple_times[:, 0])]
+        speed_at_ripple_end = speed[np.in1d(time, candidate_ripple_times[:, 1])]
+        is_below_speed_threshold = (speed_at_ripple_start <= speed_threshold) & (
+            speed_at_ripple_end <= speed_threshold
+        )
         return candidate_ripple_times[is_below_speed_threshold]
     except IndexError:
         return []
 
 
 def _find_containing_interval(interval_candidates, target_interval):
-    '''Returns the interval that contains the target interval out of a list
+    """Returns the interval that contains the target interval out of a list
     of interval candidates.
 
     This is accomplished by finding the closest start time out of the
     candidate intervals, since we already know that one interval candidate
     contains the target interval (the segements above 0 contain the
     segments above the threshold)
-    '''
+    """
     candidate_start_times = np.asarray(interval_candidates)[:, 0]
     zero = np.array(0).astype(candidate_start_times.dtype)
     closest_start_ind = np.max(
-        (candidate_start_times - target_interval[0] <= zero).nonzero())
+        (candidate_start_times - target_interval[0] <= zero).nonzero()
+    )
     return interval_candidates[closest_start_ind]
 
 
 def _extend_segment(segments_to_extend, containing_segments):
-    '''Extends the boundaries of a segment if it is a subset of one of the
+    """Extends the boundaries of a segment if it is a subset of one of the
     containing segments.
 
     Parameters
@@ -197,23 +206,26 @@ def _extend_segment(segments_to_extend, containing_segments):
     -------
     extended_segments : list of 2-element tuples
 
-    '''
-    segments = [_find_containing_interval(containing_segments, segment)
-                for segment in segments_to_extend]
+    """
+    segments = [
+        _find_containing_interval(containing_segments, segment)
+        for segment in segments_to_extend
+    ]
     return list(set(segments))  # remove duplicate segments
 
 
 def get_envelope(data, axis=0):
-    '''Extracts the instantaneous amplitude (envelope) of an analytic
-    signal using the Hilbert transform'''
+    """Extracts the instantaneous amplitude (envelope) of an analytic
+    signal using the Hilbert transform"""
     n_samples = data.shape[axis]
     instantaneous_amplitude = np.abs(
-        hilbert(data, N=next_fast_len(n_samples), axis=axis))
+        hilbert(data, N=next_fast_len(n_samples), axis=axis)
+    )
     return np.take(instantaneous_amplitude, np.arange(n_samples), axis=axis)
 
 
 def gaussian_smooth(data, sigma, sampling_frequency, axis=0, truncate=8):
-    '''1D convolution of the data with a Gaussian.
+    """1D convolution of the data with a Gaussian.
 
     The standard deviation of the gaussian is in the units of the sampling
     frequency. The function is just a wrapper around scipy's
@@ -232,15 +244,14 @@ def gaussian_smooth(data, sigma, sampling_frequency, axis=0, truncate=8):
     -------
     smoothed_data : array_like
 
-    '''
+    """
     return gaussian_filter1d(
-        data, sigma * sampling_frequency, truncate=truncate, axis=axis,
-        mode='constant')
+        data, sigma * sampling_frequency, truncate=truncate, axis=axis, mode="constant"
+    )
 
 
-def threshold_by_zscore(zscored_data, time, minimum_duration=0.015,
-                        zscore_threshold=2):
-    '''Standardize the data and determine whether it is above a given
+def threshold_by_zscore(zscored_data, time, minimum_duration=0.015, zscore_threshold=2):
+    """Standardize the data and determine whether it is above a given
     number.
 
     Parameters
@@ -252,17 +263,17 @@ def threshold_by_zscore(zscored_data, time, minimum_duration=0.015,
     -------
     candidate_ripple_times : pandas Dataframe
 
-    '''
+    """
     is_above_mean = zscored_data >= 0
     is_above_threshold = zscored_data >= zscore_threshold
 
     return extend_threshold_to_mean(
-        is_above_mean, is_above_threshold, time,
-        minimum_duration=minimum_duration)
+        is_above_mean, is_above_threshold, time, minimum_duration=minimum_duration
+    )
 
 
 def merge_overlapping_ranges(ranges):
-    '''Merge overlapping and adjacent ranges
+    """Merge overlapping and adjacent ranges
 
     Parameters
     ----------
@@ -288,7 +299,7 @@ def merge_overlapping_ranges(ranges):
     .. [1] http://codereview.stackexchange.com/questions/21307/consolidate-
     list-of-ranges-that-overlap
 
-    '''
+    """
     ranges = iter(sorted(ranges))
     try:
         current_start, current_stop = next(ranges)
@@ -307,7 +318,7 @@ def merge_overlapping_ranges(ranges):
 
 
 def exclude_close_events(candidate_event_times, close_event_threshold=1.0):
-    '''Excludes successive events that occur within  a `close_event_threshold`
+    """Excludes successive events that occur within  a `close_event_threshold`
     of a previously occuring event.
 
     Parameters
@@ -321,7 +332,7 @@ def exclude_close_events(candidate_event_times, close_event_threshold=1.0):
     -------
     candidate_event_times : ndarray, shape (n_events - too_close_events, 2)
 
-    '''
+    """
     candidate_event_times = np.array(candidate_event_times)
     n_events = candidate_event_times.shape[0]
 
@@ -331,17 +342,18 @@ def exclude_close_events(candidate_event_times, close_event_threshold=1.0):
     for ind, (start_time, end_time) in enumerate(candidate_event_times):
         if np.isin(ind, new_event_index):
             is_too_close = (
-                (end_time + close_event_threshold > new_event_times[:, 0])
-                & (new_event_index > ind))
+                end_time + close_event_threshold > new_event_times[:, 0]
+            ) & (new_event_index > ind)
             new_event_index = new_event_index[~is_too_close]
             new_event_times = new_event_times[~is_too_close]
 
     return new_event_times if new_event_times.size > 0 else []
 
 
-def get_multiunit_population_firing_rate(multiunit, sampling_frequency,
-                                         smoothing_sigma=0.015):
-    '''Calculates the multiunit population firing rate.
+def get_multiunit_population_firing_rate(
+    multiunit, sampling_frequency, smoothing_sigma=0.015
+):
+    """Calculates the multiunit population firing rate.
 
     Parameters
     ----------
@@ -358,6 +370,7 @@ def get_multiunit_population_firing_rate(multiunit, sampling_frequency,
     -------
     multiunit_population_firing_rate : ndarray, shape (n_time,)
 
-    '''
-    return gaussian_smooth(multiunit.mean(axis=1) * sampling_frequency,
-                           smoothing_sigma, sampling_frequency)
+    """
+    return gaussian_smooth(
+        multiunit.mean(axis=1) * sampling_frequency, smoothing_sigma, sampling_frequency
+    )

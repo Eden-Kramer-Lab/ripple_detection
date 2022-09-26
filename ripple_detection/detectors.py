@@ -2,32 +2,47 @@ from itertools import chain
 
 import numpy as np
 import pandas as pd
-from ripple_detection.core import (exclude_close_events, exclude_movement,
-                                   gaussian_smooth, get_envelope,
-                                   get_multiunit_population_firing_rate,
-                                   merge_overlapping_ranges,
-                                   threshold_by_zscore)
 from scipy.stats import zscore
 
+from ripple_detection.core import (
+    exclude_close_events,
+    exclude_movement,
+    gaussian_smooth,
+    get_envelope,
+    get_multiunit_population_firing_rate,
+    merge_overlapping_ranges,
+    threshold_by_zscore,
+)
 
-def get_Kay_ripple_consensus_trace(ripple_filtered_lfps, sampling_frequency,
-                                   smoothing_sigma=0.004):
+
+def get_Kay_ripple_consensus_trace(
+    ripple_filtered_lfps, sampling_frequency, smoothing_sigma=0.004
+):
     ripple_consensus_trace = np.full_like(ripple_filtered_lfps, np.nan)
     not_null = np.all(pd.notnull(ripple_filtered_lfps), axis=1)
 
     ripple_consensus_trace[not_null] = get_envelope(
-        np.asarray(ripple_filtered_lfps)[not_null])
-    ripple_consensus_trace = np.sum(ripple_consensus_trace ** 2, axis=1)
+        np.asarray(ripple_filtered_lfps)[not_null]
+    )
+    ripple_consensus_trace = np.sum(ripple_consensus_trace**2, axis=1)
     ripple_consensus_trace[not_null] = gaussian_smooth(
-        ripple_consensus_trace[not_null], smoothing_sigma, sampling_frequency)
+        ripple_consensus_trace[not_null], smoothing_sigma, sampling_frequency
+    )
     return np.sqrt(ripple_consensus_trace)
 
 
-def Kay_ripple_detector(time, filtered_lfps, speed, sampling_frequency,
-                        speed_threshold=4.0, minimum_duration=0.015,
-                        zscore_threshold=2.0, smoothing_sigma=0.004,
-                        close_ripple_threshold=0.0):
-    '''Find start and end times of sharp wave ripple events (150-250 Hz)
+def Kay_ripple_detector(
+    time,
+    filtered_lfps,
+    speed,
+    sampling_frequency,
+    speed_threshold=4.0,
+    minimum_duration=0.015,
+    zscore_threshold=2.0,
+    smoothing_sigma=0.004,
+    close_ripple_threshold=0.0,
+):
+    """Find start and end times of sharp wave ripple events (150-250 Hz)
     based on Kay et al. 2016 [1].
 
     Parameters
@@ -65,37 +80,45 @@ def Kay_ripple_detector(time, filtered_lfps, speed, sampling_frequency,
     and Frank, L.M. (2016). A hippocampal network for spatial coding during
     immobility and sleep. Nature 531, 185-190.
 
-    '''
+    """
     filtered_lfps = np.asarray(filtered_lfps)
     speed = np.asarray(speed)
     time = np.asarray(time)
 
     not_null = np.all(pd.notnull(filtered_lfps), axis=1) & pd.notnull(speed)
     filtered_lfps, speed, time = (
-        filtered_lfps[not_null], speed[not_null], time[not_null])
+        filtered_lfps[not_null],
+        speed[not_null],
+        time[not_null],
+    )
 
     combined_filtered_lfps = get_Kay_ripple_consensus_trace(
-        filtered_lfps, sampling_frequency,
-        smoothing_sigma=smoothing_sigma)
-    combined_filtered_lfps = zscore(combined_filtered_lfps, nan_policy='omit')
+        filtered_lfps, sampling_frequency, smoothing_sigma=smoothing_sigma
+    )
+    combined_filtered_lfps = zscore(combined_filtered_lfps, nan_policy="omit")
     candidate_ripple_times = threshold_by_zscore(
-        combined_filtered_lfps, time, minimum_duration, zscore_threshold)
+        combined_filtered_lfps, time, minimum_duration, zscore_threshold
+    )
     ripple_times = exclude_movement(
-        candidate_ripple_times, speed, time,
-        speed_threshold=speed_threshold)
-    ripple_times = exclude_close_events(
-        ripple_times, close_ripple_threshold)
-    index = pd.Index(np.arange(len(ripple_times)) + 1,
-                     name='ripple_number')
-    return pd.DataFrame(ripple_times, columns=['start_time', 'end_time'],
-                        index=index)
+        candidate_ripple_times, speed, time, speed_threshold=speed_threshold
+    )
+    ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
+    index = pd.Index(np.arange(len(ripple_times)) + 1, name="ripple_number")
+    return pd.DataFrame(ripple_times, columns=["start_time", "end_time"], index=index)
 
 
-def Karlsson_ripple_detector(time, filtered_lfps, speed, sampling_frequency,
-                             speed_threshold=4.0, minimum_duration=0.015,
-                             zscore_threshold=3.0, smoothing_sigma=0.004,
-                             close_ripple_threshold=0.0):
-    '''Find start and end times of sharp wave ripple events (150-250 Hz)
+def Karlsson_ripple_detector(
+    time,
+    filtered_lfps,
+    speed,
+    sampling_frequency,
+    speed_threshold=4.0,
+    minimum_duration=0.015,
+    zscore_threshold=3.0,
+    smoothing_sigma=0.004,
+    close_ripple_threshold=0.0,
+):
+    """Find start and end times of sharp wave ripple events (150-250 Hz)
     based on Karlsson et al. 2009 [1].
 
     Parameters
@@ -133,41 +156,50 @@ def Karlsson_ripple_detector(time, filtered_lfps, speed, sampling_frequency,
     experiences in the hippocampus. Nature Neuroscience 12, 913-918.
 
 
-    '''
+    """
     filtered_lfps = np.asarray(filtered_lfps)
     speed = np.asarray(speed)
     time = np.asarray(time)
 
     not_null = np.all(pd.notnull(filtered_lfps), axis=1) & pd.notnull(speed)
     filtered_lfps, speed, time = (
-        filtered_lfps[not_null], speed[not_null], time[not_null])
+        filtered_lfps[not_null],
+        speed[not_null],
+        time[not_null],
+    )
 
     filtered_lfps = get_envelope(filtered_lfps)
     filtered_lfps = gaussian_smooth(
-        filtered_lfps, sigma=smoothing_sigma,
-        sampling_frequency=sampling_frequency)
-    filtered_lfps = zscore(filtered_lfps, nan_policy='omit')
-    candidate_ripple_times = [threshold_by_zscore(
-        filtered_lfp, time, minimum_duration,
-        zscore_threshold) for filtered_lfp in filtered_lfps.T]
-    candidate_ripple_times = list(merge_overlapping_ranges(
-        chain.from_iterable(candidate_ripple_times)))
+        filtered_lfps, sigma=smoothing_sigma, sampling_frequency=sampling_frequency
+    )
+    filtered_lfps = zscore(filtered_lfps, nan_policy="omit")
+    candidate_ripple_times = [
+        threshold_by_zscore(filtered_lfp, time, minimum_duration, zscore_threshold)
+        for filtered_lfp in filtered_lfps.T
+    ]
+    candidate_ripple_times = list(
+        merge_overlapping_ranges(chain.from_iterable(candidate_ripple_times))
+    )
     ripple_times = exclude_movement(
-        candidate_ripple_times, speed, time,
-        speed_threshold=speed_threshold)
-    ripple_times = exclude_close_events(
-        ripple_times, close_ripple_threshold)
-    index = pd.Index(np.arange(len(ripple_times)) + 1,
-                     name='ripple_number')
-    return pd.DataFrame(ripple_times, columns=['start_time', 'end_time'],
-                        index=index)
+        candidate_ripple_times, speed, time, speed_threshold=speed_threshold
+    )
+    ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
+    index = pd.Index(np.arange(len(ripple_times)) + 1, name="ripple_number")
+    return pd.DataFrame(ripple_times, columns=["start_time", "end_time"], index=index)
 
 
-def Roumis_ripple_detector(time, filtered_lfps, speed, sampling_frequency,
-                           speed_threshold=4.0, minimum_duration=0.015,
-                           zscore_threshold=2.0, smoothing_sigma=0.004,
-                           close_ripple_threshold=0.0):
-    '''Find start and end times of sharp wave ripple events (150-250 Hz)
+def Roumis_ripple_detector(
+    time,
+    filtered_lfps,
+    speed,
+    sampling_frequency,
+    speed_threshold=4.0,
+    minimum_duration=0.015,
+    zscore_threshold=2.0,
+    smoothing_sigma=0.004,
+    close_ripple_threshold=0.0,
+):
+    """Find start and end times of sharp wave ripple events (150-250 Hz)
     based on [1].
 
     Parameters
@@ -199,39 +231,47 @@ def Roumis_ripple_detector(time, filtered_lfps, speed, sampling_frequency,
     -------
     ripple_times : pandas DataFrame
 
-    '''
+    """
     filtered_lfps = np.asarray(filtered_lfps)
     speed = np.asarray(speed)
     time = np.asarray(time)
 
     not_null = np.all(pd.notnull(filtered_lfps), axis=1) & pd.notnull(speed)
     filtered_lfps, speed, time = (
-        filtered_lfps[not_null], speed[not_null], time[not_null])
+        filtered_lfps[not_null],
+        speed[not_null],
+        time[not_null],
+    )
 
     filtered_lfps = get_envelope(filtered_lfps) ** 2
     filtered_lfps = gaussian_smooth(
-        filtered_lfps, sigma=smoothing_sigma,
-        sampling_frequency=sampling_frequency)
+        filtered_lfps, sigma=smoothing_sigma, sampling_frequency=sampling_frequency
+    )
     combined_filtered_lfps = np.mean(np.sqrt(filtered_lfps), axis=1)
-    combined_filtered_lfps = zscore(combined_filtered_lfps, nan_policy='omit')
+    combined_filtered_lfps = zscore(combined_filtered_lfps, nan_policy="omit")
     candidate_ripple_times = threshold_by_zscore(
-        combined_filtered_lfps, time, minimum_duration, zscore_threshold)
+        combined_filtered_lfps, time, minimum_duration, zscore_threshold
+    )
     ripple_times = exclude_movement(
-        candidate_ripple_times, speed, time,
-        speed_threshold=speed_threshold)
-    ripple_times = exclude_close_events(
-        ripple_times, close_ripple_threshold)
-    index = pd.Index(np.arange(len(ripple_times)) + 1,
-                     name='ripple_number')
-    return pd.DataFrame(ripple_times, columns=['start_time', 'end_time'],
-                        index=index)
+        candidate_ripple_times, speed, time, speed_threshold=speed_threshold
+    )
+    ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
+    index = pd.Index(np.arange(len(ripple_times)) + 1, name="ripple_number")
+    return pd.DataFrame(ripple_times, columns=["start_time", "end_time"], index=index)
 
 
-def multiunit_HSE_detector(time, multiunit, speed, sampling_frequency,
-                           speed_threshold=4.0, minimum_duration=0.015,
-                           zscore_threshold=2.0, smoothing_sigma=0.015,
-                           close_event_threshold=0.0):
-    '''Multiunit High Synchrony Event detector. Finds times when the multiunit
+def multiunit_HSE_detector(
+    time,
+    multiunit,
+    speed,
+    sampling_frequency,
+    speed_threshold=4.0,
+    minimum_duration=0.015,
+    zscore_threshold=2.0,
+    smoothing_sigma=0.015,
+    close_event_threshold=0.0,
+):
+    """Multiunit High Synchrony Event detector. Finds times when the multiunit
     population spiking activity is high relative to the average.
 
     Parameters
@@ -267,26 +307,27 @@ def multiunit_HSE_detector(time, multiunit, speed, sampling_frequency,
     .. [1] Davidson, T.J., Kloosterman, F., and Wilson, M.A. (2009).
     Hippocampal Replay of Extended Experience. Neuron 63, 497–507.
 
-    '''
+    """
     multiunit = np.asarray(multiunit)
     speed = np.asarray(speed)
     time = np.asarray(time)
 
     firing_rate = get_multiunit_population_firing_rate(
-        multiunit, sampling_frequency, smoothing_sigma)
-    firing_rate = ((
-        firing_rate -
-        np.nanmean(firing_rate[speed < speed_threshold])) /
-        np.nanstd(firing_rate[speed < speed_threshold]))
+        multiunit, sampling_frequency, smoothing_sigma
+    )
+    firing_rate = (
+        firing_rate - np.nanmean(firing_rate[speed < speed_threshold])
+    ) / np.nanstd(firing_rate[speed < speed_threshold])
     candidate_high_synchrony_events = threshold_by_zscore(
-        firing_rate, time, minimum_duration, zscore_threshold)
+        firing_rate, time, minimum_duration, zscore_threshold
+    )
     high_synchrony_events = exclude_movement(
-        candidate_high_synchrony_events, speed, time,
-        speed_threshold=speed_threshold)
+        candidate_high_synchrony_events, speed, time, speed_threshold=speed_threshold
+    )
     high_synchrony_events = exclude_close_events(
-        high_synchrony_events, close_event_threshold)
-    index = pd.Index(np.arange(len(high_synchrony_events)) + 1,
-                     name='event_number')
-    return pd.DataFrame(high_synchrony_events,
-                        columns=['start_time', 'end_time'],
-                        index=index)
+        high_synchrony_events, close_event_threshold
+    )
+    index = pd.Index(np.arange(len(high_synchrony_events)) + 1, name="event_number")
+    return pd.DataFrame(
+        high_synchrony_events, columns=["start_time", "end_time"], index=index
+    )

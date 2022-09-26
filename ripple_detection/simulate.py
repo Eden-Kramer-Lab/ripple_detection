@@ -36,8 +36,7 @@ def pink(N, state=None):
     """
     state = np.random.RandomState() if state is None else state
     uneven = N % 2
-    X = (state.randn(N // 2 + 1 + uneven) +
-         1j * state.randn(N // 2 + 1 + uneven))
+    X = state.randn(N // 2 + 1 + uneven) + 1j * state.randn(N // 2 + 1 + uneven)
     S = np.sqrt(np.arange(len(X)) + 1.0)  # +1 to avoid divide by zero
     y = (np.fft.irfft(X / S)).real
     if uneven:
@@ -74,8 +73,7 @@ def brown(N, state=None):
     """
     state = np.random.RandomState() if state is None else state
     uneven = N % 2
-    X = (state.randn(N // 2 + 1 + uneven) + 1j *
-         state.randn(N // 2 + 1 + uneven))
+    X = state.randn(N // 2 + 1 + uneven) + 1j * state.randn(N // 2 + 1 + uneven)
     S = np.arange(len(X)) + 1
     y = np.fft.irfft(X / S).real
     if uneven:
@@ -84,16 +82,21 @@ def brown(N, state=None):
 
 
 NOISE_FUNCTION = {
-    'white': white,
-    'pink': pink,
-    'brown': brown,
+    "white": white,
+    "pink": pink,
+    "brown": brown,
 }
 
 
-def simulate_LFP(time, ripple_times, ripple_amplitude=2,
-                 ripple_duration=0.100, noise_type='brown', noise_amplitude=1.3):
-    '''Simulate a LFP with a ripple at ripple times
-    '''
+def simulate_LFP(
+    time,
+    ripple_times,
+    ripple_amplitude=2,
+    ripple_duration=0.100,
+    noise_type="brown",
+    noise_amplitude=1.3,
+):
+    """Simulate a LFP with a ripple at ripple times"""
     noise = (noise_amplitude / 2) * NOISE_FUNCTION[noise_type](time.size)
     ripple_signal = np.sin(2 * np.pi * time * RIPPLE_FREQUENCY)
     signal = []
