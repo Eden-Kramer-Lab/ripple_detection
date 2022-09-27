@@ -270,6 +270,7 @@ def multiunit_HSE_detector(
     zscore_threshold=2.0,
     smoothing_sigma=0.015,
     close_event_threshold=0.0,
+    use_speed_threshold_for_zscore=False,
 ):
     """Multiunit High Synchrony Event detector. Finds times when the multiunit
     population spiking activity is high relative to the average.
@@ -297,6 +298,8 @@ def multiunit_HSE_detector(
     close_event_threshold : float
         Exclude events that occur within `close_event_threshold` of a
         previously detected event.
+    use_speed_threshold_for_zscore : bool
+        Use speed thresholded multiunit for mean and std for z-score calculation
 
     Returns
     -------
@@ -315,9 +318,15 @@ def multiunit_HSE_detector(
     firing_rate = get_multiunit_population_firing_rate(
         multiunit, sampling_frequency, smoothing_sigma
     )
-    firing_rate = (
-        firing_rate - np.nanmean(firing_rate[speed < speed_threshold])
-    ) / np.nanstd(firing_rate[speed < speed_threshold])
+
+    if use_speed_threshold_for_zscore:
+        mean = np.nanmean(firing_rate[speed < speed_threshold])
+        std = np.nanstd(firing_rate[speed < speed_threshold])
+    else:
+        mean = np.nanmean(firing_rate)
+        std = np.nanstd(firing_rate)
+
+    firing_rate = (firing_rate - mean) / std
     candidate_high_synchrony_events = threshold_by_zscore(
         firing_rate, time, minimum_duration, zscore_threshold
     )
