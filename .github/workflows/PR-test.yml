@@ -35,3 +35,8 @@ jobs:
       shell: bash -l {0}
       run: |
         pytest --cov=ripple_detection tests/
+    - name: Test notebooks
+      shell: bash -l {0}
+      run: |
+        jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/detection_examples.ipynb
+        jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/test_individual_algorithm_components.ipynb
