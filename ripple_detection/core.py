@@ -372,5 +372,5 @@ def get_multiunit_population_firing_rate(
 
     """
     return gaussian_smooth(
-        multiunit.mean(axis=1) * sampling_frequency, smoothing_sigma, sampling_frequency
+        multiunit.sum(axis=1) * sampling_frequency, smoothing_sigma, sampling_frequency
     )
