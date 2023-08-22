@@ -104,7 +104,51 @@ def Kay_ripple_detector(
     )
     ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
     index = pd.Index(np.arange(len(ripple_times)) + 1, name="ripple_number")
-    return pd.DataFrame(ripple_times, columns=["start_time", "end_time"], index=index)
+
+    try:
+        speed_at_start = speed[np.in1d(time, ripple_times[:, 0])]
+        speed_at_end = speed[np.in1d(time, ripple_times[:, 1])]
+    except IndexError:
+        speed_at_start = np.full_like(ripple_times, np.nan)
+        speed_at_end = np.full_like(ripple_times, np.nan)
+    mean_zscore = []
+    median_zscore = []
+    max_zscore = []
+    min_zscore = []
+    duration = []
+    max_speed = []
+    median_speed = []
+    mean_speed = []
+
+    for start_time, end_time in ripple_times:
+        ind = np.logical_and(time >= start_time, time <= end_time)
+        event_zscore = combined_filtered_lfps[ind]
+        mean_zscore.append(np.mean(event_zscore))
+        median_zscore.append(np.median(event_zscore))
+        max_zscore.append(np.max(event_zscore))
+        min_zscore.append(np.min(event_zscore))
+        duration.append(end_time - start_time)
+        max_speed.append(np.max(speed[ind]))
+        median_speed.append(np.median(speed[ind]))
+        mean_speed.append(np.mean(speed[ind]))
+
+    return pd.DataFrame(
+        {
+            "start_time": ripple_times[:, 0],
+            "end_time": ripple_times[:, 1],
+            "duration": duration,
+            "mean_zscore": mean_zscore,
+            "median_zscore": median_zscore,
+            "max_zscore": max_zscore,
+            "min_zscore": min_zscore,
+            "speed_at_start": speed_at_start,
+            "speed_at_end": speed_at_end,
+            "max_speed": max_speed,
+            "median_speed": median_speed,
+            "mean_speed": mean_speed,
+        },
+        index=index,
+    )
 
 
 def Karlsson_ripple_detector(
@@ -185,7 +229,6 @@ def Karlsson_ripple_detector(
     )
     ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
     index = pd.Index(np.arange(len(ripple_times)) + 1, name="ripple_number")
-    return pd.DataFrame(ripple_times, columns=["start_time", "end_time"], index=index)
 
 
 def Roumis_ripple_detector(
@@ -337,6 +380,49 @@ def multiunit_HSE_detector(
         high_synchrony_events, close_event_threshold
     )
     index = pd.Index(np.arange(len(high_synchrony_events)) + 1, name="event_number")
+
+    try:
+        speed_at_start = speed[np.in1d(time, high_synchrony_events[:, 0])]
+        speed_at_end = speed[np.in1d(time, high_synchrony_events[:, 1])]
+    except IndexError:
+        speed_at_start = np.full_like(high_synchrony_events, np.nan)
+        speed_at_end = np.full_like(high_synchrony_events, np.nan)
+
+    mean_zscore = []
+    median_zscore = []
+    max_zscore = []
+    min_zscore = []
+    duration = []
+    max_speed = []
+    median_speed = []
+    mean_speed = []
+
+    for start_time, end_time in high_synchrony_events:
+        ind = np.logical_and(time >= start_time, time <= end_time)
+        event_zscore = firing_rate[ind]
+        mean_zscore.append(np.mean(event_zscore))
+        median_zscore.append(np.median(event_zscore))
+        max_zscore.append(np.max(event_zscore))
+        min_zscore.append(np.min(event_zscore))
+        duration.append(end_time - start_time)
+        max_speed.append(np.max(speed[ind]))
+        median_speed.append(np.median(speed[ind]))
+        mean_speed.append(np.mean(speed[ind]))
+
     return pd.DataFrame(
-        high_synchrony_events, columns=["start_time", "end_time"], index=index
+        {
+            "start_time": high_synchrony_events[:, 0],
+            "end_time": high_synchrony_events[:, 1],
+            "duration": duration,
+            "mean_zscore": mean_zscore,
+            "median_zscore": median_zscore,
+            "max_zscore": max_zscore,
+            "min_zscore": min_zscore,
+            "speed_at_start": speed_at_start,
+            "speed_at_end": speed_at_end,
+            "max_speed": max_speed,
+            "median_speed": median_speed,
+            "mean_speed": mean_speed,
+        },
+        index=index,
     )
