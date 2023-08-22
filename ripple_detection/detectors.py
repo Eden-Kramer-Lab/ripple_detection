@@ -117,6 +117,7 @@ def Kay_ripple_detector(
     min_zscore = []
     duration = []
     max_speed = []
+    min_speed = []
     median_speed = []
     mean_speed = []
 
@@ -129,6 +130,7 @@ def Kay_ripple_detector(
         min_zscore.append(np.min(event_zscore))
         duration.append(end_time - start_time)
         max_speed.append(np.max(speed[ind]))
+        min_speed.append(np.min(speed[ind]))
         median_speed.append(np.median(speed[ind]))
         mean_speed.append(np.mean(speed[ind]))
 
@@ -144,6 +146,7 @@ def Kay_ripple_detector(
             "speed_at_start": speed_at_start,
             "speed_at_end": speed_at_end,
             "max_speed": max_speed,
+            "min_speed": min_speed,
             "median_speed": median_speed,
             "mean_speed": mean_speed,
         },
@@ -394,6 +397,7 @@ def multiunit_HSE_detector(
     min_zscore = []
     duration = []
     max_speed = []
+    min_speed = []
     median_speed = []
     mean_speed = []
 
@@ -406,6 +410,7 @@ def multiunit_HSE_detector(
         min_zscore.append(np.min(event_zscore))
         duration.append(end_time - start_time)
         max_speed.append(np.max(speed[ind]))
+        min_speed.append(np.min(speed[ind]))
         median_speed.append(np.median(speed[ind]))
         mean_speed.append(np.mean(speed[ind]))
 
@@ -421,6 +426,7 @@ def multiunit_HSE_detector(
             "speed_at_start": speed_at_start,
             "speed_at_end": speed_at_end,
             "max_speed": max_speed,
+            "min_speed": min_speed,
             "median_speed": median_speed,
             "mean_speed": mean_speed,
         },
