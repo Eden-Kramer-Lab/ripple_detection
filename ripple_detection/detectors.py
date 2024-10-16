@@ -104,7 +104,7 @@ def Kay_ripple_detector(
     )
     ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
 
-    return _get_event_stats(ripple_times, time, combined_filtered_lfps, speed)
+    return _get_event_stats(ripple_times, time, combined_filtered_lfps, speed, minimum_duration)
 
 
 def Karlsson_ripple_detector(
@@ -375,7 +375,7 @@ def _find_max_thresh(time: np.ndarray, data: np.ndarray, minimum_duration: float
     return min(data[peak_left_ind], data[peak_right_ind])
 
 
-def _get_event_stats(event_times, time, zscore_metric, speed):
+def _get_event_stats(event_times, time, zscore_metric, speed, minimum_duration=0.015):
     index = pd.Index(np.arange(len(event_times)) + 1, name="event_number")
     try:
         speed_at_start = speed[np.in1d(time, event_times[:, 0])]
@@ -400,7 +400,7 @@ def _get_event_stats(event_times, time, zscore_metric, speed):
     for start_time, end_time in event_times:
         ind = np.logical_and(time >= start_time, time <= end_time)
         event_zscore = zscore_metric[ind]
-        max_thresh.append(_find_max_thresh(time[ind], zscore_metric[ind]))
+        max_thresh.append(_find_max_thresh(time[ind], zscore_metric[ind], minimum_duration))
         mean_zscore.append(np.mean(event_zscore))
         median_zscore.append(np.median(event_zscore))
         max_zscore.append(np.max(event_zscore))
