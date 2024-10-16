@@ -340,6 +340,41 @@ def multiunit_HSE_detector(
     return _get_event_stats(high_synchrony_events, time, firing_rate, speed)
 
 
+def _find_max_thresh(time: np.ndarray, data: np.ndarray, minimum_duration: float=0.015) -> float:
+    """Find the maximum value of a peak that exceeds a
+    threshold for a minimum duration.
+
+    Parameters
+    ----------
+    time : np.ndarray, shape (n_time,)
+    data : np.ndarray, shape (n_time,)
+    minimum_duration : float, optional
+
+    Returns
+    -------
+    max_thresh : float
+    """
+    # Find the peak of the data points
+    peak_ind = np.argmax(data)
+
+    # Initialize the search window
+    peak_left_ind = peak_ind
+    peak_right_ind = peak_ind
+
+    # Expand the window until the time difference exceeds the minimum duration
+    while time[peak_right_ind] - time[peak_left_ind] < minimum_duration:
+        # Determine the direction to expand
+        if peak_right_ind < len(time) - 1 and (
+            peak_left_ind == 0 or data[peak_right_ind + 1] > data[peak_left_ind - 1]
+        ):
+            peak_right_ind += 1
+        else:
+            peak_left_ind -= 1
+
+    # Return the minimum value between the left and right edges of the window
+    return min(data[peak_left_ind], data[peak_right_ind])
+
+
 def _get_event_stats(event_times, time, zscore_metric, speed):
     index = pd.Index(np.arange(len(event_times)) + 1, name="event_number")
     try:
@@ -358,14 +393,20 @@ def _get_event_stats(event_times, time, zscore_metric, speed):
     min_speed = []
     median_speed = []
     mean_speed = []
+    max_thresh = []
+    area = []
+    total_energy = []
 
     for start_time, end_time in event_times:
         ind = np.logical_and(time >= start_time, time <= end_time)
         event_zscore = zscore_metric[ind]
+        max_thresh.append(_find_max_thresh(time[ind], zscore_metric[ind]))
         mean_zscore.append(np.mean(event_zscore))
         median_zscore.append(np.median(event_zscore))
         max_zscore.append(np.max(event_zscore))
         min_zscore.append(np.min(event_zscore))
+        area.append(np.trapz(event_zscore, time[ind]))
+        total_energy.append(np.trapz(event_zscore ** 2, time[ind]))
         duration.append(end_time - start_time)
         max_speed.append(np.max(speed[ind]))
         min_speed.append(np.min(speed[ind]))
@@ -384,10 +425,13 @@ def _get_event_stats(event_times, time, zscore_metric, speed):
             "start_time": event_start_times,
             "end_time": event_end_times,
             "duration": duration,
+            "max_thresh": max_thresh,
             "mean_zscore": mean_zscore,
             "median_zscore": median_zscore,
             "max_zscore": max_zscore,
             "min_zscore": min_zscore,
+            "area": area,
+            "total_energy": total_energy,
             "speed_at_start": speed_at_start,
             "speed_at_end": speed_at_end,
             "max_speed": max_speed,
