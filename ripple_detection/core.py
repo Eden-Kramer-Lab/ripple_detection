@@ -164,8 +164,8 @@ def exclude_movement(candidate_ripple_times, speed, time, speed_threshold=4.0):
     """
     candidate_ripple_times = np.array(candidate_ripple_times)
     try:
-        speed_at_ripple_start = speed[np.in1d(time, candidate_ripple_times[:, 0])]
-        speed_at_ripple_end = speed[np.in1d(time, candidate_ripple_times[:, 1])]
+        speed_at_ripple_start = speed[np.isin(time, candidate_ripple_times[:, 0])]
+        speed_at_ripple_end = speed[np.isin(time, candidate_ripple_times[:, 1])]
         is_below_speed_threshold = (speed_at_ripple_start <= speed_threshold) & (
             speed_at_ripple_end <= speed_threshold
         )

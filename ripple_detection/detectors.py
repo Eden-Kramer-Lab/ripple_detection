@@ -378,8 +378,8 @@ def _find_max_thresh(time: np.ndarray, data: np.ndarray, minimum_duration: float
 def _get_event_stats(event_times, time, zscore_metric, speed, minimum_duration=0.015):
     index = pd.Index(np.arange(len(event_times)) + 1, name="event_number")
     try:
-        speed_at_start = speed[np.in1d(time, event_times[:, 0])]
-        speed_at_end = speed[np.in1d(time, event_times[:, 1])]
+        speed_at_start = speed[np.isin(time, event_times[:, 0])]
+        speed_at_end = speed[np.isin(time, event_times[:, 1])]
     except (IndexError, TypeError):
         speed_at_start = np.full_like(event_times, np.nan)
         speed_at_end = np.full_like(event_times, np.nan)
@@ -405,8 +405,8 @@ def _get_event_stats(event_times, time, zscore_metric, speed, minimum_duration=0
         median_zscore.append(np.median(event_zscore))
         max_zscore.append(np.max(event_zscore))
         min_zscore.append(np.min(event_zscore))
-        area.append(np.trapz(event_zscore, time[ind]))
-        total_energy.append(np.trapz(event_zscore ** 2, time[ind]))
+        area.append(np.trapezoid(event_zscore, time[ind]))
+        total_energy.append(np.trapezoid(event_zscore ** 2, time[ind]))
         duration.append(end_time - start_time)
         max_speed.append(np.max(speed[ind]))
         min_speed.append(np.min(speed[ind]))
