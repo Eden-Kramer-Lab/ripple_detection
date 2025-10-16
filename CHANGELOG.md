@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed misleading filter warning-then-crash behavior for incompatible sampling frequencies
 - Improved empty result guidance - docstrings now suggest specific parameter adjustments
 
-## [1.5.1] - Previous Release
+## [1.5.1] - 2024-10-15
 
 ### Added
 - Improved code formatting and organization
@@ -60,32 +60,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## Release Notes for Upcoming Version
-
-This release focuses on **user experience improvements** to make ripple_detection more accessible to neuroscientists with varying Python expertise. The changes eliminate common confusion points and provide clear, actionable guidance when issues occur.
-
-### Key Improvements
-
-1. **Prevents Silent Failures**: Validates speed/time units to catch mistakes before they cause incorrect results
-2. **Better Error Messages**: All errors explain what went wrong, why, and exactly how to fix it
-3. **Comprehensive Troubleshooting**: README now includes solutions for every common error scenario
-4. **Clearer Workflow**: Documentation emphasizes the filter → detect workflow with complete examples
-5. **No Breaking Changes**: All improvements are backward-compatible; existing code continues to work
-
-### Upgrade Recommendation
-
-**Strongly recommended** for all users. This release prevents common mistakes that could lead to:
-- Zero detections due to wrong speed units
-- Incorrect results due to time in samples instead of seconds
-- Confusion about parameter meanings and units
-
-All improvements are non-breaking and add safety guardrails without changing functionality.
-
-### Migration Guide
-
-No migration needed! All changes are backward-compatible. However, you may now see helpful warnings if:
-- Your speed data appears to be in m/s (should be cm/s)
-- Your time array doesn't match the specified sampling frequency
-- Your sampling rate is incompatible with the pre-computed filter
-
-These warnings help catch real issues - follow the suggested fixes in the warning messages.
+[Unreleased]: https://github.com/Eden-Kramer-Lab/ripple_detection/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/Eden-Kramer-Lab/ripple_detection/compare/v1.5.1...v1.6.0
+[1.5.1]: https://github.com/Eden-Kramer-Lab/ripple_detection/releases/tag/v1.5.1
