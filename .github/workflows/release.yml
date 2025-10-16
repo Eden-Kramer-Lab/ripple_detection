@@ -110,7 +110,7 @@ jobs:
         if: matrix.package == 'sdist'
         run: pip install dist/*.tar.gz
       - name: Check import
-        run: python -c "import ripple_detection; print(f'Version: {ripple_detection.__version__}')"
+        run: python -c "import ripple_detection; print('Version:', ripple_detection.__version__)"
       - name: Install test dependencies
         run: pip install pytest pytest-cov
       - name: Run package tests
