@@ -593,7 +593,7 @@ def get_multiunit_population_firing_rate(
     Parameters
     ----------
     multiunit : ndarray, shape (n_time, n_signals)
-        Binary array of multiunit spike times.
+        Spike indicator matrix. Can be binary (0/1) or spike counts per bin.
     sampling_frequency : float
         Number of samples per second.
     smoothing_sigma : float or np.timedelta

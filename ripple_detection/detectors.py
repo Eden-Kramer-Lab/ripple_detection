@@ -19,22 +19,31 @@ from ripple_detection.core import (
 
 
 def _preprocess_detector_inputs(
-    time: ArrayLike, filtered_lfps: ArrayLike, speed: ArrayLike
+    time: ArrayLike,
+    filtered_lfps: ArrayLike,
+    speed: ArrayLike,
+    sampling_frequency: float,
+    speed_threshold: float = 4.0,
 ) -> tuple[NDArray, NDArray, NDArray]:
-    """Remove NaN values from detector inputs.
+    """Remove NaN values from detector inputs and validate units.
 
     Ensures all inputs are aligned by removing any time points where
-    LFP data or speed contains NaN values. This preprocessing step is
-    shared by all ripple detectors.
+    LFP data or speed contains NaN values. Also validates that time
+    and speed appear to be in the correct units. This preprocessing
+    step is shared by all ripple detectors.
 
     Parameters
     ----------
     time : array_like, shape (n_time,)
-        Time values for each sample.
+        Time values for each sample in seconds.
     filtered_lfps : array_like, shape (n_time, n_channels)
         Bandpass filtered LFP signals.
     speed : array_like, shape (n_time,)
-        Animal's running speed.
+        Animal's running speed in cm/s.
+    sampling_frequency : float
+        Sampling rate in Hz, used to validate time units.
+    speed_threshold : float, optional
+        Speed threshold in cm/s, used to validate speed units. Default is 4.0.
 
     Returns
     -------
@@ -48,9 +57,17 @@ def _preprocess_detector_inputs(
     Raises
     ------
     ValueError
-        If filtered_lfps is not 2D or if array lengths don't match.
+        If filtered_lfps is not 2D, if array lengths don't match, or if
+        time/speed appear to be in incorrect units.
+
+    Warnings
+    --------
+    UserWarning
+        If speed values appear to be in wrong units (m/s instead of cm/s).
 
     """
+    import warnings
+
     filtered_lfps = np.asarray(filtered_lfps)
     speed = np.asarray(speed)
     time = np.asarray(time)
@@ -89,6 +106,50 @@ def _preprocess_detector_inputs(
             f"  speed:        {n_speed_samples} samples\n"
             "Ensure your time, LFP, and speed arrays are aligned and have matching lengths."
         )
+
+    # Validate time units (should be in seconds, not samples)
+    if n_time_samples > 1:
+        median_dt = np.median(np.diff(time))
+        expected_dt = 1.0 / sampling_frequency
+
+        # Check if time appears to be in samples instead of seconds
+        if median_dt > 10 * expected_dt:
+            raise ValueError(
+                f"Time array appears to be in samples, not seconds.\n"
+                f"Median time step: {median_dt:.6f} (expected ~{expected_dt:.6f} for {sampling_frequency} Hz)\n"
+                f"\n"
+                f"Solution: Convert sample indices to seconds:\n"
+                f"  time_seconds = time_samples / {sampling_frequency}"
+            )
+        # Check if time step is suspiciously different from sampling frequency
+        elif not np.isclose(median_dt, expected_dt, rtol=0.2):
+            warnings.warn(
+                f"Time array step ({median_dt:.6f} s) differs from expected sampling interval "
+                f"({expected_dt:.6f} s at {sampling_frequency} Hz).\n"
+                f"Verify that:\n"
+                f"  1. time is in seconds (not milliseconds or samples)\n"
+                f"  2. sampling_frequency ({sampling_frequency} Hz) is correct",
+                UserWarning,
+                stacklevel=3,
+            )
+
+    # Validate speed units (should be in cm/s, not m/s)
+    non_nan_speed = speed[pd.notnull(speed)]
+    if len(non_nan_speed) > 0:
+        non_zero_speed = non_nan_speed[non_nan_speed > 0]
+        if len(non_zero_speed) > 0:
+            median_speed = np.median(non_zero_speed)
+            # If median speed is very small and threshold is typical (> 1 cm/s),
+            # user likely passed speed in m/s instead of cm/s
+            if median_speed < 0.5 and speed_threshold > 1.0:
+                warnings.warn(
+                    f"Speed values appear very small (median non-zero: {median_speed:.4f}).\n"
+                    f"Speed should be in cm/s, not m/s.\n"
+                    f"If your speed is in m/s, multiply by 100:\n"
+                    f"  speed_cms = speed_ms * 100",
+                    UserWarning,
+                    stacklevel=3,
+                )
 
     not_null = np.all(pd.notnull(filtered_lfps), axis=1) & pd.notnull(speed)
 
@@ -157,11 +218,12 @@ def Kay_ripple_detector(
     Parameters
     ----------
     time : array_like, shape (n_time,)
-        Time values for each sample.
+        Time values for each sample in **seconds**.
     filtered_lfps : array_like, shape (n_time, n_channels)
-        Bandpass filtered LFP signals in the ripple band (150-250 Hz).
+        LFP signals **already bandpass filtered** to ripple band (150-250 Hz).
+        Must be pre-filtered using `filter_ripple_band()` before calling this detector.
     speed : array_like, shape (n_time,)
-        Animal's running speed at each time point.
+        Animal's running speed at each time point in **cm/s**.
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
@@ -205,6 +267,23 @@ def Kay_ripple_detector(
         - Increasing speed_threshold if movement exclusion is too strict
         - Verifying your data contains ripple oscillations (150-250 Hz)
 
+    Examples
+    --------
+    >>> from ripple_detection import filter_ripple_band, Kay_ripple_detector
+    >>> import numpy as np
+    >>>
+    >>> # Step 1: Prepare your data
+    >>> time = np.arange(10000) / 1500  # 10000 samples at 1500 Hz
+    >>> raw_lfps = np.random.randn(10000, 4)  # 4 channels of raw LFP
+    >>> speed = np.abs(np.random.randn(10000)) * 5  # Speed in cm/s
+    >>>
+    >>> # Step 2: Filter LFPs to ripple band (REQUIRED)
+    >>> filtered_lfps = filter_ripple_band(raw_lfps, sampling_frequency=1500)
+    >>>
+    >>> # Step 3: Detect ripples
+    >>> ripples = Kay_ripple_detector(time, filtered_lfps, speed, sampling_frequency=1500)
+    >>> print(f"Detected {len(ripples)} ripple events")
+
     References
     ----------
     .. [1] Kay, K., Sosa, M., Chung, J.E., Karlsson, M.P., Larkin, M.C.,
@@ -212,7 +291,9 @@ def Kay_ripple_detector(
        immobility and sleep. Nature 531, 185-190.
 
     """
-    time, filtered_lfps, speed = _preprocess_detector_inputs(time, filtered_lfps, speed)
+    time, filtered_lfps, speed = _preprocess_detector_inputs(
+        time, filtered_lfps, speed, sampling_frequency, speed_threshold
+    )
 
     combined_filtered_lfps = get_Kay_ripple_consensus_trace(
         filtered_lfps, sampling_frequency, smoothing_sigma=smoothing_sigma
@@ -251,11 +332,12 @@ def Karlsson_ripple_detector(
     Parameters
     ----------
     time : array_like, shape (n_time,)
-        Time values for each sample.
+        Time values for each sample in **seconds**.
     filtered_lfps : array_like, shape (n_time, n_channels)
-        Bandpass filtered LFP signals in the ripple band (150-250 Hz).
+        LFP signals **already bandpass filtered** to ripple band (150-250 Hz).
+        Must be pre-filtered using `filter_ripple_band()` before calling this detector.
     speed : array_like, shape (n_time,)
-        Animal's running speed at each time point.
+        Animal's running speed at each time point in **cm/s**.
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
@@ -300,7 +382,9 @@ def Karlsson_ripple_detector(
        experiences in the hippocampus. Nature Neuroscience 12, 913-918.
 
     """
-    time, filtered_lfps, speed = _preprocess_detector_inputs(time, filtered_lfps, speed)
+    time, filtered_lfps, speed = _preprocess_detector_inputs(
+        time, filtered_lfps, speed, sampling_frequency, speed_threshold
+    )
 
     filtered_lfps = get_envelope(filtered_lfps)
     filtered_lfps = gaussian_smooth(
@@ -342,11 +426,12 @@ def Roumis_ripple_detector(
     Parameters
     ----------
     time : array_like, shape (n_time,)
-        Time values for each sample.
+        Time values for each sample in **seconds**.
     filtered_lfps : array_like, shape (n_time, n_channels)
-        Bandpass filtered LFP signals in the ripple band (150-250 Hz).
+        LFP signals **already bandpass filtered** to ripple band (150-250 Hz).
+        Must be pre-filtered using `filter_ripple_band()` before calling this detector.
     speed : array_like, shape (n_time,)
-        Animal's running speed at each time point.
+        Animal's running speed at each time point in **cm/s**.
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
@@ -386,7 +471,9 @@ def Roumis_ripple_detector(
         - Verifying your data contains ripple oscillations (150-250 Hz)
 
     """
-    time, filtered_lfps, speed = _preprocess_detector_inputs(time, filtered_lfps, speed)
+    time, filtered_lfps, speed = _preprocess_detector_inputs(
+        time, filtered_lfps, speed, sampling_frequency, speed_threshold
+    )
 
     filtered_lfps = get_envelope(filtered_lfps) ** 2
     filtered_lfps = gaussian_smooth(
@@ -430,7 +517,13 @@ def multiunit_HSE_detector(
     time : array_like, shape (n_time,)
         Time values for each sample.
     multiunit : array_like, shape (n_time, n_units)
-        Binary spike indicator matrix (1 = spike, 0 = no spike) for each unit.
+        Spike indicator matrix for each unit at each time point.
+        Can be either:
+        - **Binary** (0 = no spike, 1 = spike) - recommended for consistent results
+        - **Spike counts** (0, 1, 2, ...) - also supported, represents number of spikes per bin
+
+        Both formats work, but may produce different sensitivities. For multi-spike
+        bins, results are typically more consistent with binary format.
     speed : array_like, shape (n_time,)
         Animal's running speed at each time point.
     sampling_frequency : float

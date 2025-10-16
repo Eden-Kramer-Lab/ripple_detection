@@ -213,14 +213,18 @@ def simulate_LFP(
     ripple_times : float or list of float
         Center time(s) of ripple event(s) in seconds.
     ripple_amplitude : float, optional
-        Peak amplitude of ripple oscillation. Default is 2.
+        Peak amplitude of ripple oscillation in **arbitrary units**. Default is 2.
+        For realistic LFPs, scale to match your recording system (typically µV or mV).
+        The ratio to noise_amplitude matters more than absolute values.
     ripple_duration : float, optional
-        Approximate duration (seconds) of ripple event, defined as 6 standard
+        Approximate duration in **seconds** of ripple event, defined as 6 standard
         deviations of the Gaussian envelope. Default is 0.100 (100 ms).
     noise_type : {'white', 'pink', 'brown'}, optional
         Type of background noise. Default is 'brown' (most realistic for LFP).
     noise_amplitude : float, optional
-        Amplitude of background noise. Default is 1.3.
+        Amplitude of background noise in **arbitrary units**. Default is 1.3.
+        A ratio of ripple_amplitude/noise_amplitude ≈ 1.5 provides realistic
+        signal-to-noise ratio for ripple detection.
 
     Returns
     -------
