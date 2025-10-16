@@ -3,8 +3,8 @@
 [![PyPI version](https://badge.fury.io/py/ripple-detection.svg)](https://badge.fury.io/py/ripple-detection)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![PR Test](https://github.com/Eden-Kramer-Lab/ripple_detection/actions/workflows/PR-test.yml/badge.svg)](https://github.com/Eden-Kramer-Lab/ripple_detection/actions/workflows/PR-test.yml)
-[![Coverage Status](https://coveralls.io/repos/github/Eden-Kramer-Lab/ripple_detection/badge.svg?branch=master)](https://coveralls.io/github/Eden-Kramer-Lab/ripple_detection?branch=master)
+[![Test, Build, and Publish](https://github.com/Eden-Kramer-Lab/ripple_detection/actions/workflows/release.yml/badge.svg)](https://github.com/Eden-Kramer-Lab/ripple_detection/actions/workflows/release.yml)
+[![codecov](https://codecov.io/gh/Eden-Kramer-Lab/ripple_detection/branch/master/graph/badge.svg)](https://codecov.io/gh/Eden-Kramer-Lab/ripple_detection)
 
 A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki/Sharp_waves_and_ripples) events (150-250 Hz) from local field potentials (LFPs) in neuroscience research.
 
