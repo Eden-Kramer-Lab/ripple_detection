@@ -50,14 +50,20 @@ jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --exec
 ### Code Quality
 
 ```bash
-# Lint code with flake8
-flake8 ripple_detection/
-
 # Format code with black
 black ripple_detection/ tests/
 
 # Check formatting without modifying files
 black --check ripple_detection/ tests/
+
+# Lint code with ruff (fast, modern linter - replaces flake8)
+ruff check ripple_detection/ tests/
+
+# Auto-fix ruff issues where possible
+ruff check --fix ripple_detection/ tests/
+
+# Type check with mypy
+mypy ripple_detection/
 ```
 
 ### Building
@@ -211,8 +217,10 @@ The package also validates that example notebooks run without errors in CI.
 
 - pytest >= 7.0.0
 - pytest-cov >= 4.0.0
-- flake8 >= 6.0.0
 - black[jupyter] >= 23.0.0
+- ruff >= 0.3.0
+- mypy >= 1.8.0
+- flake8 >= 6.0.0 (legacy, use ruff instead)
 
 **Examples** (minimum versions):
 
@@ -223,11 +231,46 @@ The package also validates that example notebooks run without errors in CI.
 ## Standards
 
 - Follows PEP 8 style guide
-- Type hints for function signatures
+- **Type hints for all function signatures** (using modern Python 3.10+ syntax)
 - Numpy Docstrings for all public functions and classes using numpy docstring best practices
 - Uses f-strings for formatting
 - Modular functions with single responsibility
 - Comprehensive test coverage: 98% overall, 100% on core modules
+- **Code quality tools**: Black (formatting), Ruff (linting), Mypy (type checking)
 - Continuous integration with GitHub Actions (tests on Python 3.10, 3.11, 3.12, 3.13)
+
+### Type Hints
+
+All functions in the codebase use type hints with modern Python 3.10+ syntax:
+- `X | Y` instead of `Union[X, Y]`
+- `X | None` instead of `Optional[X]`
+- `list[X]`, `dict[K, V]`, `tuple[X, Y]` instead of `List[X]`, `Dict[K, V]`, `Tuple[X, Y]`
+- `collections.abc.Generator` for generators
+- `numpy.typing.ArrayLike` and `NDArray` for numpy array parameters and return types
+
+The mypy configuration in `pyproject.toml` includes pragmatic overrides to avoid false positives with numpy's `ArrayLike` type while maintaining type safety.
+
+### Tool Configuration
+
+All code quality tools are configured in [pyproject.toml](pyproject.toml):
+
+**Black** (`[tool.black]`):
+- Line length: 95
+- Target: Python 3.10, 3.11, 3.12, 3.13
+
+**Ruff** (`[tool.ruff]` and `[tool.ruff.lint]`):
+- Line length: 95 (matches black)
+- Target: Python 3.10
+- Enabled checks: pycodestyle (E/W), pyflakes (F), isort (I), flake8-bugbear (B), comprehensions (C4), pyupgrade (UP)
+- Ignores E501 (line too long) since black handles it
+
+**Mypy** (`[tool.mypy]`):
+- Target: Python 3.10
+- `ignore_missing_imports = true` (for scipy, pandas - no stubs installed)
+- Module overrides disable specific error codes that cause false positives with `ArrayLike`
+
+**Pytest** (`[tool.pytest.ini_options]`):
+- Auto coverage reporting to terminal with missing lines
+- Test path: `tests/`
 
 Use the `ripple_detection` conda environment if available for testing and development to ensure consistent dependency versions.

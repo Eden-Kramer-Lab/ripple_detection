@@ -8,7 +8,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]  #, macos-latest, windows-latest]
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     env:
       OS: ${{ matrix.os }}
       PYTHON: ${{ matrix.python-version }}
@@ -35,10 +35,18 @@ jobs:
       shell: bash -l {0}
       run: |
         pip install -e .[dev,examples]
-    - name: Run linting
+    - name: Run code formatting check
       shell: bash -l {0}
       run: |
-        flake8 ripple_detection/ tests/
+        black --check ripple_detection/ tests/
+    - name: Run linting with ruff
+      shell: bash -l {0}
+      run: |
+        ruff check ripple_detection/ tests/
+    - name: Run type checking with mypy
+      shell: bash -l {0}
+      run: |
+        mypy ripple_detection/
     - name: Run tests
       shell: bash -l {0}
       run: |
