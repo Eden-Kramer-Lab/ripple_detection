@@ -116,7 +116,7 @@ def segment_boolean_series(
     ]
 
 
-def filter_ripple_band(data: ArrayLike) -> NDArray:
+def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None) -> NDArray:
     """Apply bandpass filter to isolate ripple frequency band (150-250 Hz).
 
     Uses a pre-computed filter kernel from the Frank lab with 40 dB roll-off,
@@ -127,6 +127,12 @@ def filter_ripple_band(data: ArrayLike) -> NDArray:
     ----------
     data : array_like, shape (n_time,) or (n_time, n_channels)
         Input signal(s) to be filtered. Can be 1D or 2D.
+    sampling_frequency : float, optional
+        Sampling rate of the input data in Hz. If provided and not equal to
+        1500 Hz, a warning is issued since the pre-computed filter is optimized
+        for 1500 Hz. For other sampling rates, consider using
+        `ripple_bandpass_filter()` to generate a custom filter. Default is None
+        (no check performed).
 
     Returns
     -------
@@ -134,7 +140,32 @@ def filter_ripple_band(data: ArrayLike) -> NDArray:
         Bandpass filtered signal in the ripple band. NaN values are preserved
         at their original locations.
 
+    Warnings
+    --------
+    UserWarning
+        If sampling_frequency is provided and differs from 1500 Hz.
+
+    See Also
+    --------
+    ripple_bandpass_filter : Generate custom filter for arbitrary sampling rates.
+
     """
+    import warnings
+
+    EXPECTED_SAMPLING_FREQUENCY = 1500.0
+
+    if sampling_frequency is not None and not np.isclose(
+        sampling_frequency, EXPECTED_SAMPLING_FREQUENCY
+    ):
+        warnings.warn(
+            f"The pre-computed ripple filter is designed for {EXPECTED_SAMPLING_FREQUENCY} Hz sampling. "
+            f"Your data has {sampling_frequency} Hz sampling frequency. "
+            f"For optimal results with different sampling rates, consider using "
+            f"`ripple_bandpass_filter()` to generate a custom filter.",
+            UserWarning,
+            stacklevel=2,
+        )
+
     filter_numerator, filter_denominator = _get_ripplefilter_kernel()
     is_nan = np.any(np.isnan(data), axis=-1)
     filtered_data = np.full_like(data, np.nan)
@@ -462,6 +493,9 @@ def exclude_close_events(
     time units of a previous event's end, keeping only the first event in
     each cluster of closely-spaced events.
 
+    Implementation uses iterative filtering: for each kept event, mark all
+    subsequent events that start too soon as excluded.
+
     Parameters
     ----------
     candidate_event_times : array_like, shape (n_events, 2)
@@ -478,20 +512,27 @@ def exclude_close_events(
 
     """
     candidate_event_times = np.array(candidate_event_times)
+
+    if candidate_event_times.size == 0:
+        return []
+
     n_events = candidate_event_times.shape[0]
+    keep_mask = np.ones(n_events, dtype=bool)
 
-    new_event_index = np.arange(n_events)
-    new_event_times = candidate_event_times.copy()
+    for i in range(n_events):
+        if not keep_mask[i]:
+            continue
 
-    for ind, (_start_time, end_time) in enumerate(candidate_event_times):
-        if np.isin(ind, new_event_index):
-            is_too_close = (end_time + close_event_threshold > new_event_times[:, 0]) & (
-                new_event_index > ind
-            )
-            new_event_index = new_event_index[~is_too_close]
-            new_event_times = new_event_times[~is_too_close]
+        end_time = candidate_event_times[i, 1]
+        # Mark subsequent events that start too soon as excluded
+        later_indices = np.arange(i + 1, n_events)
+        is_too_close = candidate_event_times[later_indices, 0] < (
+            end_time + close_event_threshold
+        )
+        keep_mask[later_indices] = keep_mask[later_indices] & ~is_too_close
 
-    return new_event_times if new_event_times.size > 0 else []
+    filtered_events = candidate_event_times[keep_mask]
+    return filtered_events if filtered_events.size > 0 else []
 
 
 def get_multiunit_population_firing_rate(

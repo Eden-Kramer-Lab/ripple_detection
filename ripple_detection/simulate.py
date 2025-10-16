@@ -70,6 +70,11 @@ def normalize(y: NDArray, x: NDArray | None = None) -> NDArray:
     -----
     The mean power of a Gaussian with μ=0 and σ=1 is 1.
 
+    If the input signal `y` has zero power (e.g., all zeros), the function
+    will return NaN values due to division by zero. This is expected behavior,
+    as zero-power signals cannot be meaningfully normalized. In practice, this
+    edge case only occurs with artificial test inputs.
+
     References
     ----------
     Adapted from python-acoustics library.

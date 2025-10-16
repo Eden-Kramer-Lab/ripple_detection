@@ -222,9 +222,7 @@ class TestMergeOverlappingRangesProperties:
     def test_merge_reduces_or_maintains_count(self, ranges):
         """Merging should reduce or maintain the number of ranges."""
         # Filter out invalid ranges and duplicates
-        valid_ranges = sorted(
-            {(min(s, e), max(s, e)) for s, e in ranges if abs(s - e) > 0.01}
-        )
+        valid_ranges = sorted({(min(s, e), max(s, e)) for s, e in ranges if abs(s - e) > 0.01})
 
         if len(valid_ranges) == 0:
             return
@@ -246,9 +244,7 @@ class TestMergeOverlappingRangesProperties:
     @settings(max_examples=50, deadline=1000)
     def test_merged_ranges_sorted(self, ranges):
         """Merged ranges should be sorted by start time."""
-        valid_ranges = sorted(
-            {(min(s, e), max(s, e)) for s, e in ranges if abs(s - e) > 0.01}
-        )
+        valid_ranges = sorted({(min(s, e), max(s, e)) for s, e in ranges if abs(s - e) > 0.01})
 
         if len(valid_ranges) == 0:
             return
@@ -272,9 +268,7 @@ class TestMergeOverlappingRangesProperties:
     @settings(max_examples=50, deadline=1000)
     def test_merged_ranges_non_overlapping(self, ranges):
         """Merged ranges should not overlap."""
-        valid_ranges = sorted(
-            {(min(s, e), max(s, e)) for s, e in ranges if abs(s - e) > 0.01}
-        )
+        valid_ranges = sorted({(min(s, e), max(s, e)) for s, e in ranges if abs(s - e) > 0.01})
 
         if len(valid_ranges) == 0:
             return

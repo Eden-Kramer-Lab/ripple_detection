@@ -18,6 +18,43 @@ from ripple_detection.core import (
 )
 
 
+def _preprocess_detector_inputs(
+    time: ArrayLike, filtered_lfps: ArrayLike, speed: ArrayLike
+) -> tuple[NDArray, NDArray, NDArray]:
+    """Remove NaN values from detector inputs.
+
+    Ensures all inputs are aligned by removing any time points where
+    LFP data or speed contains NaN values. This preprocessing step is
+    shared by all ripple detectors.
+
+    Parameters
+    ----------
+    time : array_like, shape (n_time,)
+        Time values for each sample.
+    filtered_lfps : array_like, shape (n_time, n_channels)
+        Bandpass filtered LFP signals.
+    speed : array_like, shape (n_time,)
+        Animal's running speed.
+
+    Returns
+    -------
+    time_clean : ndarray, shape (n_clean_time,)
+        Time array with NaN rows removed.
+    filtered_lfps_clean : ndarray, shape (n_clean_time, n_channels)
+        LFP array with NaN rows removed.
+    speed_clean : ndarray, shape (n_clean_time,)
+        Speed array with NaN values removed.
+
+    """
+    filtered_lfps = np.asarray(filtered_lfps)
+    speed = np.asarray(speed)
+    time = np.asarray(time)
+
+    not_null = np.all(pd.notnull(filtered_lfps), axis=1) & pd.notnull(speed)
+
+    return time[not_null], filtered_lfps[not_null], speed[not_null]
+
+
 def get_Kay_ripple_consensus_trace(
     ripple_filtered_lfps: ArrayLike, sampling_frequency: float, smoothing_sigma: float = 0.004
 ) -> NDArray:
@@ -121,16 +158,7 @@ def Kay_ripple_detector(
        immobility and sleep. Nature 531, 185-190.
 
     """
-    filtered_lfps = np.asarray(filtered_lfps)
-    speed = np.asarray(speed)
-    time = np.asarray(time)
-
-    not_null = np.all(pd.notnull(filtered_lfps), axis=1) & pd.notnull(speed)
-    filtered_lfps, speed, time = (
-        filtered_lfps[not_null],
-        speed[not_null],
-        time[not_null],
-    )
+    time, filtered_lfps, speed = _preprocess_detector_inputs(time, filtered_lfps, speed)
 
     combined_filtered_lfps = get_Kay_ripple_consensus_trace(
         filtered_lfps, sampling_frequency, smoothing_sigma=smoothing_sigma
@@ -199,16 +227,7 @@ def Karlsson_ripple_detector(
        experiences in the hippocampus. Nature Neuroscience 12, 913-918.
 
     """
-    filtered_lfps = np.asarray(filtered_lfps)
-    speed = np.asarray(speed)
-    time = np.asarray(time)
-
-    not_null = np.all(pd.notnull(filtered_lfps), axis=1) & pd.notnull(speed)
-    filtered_lfps, speed, time = (
-        filtered_lfps[not_null],
-        speed[not_null],
-        time[not_null],
-    )
+    time, filtered_lfps, speed = _preprocess_detector_inputs(time, filtered_lfps, speed)
 
     filtered_lfps = get_envelope(filtered_lfps)
     filtered_lfps = gaussian_smooth(
@@ -271,20 +290,11 @@ def Roumis_ripple_detector(
     Returns
     -------
     ripple_times : pd.DataFrame
-        DataFrame with columns start_time, end_time only (simplified output
-        compared to Kay and Karlsson detectors).
+        DataFrame with detected ripples and comprehensive statistics (see
+        Kay_ripple_detector for column descriptions).
 
     """
-    filtered_lfps = np.asarray(filtered_lfps)
-    speed = np.asarray(speed)
-    time = np.asarray(time)
-
-    not_null = np.all(pd.notnull(filtered_lfps), axis=1) & pd.notnull(speed)
-    filtered_lfps, speed, time = (
-        filtered_lfps[not_null],
-        speed[not_null],
-        time[not_null],
-    )
+    time, filtered_lfps, speed = _preprocess_detector_inputs(time, filtered_lfps, speed)
 
     filtered_lfps = get_envelope(filtered_lfps) ** 2
     filtered_lfps = gaussian_smooth(
@@ -299,8 +309,10 @@ def Roumis_ripple_detector(
         candidate_ripple_times, speed, time, speed_threshold=speed_threshold
     )
     ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
-    index = pd.Index(np.arange(len(ripple_times)) + 1, name="ripple_number")
-    return pd.DataFrame(ripple_times, columns=["start_time", "end_time"], index=index)
+
+    return _get_event_stats(
+        ripple_times, time, combined_filtered_lfps, speed, minimum_duration
+    )
 
 
 def multiunit_HSE_detector(
