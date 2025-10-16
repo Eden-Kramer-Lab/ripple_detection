@@ -1,7 +1,10 @@
+"""High-level detectors for sharp-wave ripple events and multiunit synchrony events."""
+
 from itertools import chain
 
 import numpy as np
 import pandas as pd
+from numpy.typing import ArrayLike, NDArray
 from scipy.stats import zscore
 
 from ripple_detection.core import (
@@ -16,8 +19,8 @@ from ripple_detection.core import (
 
 
 def get_Kay_ripple_consensus_trace(
-    ripple_filtered_lfps, sampling_frequency, smoothing_sigma=0.004
-):
+    ripple_filtered_lfps: ArrayLike, sampling_frequency: float, smoothing_sigma: float = 0.004
+) -> NDArray:
     ripple_consensus_trace = np.full_like(ripple_filtered_lfps, np.nan)
     not_null = np.all(pd.notnull(ripple_filtered_lfps), axis=1)
 
@@ -30,16 +33,16 @@ def get_Kay_ripple_consensus_trace(
 
 
 def Kay_ripple_detector(
-    time,
-    filtered_lfps,
-    speed,
-    sampling_frequency,
-    speed_threshold=4.0,
-    minimum_duration=0.015,
-    zscore_threshold=2.0,
-    smoothing_sigma=0.004,
-    close_ripple_threshold=0.0,
-):
+    time: ArrayLike,
+    filtered_lfps: ArrayLike,
+    speed: ArrayLike,
+    sampling_frequency: float,
+    speed_threshold: float = 4.0,
+    minimum_duration: float = 0.015,
+    zscore_threshold: float = 2.0,
+    smoothing_sigma: float = 0.004,
+    close_ripple_threshold: float = 0.0,
+) -> pd.DataFrame:
     """Find start and end times of sharp wave ripple events (150-250 Hz)
     based on Kay et al. 2016 [1].
 
@@ -108,22 +111,22 @@ def Kay_ripple_detector(
 
 
 def Karlsson_ripple_detector(
-    time,
-    filtered_lfps,
-    speed,
-    sampling_frequency,
-    speed_threshold=4.0,
-    minimum_duration=0.015,
-    zscore_threshold=3.0,
-    smoothing_sigma=0.004,
-    close_ripple_threshold=0.0,
-):
+    time: ArrayLike,
+    filtered_lfps: ArrayLike,
+    speed: ArrayLike,
+    sampling_frequency: float,
+    speed_threshold: float = 4.0,
+    minimum_duration: float = 0.015,
+    zscore_threshold: float = 3.0,
+    smoothing_sigma: float = 0.004,
+    close_ripple_threshold: float = 0.0,
+) -> pd.DataFrame:
     """Find start and end times of sharp wave ripple events (150-250 Hz)
     based on Karlsson et al. 2009 [1].
 
     Parameters
     ----------
-    time : array_like, shpe (n_time,)
+    time : array_like, shape (n_time,)
     filtered_lfps : array_like, shape (n_time, n_signals)
         Bandpass filtered time series of electric potentials in the ripple band
     speed : array_like, shape (n_time,)
@@ -189,22 +192,22 @@ def Karlsson_ripple_detector(
 
 
 def Roumis_ripple_detector(
-    time,
-    filtered_lfps,
-    speed,
-    sampling_frequency,
-    speed_threshold=4.0,
-    minimum_duration=0.015,
-    zscore_threshold=2.0,
-    smoothing_sigma=0.004,
-    close_ripple_threshold=0.0,
-):
+    time: ArrayLike,
+    filtered_lfps: ArrayLike,
+    speed: ArrayLike,
+    sampling_frequency: float,
+    speed_threshold: float = 4.0,
+    minimum_duration: float = 0.015,
+    zscore_threshold: float = 2.0,
+    smoothing_sigma: float = 0.004,
+    close_ripple_threshold: float = 0.0,
+) -> pd.DataFrame:
     """Find start and end times of sharp wave ripple events (150-250 Hz)
     based on [1].
 
     Parameters
     ----------
-    time : array_like, shpe (n_time,)
+    time : array_like, shape (n_time,)
     filtered_lfps : array_like, shape (n_time, n_signals)
         Bandpass filtered time series of electric potentials in the ripple band
     speed : array_like, shape (n_time,)
@@ -261,17 +264,17 @@ def Roumis_ripple_detector(
 
 
 def multiunit_HSE_detector(
-    time,
-    multiunit,
-    speed,
-    sampling_frequency,
-    speed_threshold=4.0,
-    minimum_duration=0.015,
-    zscore_threshold=2.0,
-    smoothing_sigma=0.015,
-    close_event_threshold=0.0,
-    use_speed_threshold_for_zscore=False,
-):
+    time: ArrayLike,
+    multiunit: ArrayLike,
+    speed: ArrayLike,
+    sampling_frequency: float,
+    speed_threshold: float = 4.0,
+    minimum_duration: float = 0.015,
+    zscore_threshold: float = 2.0,
+    smoothing_sigma: float = 0.015,
+    close_event_threshold: float = 0.0,
+    use_speed_threshold_for_zscore: bool = False,
+) -> pd.DataFrame:
     """Multiunit High Synchrony Event detector. Finds times when the multiunit
     population spiking activity is high relative to the average.
 
@@ -375,14 +378,25 @@ def _find_max_thresh(
     return min(data[peak_left_ind], data[peak_right_ind])
 
 
-def _get_event_stats(event_times, time, zscore_metric, speed, minimum_duration=0.015):
-    index = pd.Index(np.arange(len(event_times)) + 1, name="event_number")
+def _get_event_stats(
+    event_times: ArrayLike,
+    time: ArrayLike,
+    zscore_metric: ArrayLike,
+    speed: ArrayLike,
+    minimum_duration: float = 0.015,
+) -> pd.DataFrame:
+    event_times_arr = np.asarray(event_times)
+    time_arr = np.asarray(time)
+    zscore_metric_arr = np.asarray(zscore_metric)
+    speed_arr = np.asarray(speed)
+
+    index = pd.Index(np.arange(len(event_times_arr)) + 1, name="event_number")
     try:
-        speed_at_start = speed[np.isin(time, event_times[:, 0])]
-        speed_at_end = speed[np.isin(time, event_times[:, 1])]
+        speed_at_start = speed_arr[np.isin(time_arr, event_times_arr[:, 0])]
+        speed_at_end = speed_arr[np.isin(time_arr, event_times_arr[:, 1])]
     except (IndexError, TypeError):
-        speed_at_start = np.full_like(event_times, np.nan)
-        speed_at_end = np.full_like(event_times, np.nan)
+        speed_at_start = np.full_like(event_times_arr, np.nan)
+        speed_at_end = np.full_like(event_times_arr, np.nan)
 
     mean_zscore = []
     median_zscore = []
@@ -397,26 +411,28 @@ def _get_event_stats(event_times, time, zscore_metric, speed, minimum_duration=0
     area = []
     total_energy = []
 
-    for start_time, end_time in event_times:
-        ind = np.logical_and(time >= start_time, time <= end_time)
-        event_zscore = zscore_metric[ind]
-        max_thresh.append(_find_max_thresh(time[ind], zscore_metric[ind], minimum_duration))
+    for start_time, end_time in event_times_arr:
+        ind = np.logical_and(time_arr >= start_time, time_arr <= end_time)
+        event_zscore = zscore_metric_arr[ind]
+        max_thresh.append(
+            _find_max_thresh(time_arr[ind], zscore_metric_arr[ind], minimum_duration)
+        )
         mean_zscore.append(np.mean(event_zscore))
         median_zscore.append(np.median(event_zscore))
         max_zscore.append(np.max(event_zscore))
         min_zscore.append(np.min(event_zscore))
-        area.append(np.trapezoid(event_zscore, time[ind]))
-        total_energy.append(np.trapezoid(event_zscore**2, time[ind]))
+        area.append(np.trapezoid(event_zscore, time_arr[ind]))
+        total_energy.append(np.trapezoid(event_zscore**2, time_arr[ind]))
         duration.append(end_time - start_time)
-        max_speed.append(np.max(speed[ind]))
-        min_speed.append(np.min(speed[ind]))
-        median_speed.append(np.median(speed[ind]))
-        mean_speed.append(np.mean(speed[ind]))
+        max_speed.append(np.max(speed_arr[ind]))
+        min_speed.append(np.min(speed_arr[ind]))
+        median_speed.append(np.median(speed_arr[ind]))
+        mean_speed.append(np.mean(speed_arr[ind]))
 
     try:
-        event_start_times = event_times[:, 0]
-        event_end_times = event_times[:, 1]
-    except TypeError:
+        event_start_times = event_times_arr[:, 0]
+        event_end_times = event_times_arr[:, 1]
+    except (IndexError, TypeError):
         event_start_times = []
         event_end_times = []
 

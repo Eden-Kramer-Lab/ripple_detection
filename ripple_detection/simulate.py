@@ -1,18 +1,23 @@
+"""Simulation tools for generating synthetic LFP data with embedded ripples."""
+
+from typing import Literal
+
 import numpy as np
+from numpy.typing import NDArray
 from scipy.stats import norm
 
 RIPPLE_FREQUENCY = 200
 
 
-def simulate_time(n_samples, sampling_frequency):
+def simulate_time(n_samples: int, sampling_frequency: float) -> NDArray:
     return np.arange(n_samples) / sampling_frequency
 
 
-def mean_squared(x):
+def mean_squared(x: NDArray) -> float:
     return (np.abs(x) ** 2.0).mean()
 
 
-def normalize(y, x=None):
+def normalize(y: NDArray, x: NDArray | None = None) -> NDArray:
     """normalize power in y to a (standard normal) white noise signal.
     Optionally normalize to power in signal `x`.
     #The mean power of a Gaussian with :math:`\\mu=0` and :math:`\\sigma=1` is 1.
@@ -22,7 +27,7 @@ def normalize(y, x=None):
     return y * np.sqrt(x / mean_squared(y))
 
 
-def pink(N, state=None):
+def pink(N: int, state: np.random.RandomState | None = None) -> NDArray:
     """
     Pink noise.
 
@@ -44,7 +49,7 @@ def pink(N, state=None):
     return normalize(y)
 
 
-def white(N, state=None):
+def white(N: int, state: np.random.RandomState | None = None) -> NDArray:
     """
     White noise.
 
@@ -60,7 +65,7 @@ def white(N, state=None):
     return state.randn(N)
 
 
-def brown(N, state=None):
+def brown(N: int, state: np.random.RandomState | None = None) -> NDArray:
     """
     Brown noise.
 
@@ -89,21 +94,19 @@ NOISE_FUNCTION = {
 
 
 def simulate_LFP(
-    time,
-    ripple_times,
-    ripple_amplitude=2,
-    ripple_duration=0.100,
-    noise_type="brown",
-    noise_amplitude=1.3,
-):
+    time: NDArray,
+    ripple_times: float | list[float],
+    ripple_amplitude: float = 2,
+    ripple_duration: float = 0.100,
+    noise_type: Literal["white", "pink", "brown"] = "brown",
+    noise_amplitude: float = 1.3,
+) -> NDArray:
     """Simulate a LFP with a ripple at ripple times"""
     noise = (noise_amplitude / 2) * NOISE_FUNCTION[noise_type](time.size)
     ripple_signal = np.sin(2 * np.pi * time * RIPPLE_FREQUENCY)
     signal = []
 
-    try:
-        iter(ripple_times)
-    except TypeError:
+    if isinstance(ripple_times, (int, float)):
         ripple_times = [ripple_times]
 
     for ripple_time in ripple_times:

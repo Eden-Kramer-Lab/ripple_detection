@@ -2,17 +2,19 @@
 potentials.
 """
 
+from collections.abc import Generator
 from os.path import abspath, dirname, join
 
 import numpy as np
 import pandas as pd
+from numpy.typing import ArrayLike, NDArray
 from scipy.fftpack import next_fast_len
 from scipy.io import loadmat
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import filtfilt, hilbert, remez
 
 
-def ripple_bandpass_filter(sampling_frequency):
+def ripple_bandpass_filter(sampling_frequency: float) -> tuple[NDArray, float]:
     ORDER = 101
     nyquist = 0.5 * sampling_frequency
     TRANSITION_BAND = 25
@@ -28,14 +30,14 @@ def ripple_bandpass_filter(sampling_frequency):
     return remez(ORDER, desired, [0, 1, 0], Hz=sampling_frequency), 1.0
 
 
-def _get_series_start_end_times(series):
-    """Extracts the start and end times of segements defined by a boolean
+def _get_series_start_end_times(series: pd.Series) -> tuple[NDArray, NDArray]:
+    """Extracts the start and end times of segments defined by a boolean
     pandas Series.
 
     Parameters
     ----------
     series : pandas boolean Series (n_time,)
-        Consecutive Trues define each segement.
+        Consecutive Trues define each segment.
 
     Returns
     -------
@@ -62,15 +64,17 @@ def _get_series_start_end_times(series):
     return start_times, end_times
 
 
-def segment_boolean_series(series, minimum_duration=0.015):
+def segment_boolean_series(
+    series: pd.Series, minimum_duration: float = 0.015
+) -> list[tuple[float, float]]:
     """Returns a list of tuples where each tuple contains the start time of
-    segement and end time of segment. It takes a boolean pandas series as
+    segment and end time of segment. It takes a boolean pandas series as
     input where the index is time.
 
     Parameters
     ----------
     series : pandas boolean Series (n_time,)
-        Consecutive Trues define each segement.
+        Consecutive Trues define each segment.
     minimum_duration : float, optional
         Segments must be at least this duration to be included.
 
@@ -83,12 +87,12 @@ def segment_boolean_series(series, minimum_duration=0.015):
 
     return [
         (start_time, end_time)
-        for start_time, end_time in zip(start_times, end_times)
+        for start_time, end_time in zip(start_times, end_times, strict=False)
         if end_time >= (start_time + minimum_duration)
     ]
 
 
-def filter_ripple_band(data):
+def filter_ripple_band(data: ArrayLike) -> NDArray:
     """Returns a bandpass filtered signal between 150-250 Hz
 
     Parameters
@@ -109,7 +113,7 @@ def filter_ripple_band(data):
     return filtered_data
 
 
-def _get_ripplefilter_kernel():
+def _get_ripplefilter_kernel() -> tuple[NDArray, int]:
     """Returns the pre-computed ripple filter kernel from the Frank lab.
     The kernel is 150-250 Hz bandpass with 40 db roll off and 10 Hz
     sidebands. Sampling frequency is 1500 Hz.
@@ -119,7 +123,12 @@ def _get_ripplefilter_kernel():
     return ripplefilter["ripplefilter"]["kernel"][0][0].flatten(), 1
 
 
-def extend_threshold_to_mean(is_above_mean, is_above_threshold, time, minimum_duration=0.015):
+def extend_threshold_to_mean(
+    is_above_mean: ArrayLike,
+    is_above_threshold: ArrayLike,
+    time: ArrayLike,
+    minimum_duration: float = 0.015,
+) -> list[tuple[float, float]]:
     """Extract segments above threshold if they remain above the threshold
     for a minimum amount of time and extend them to the mean.
 
@@ -150,7 +159,12 @@ def extend_threshold_to_mean(is_above_mean, is_above_threshold, time, minimum_du
     return sorted(_extend_segment(above_threshold_segments, above_mean_segments))
 
 
-def exclude_movement(candidate_ripple_times, speed, time, speed_threshold=4.0):
+def exclude_movement(
+    candidate_ripple_times: ArrayLike,
+    speed: ArrayLike,
+    time: ArrayLike,
+    speed_threshold: float = 4.0,
+) -> NDArray | list:
     """Removes candidate ripples if the animal is moving.
 
     Parameters
@@ -181,13 +195,15 @@ def exclude_movement(candidate_ripple_times, speed, time, speed_threshold=4.0):
         return []
 
 
-def _find_containing_interval(interval_candidates, target_interval):
+def _find_containing_interval(
+    interval_candidates: list[tuple[float, float]], target_interval: tuple[float, float]
+) -> tuple[float, float]:
     """Returns the interval that contains the target interval out of a list
     of interval candidates.
 
     This is accomplished by finding the closest start time out of the
     candidate intervals, since we already know that one interval candidate
-    contains the target interval (the segements above 0 contain the
+    contains the target interval (the segments above 0 contain the
     segments above the threshold)
     """
     candidate_start_times = np.asarray(interval_candidates)[:, 0]
@@ -196,7 +212,10 @@ def _find_containing_interval(interval_candidates, target_interval):
     return interval_candidates[closest_start_ind]
 
 
-def _extend_segment(segments_to_extend, containing_segments):
+def _extend_segment(
+    segments_to_extend: list[tuple[float, float]],
+    containing_segments: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
     """Extends the boundaries of a segment if it is a subset of one of the
     containing segments.
 
@@ -219,7 +238,7 @@ def _extend_segment(segments_to_extend, containing_segments):
     return list(set(segments))  # remove duplicate segments
 
 
-def get_envelope(data, axis=0):
+def get_envelope(data: ArrayLike, axis: int = 0) -> NDArray:
     """Extracts the instantaneous amplitude (envelope) of an analytic
     signal using the Hilbert transform"""
     n_samples = data.shape[axis]
@@ -227,7 +246,13 @@ def get_envelope(data, axis=0):
     return np.take(instantaneous_amplitude, np.arange(n_samples), axis=axis)
 
 
-def gaussian_smooth(data, sigma, sampling_frequency, axis=0, truncate=8):
+def gaussian_smooth(
+    data: ArrayLike,
+    sigma: float,
+    sampling_frequency: float,
+    axis: int = 0,
+    truncate: int = 8,
+) -> NDArray:
     """1D convolution of the data with a Gaussian.
 
     The standard deviation of the gaussian is in the units of the sampling
@@ -253,7 +278,12 @@ def gaussian_smooth(data, sigma, sampling_frequency, axis=0, truncate=8):
     )
 
 
-def threshold_by_zscore(zscored_data, time, minimum_duration=0.015, zscore_threshold=2):
+def threshold_by_zscore(
+    zscored_data: ArrayLike,
+    time: ArrayLike,
+    minimum_duration: float = 0.015,
+    zscore_threshold: float = 2,
+) -> list[tuple[float, float]]:
     """Standardize the data and determine whether it is above a given
     number.
 
@@ -275,7 +305,9 @@ def threshold_by_zscore(zscored_data, time, minimum_duration=0.015, zscore_thres
     )
 
 
-def merge_overlapping_ranges(ranges):
+def merge_overlapping_ranges(
+    ranges: list[tuple[float, float]]
+) -> Generator[tuple[float, float], None, None]:
     """Merge overlapping and adjacent ranges
 
     Parameters
@@ -320,7 +352,9 @@ def merge_overlapping_ranges(ranges):
     yield current_start, current_stop
 
 
-def exclude_close_events(candidate_event_times, close_event_threshold=1.0):
+def exclude_close_events(
+    candidate_event_times: ArrayLike, close_event_threshold: float = 1.0
+) -> NDArray | list:
     """Excludes successive events that occur within  a `close_event_threshold`
     of a previously occuring event.
 
@@ -342,7 +376,7 @@ def exclude_close_events(candidate_event_times, close_event_threshold=1.0):
     new_event_index = np.arange(n_events)
     new_event_times = candidate_event_times.copy()
 
-    for ind, (start_time, end_time) in enumerate(candidate_event_times):
+    for ind, (_start_time, end_time) in enumerate(candidate_event_times):
         if np.isin(ind, new_event_index):
             is_too_close = (end_time + close_event_threshold > new_event_times[:, 0]) & (
                 new_event_index > ind
@@ -353,7 +387,9 @@ def exclude_close_events(candidate_event_times, close_event_threshold=1.0):
     return new_event_times if new_event_times.size > 0 else []
 
 
-def get_multiunit_population_firing_rate(multiunit, sampling_frequency, smoothing_sigma=0.015):
+def get_multiunit_population_firing_rate(
+    multiunit: ArrayLike, sampling_frequency: float, smoothing_sigma: float = 0.015
+) -> NDArray:
     """Calculates the multiunit population firing rate.
 
     Parameters
