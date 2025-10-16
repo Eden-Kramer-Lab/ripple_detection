@@ -2,7 +2,6 @@
 
 import numpy as np
 import pandas as pd
-import pytest
 from ripple_detection import (
     Kay_ripple_detector,
     Karlsson_ripple_detector,
@@ -58,8 +57,7 @@ class TestKayRippleDetector:
         for true_time in true_ripple_times:
             # Check if any detected ripple overlaps with expected time window
             ripple_detected = any(
-                (ripples["start_time"] <= true_time)
-                & (ripples["end_time"] >= true_time)
+                (ripples["start_time"] <= true_time) & (ripples["end_time"] >= true_time)
             )
             assert ripple_detected, f"Failed to detect ripple near {true_time}s"
 
@@ -69,9 +67,7 @@ class TestKayRippleDetector:
 
         # Verify z-scores are positive (above threshold)
         assert all(ripples["max_zscore"] > 0), "Max z-score should be positive"
-        assert all(
-            ripples["mean_zscore"] >= 0
-        ), "Mean z-score should be non-negative"
+        assert all(ripples["mean_zscore"] >= 0), "Mean z-score should be non-negative"
 
     def test_dual_channel_with_ripples(
         self, time_3s, dual_lfp_with_ripples, stationary_speed, sampling_frequency
@@ -114,9 +110,7 @@ class TestKayRippleDetector:
         # Should still detect ripples even with many noise channels
         assert len(ripples) > 0
 
-    def test_no_ripples(
-        self, time_3s, lfp_no_ripples, stationary_speed, sampling_frequency
-    ):
+    def test_no_ripples(self, time_3s, lfp_no_ripples, stationary_speed, sampling_frequency):
         """Test with noise-only signal (no ripples)."""
         filtered_lfps = filter_ripple_band(lfp_no_ripples)
         ripples = Kay_ripple_detector(
@@ -295,13 +289,9 @@ class TestKarlssonRippleDetector:
             zscore_threshold=1.0,
         )
 
-        assert len(ripples_low) >= len(
-            ripples_default
-        ), "Lower threshold should detect more"
+        assert len(ripples_low) >= len(ripples_default), "Lower threshold should detect more"
 
-    def test_no_ripples(
-        self, time_3s, lfp_no_ripples, stationary_speed, sampling_frequency
-    ):
+    def test_no_ripples(self, time_3s, lfp_no_ripples, stationary_speed, sampling_frequency):
         """Test Karlsson detector with noise-only signal."""
         filtered_lfps = filter_ripple_band(lfp_no_ripples)
         ripples = Karlsson_ripple_detector(
@@ -423,9 +413,7 @@ class TestMultiunitHSEDetector:
 class TestKayConsensusTrace:
     """Test the Kay consensus trace generation."""
 
-    def test_consensus_trace_shape(
-        self, time_3s, dual_lfp_with_ripples, sampling_frequency
-    ):
+    def test_consensus_trace_shape(self, time_3s, dual_lfp_with_ripples, sampling_frequency):
         """Test that consensus trace has correct shape."""
         filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
         consensus = get_Kay_ripple_consensus_trace(
@@ -498,9 +486,7 @@ class TestDetectorErrorHandling:
         # Should handle NaN in speed data
         assert isinstance(ripples, pd.DataFrame)
 
-    def test_mismatched_lengths(
-        self, time_3s, single_lfp_with_ripples, sampling_frequency
-    ):
+    def test_mismatched_lengths(self, time_3s, single_lfp_with_ripples, sampling_frequency):
         """Test with mismatched time and LFP lengths."""
         # Create speed array with different length
         speed_short = np.ones(len(time_3s) // 2)

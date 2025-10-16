@@ -35,10 +35,19 @@ jobs:
       shell: bash -l {0}
       run: |
         pip install -e .[dev,examples]
+    - name: Run linting
+      shell: bash -l {0}
+      run: |
+        flake8 ripple_detection/ tests/
     - name: Run tests
       shell: bash -l {0}
       run: |
-        pytest --cov=ripple_detection tests/
+        pytest --cov=ripple_detection --cov-report=term-missing --cov-report=xml tests/
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v5
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        env_vars: OS,PYTHON
     - name: Test notebooks
       shell: bash -l {0}
       run: |

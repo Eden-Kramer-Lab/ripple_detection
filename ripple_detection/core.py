@@ -1,6 +1,7 @@
 """Finding sharp-wave ripple events (150-250 Hz) from local field
 potentials.
 """
+
 from os.path import abspath, dirname, join
 
 import numpy as np
@@ -118,9 +119,7 @@ def _get_ripplefilter_kernel():
     return ripplefilter["ripplefilter"]["kernel"][0][0].flatten(), 1
 
 
-def extend_threshold_to_mean(
-    is_above_mean, is_above_threshold, time, minimum_duration=0.015
-):
+def extend_threshold_to_mean(is_above_mean, is_above_threshold, time, minimum_duration=0.015):
     """Extract segments above threshold if they remain above the threshold
     for a minimum amount of time and extend them to the mean.
 
@@ -193,9 +192,7 @@ def _find_containing_interval(interval_candidates, target_interval):
     """
     candidate_start_times = np.asarray(interval_candidates)[:, 0]
     zero = np.array(0).astype(candidate_start_times.dtype)
-    closest_start_ind = np.max(
-        (candidate_start_times - target_interval[0] <= zero).nonzero()
-    )
+    closest_start_ind = np.max((candidate_start_times - target_interval[0] <= zero).nonzero())
     return interval_candidates[closest_start_ind]
 
 
@@ -226,9 +223,7 @@ def get_envelope(data, axis=0):
     """Extracts the instantaneous amplitude (envelope) of an analytic
     signal using the Hilbert transform"""
     n_samples = data.shape[axis]
-    instantaneous_amplitude = np.abs(
-        hilbert(data, N=next_fast_len(n_samples), axis=axis)
-    )
+    instantaneous_amplitude = np.abs(hilbert(data, N=next_fast_len(n_samples), axis=axis))
     return np.take(instantaneous_amplitude, np.arange(n_samples), axis=axis)
 
 
@@ -349,18 +344,16 @@ def exclude_close_events(candidate_event_times, close_event_threshold=1.0):
 
     for ind, (start_time, end_time) in enumerate(candidate_event_times):
         if np.isin(ind, new_event_index):
-            is_too_close = (
-                end_time + close_event_threshold > new_event_times[:, 0]
-            ) & (new_event_index > ind)
+            is_too_close = (end_time + close_event_threshold > new_event_times[:, 0]) & (
+                new_event_index > ind
+            )
             new_event_index = new_event_index[~is_too_close]
             new_event_times = new_event_times[~is_too_close]
 
     return new_event_times if new_event_times.size > 0 else []
 
 
-def get_multiunit_population_firing_rate(
-    multiunit, sampling_frequency, smoothing_sigma=0.015
-):
+def get_multiunit_population_firing_rate(multiunit, sampling_frequency, smoothing_sigma=0.015):
     """Calculates the multiunit population firing rate.
 
     Parameters

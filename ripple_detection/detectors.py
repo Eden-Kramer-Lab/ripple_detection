@@ -21,9 +21,7 @@ def get_Kay_ripple_consensus_trace(
     ripple_consensus_trace = np.full_like(ripple_filtered_lfps, np.nan)
     not_null = np.all(pd.notnull(ripple_filtered_lfps), axis=1)
 
-    ripple_consensus_trace[not_null] = get_envelope(
-        np.asarray(ripple_filtered_lfps)[not_null]
-    )
+    ripple_consensus_trace[not_null] = get_envelope(np.asarray(ripple_filtered_lfps)[not_null])
     ripple_consensus_trace = np.sum(ripple_consensus_trace**2, axis=1)
     ripple_consensus_trace[not_null] = gaussian_smooth(
         ripple_consensus_trace[not_null], smoothing_sigma, sampling_frequency
@@ -104,7 +102,9 @@ def Kay_ripple_detector(
     )
     ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
 
-    return _get_event_stats(ripple_times, time, combined_filtered_lfps, speed, minimum_duration)
+    return _get_event_stats(
+        ripple_times, time, combined_filtered_lfps, speed, minimum_duration
+    )
 
 
 def Karlsson_ripple_detector(
@@ -333,14 +333,14 @@ def multiunit_HSE_detector(
     high_synchrony_events = exclude_movement(
         candidate_high_synchrony_events, speed, time, speed_threshold=speed_threshold
     )
-    high_synchrony_events = exclude_close_events(
-        high_synchrony_events, close_event_threshold
-    )
+    high_synchrony_events = exclude_close_events(high_synchrony_events, close_event_threshold)
 
     return _get_event_stats(high_synchrony_events, time, firing_rate, speed)
 
 
-def _find_max_thresh(time: np.ndarray, data: np.ndarray, minimum_duration: float=0.015) -> float:
+def _find_max_thresh(
+    time: np.ndarray, data: np.ndarray, minimum_duration: float = 0.015
+) -> float:
     """Find the maximum value of a peak that exceeds a
     threshold for a minimum duration.
 
@@ -406,7 +406,7 @@ def _get_event_stats(event_times, time, zscore_metric, speed, minimum_duration=0
         max_zscore.append(np.max(event_zscore))
         min_zscore.append(np.min(event_zscore))
         area.append(np.trapezoid(event_zscore, time[ind]))
-        total_energy.append(np.trapezoid(event_zscore ** 2, time[ind]))
+        total_energy.append(np.trapezoid(event_zscore**2, time[ind]))
         duration.append(end_time - start_time)
         max_speed.append(np.max(speed[ind]))
         min_speed.append(np.min(speed[ind]))

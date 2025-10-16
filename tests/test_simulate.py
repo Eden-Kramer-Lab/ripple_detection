@@ -91,9 +91,7 @@ class TestNormalize:
         normalized = normalize(signal, reference)
 
         # Normalized signal should have same power as reference
-        assert np.allclose(
-            mean_squared(normalized), mean_squared(reference), atol=0.1
-        )
+        assert np.allclose(mean_squared(normalized), mean_squared(reference), atol=0.1)
 
     def test_normalize_preserves_zeros(self):
         """Test that zero signal remains zero or NaN."""
@@ -322,12 +320,8 @@ class TestSimulateLFP:
         time = simulate_time(n_samples, sampling_frequency)
         ripple_time = 0.5
 
-        lfp_low = simulate_LFP(
-            time, ripple_time, ripple_amplitude=1.0, noise_amplitude=0.5
-        )
-        lfp_high = simulate_LFP(
-            time, ripple_time, ripple_amplitude=5.0, noise_amplitude=0.5
-        )
+        lfp_low = simulate_LFP(time, ripple_time, ripple_amplitude=1.0, noise_amplitude=0.5)
+        lfp_high = simulate_LFP(time, ripple_time, ripple_amplitude=5.0, noise_amplitude=0.5)
 
         # Higher ripple amplitude should create larger peak
         ripple_idx = int(ripple_time * sampling_frequency)
@@ -454,7 +448,7 @@ class TestSimulateErrorHandling:
         """Test normalization of zero-power signal."""
         signal = np.zeros(100)
         # Should handle division by zero gracefully
-        with np.errstate(divide='ignore', invalid='ignore'):
+        with np.errstate(divide="ignore", invalid="ignore"):
             normalized = normalize(signal)
             # Result should be all zeros or NaN
             assert np.all(np.isnan(normalized)) or np.all(normalized == 0)

@@ -166,8 +166,6 @@ def multiunit_data(time_3s):
     hse_rate = 0.3
     for hse_time in hse_times:
         time_mask = np.abs(time_3s - hse_time) < 0.05
-        multiunit[time_mask, :] = (
-            np.random.random((time_mask.sum(), n_units)) < hse_rate
-        )
+        multiunit[time_mask, :] = np.random.random((time_mask.sum(), n_units)) < hse_rate
 
     return multiunit.astype(float)
