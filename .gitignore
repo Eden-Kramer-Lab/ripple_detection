@@ -98,3 +98,4 @@ ENV/
 # mypy
 .mypy_cache/
 .DS_Store
+ripple_detection/_version.py
