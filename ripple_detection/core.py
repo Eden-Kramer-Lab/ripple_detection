@@ -44,10 +44,18 @@ def _get_series_start_end_times(series):
         End time of each segment based on the index of the series.
 
     """
-    is_start_time = (~series.shift(1).fillna(False)) & series
+    # Identify starts and ends without using fillna to avoid pandas FutureWarning
+    # A start is where current is True AND previous is not True (False or NaN)
+    # An end is where current is True AND next is not True (False or NaN)
+    shifted_prev = series.shift(1)
+    shifted_next = series.shift(-1)
+
+    # Use != True instead of == False to handle NaN properly
+    # NaN != True is True, which is what we want for boundaries
+    is_start_time = series & (shifted_prev != True)  # noqa: E712
     start_times = np.asarray(series.index[is_start_time])
 
-    is_end_time = series & (~series.shift(-1).fillna(False))
+    is_end_time = series & (shifted_next != True)  # noqa: E712
     end_times = np.asarray(series.index[is_end_time])
 
     return start_times, end_times
