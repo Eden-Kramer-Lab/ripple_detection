@@ -45,10 +45,50 @@ def _preprocess_detector_inputs(
     speed_clean : ndarray, shape (n_clean_time,)
         Speed array with NaN values removed.
 
+    Raises
+    ------
+    ValueError
+        If filtered_lfps is not 2D or if array lengths don't match.
+
     """
     filtered_lfps = np.asarray(filtered_lfps)
     speed = np.asarray(speed)
     time = np.asarray(time)
+
+    # Validate LFP dimensions
+    if filtered_lfps.ndim == 0:
+        raise ValueError(
+            "filtered_lfps must be a 2D array with shape (n_time, n_channels).\n"
+            "Received a scalar value.\n"
+            "Expected: A 2D array where each row is a time point and each column is a channel."
+        )
+    elif filtered_lfps.ndim == 1:
+        raise ValueError(
+            "filtered_lfps must be a 2D array with shape (n_time, n_channels).\n"
+            f"Received a 1D array with shape {filtered_lfps.shape}.\n"
+            "If you have a single channel, reshape your data using:\n"
+            "  filtered_lfps = filtered_lfps.reshape(-1, 1)"
+        )
+    elif filtered_lfps.ndim > 2:
+        raise ValueError(
+            "filtered_lfps must be a 2D array with shape (n_time, n_channels).\n"
+            f"Received a {filtered_lfps.ndim}D array with shape {filtered_lfps.shape}.\n"
+            "Expected: 2D array with rows as time points and columns as channels."
+        )
+
+    # Validate array lengths
+    n_time_samples = len(time)
+    n_lfp_samples = len(filtered_lfps)
+    n_speed_samples = len(speed)
+
+    if not (n_time_samples == n_lfp_samples == n_speed_samples):
+        raise ValueError(
+            "Array length mismatch detected. All inputs must have the same length.\n"
+            f"  time:         {n_time_samples} samples\n"
+            f"  filtered_lfps: {n_lfp_samples} samples\n"
+            f"  speed:        {n_speed_samples} samples\n"
+            "Ensure your time, LFP, and speed arrays are aligned and have matching lengths."
+        )
 
     not_null = np.all(pd.notnull(filtered_lfps), axis=1) & pd.notnull(speed)
 
@@ -125,20 +165,28 @@ def Kay_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (cm/s) for ripple detection. Ripples during movement
-        (speed > threshold) are excluded. Default is 4.0 cm/s.
+        Maximum speed (in cm/s) for ripple detection. Events during movement
+        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
+        to immobility/slow movement in rodents.
+
+        **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
+        by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
-        Minimum duration (seconds) that z-score must exceed threshold.
-        Default is 0.015 (15 ms).
+        Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
+        Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
+        events but may increase false positives.
     zscore_threshold : float, optional
-        Number of standard deviations above mean for detection.
-        Default is 2.0.
+        Detection sensitivity threshold in standard deviations above mean.
+        Default is 2.0. Lower values (e.g., 1.5) detect more events but may
+        include false positives. Higher values (e.g., 3.0) are more conservative.
     smoothing_sigma : float, optional
-        Standard deviation (seconds) of Gaussian smoothing kernel applied
-        to consensus trace. Default is 0.004 (4 ms).
+        Standard deviation of Gaussian smoothing kernel in **seconds**.
+        Default is 0.004 (4 ms). Rarely needs adjustment; increase for
+        noisier data.
     close_ripple_threshold : float, optional
-        Minimum time (seconds) between ripples. Ripples closer than this
-        are merged. Default is 0.0 (no merging).
+        Minimum time in **seconds** between ripples. Events closer than this
+        are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
+        closely-spaced events.
 
     Returns
     -------
@@ -150,6 +198,12 @@ def Kay_ripple_detector(
         - area: integral of z-score
         - total_energy: integral of squared z-score
         - speed metrics: speed_at_start, speed_at_end, max/min/median/mean_speed
+
+        Returns empty DataFrame if no ripples detected. If this occurs, try:
+        - Lowering zscore_threshold (e.g., from 2.0 to 1.5)
+        - Lowering minimum_duration (e.g., from 0.015 to 0.010)
+        - Increasing speed_threshold if movement exclusion is too strict
+        - Verifying your data contains ripple oscillations (150-250 Hz)
 
     References
     ----------
@@ -205,21 +259,40 @@ def Karlsson_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (cm/s) for ripple detection. Default is 4.0 cm/s.
+        Maximum speed (in cm/s) for ripple detection. Events during movement
+        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
+        to immobility/slow movement in rodents.
+
+        **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
+        by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
-        Minimum duration (seconds) for detection. Default is 0.015 (15 ms).
+        Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
+        Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
+        events but may increase false positives.
     zscore_threshold : float, optional
-        Z-score threshold for detection. Default is 3.0 (higher than Kay).
+        Detection sensitivity threshold in standard deviations above mean.
+        Default is 3.0 (higher than Kay's 2.0 because per-channel detection
+        is more sensitive). Lower values detect more events.
     smoothing_sigma : float, optional
-        Standard deviation (seconds) of Gaussian smoothing. Default is 0.004 (4 ms).
+        Standard deviation of Gaussian smoothing kernel in **seconds**.
+        Default is 0.004 (4 ms). Rarely needs adjustment; increase for
+        noisier data.
     close_ripple_threshold : float, optional
-        Minimum time (seconds) between ripples. Default is 0.0.
+        Minimum time in **seconds** between ripples. Events closer than this
+        are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
+        closely-spaced events.
 
     Returns
     -------
     ripple_times : pd.DataFrame
         DataFrame with detected ripples and comprehensive statistics (see
         Kay_ripple_detector for column descriptions).
+
+        Returns empty DataFrame if no ripples detected. If this occurs, try:
+        - Lowering zscore_threshold (e.g., from 3.0 to 2.0)
+        - Lowering minimum_duration (e.g., from 0.015 to 0.010)
+        - Increasing speed_threshold if movement exclusion is too strict
+        - Verifying your data contains ripple oscillations (150-250 Hz)
 
     References
     ----------
@@ -277,21 +350,40 @@ def Roumis_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (cm/s) for ripple detection. Default is 4.0 cm/s.
+        Maximum speed (in cm/s) for ripple detection. Events during movement
+        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
+        to immobility/slow movement in rodents.
+
+        **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
+        by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
-        Minimum duration (seconds) for detection. Default is 0.015 (15 ms).
+        Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
+        Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
+        events but may increase false positives.
     zscore_threshold : float, optional
-        Z-score threshold for detection. Default is 2.0.
+        Detection sensitivity threshold in standard deviations above mean.
+        Default is 2.0. Lower values (e.g., 1.5) detect more events but may
+        include false positives. Higher values (e.g., 3.0) are more conservative.
     smoothing_sigma : float, optional
-        Standard deviation (seconds) of Gaussian smoothing. Default is 0.004 (4 ms).
+        Standard deviation of Gaussian smoothing kernel in **seconds**.
+        Default is 0.004 (4 ms). Rarely needs adjustment; increase for
+        noisier data.
     close_ripple_threshold : float, optional
-        Minimum time (seconds) between ripples. Default is 0.0.
+        Minimum time in **seconds** between ripples. Events closer than this
+        are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
+        closely-spaced events.
 
     Returns
     -------
     ripple_times : pd.DataFrame
         DataFrame with detected ripples and comprehensive statistics (see
         Kay_ripple_detector for column descriptions).
+
+        Returns empty DataFrame if no ripples detected. If this occurs, try:
+        - Lowering zscore_threshold (e.g., from 2.0 to 1.5)
+        - Lowering minimum_duration (e.g., from 0.015 to 0.010)
+        - Increasing speed_threshold if movement exclusion is too strict
+        - Verifying your data contains ripple oscillations (150-250 Hz)
 
     """
     time, filtered_lfps, speed = _preprocess_detector_inputs(time, filtered_lfps, speed)
@@ -344,16 +436,28 @@ def multiunit_HSE_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (cm/s) for event detection. Default is 4.0 cm/s.
+        Maximum speed (in cm/s) for event detection. Events during movement
+        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
+        to immobility/slow movement in rodents.
+
+        **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
+        by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
-        Minimum duration (seconds) for detection. Default is 0.015 (15 ms).
+        Minimum event duration in **seconds**. Default is 0.015 (15 milliseconds).
+        Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
+        events but may increase false positives.
     zscore_threshold : float, optional
-        Z-score threshold for population firing rate. Default is 2.0.
+        Detection sensitivity threshold in standard deviations above mean.
+        Default is 2.0. Lower values (e.g., 1.5) detect more events but may
+        include false positives. Higher values (e.g., 3.0) are more conservative.
     smoothing_sigma : float, optional
-        Standard deviation (seconds) of Gaussian smoothing applied to firing
-        rate. Default is 0.015 (15 ms, longer than ripple detectors).
+        Standard deviation of Gaussian smoothing kernel in **seconds**.
+        Default is 0.015 (15 ms, longer than ripple detectors for smoother
+        population firing rate estimates).
     close_event_threshold : float, optional
-        Minimum time (seconds) between events. Default is 0.0.
+        Minimum time in **seconds** between events. Events closer than this
+        are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
+        closely-spaced events.
     use_speed_threshold_for_zscore : bool, optional
         If True, compute z-score statistics (mean/std) using only immobility
         periods (speed < threshold). Default is False (use all time points).
@@ -363,6 +467,12 @@ def multiunit_HSE_detector(
     high_synchrony_events : pd.DataFrame
         DataFrame with detected events and comprehensive statistics (see
         Kay_ripple_detector for column descriptions).
+
+        Returns empty DataFrame if no events detected. If this occurs, try:
+        - Lowering zscore_threshold (e.g., from 2.0 to 1.5)
+        - Lowering minimum_duration (e.g., from 0.015 to 0.010)
+        - Increasing speed_threshold if movement exclusion is too strict
+        - Verifying your multiunit data shows synchronous spiking activity
 
     References
     ----------

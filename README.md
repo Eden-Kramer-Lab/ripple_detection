@@ -141,6 +141,81 @@ See the [examples](examples/) directory for Jupyter notebooks demonstrating:
 - [Detection Examples](examples/detection_examples.ipynb) - Using different detectors
 - [Algorithm Components](examples/test_individual_algorithm_components.ipynb) - Testing individual components
 
+## Troubleshooting
+
+### Common Errors
+
+#### "axis 1 is out of bounds" or "must be a 2D array"
+
+Your LFP data must be 2D with shape `(n_time, n_channels)`. Even for a single channel, the array must be 2D.
+
+```python
+# Wrong - 1D array
+lfps = np.random.randn(1000)  # Shape: (1000,)
+
+# Correct - 2D array with single channel
+lfps = np.random.randn(1000, 1)  # Shape: (1000, 1)
+# OR reshape existing 1D array:
+lfps = lfps.reshape(-1, 1)
+```
+
+#### "Array length mismatch detected"
+
+Your `time`, `LFPs`, and `speed` arrays must have the same length. Check dimensions:
+
+```python
+print(f"time: {len(time)}, LFPs: {len(lfps)}, speed: {len(speed)}")
+```
+
+Make sure all arrays cover the same time period and sampling rate.
+
+#### "Sampling frequency is too low for the pre-computed filter"
+
+The built-in `filter_ripple_band()` function uses a pre-computed filter designed for 1500 Hz sampling. For other sampling rates, generate a custom filter:
+
+```python
+from ripple_detection import ripple_bandpass_filter
+from scipy.signal import filtfilt
+
+# Generate custom filter for your sampling rate
+filter_num, filter_denom = ripple_bandpass_filter(sampling_frequency)
+filtered_lfps = filtfilt(filter_num, filter_denom, raw_lfps, axis=0)
+```
+
+#### No ripples detected (empty DataFrame)
+
+If detection returns no events, try adjusting parameters:
+
+```python
+ripples = Kay_ripple_detector(
+    time, filtered_lfps, speed, sampling_frequency,
+    zscore_threshold=1.5,      # Lower from default 2.0
+    minimum_duration=0.010,    # Lower from default 0.015
+    speed_threshold=10.0       # Increase if too restrictive (default 4.0)
+)
+```
+
+**Diagnostic steps:**
+1. Check if your LFPs actually contain ripples (150-250 Hz oscillations)
+2. Verify speed is in cm/s (not m/s)
+3. Plot the filtered LFP to visually inspect for ripple events
+4. Try different detector algorithms (Kay, Karlsson, Roumis)
+
+### Parameter Selection Guide
+
+| Parameter | Default | Description | When to Adjust |
+|-----------|---------|-------------|----------------|
+| `speed_threshold` | 4.0 cm/s | Maximum speed for ripple detection | Increase if too many events excluded during slow movement |
+| `minimum_duration` | 0.015 s | Minimum ripple duration (15 ms) | Decrease to 0.010 for shorter ripples; increase to 0.020 for stricter detection |
+| `zscore_threshold` | 2.0 (Kay/Roumis)<br>3.0 (Karlsson) | Detection sensitivity | Decrease for more detections; increase for fewer, higher-confidence events |
+| `smoothing_sigma` | 0.004 s | Gaussian smoothing window (4 ms) | Rarely needs adjustment; increase for noisier data |
+
+### Getting Help
+
+- **Issues**: [GitHub Issues](https://github.com/Eden-Kramer-Lab/ripple_detection/issues)
+- **Discussions**: For questions about usage and parameter selection
+- **Email**: [edeno@bu.edu](mailto:edeno@bu.edu)
+
 ## Documentation
 
 For detailed documentation on the detection algorithms and signal processing pipeline, see [CLAUDE.md](CLAUDE.md).

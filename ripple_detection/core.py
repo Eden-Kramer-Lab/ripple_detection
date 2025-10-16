@@ -140,6 +140,11 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
         Bandpass filtered signal in the ripple band. NaN values are preserved
         at their original locations.
 
+    Raises
+    ------
+    ValueError
+        If sampling_frequency is too low for the pre-computed filter to work properly.
+
     Warnings
     --------
     UserWarning
@@ -153,24 +158,69 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
     import warnings
 
     EXPECTED_SAMPLING_FREQUENCY = 1500.0
+    MINIMUM_SAFE_FREQUENCY = 1200.0  # Pre-computed filter needs ~954 samples minimum
 
     if sampling_frequency is not None and not np.isclose(
         sampling_frequency, EXPECTED_SAMPLING_FREQUENCY
     ):
-        warnings.warn(
-            f"The pre-computed ripple filter is designed for {EXPECTED_SAMPLING_FREQUENCY} Hz sampling. "
-            f"Your data has {sampling_frequency} Hz sampling frequency. "
-            f"For optimal results with different sampling rates, consider using "
-            f"`ripple_bandpass_filter()` to generate a custom filter.",
-            UserWarning,
-            stacklevel=2,
-        )
+        # Check if sampling frequency is too low for pre-computed filter
+        if sampling_frequency < MINIMUM_SAFE_FREQUENCY:
+            raise ValueError(
+                f"Sampling frequency ({sampling_frequency} Hz) is too low for the pre-computed filter.\n"
+                f"The pre-computed filter requires at least ~{MINIMUM_SAFE_FREQUENCY} Hz.\n"
+                f"\n"
+                f"Solution: Generate a custom filter for your sampling frequency:\n"
+                f"\n"
+                f"  from ripple_detection import ripple_bandpass_filter\n"
+                f"  from scipy.signal import filtfilt\n"
+                f"  \n"
+                f"  filter_num, filter_denom = ripple_bandpass_filter({sampling_frequency})\n"
+                f"  filtered_data = filtfilt(filter_num, filter_denom, data, axis=0)\n"
+                f"\n"
+                f"Or use a higher sampling rate when recording your data."
+            )
+        else:
+            warnings.warn(
+                f"The pre-computed ripple filter is optimized for {EXPECTED_SAMPLING_FREQUENCY} Hz sampling.\n"
+                f"Your data: {sampling_frequency} Hz. Results may be suboptimal.\n"
+                f"For best results, use ripple_bandpass_filter({sampling_frequency}) to generate a custom filter.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     filter_numerator, filter_denominator = _get_ripplefilter_kernel()
-    is_nan = np.any(np.isnan(data), axis=-1)
-    filtered_data = np.full_like(data, np.nan)
+
+    # Validate data length
+    data_array = np.asarray(data)
+
+    # Check if data is multi-dimensional - handle NaN checking appropriately
+    if data_array.ndim > 1:
+        is_nan = np.any(np.isnan(data_array), axis=-1)
+    else:
+        is_nan = np.isnan(data_array)
+
+    non_nan_length = np.sum(~is_nan)
+
+    # filtfilt requires data length > 3 * filter_length (for padding)
+    min_required_length = 3 * len(filter_numerator)
+    if non_nan_length < min_required_length:
+        raise ValueError(
+            f"Data is too short for the pre-computed filter.\n"
+            f"Non-NaN data length: {non_nan_length} samples\n"
+            f"Minimum required: {min_required_length} samples (~{min_required_length/sampling_frequency if sampling_frequency else 'N/A':.2f} seconds at {sampling_frequency} Hz)\n"
+            f"\n"
+            f"Solutions:\n"
+            f"  1. Use a longer recording segment\n"
+            f"  2. Generate a shorter custom filter:\n"
+            f"     from ripple_detection import ripple_bandpass_filter\n"
+            f"     from scipy.signal import filtfilt\n"
+            f"     filter_num, filter_denom = ripple_bandpass_filter({sampling_frequency})\n"
+            f"     filtered_data = filtfilt(filter_num, filter_denom, data, axis=0)"
+        )
+
+    filtered_data = np.full_like(data_array, np.nan)
     filtered_data[~is_nan] = filtfilt(
-        filter_numerator, filter_denominator, data[~is_nan], axis=0
+        filter_numerator, filter_denominator, data_array[~is_nan], axis=0
     )
     return filtered_data
 
