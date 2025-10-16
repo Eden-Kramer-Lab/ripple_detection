@@ -190,3 +190,5 @@ The package also validates notebooks run without errors in CI.
 - Modular functions with single responsibility
 - Comprehensive test coverage for core functionality
 - Continuous integration with GitHub Actions (tests on Python 3.10, 3.11, 3.12)
+
+Use the `ripple_detection` conda environment if available for testing and development to ensure consistent dependency versions.
