@@ -2,10 +2,10 @@
 
 import numpy as np
 import pandas as pd
-import pytest
-from hypothesis import assume, given, settings
+from hypothesis import given, settings
 from hypothesis import strategies as st
 from hypothesis.extra.numpy import arrays
+
 from ripple_detection.core import (
     exclude_close_events,
     filter_ripple_band,
@@ -151,7 +151,9 @@ class TestGaussianSmoothProperties:
         assert smoothed.shape == data.shape
 
     @given(
-        value=st.floats(min_value=-10.0, max_value=10.0, allow_nan=False, allow_infinity=False),
+        value=st.floats(
+            min_value=-10.0, max_value=10.0, allow_nan=False, allow_infinity=False
+        ),
         n_samples=st.integers(min_value=1500, max_value=3000),
         sigma=st.floats(min_value=0.004, max_value=0.02),
     )
@@ -220,7 +222,9 @@ class TestMergeOverlappingRangesProperties:
     def test_merge_reduces_or_maintains_count(self, ranges):
         """Merging should reduce or maintain the number of ranges."""
         # Filter out invalid ranges and duplicates
-        valid_ranges = sorted(set((min(s, e), max(s, e)) for s, e in ranges if abs(s - e) > 0.01))
+        valid_ranges = sorted(
+            {(min(s, e), max(s, e)) for s, e in ranges if abs(s - e) > 0.01}
+        )
 
         if len(valid_ranges) == 0:
             return
@@ -242,7 +246,9 @@ class TestMergeOverlappingRangesProperties:
     @settings(max_examples=50, deadline=1000)
     def test_merged_ranges_sorted(self, ranges):
         """Merged ranges should be sorted by start time."""
-        valid_ranges = sorted(set((min(s, e), max(s, e)) for s, e in ranges if abs(s - e) > 0.01))
+        valid_ranges = sorted(
+            {(min(s, e), max(s, e)) for s, e in ranges if abs(s - e) > 0.01}
+        )
 
         if len(valid_ranges) == 0:
             return
@@ -266,7 +272,9 @@ class TestMergeOverlappingRangesProperties:
     @settings(max_examples=50, deadline=1000)
     def test_merged_ranges_non_overlapping(self, ranges):
         """Merged ranges should not overlap."""
-        valid_ranges = sorted(set((min(s, e), max(s, e)) for s, e in ranges if abs(s - e) > 0.01))
+        valid_ranges = sorted(
+            {(min(s, e), max(s, e)) for s, e in ranges if abs(s - e) > 0.01}
+        )
 
         if len(valid_ranges) == 0:
             return

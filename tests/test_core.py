@@ -3,6 +3,8 @@
 import numpy as np
 import pandas as pd
 import pytest
+from scipy.stats import zscore
+
 from ripple_detection.core import (
     _extend_segment,
     _find_containing_interval,
@@ -19,7 +21,6 @@ from ripple_detection.core import (
     segment_boolean_series,
     threshold_by_zscore,
 )
-from scipy.stats import zscore
 
 
 @pytest.mark.parametrize(
@@ -79,7 +80,7 @@ def test_segment_boolean_series(series, expected_segments):
         [
             (np.allclose(expected_start, test_start)) & (np.allclose(expected_end, test_end))
             for (test_start, test_end), (expected_start, expected_end) in zip(
-                segment_boolean_series(series), expected_segments
+                segment_boolean_series(series), expected_segments, strict=False
             )
         ]
     )
@@ -188,7 +189,7 @@ class TestFilterRippleBand:
     def test_multi_channel(self):
         """Test filtering multi-channel LFP with realistic data."""
         # Use the actual test fixtures which generate proper LFP data
-        from ripple_detection.simulate import simulate_time, simulate_LFP
+        from ripple_detection.simulate import simulate_LFP, simulate_time
 
         sampling_frequency = 1500
         n_samples = sampling_frequency * 3  # 3 seconds

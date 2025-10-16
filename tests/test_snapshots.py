@@ -2,9 +2,10 @@
 
 import numpy as np
 import pytest
+
 from ripple_detection import (
-    Kay_ripple_detector,
     Karlsson_ripple_detector,
+    Kay_ripple_detector,
     filter_ripple_band,
 )
 from ripple_detection.detectors import (
@@ -75,7 +76,7 @@ def test_multiunit_data(reproducible_seed):
     for idx in hse_indices:
         if idx < len(time) - 10:
             # Make multiple neurons fire together
-            multiunit[idx:idx+10, :7] = 1
+            multiunit[idx : idx + 10, :7] = 1
 
     return time, multiunit
 
@@ -97,7 +98,10 @@ class TestKayDetectorSnapshots:
         speed = np.ones(len(time)) * 2.0
 
         ripples = Kay_ripple_detector(
-            time, filtered_lfp, speed, sampling_frequency=1500,
+            time,
+            filtered_lfp,
+            speed,
+            sampling_frequency=1500,
             speed_threshold=4.0,
             minimum_duration=0.015,
             zscore_threshold=2.0,
@@ -125,7 +129,10 @@ class TestKayDetectorSnapshots:
         speed = np.ones(len(time)) * 2.0
 
         ripples = Kay_ripple_detector(
-            time, filtered_lfps, speed, sampling_frequency=1500,
+            time,
+            filtered_lfps,
+            speed,
+            sampling_frequency=1500,
             speed_threshold=4.0,
             minimum_duration=0.015,
             zscore_threshold=2.0,
@@ -153,7 +160,10 @@ class TestKarlssonDetectorSnapshots:
         speed = np.ones(len(time)) * 2.0
 
         ripples = Karlsson_ripple_detector(
-            time, filtered_lfp, speed, sampling_frequency=1500,
+            time,
+            filtered_lfp,
+            speed,
+            sampling_frequency=1500,
             speed_threshold=4.0,
             minimum_duration=0.015,
             zscore_threshold=2.0,
@@ -174,7 +184,10 @@ class TestKarlssonDetectorSnapshots:
         speed = np.ones(len(time)) * 2.0
 
         ripples = Karlsson_ripple_detector(
-            time, filtered_lfps, speed, sampling_frequency=1500,
+            time,
+            filtered_lfps,
+            speed,
+            sampling_frequency=1500,
             speed_threshold=4.0,
             minimum_duration=0.015,
             zscore_threshold=2.0,
@@ -198,7 +211,10 @@ class TestRoumisDetectorSnapshots:
         speed = np.ones(len(time)) * 2.0
 
         ripples = Roumis_ripple_detector(
-            time, filtered_lfps, speed, sampling_frequency=1500,
+            time,
+            filtered_lfps,
+            speed,
+            sampling_frequency=1500,
             speed_threshold=4.0,
             minimum_duration=0.015,
             zscore_threshold=1.5,  # Lower threshold for this detector
@@ -224,7 +240,10 @@ class TestMultiunitHSEDetectorSnapshots:
         speed = np.ones(len(time)) * 2.0
 
         hse_events = multiunit_HSE_detector(
-            time, multiunit, speed, sampling_frequency=1500,
+            time,
+            multiunit,
+            speed,
+            sampling_frequency=1500,
             speed_threshold=4.0,
             minimum_duration=0.015,
             zscore_threshold=2.0,
@@ -252,9 +271,7 @@ class TestDetectorComparison:
         speed = np.ones(len(time)) * 2.0
 
         # Run all three ripple detectors
-        kay_ripples = Kay_ripple_detector(
-            time, filtered_lfps, speed, sampling_frequency=1500
-        )
+        kay_ripples = Kay_ripple_detector(time, filtered_lfps, speed, sampling_frequency=1500)
 
         karlsson_ripples = Karlsson_ripple_detector(
             time, filtered_lfps, speed, sampling_frequency=1500
@@ -287,7 +304,10 @@ class TestRegressionPrevention:
         speed = np.ones(len(time)) * 2.0
 
         ripples = Kay_ripple_detector(
-            time, filtered_lfp, speed, sampling_frequency=1500,
+            time,
+            filtered_lfp,
+            speed,
+            sampling_frequency=1500,
             zscore_threshold=3.0,  # High threshold
         )
 
@@ -312,7 +332,10 @@ class TestRegressionPrevention:
         speed = np.ones(len(time)) * 2.0
 
         ripples = Kay_ripple_detector(
-            time, filtered_lfp, speed, sampling_frequency=1500,
+            time,
+            filtered_lfp,
+            speed,
+            sampling_frequency=1500,
             zscore_threshold=2.0,
         )
 
@@ -322,5 +345,6 @@ class TestRegressionPrevention:
         if len(ripples) > 0:
             # Check that detected ripple is near expected time
             detected_times = ripples["start_time"].values
-            assert any(abs(t - 1.0) < 0.1 for t in detected_times), \
-                "Detected ripple not near expected time"
+            assert any(
+                abs(t - 1.0) < 0.1 for t in detected_times
+            ), "Detected ripple not near expected time"

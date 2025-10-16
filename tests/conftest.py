@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+
 from ripple_detection.simulate import simulate_LFP, simulate_time
 
 

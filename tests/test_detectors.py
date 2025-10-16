@@ -2,9 +2,10 @@
 
 import numpy as np
 import pandas as pd
+
 from ripple_detection import (
-    Kay_ripple_detector,
     Karlsson_ripple_detector,
+    Kay_ripple_detector,
     filter_ripple_band,
 )
 from ripple_detection.detectors import (

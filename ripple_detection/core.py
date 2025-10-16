@@ -407,7 +407,7 @@ def threshold_by_zscore(
 
 
 def merge_overlapping_ranges(
-    ranges: list[tuple[float, float]]
+    ranges: list[tuple[float, float]],
 ) -> Generator[tuple[float, float], None, None]:
     """Merge overlapping and adjacent ranges
 
