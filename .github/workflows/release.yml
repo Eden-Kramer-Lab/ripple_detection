@@ -54,9 +54,9 @@ jobs:
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.12'
         uses: codecov/codecov-action@v5
+        continue-on-error: true
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-        continue-on-error: true
       - name: Test notebooks
         if: matrix.python-version == '3.12'
         run: |
