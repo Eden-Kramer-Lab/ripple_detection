@@ -3,19 +3,19 @@ channels:
 - defaults
 - conda-forge
 dependencies:
-- "python >= 3.5"
-- "numpy >= 1.11"
-- scipy
-- "pandas >= 0.18.0"
-- matplotlib
-- jupyter
-- jupyterlab
-- nb_conda
-- setuptools
-- "pytest >= 2.7.1"
-- pytest-cov
+- python >=3.10,<3.14
+- "numpy >= 1.23.0"
+- "scipy >= 1.9.0"
+- "pandas >= 1.5.0"
+- "matplotlib >= 3.5.0"
+- "jupyter >= 1.0.0"
+- "jupyterlab >= 3.0.0"
+- "pytest >= 7.0.0"
+- "pytest-cov >= 4.0.0"
 - coveralls
-- flake8
+- "flake8 >= 6.0.0"
 - pip
 - pip:
-  - 'black[jupyter]'
+  - 'black[jupyter] >= 23.0.0'
+  - hatchling
+  - hatch-vcs

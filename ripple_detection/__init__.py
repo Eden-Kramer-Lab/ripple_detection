@@ -9,3 +9,8 @@ from ripple_detection.detectors import (
     Roumis_ripple_detector,
     multiunit_HSE_detector,
 )
+
+try:
+    from ripple_detection._version import __version__
+except ImportError:
+    __version__ = "unknown"

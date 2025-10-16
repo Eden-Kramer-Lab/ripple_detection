@@ -1,0 +1,115 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ripple_detection"
+dynamic = ["version"]
+description = "Tools for finding sharp-wave ripple events (150-250 Hz) from local field potentials."
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Eric Denovellis", email = "edeno@bu.edu"},
+]
+keywords = ["neuroscience", "hippocampus", "ripple", "LFP", "sharp-wave"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "numpy>=1.23.0",
+    "pandas>=1.5.0",
+    "scipy>=1.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black[jupyter]>=23.0.0",
+    "flake8>=6.0.0",
+]
+examples = [
+    "matplotlib>=3.5.0",
+    "jupyter>=1.0.0",
+    "jupyterlab>=3.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Eden-Kramer-Lab/ripple_detection"
+Repository = "https://github.com/Eden-Kramer-Lab/ripple_detection"
+Issues = "https://github.com/Eden-Kramer-Lab/ripple_detection/issues"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "ripple_detection/_version.py"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/ripple_detection",
+    "/tests",
+    "/examples",
+    "README.md",
+    "LICENSE",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["ripple_detection"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"ripple_detection/ripplefilter.mat" = "ripple_detection/ripplefilter.mat"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "--cov=ripple_detection",
+    "--cov-report=term-missing",
+    "--verbose",
+]
+
+[tool.black]
+line-length = 95
+target-version = ["py310", "py311", "py312", "py313"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.hatch
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | build
+  | dist
+)/
+'''
+
+[tool.coverage.run]
+branch = true
+source = ["ripple_detection"]
+omit = [
+    "*/tests/*",
+    "*/_version.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

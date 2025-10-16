@@ -98,4 +98,10 @@ ENV/
 # mypy
 .mypy_cache/
 .DS_Store
+
+# Modern build tools
+.hatch/
+.pytest_cache/
+
+# Auto-generated version file
 ripple_detection/_version.py
