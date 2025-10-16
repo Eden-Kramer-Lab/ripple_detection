@@ -5,6 +5,7 @@ This document explains how to set up automatic PyPI publishing using the new `re
 ## Overview
 
 The workflow automatically:
+
 1. ✅ Runs quality checks (black, ruff, mypy)
 2. ✅ Tests on Python 3.10, 3.11, 3.12, 3.13
 3. ✅ Builds distributions (wheel + sdist)
@@ -18,7 +19,7 @@ The workflow automatically:
 
 PyPI now supports trusted publishing from GitHub Actions without API tokens:
 
-1. Go to https://pypi.org/manage/account/publishing/
+1. Go to <https://pypi.org/manage/account/publishing/>
 2. Click "Add a new pending publisher"
 3. Fill in:
    - **PyPI Project Name**: `ripple-detection`
@@ -34,7 +35,7 @@ That's it! No tokens needed. GitHub Actions will authenticate automatically.
 
 If you prefer the traditional method:
 
-1. Go to https://pypi.org/manage/account/token/
+1. Go to <https://pypi.org/manage/account/token/>
 2. Create an API token with scope limited to `ripple-detection` project
 3. Copy the token (starts with `pypi-`)
 4. Go to your GitHub repo → Settings → Secrets and variables → Actions
@@ -42,6 +43,7 @@ If you prefer the traditional method:
    - Name: `PYPI_API_TOKEN`
    - Value: paste your PyPI token
 6. Update `.github/workflows/release.yml`:
+
    ```yaml
    # Change this:
    - name: Publish to PyPI
@@ -59,7 +61,7 @@ If you prefer the traditional method:
 
 For coverage reporting:
 
-1. Go to https://codecov.io/ and sign in with GitHub
+1. Go to <https://codecov.io/> and sign in with GitHub
 2. Add the `ripple_detection` repository
 3. Copy the upload token
 4. Add as GitHub secret: `CODECOV_TOKEN`
@@ -81,6 +83,7 @@ git push origin v1.6.0
 ```
 
 The workflow will automatically:
+
 - Run all tests
 - Build the package
 - Publish to PyPI
@@ -88,12 +91,12 @@ The workflow will automatically:
 
 ### Monitoring the Release
 
-1. Go to: https://github.com/Eden-Kramer-Lab/ripple_detection/actions
+1. Go to: <https://github.com/Eden-Kramer-Lab/ripple_detection/actions>
 2. Find the "Test, Build, and Publish" workflow for your tag
 3. Watch the progress through each job
 4. When complete, check:
-   - PyPI: https://pypi.org/project/ripple-detection/
-   - GitHub Releases: https://github.com/Eden-Kramer-Lab/ripple_detection/releases
+   - PyPI: <https://pypi.org/project/ripple-detection/>
+   - GitHub Releases: <https://github.com/Eden-Kramer-Lab/ripple_detection/releases>
 
 ## Release Checklist
 
@@ -111,9 +114,11 @@ Before pushing a release tag:
 ### Release fails at "Publish to PyPI"
 
 **Error: "The user 'token' isn't allowed to upload"**
+
 - Solution: Set up trusted publishing (see Setup section)
 
 **Error: "File already exists"**
+
 - Problem: Version already published
 - Solution: Delete the tag, increment version, create new tag
 
@@ -126,11 +131,13 @@ Before pushing a release tag:
 ### Quality checks fail
 
 - Run locally to see errors:
+
   ```bash
   black --check ripple_detection/ tests/
   ruff check ripple_detection/ tests/
   mypy ripple_detection/
   ```
+
 - Fix issues, commit, and push
 
 ## Workflow Files
@@ -167,11 +174,14 @@ Before pushing a release tag:
 If you need to rollback a release:
 
 1. **PyPI**: You cannot delete releases, but you can yank them:
+
    ```bash
    pip install --upgrade twine
    twine yank ripple-detection 1.6.0 -r pypi
    ```
+
 2. **GitHub**: Delete the release and tag:
+
    ```bash
    # Delete GitHub release (via web UI)
    git tag -d v1.6.0                    # Delete local tag
@@ -180,6 +190,6 @@ If you need to rollback a release:
 
 ## Questions?
 
-- GitHub Actions docs: https://docs.github.com/en/actions
-- PyPI Trusted Publishing: https://docs.pypi.org/trusted-publishers/
-- Issues: File at https://github.com/Eden-Kramer-Lab/ripple_detection/issues
+- GitHub Actions docs: <https://docs.github.com/en/actions>
+- PyPI Trusted Publishing: <https://docs.pypi.org/trusted-publishers/>
+- Issues: File at <https://github.com/Eden-Kramer-Lab/ripple_detection/issues>
