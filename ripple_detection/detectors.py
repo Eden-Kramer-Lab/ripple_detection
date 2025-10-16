@@ -21,6 +21,33 @@ from ripple_detection.core import (
 def get_Kay_ripple_consensus_trace(
     ripple_filtered_lfps: ArrayLike, sampling_frequency: float, smoothing_sigma: float = 0.004
 ) -> NDArray:
+    """Compute Kay consensus trace from multi-channel ripple-filtered LFPs.
+
+    Combines multiple LFP channels into a single consensus trace using the sum
+    of squared envelopes, following Kay et al. 2016. The trace is smoothed with
+    a Gaussian kernel.
+
+    Parameters
+    ----------
+    ripple_filtered_lfps : array_like, shape (n_time, n_channels)
+        Bandpass filtered LFP signals in the ripple band (150-250 Hz).
+    sampling_frequency : float
+        Sampling rate in Hz.
+    smoothing_sigma : float, optional
+        Standard deviation of Gaussian smoothing kernel in seconds.
+        Default is 0.004 (4 ms).
+
+    Returns
+    -------
+    consensus_trace : ndarray, shape (n_time,)
+        Combined consensus trace computed as sqrt(sum(envelope^2)).
+
+    References
+    ----------
+    .. [1] Kay, K., et al. (2016). A hippocampal network for spatial coding
+       during immobility and sleep. Nature, 531(7593), 185-190.
+
+    """
     ripple_consensus_trace = np.full_like(ripple_filtered_lfps, np.nan)
     not_null = np.all(pd.notnull(ripple_filtered_lfps), axis=1)
 
@@ -43,43 +70,55 @@ def Kay_ripple_detector(
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
 ) -> pd.DataFrame:
-    """Find start and end times of sharp wave ripple events (150-250 Hz)
-    based on Kay et al. 2016 [1].
+    """Detect sharp-wave ripple events using multi-channel consensus method.
+
+    Implements the Kay et al. 2016 ripple detection algorithm, which combines
+    multiple LFP channels into a consensus trace using sum of squared envelopes.
+    Ripples are identified as periods where the z-scored consensus exceeds a
+    threshold during immobility.
 
     Parameters
     ----------
     time : array_like, shape (n_time,)
-    filtered_lfps : array_like, shape (n_time, n_signals)
-        Bandpass filtered time series of electric potentials in the ripple band
+        Time values for each sample.
+    filtered_lfps : array_like, shape (n_time, n_channels)
+        Bandpass filtered LFP signals in the ripple band (150-250 Hz).
     speed : array_like, shape (n_time,)
-        Running speed of animal
+        Animal's running speed at each time point.
     sampling_frequency : float
-        Number of samples per second.
+        Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum running speed of animal for a ripple
+        Maximum speed (cm/s) for ripple detection. Ripples during movement
+        (speed > threshold) are excluded. Default is 4.0 cm/s.
     minimum_duration : float, optional
-        Minimum time the z-score has to stay above threshold to be
-        considered a ripple. The default is given assuming time is in
-        units of seconds.
+        Minimum duration (seconds) that z-score must exceed threshold.
+        Default is 0.015 (15 ms).
     zscore_threshold : float, optional
-        Number of standard deviations the ripple power must exceed to
-        be considered a ripple
+        Number of standard deviations above mean for detection.
+        Default is 2.0.
     smoothing_sigma : float, optional
-        Amount to smooth the time series over time. The default is
-        given assuming time is in units of seconds.
+        Standard deviation (seconds) of Gaussian smoothing kernel applied
+        to consensus trace. Default is 0.004 (4 ms).
     close_ripple_threshold : float, optional
-        Exclude ripples that occur within `close_ripple_threshold` of a
-        previously detected ripple.
+        Minimum time (seconds) between ripples. Ripples closer than this
+        are merged. Default is 0.0 (no merging).
 
     Returns
     -------
-    ripple_times : pandas DataFrame
+    ripple_times : pd.DataFrame
+        DataFrame with one row per detected ripple, containing:
+        - start_time, end_time, duration
+        - max_thresh: maximum sustained z-score
+        - mean_zscore, median_zscore, max_zscore, min_zscore
+        - area: integral of z-score
+        - total_energy: integral of squared z-score
+        - speed metrics: speed_at_start, speed_at_end, max/min/median/mean_speed
 
     References
     ----------
     .. [1] Kay, K., Sosa, M., Chung, J.E., Karlsson, M.P., Larkin, M.C.,
-    and Frank, L.M. (2016). A hippocampal network for spatial coding during
-    immobility and sleep. Nature 531, 185-190.
+       and Frank, L.M. (2016). A hippocampal network for spatial coding during
+       immobility and sleep. Nature 531, 185-190.
 
     """
     filtered_lfps = np.asarray(filtered_lfps)
@@ -121,43 +160,43 @@ def Karlsson_ripple_detector(
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
 ) -> pd.DataFrame:
-    """Find start and end times of sharp wave ripple events (150-250 Hz)
-    based on Karlsson et al. 2009 [1].
+    """Detect sharp-wave ripples using per-channel detection with merging.
+
+    Implements the Karlsson et al. 2009 algorithm, which detects ripples on
+    each LFP channel independently, then merges overlapping events across
+    channels. More sensitive to local ripples than consensus methods.
 
     Parameters
     ----------
     time : array_like, shape (n_time,)
-    filtered_lfps : array_like, shape (n_time, n_signals)
-        Bandpass filtered time series of electric potentials in the ripple band
+        Time values for each sample.
+    filtered_lfps : array_like, shape (n_time, n_channels)
+        Bandpass filtered LFP signals in the ripple band (150-250 Hz).
     speed : array_like, shape (n_time,)
-        Running speed of animal
+        Animal's running speed at each time point.
     sampling_frequency : float
-        Number of samples per second.
+        Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum running speed of animal for a ripple
+        Maximum speed (cm/s) for ripple detection. Default is 4.0 cm/s.
     minimum_duration : float, optional
-        Minimum time the z-score has to stay above threshold to be
-        considered a ripple. The default is given assuming time is in
-        units of seconds.
+        Minimum duration (seconds) for detection. Default is 0.015 (15 ms).
     zscore_threshold : float, optional
-        Number of standard deviations the ripple power must exceed to
-        be considered a ripple
+        Z-score threshold for detection. Default is 3.0 (higher than Kay).
     smoothing_sigma : float, optional
-        Amount to smooth the time series over time. The default is
-        given assuming time is in units of seconds.
+        Standard deviation (seconds) of Gaussian smoothing. Default is 0.004 (4 ms).
     close_ripple_threshold : float, optional
-        Exclude ripples that occur within `close_ripple_threshold` of a
-        previously detected ripple.
+        Minimum time (seconds) between ripples. Default is 0.0.
 
     Returns
     -------
-    ripple_times : pandas DataFrame
+    ripple_times : pd.DataFrame
+        DataFrame with detected ripples and comprehensive statistics (see
+        Kay_ripple_detector for column descriptions).
 
     References
     ----------
     .. [1] Karlsson, M.P., and Frank, L.M. (2009). Awake replay of remote
-    experiences in the hippocampus. Nature Neuroscience 12, 913-918.
-
+       experiences in the hippocampus. Nature Neuroscience 12, 913-918.
 
     """
     filtered_lfps = np.asarray(filtered_lfps)
@@ -202,37 +241,38 @@ def Roumis_ripple_detector(
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
 ) -> pd.DataFrame:
-    """Find start and end times of sharp wave ripple events (150-250 Hz)
-    based on [1].
+    """Detect sharp-wave ripples using averaged square-root envelope method.
+
+    Variant detection method that averages the square-root of squared envelopes
+    across channels. Provides a balanced approach between Kay (consensus) and
+    Karlsson (per-channel) methods.
 
     Parameters
     ----------
     time : array_like, shape (n_time,)
-    filtered_lfps : array_like, shape (n_time, n_signals)
-        Bandpass filtered time series of electric potentials in the ripple band
+        Time values for each sample.
+    filtered_lfps : array_like, shape (n_time, n_channels)
+        Bandpass filtered LFP signals in the ripple band (150-250 Hz).
     speed : array_like, shape (n_time,)
-        Running speed of animal
+        Animal's running speed at each time point.
     sampling_frequency : float
-        Number of samples per second.
+        Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum running speed of animal for a ripple
+        Maximum speed (cm/s) for ripple detection. Default is 4.0 cm/s.
     minimum_duration : float, optional
-        Minimum time the z-score has to stay above threshold to be
-        considered a ripple. The default is given assuming time is in
-        units of seconds.
+        Minimum duration (seconds) for detection. Default is 0.015 (15 ms).
     zscore_threshold : float, optional
-        Number of standard deviations the ripple power must exceed to
-        be considered a ripple
+        Z-score threshold for detection. Default is 2.0.
     smoothing_sigma : float, optional
-        Amount to smooth the time series over time. The default is
-        given assuming time is in units of seconds.
+        Standard deviation (seconds) of Gaussian smoothing. Default is 0.004 (4 ms).
     close_ripple_threshold : float, optional
-        Exclude ripples that occur within `close_ripple_threshold` of a
-        previously detected ripple.
+        Minimum time (seconds) between ripples. Default is 0.0.
 
     Returns
     -------
-    ripple_times : pandas DataFrame
+    ripple_times : pd.DataFrame
+        DataFrame with columns start_time, end_time only (simplified output
+        compared to Kay and Karlsson detectors).
 
     """
     filtered_lfps = np.asarray(filtered_lfps)
@@ -275,43 +315,47 @@ def multiunit_HSE_detector(
     close_event_threshold: float = 0.0,
     use_speed_threshold_for_zscore: bool = False,
 ) -> pd.DataFrame:
-    """Multiunit High Synchrony Event detector. Finds times when the multiunit
-    population spiking activity is high relative to the average.
+    """Detect High Synchrony Events from multiunit spiking activity.
+
+    Identifies periods of elevated population spiking activity during immobility,
+    following Davidson et al. 2009. The population firing rate is smoothed and
+    z-scored, then thresholded to find synchronous events.
 
     Parameters
     ----------
-    time : ndarray, shape (n_time,)
-    multiunit : ndarray, shape (n_time, n_signals)
-        Binary array of multiunit spike times.
-    speed : ndarray, shape (n_time,)
-        Running speed of animal
+    time : array_like, shape (n_time,)
+        Time values for each sample.
+    multiunit : array_like, shape (n_time, n_units)
+        Binary spike indicator matrix (1 = spike, 0 = no spike) for each unit.
+    speed : array_like, shape (n_time,)
+        Animal's running speed at each time point.
     sampling_frequency : float
-        Number of samples per second.
-    speed_threshold : float
-        Maximum running speed of animal to be counted as an event
-    minimum_duration : float
-        Minimum time the z-score has to stay above threshold to be
-        considered an event.
-    zscore_threshold : float
-        Number of standard deviations the multiunit population firing rate must
-        exceed to be considered an event
-    smoothing_sigma : float or np.timedelta
-        Amount to smooth the firing rate over time. The default is
-        given assuming time is in units of seconds.
-    close_event_threshold : float
-        Exclude events that occur within `close_event_threshold` of a
-        previously detected event.
-    use_speed_threshold_for_zscore : bool
-        Use speed thresholded multiunit for mean and std for z-score calculation
+        Sampling rate in Hz.
+    speed_threshold : float, optional
+        Maximum speed (cm/s) for event detection. Default is 4.0 cm/s.
+    minimum_duration : float, optional
+        Minimum duration (seconds) for detection. Default is 0.015 (15 ms).
+    zscore_threshold : float, optional
+        Z-score threshold for population firing rate. Default is 2.0.
+    smoothing_sigma : float, optional
+        Standard deviation (seconds) of Gaussian smoothing applied to firing
+        rate. Default is 0.015 (15 ms, longer than ripple detectors).
+    close_event_threshold : float, optional
+        Minimum time (seconds) between events. Default is 0.0.
+    use_speed_threshold_for_zscore : bool, optional
+        If True, compute z-score statistics (mean/std) using only immobility
+        periods (speed < threshold). Default is False (use all time points).
 
     Returns
     -------
-    high_synchrony_event_times : pandas.DataFrame, shape (n_events, 2)
+    high_synchrony_events : pd.DataFrame
+        DataFrame with detected events and comprehensive statistics (see
+        Kay_ripple_detector for column descriptions).
 
     References
     ----------
     .. [1] Davidson, T.J., Kloosterman, F., and Wilson, M.A. (2009).
-    Hippocampal Replay of Extended Experience. Neuron 63, 497–507.
+       Hippocampal Replay of Extended Experience. Neuron 63, 497–507.
 
     """
     multiunit = np.asarray(multiunit)
@@ -385,6 +429,37 @@ def _get_event_stats(
     speed: ArrayLike,
     minimum_duration: float = 0.015,
 ) -> pd.DataFrame:
+    """Compute comprehensive statistics for detected events.
+
+    Calculates temporal, z-score, signal, and speed metrics for each event.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2)
+        Array of [start_time, end_time] for each event.
+    time : array_like, shape (n_time,)
+        Time values for each sample.
+    zscore_metric : array_like, shape (n_time,)
+        Z-scored signal used for detection.
+    speed : array_like, shape (n_time,)
+        Animal's speed at each time point.
+    minimum_duration : float, optional
+        Minimum duration for max_thresh calculation. Default is 0.015 (15 ms).
+
+    Returns
+    -------
+    event_stats : pd.DataFrame
+        DataFrame with one row per event and columns:
+        - start_time, end_time: Event boundaries
+        - duration: Event duration (end - start)
+        - max_thresh: Maximum z-score sustained for minimum_duration
+        - mean_zscore, median_zscore, max_zscore, min_zscore: Z-score statistics
+        - area: Integral of z-score over event duration
+        - total_energy: Integral of squared z-score
+        - speed_at_start, speed_at_end: Speed at event boundaries
+        - max_speed, min_speed, median_speed, mean_speed: Speed statistics
+
+    """
     event_times_arr = np.asarray(event_times)
     time_arr = np.asarray(time)
     zscore_metric_arr = np.asarray(zscore_metric)

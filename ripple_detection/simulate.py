@@ -10,34 +10,102 @@ RIPPLE_FREQUENCY = 200
 
 
 def simulate_time(n_samples: int, sampling_frequency: float) -> NDArray:
+    """Generate time array for simulation.
+
+    Parameters
+    ----------
+    n_samples : int
+        Number of samples in the time series.
+    sampling_frequency : float
+        Sampling rate in Hz.
+
+    Returns
+    -------
+    time : ndarray, shape (n_samples,)
+        Time array in seconds, starting at 0.
+
+    """
     return np.arange(n_samples) / sampling_frequency
 
 
 def mean_squared(x: NDArray) -> float:
+    """Calculate the mean squared value of a signal.
+
+    Parameters
+    ----------
+    x : ndarray
+        Input signal.
+
+    Returns
+    -------
+    ms : float
+        Mean of squared absolute values.
+
+    """
     return (np.abs(x) ** 2.0).mean()
 
 
 def normalize(y: NDArray, x: NDArray | None = None) -> NDArray:
-    """normalize power in y to a (standard normal) white noise signal.
-    Optionally normalize to power in signal `x`.
-    #The mean power of a Gaussian with :math:`\\mu=0` and :math:`\\sigma=1` is 1.
-    https://github.com/python-acoustics/python-acoustics/tree/master/acoustics
+    """Normalize signal power to match white noise or reference signal.
+
+    Scales the signal `y` to have the same mean squared value as a standard
+    normal white noise signal (power = 1) or optionally to match the power
+    of a reference signal `x`.
+
+    Parameters
+    ----------
+    y : ndarray
+        Signal to be normalized.
+    x : ndarray, optional
+        Reference signal. If provided, `y` is normalized to match the power
+        of `x`. If None, normalized to unit power (standard normal).
+        Default is None.
+
+    Returns
+    -------
+    normalized_signal : ndarray
+        Signal with adjusted power, same shape as `y`.
+
+    Notes
+    -----
+    The mean power of a Gaussian with μ=0 and σ=1 is 1.
+
+    References
+    ----------
+    Adapted from python-acoustics library.
+
     """
     x = mean_squared(x) if x is not None else 1.0
     return y * np.sqrt(x / mean_squared(y))
 
 
 def pink(N: int, state: np.random.RandomState | None = None) -> NDArray:
-    """
-    Pink noise.
+    """Generate pink (1/f) noise.
 
-    :param N: Amount of samples.
-    :param state: State of PRNG.
-    :type state: :class:`np.random.RandomState`
+    Pink noise has equal power in proportionally-wide frequency bands (octaves).
+    Power spectral density decreases at 3 dB per octave (1/f spectrum).
 
-    Pink noise has equal power in bands that are proportionally wide.
-    Power density decreases with 3 dB per octave.
-    https://github.com/python-acoustics/python-acoustics/tree/master/acoustics
+    Parameters
+    ----------
+    N : int
+        Number of samples to generate.
+    state : np.random.RandomState, optional
+        Random number generator state for reproducibility. If None, uses a
+        new RandomState. Default is None.
+
+    Returns
+    -------
+    pink_noise : ndarray, shape (N,)
+        Pink noise signal normalized to unit power.
+
+    Notes
+    -----
+    Implementation uses frequency domain method with 1/sqrt(f) scaling.
+
+    References
+    ----------
+    Adapted from python-acoustics library.
+
     """
     state = np.random.RandomState() if state is None else state
     uneven = N % 2
@@ -50,31 +118,57 @@ def pink(N: int, state: np.random.RandomState | None = None) -> NDArray:
 
 
 def white(N: int, state: np.random.RandomState | None = None) -> NDArray:
-    """
-    White noise.
+    """Generate white noise.
 
-    :param N: Amount of samples.
-    :param state: State of PRNG.
-    :type state: :class:`np.random.RandomState`
+    White noise has constant power spectral density across all frequencies (flat
+    spectrum). Power increases by 3 dB per octave when integrated over octave bands.
 
-    White noise has a constant power density. It's narrowband spectrum is therefore flat.
-    The power in white noise will increase by a factor of two for each octave band,
-    and therefore increases with 3 dB per octave.
+    Parameters
+    ----------
+    N : int
+        Number of samples to generate.
+    state : np.random.RandomState, optional
+        Random number generator state for reproducibility. If None, uses a
+        new RandomState. Default is None.
+
+    Returns
+    -------
+    white_noise : ndarray, shape (N,)
+        White noise signal from standard normal distribution.
+
     """
     state = np.random.RandomState() if state is None else state
     return state.randn(N)
 
 
 def brown(N: int, state: np.random.RandomState | None = None) -> NDArray:
-    """
-    Brown noise.
+    """Generate brown (Brownian, red) noise.
 
-    :param N: Amount of samples.
-    :param state: State of PRNG.
-    :type state: :class:`np.random.RandomState`
+    Brown noise has power spectral density that decreases at 6 dB per octave
+    (1/f² spectrum). Power decreases at 3 dB per octave when integrated over
+    octave bands.
 
-    Power decreases with -3 dB per octave.
-    Power density decreases with 6 dB per octave.
+    Parameters
+    ----------
+    N : int
+        Number of samples to generate.
+    state : np.random.RandomState, optional
+        Random number generator state for reproducibility. If None, uses a
+        new RandomState. Default is None.
+
+    Returns
+    -------
+    brown_noise : ndarray, shape (N,)
+        Brown noise signal normalized to unit power.
+
+    Notes
+    -----
+    Implementation uses frequency domain method with 1/f scaling.
+
+    References
+    ----------
+    Adapted from python-acoustics library.
+
     """
     state = np.random.RandomState() if state is None else state
     uneven = N % 2
@@ -101,7 +195,45 @@ def simulate_LFP(
     noise_type: Literal["white", "pink", "brown"] = "brown",
     noise_amplitude: float = 1.3,
 ) -> NDArray:
-    """Simulate a LFP with a ripple at ripple times"""
+    """Simulate local field potential with embedded ripple oscillations.
+
+    Generates a synthetic LFP signal containing ripple events (200 Hz sinusoids)
+    embedded in colored noise. Ripples are amplitude-modulated by a Gaussian
+    envelope.
+
+    Parameters
+    ----------
+    time : ndarray, shape (n_time,)
+        Time array in seconds.
+    ripple_times : float or list of float
+        Center time(s) of ripple event(s) in seconds.
+    ripple_amplitude : float, optional
+        Peak amplitude of ripple oscillation. Default is 2.
+    ripple_duration : float, optional
+        Approximate duration (seconds) of ripple event, defined as 6 standard
+        deviations of the Gaussian envelope. Default is 0.100 (100 ms).
+    noise_type : {'white', 'pink', 'brown'}, optional
+        Type of background noise. Default is 'brown' (most realistic for LFP).
+    noise_amplitude : float, optional
+        Amplitude of background noise. Default is 1.3.
+
+    Returns
+    -------
+    lfp : ndarray, shape (n_time,)
+        Simulated LFP signal with embedded ripples.
+
+    Notes
+    -----
+    Ripple frequency is fixed at 200 Hz (RIPPLE_FREQUENCY constant).
+    The Gaussian envelope has sigma = ripple_duration / 6, so the ripple
+    amplitude decays to ~1% at ±3σ from the center.
+
+    Examples
+    --------
+    >>> time = simulate_time(3000, 1000)  # 3 seconds at 1000 Hz
+    >>> lfp = simulate_LFP(time, [1.0, 2.0], noise_type='brown')
+
+    """
     noise = (noise_amplitude / 2) * NOISE_FUNCTION[noise_type](time.size)
     ripple_signal = np.sin(2 * np.pi * time * RIPPLE_FREQUENCY)
     signal = []

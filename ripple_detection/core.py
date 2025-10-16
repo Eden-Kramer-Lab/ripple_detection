@@ -15,6 +15,24 @@ from scipy.signal import filtfilt, hilbert, remez
 
 
 def ripple_bandpass_filter(sampling_frequency: float) -> tuple[NDArray, float]:
+    """Generate a bandpass filter for the ripple frequency band (150-250 Hz).
+
+    Uses the Remez exchange algorithm to design a finite impulse response (FIR)
+    filter with 101 taps and 25 Hz transition bands.
+
+    Parameters
+    ----------
+    sampling_frequency : float
+        Sampling rate of the signal in Hz.
+
+    Returns
+    -------
+    filter_numerator : ndarray
+        Numerator coefficients of the filter.
+    filter_denominator : float
+        Denominator coefficient (always 1.0 for FIR filters).
+
+    """
     ORDER = 101
     nyquist = 0.5 * sampling_frequency
     TRANSITION_BAND = 25
@@ -67,20 +85,26 @@ def _get_series_start_end_times(series: pd.Series) -> tuple[NDArray, NDArray]:
 def segment_boolean_series(
     series: pd.Series, minimum_duration: float = 0.015
 ) -> list[tuple[float, float]]:
-    """Returns a list of tuples where each tuple contains the start time of
-    segment and end time of segment. It takes a boolean pandas series as
-    input where the index is time.
+    """Extract time segments from a boolean pandas Series.
+
+    Returns a list of tuples where each tuple contains the start and end time
+    of a segment. Segments are defined by consecutive True values in the input
+    series, where the series index represents time.
 
     Parameters
     ----------
-    series : pandas boolean Series (n_time,)
-        Consecutive Trues define each segment.
+    series : pd.Series
+        Boolean pandas Series with time as index. Consecutive True values
+        define each segment.
     minimum_duration : float, optional
-        Segments must be at least this duration to be included.
+        Minimum duration (in same units as index) for a segment to be included.
+        Default is 0.015 (15 ms if index is in seconds).
 
     Returns
     -------
-    segments : list of 2-element tuples
+    segments : list of tuple
+        List of (start_time, end_time) tuples for each segment that meets
+        the minimum duration requirement.
 
     """
     start_times, end_times = _get_series_start_end_times(series)
@@ -93,15 +117,22 @@ def segment_boolean_series(
 
 
 def filter_ripple_band(data: ArrayLike) -> NDArray:
-    """Returns a bandpass filtered signal between 150-250 Hz
+    """Apply bandpass filter to isolate ripple frequency band (150-250 Hz).
+
+    Uses a pre-computed filter kernel from the Frank lab with 40 dB roll-off,
+    10 Hz sidebands, and 1500 Hz sampling frequency. Handles NaN values by
+    filtering only non-NaN segments.
 
     Parameters
     ----------
-    data : array_like, shape (n_time,)
+    data : array_like, shape (n_time,) or (n_time, n_channels)
+        Input signal(s) to be filtered. Can be 1D or 2D.
 
     Returns
     -------
-    filtered_data : array_like, shape (n_time,)
+    filtered_data : ndarray, shape (n_time,) or (n_time, n_channels)
+        Bandpass filtered signal in the ripple band. NaN values are preserved
+        at their original locations.
 
     """
     filter_numerator, filter_denominator = _get_ripplefilter_kernel()
@@ -114,9 +145,18 @@ def filter_ripple_band(data: ArrayLike) -> NDArray:
 
 
 def _get_ripplefilter_kernel() -> tuple[NDArray, int]:
-    """Returns the pre-computed ripple filter kernel from the Frank lab.
-    The kernel is 150-250 Hz bandpass with 40 db roll off and 10 Hz
-    sidebands. Sampling frequency is 1500 Hz.
+    """Load the pre-computed ripple filter kernel from the Frank lab.
+
+    The kernel is a 150-250 Hz bandpass filter with 40 dB roll-off and 10 Hz
+    transition sidebands, designed for signals sampled at 1500 Hz.
+
+    Returns
+    -------
+    filter_numerator : ndarray
+        Filter kernel coefficients.
+    filter_denominator : int
+        Denominator coefficient (always 1 for FIR filters).
+
     """
     filter_file = join(abspath(dirname(__file__)), "ripplefilter.mat")
     ripplefilter = loadmat(filter_file)
@@ -129,23 +169,29 @@ def extend_threshold_to_mean(
     time: ArrayLike,
     minimum_duration: float = 0.015,
 ) -> list[tuple[float, float]]:
-    """Extract segments above threshold if they remain above the threshold
-    for a minimum amount of time and extend them to the mean.
+    """Extend threshold-crossing segments to where the signal crosses the mean.
+
+    Finds segments where the signal exceeds a threshold for a minimum duration,
+    then extends the boundaries of these segments to where the signal crosses
+    the mean value.
 
     Parameters
     ----------
-    is_above_mean : ndarray, shape (n_time,)
-        Time series indicator function specifying when the
-        time series is above the mean
-    is_above_threshold : ndarray, shape (n_time,)
-        Time series indicator function specifying when the
-        time series is above the the threshold.
-    time : ndarray, shape (n_time,)
+    is_above_mean : array_like, shape (n_time,)
+        Boolean array indicating where the signal is above its mean.
+    is_above_threshold : array_like, shape (n_time,)
+        Boolean array indicating where the signal is above the threshold.
+    time : array_like, shape (n_time,)
+        Time values corresponding to each sample.
+    minimum_duration : float, optional
+        Minimum time (in same units as `time`) that signal must remain above
+        threshold. Default is 0.015 (15 ms if time is in seconds).
 
     Returns
     -------
-    candidate_ripple_times : list of 2-element tuples
-        Each tuple is the start and end time of the candidate ripple.
+    candidate_ripple_times : list of tuple
+        List of (start_time, end_time) tuples for each detected event,
+        extended to mean crossings.
 
     """
     is_above_threshold = pd.Series(is_above_threshold, index=time)
@@ -165,22 +211,30 @@ def exclude_movement(
     time: ArrayLike,
     speed_threshold: float = 4.0,
 ) -> NDArray | list:
-    """Removes candidate ripples if the animal is moving.
+    """Filter out candidate ripples that occur during animal movement.
+
+    Removes events where the animal's speed at either the start or end of the
+    event exceeds the specified threshold.
 
     Parameters
     ----------
     candidate_ripple_times : array_like, shape (n_ripples, 2)
-    speed : ndarray, shape (n_time,)
-        Speed of animal during recording session.
-    time : ndarray, shape (n_time,)
-        Time in recording session.
+        Array of candidate event times with columns [start_time, end_time].
+    speed : array_like, shape (n_time,)
+        Animal's speed at each time point.
+    time : array_like, shape (n_time,)
+        Time values corresponding to speed measurements.
     speed_threshold : float, optional
-        Maximum speed for animal to be considered to be moving.
+        Maximum speed (in same units as `speed`) for event to be retained.
+        Events with speed > threshold at start or end are excluded.
+        Default is 4.0 (cm/s).
 
     Returns
     -------
-    ripple_times : ndarray, shape (n_ripples, 2)
-        Ripple times where the animal is not moving.
+    ripple_times : ndarray or list
+        Filtered event times where animal speed is below threshold. Returns
+        ndarray of shape (n_stationary_ripples, 2), or empty list if no
+        events remain.
 
     """
     candidate_ripple_times = np.array(candidate_ripple_times)
@@ -198,13 +252,25 @@ def exclude_movement(
 def _find_containing_interval(
     interval_candidates: list[tuple[float, float]], target_interval: tuple[float, float]
 ) -> tuple[float, float]:
-    """Returns the interval that contains the target interval out of a list
-    of interval candidates.
+    """Find the interval that contains the target interval.
 
-    This is accomplished by finding the closest start time out of the
-    candidate intervals, since we already know that one interval candidate
-    contains the target interval (the segments above 0 contain the
-    segments above the threshold)
+    Identifies which candidate interval contains the target interval by finding
+    the candidate with the closest start time that precedes the target start.
+    Assumes one candidate interval contains the target (e.g., segments above
+    mean contain segments above threshold).
+
+    Parameters
+    ----------
+    interval_candidates : list of tuple
+        List of (start, end) tuples representing candidate intervals.
+    target_interval : tuple
+        (start, end) tuple representing the target interval to be contained.
+
+    Returns
+    -------
+    containing_interval : tuple
+        The (start, end) tuple from candidates that contains the target.
+
     """
     candidate_start_times = np.asarray(interval_candidates)[:, 0]
     zero = np.array(0).astype(candidate_start_times.dtype)
@@ -239,8 +305,24 @@ def _extend_segment(
 
 
 def get_envelope(data: ArrayLike, axis: int = 0) -> NDArray:
-    """Extracts the instantaneous amplitude (envelope) of an analytic
-    signal using the Hilbert transform"""
+    """Extract the instantaneous amplitude (envelope) using Hilbert transform.
+
+    Computes the analytic signal via Hilbert transform and returns its
+    magnitude, representing the instantaneous amplitude envelope.
+
+    Parameters
+    ----------
+    data : array_like
+        Input signal. Can be multi-dimensional.
+    axis : int, optional
+        Axis along which to compute the envelope. Default is 0.
+
+    Returns
+    -------
+    envelope : ndarray
+        Instantaneous amplitude (envelope) of the signal, same shape as input.
+
+    """
     n_samples = data.shape[axis]
     instantaneous_amplitude = np.abs(hilbert(data, N=next_fast_len(n_samples), axis=axis))
     return np.take(instantaneous_amplitude, np.arange(n_samples), axis=axis)
@@ -253,24 +335,31 @@ def gaussian_smooth(
     axis: int = 0,
     truncate: int = 8,
 ) -> NDArray:
-    """1D convolution of the data with a Gaussian.
+    """Apply 1D Gaussian smoothing to data.
 
-    The standard deviation of the gaussian is in the units of the sampling
-    frequency. The function is just a wrapper around scipy's
-    `gaussian_filter1d`, The support is truncated at 8 by default, instead
-    of 4 in `gaussian_filter1d`
+    Convolves the data with a Gaussian kernel. The standard deviation is
+    specified in time units (e.g., seconds) and converted to samples using
+    the sampling frequency. This is a wrapper around scipy's `gaussian_filter1d`
+    with truncation at 8 standard deviations (instead of 4).
 
     Parameters
     ----------
     data : array_like
+        Input data to be smoothed. Can be multi-dimensional.
     sigma : float
-    sampling_frequency : int
+        Standard deviation of the Gaussian kernel in time units (e.g., seconds).
+    sampling_frequency : float
+        Sampling rate in Hz, used to convert sigma from time to samples.
     axis : int, optional
+        Axis along which to apply the filter. Default is 0.
     truncate : int, optional
+        Number of standard deviations at which to truncate the filter.
+        Default is 8 (wider support than scipy's default of 4).
 
     Returns
     -------
-    smoothed_data : array_like
+    smoothed_data : ndarray
+        Gaussian-smoothed data, same shape as input.
 
     """
     return gaussian_filter1d(
@@ -284,17 +373,29 @@ def threshold_by_zscore(
     minimum_duration: float = 0.015,
     zscore_threshold: float = 2,
 ) -> list[tuple[float, float]]:
-    """Standardize the data and determine whether it is above a given
-    number.
+    """Find time segments where z-scored data exceeds a threshold.
+
+    Identifies segments where the z-scored signal exceeds the specified
+    threshold for at least the minimum duration, then extends these segments
+    to where the signal crosses zero (the mean of z-scored data).
 
     Parameters
     ----------
-    data : array_like, shape (n_time,)
-    zscore_threshold : int, optional
+    zscored_data : array_like, shape (n_time,)
+        Z-scored (standardized) input signal.
+    time : array_like, shape (n_time,)
+        Time values corresponding to each sample.
+    minimum_duration : float, optional
+        Minimum time that signal must exceed threshold. Default is 0.015
+        (15 ms if time is in seconds).
+    zscore_threshold : float, optional
+        Z-score threshold value. Default is 2 (2 standard deviations).
 
     Returns
     -------
-    candidate_ripple_times : pandas Dataframe
+    candidate_ripple_times : list of tuple
+        List of (start_time, end_time) tuples for detected events, extended
+        to mean crossings.
 
     """
     is_above_mean = zscored_data >= 0
@@ -355,19 +456,25 @@ def merge_overlapping_ranges(
 def exclude_close_events(
     candidate_event_times: ArrayLike, close_event_threshold: float = 1.0
 ) -> NDArray | list:
-    """Excludes successive events that occur within  a `close_event_threshold`
-    of a previously occuring event.
+    """Remove events that occur too close together in time.
+
+    Filters out successive events that start within `close_event_threshold`
+    time units of a previous event's end, keeping only the first event in
+    each cluster of closely-spaced events.
 
     Parameters
     ----------
-    candidate_event_times : ndarray or list, shape (n_events, 2)
-        Start and end times of possible events
-    close_event_threshold : float or np.timedelta
-
+    candidate_event_times : array_like, shape (n_events, 2)
+        Array of event times with columns [start_time, end_time].
+    close_event_threshold : float, optional
+        Minimum time between events. Events starting within this time after
+        a previous event ends are excluded. Default is 1.0 (seconds).
 
     Returns
     -------
-    candidate_event_times : ndarray, shape (n_events - too_close_events, 2)
+    filtered_event_times : ndarray or list
+        Filtered event times with shape (n_filtered_events, 2), or empty
+        list if no events remain.
 
     """
     candidate_event_times = np.array(candidate_event_times)
