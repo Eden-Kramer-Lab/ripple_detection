@@ -152,3 +152,9 @@ select = [
 ignore = [
     "E501", # line too long (handled by black)
 ]
+
+# Per-file ignores for notebooks
+[tool.ruff.lint.per-file-ignores]
+"*.ipynb" = [
+    "NPY002",  # Allow legacy np.random in notebooks for pedagogical simplicity
+]
