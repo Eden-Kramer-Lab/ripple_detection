@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2025-10-17
+
+### Added
+
+- **Flexible Signal Normalization**: New `normalize_signal()` function supporting both z-score (mean/std) and median/MAD normalization methods
+  - Median/MAD normalization provides robust statistics less sensitive to outliers
+  - Configurable normalization baseline via `normalization_mask` or `normalization_time_range` parameters
+  - All detectors (`Kay_ripple_detector`, `Karlsson_ripple_detector`, `Roumis_ripple_detector`, `multiunit_HSE_detector`) now support these parameters
+  - Enables advanced use cases: normalize during immobility only, use baseline period, exclude artifacts
+  - Comprehensive test coverage including 23 new tests for normalization functionality
+
+- **Tutorial Notebook**: Added `examples/ripple_detection_tutorial.ipynb` with step-by-step guide
+  - Demonstrates basic ripple detection workflow
+  - Shows how to use different normalization methods
+  - Includes visualization examples
+
+### Changed
+
+- **Parameter Enhancement**: Added `normalization_method`, `normalization_mask`, and `normalization_time_range` parameters to all detector functions
+  - Default behavior unchanged (z-score normalization on full signal)
+  - New parameters provide fine-grained control over normalization baseline
+
+### Deprecated
+
+- `use_speed_threshold_for_zscore` parameter in `multiunit_HSE_detector`
+  - Use `normalization_mask=speed < speed_threshold` instead for equivalent functionality
+  - Deprecation warning added with migration guidance
+
+### Fixed
+
+- Updated README badges to reference release workflow and codecov
+- Reformatted pyproject.toml for better readability
+
+### Removed
+
+- PR test GitHub Actions workflow (consolidated with main test workflow)
+
+### Closed Issues
+
+- Issue #8: Add support for using Median / MAD for ripple detection
+- Issue #9: Allow users to customize where the mean and std come from
+
 ## [1.6.0] - 2025-10-16
 
 ### Added
@@ -60,6 +102,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/Eden-Kramer-Lab/ripple_detection/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/Eden-Kramer-Lab/ripple_detection/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/Eden-Kramer-Lab/ripple_detection/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/Eden-Kramer-Lab/ripple_detection/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/Eden-Kramer-Lab/ripple_detection/releases/tag/v1.5.1
