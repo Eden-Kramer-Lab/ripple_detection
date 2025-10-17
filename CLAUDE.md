@@ -76,6 +76,63 @@ python -m build
 hatch build
 ```
 
+### Release Process
+
+When preparing a new release:
+
+```bash
+# 1. Run all tests to ensure everything passes
+pytest --cov=ripple_detection tests/
+
+# 2. Run code quality checks
+black --check ripple_detection/ tests/
+ruff check ripple_detection/ tests/
+mypy ripple_detection/
+
+# 3. Update CHANGELOG.md
+# - Add new version section with date: ## [X.Y.Z] - YYYY-MM-DD
+# - Document all changes under appropriate headers:
+#   - Added (new features)
+#   - Changed (changes to existing functionality)
+#   - Deprecated (soon-to-be removed features)
+#   - Removed (removed features)
+#   - Fixed (bug fixes)
+#   - Security (security fixes)
+# - List closed issues: "Closes #N"
+# - Update comparison links at bottom of file
+
+# 4. Commit the changelog
+git add CHANGELOG.md
+git commit -m "Update CHANGELOG for vX.Y.Z release"
+git push origin master
+
+# 5. Create and push annotated git tag
+git tag -a vX.Y.Z -m "Release vX.Y.Z
+
+## New Features
+- Feature description
+
+## Improvements
+- Improvement description
+
+Closes #N"
+
+git push origin vX.Y.Z
+
+# The tag push triggers the automated GitHub Actions release workflow:
+# - Runs tests on Python 3.10, 3.11, 3.12, 3.13
+# - Builds source distribution and wheels
+# - Publishes to PyPI
+# - Creates GitHub release with auto-generated notes
+```
+
+**Important Notes:**
+- Always update CHANGELOG.md BEFORE creating the tag
+- The tag must be an annotated tag (use `-a` flag) with a meaningful message
+- Version follows semantic versioning (MAJOR.MINOR.PATCH)
+- The version in `ripple_detection/_version.py` is auto-generated from the git tag by hatch-vcs
+- Monitor the release workflow at: https://github.com/Eden-Kramer-Lab/ripple_detection/actions
+
 ## Architecture
 
 ### Core Module Structure

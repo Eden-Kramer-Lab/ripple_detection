@@ -274,12 +274,49 @@ pytest --cov=ripple_detection --cov-report=html tests/
 # Format code with black
 black ripple_detection/ tests/
 
-# Lint code with flake8
-flake8 ripple_detection/ tests/
+# Lint code with ruff (modern, fast linter)
+ruff check ripple_detection/ tests/
+
+# Type check with mypy
+mypy ripple_detection/
 
 # Check formatting without modifying
 black --check ripple_detection/ tests/
 ```
+
+### Release Process
+
+Releases are automated via GitHub Actions when a version tag is pushed:
+
+```bash
+# 1. Ensure all tests pass and code quality checks pass
+pytest --cov=ripple_detection tests/
+black --check ripple_detection/ tests/
+ruff check ripple_detection/ tests/
+mypy ripple_detection/
+
+# 2. Update CHANGELOG.md with new version and changes
+# - Add ## [X.Y.Z] - YYYY-MM-DD section
+# - Document changes under Added/Changed/Deprecated/Removed/Fixed/Security
+# - Update comparison links at bottom
+
+# 3. Commit and push changelog
+git add CHANGELOG.md
+git commit -m "Update CHANGELOG for vX.Y.Z release"
+git push origin master
+
+# 4. Create and push annotated tag (triggers release workflow)
+git tag -a vX.Y.Z -m "Release vX.Y.Z with feature descriptions"
+git push origin vX.Y.Z
+```
+
+The automated workflow will:
+- Run tests on Python 3.10, 3.11, 3.12, 3.13
+- Build source distribution and wheels
+- Publish to PyPI
+- Create GitHub release
+
+**Note:** Version numbers follow [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH). The package version is automatically determined from git tags via `hatch-vcs`.
 
 ## Contributing
 
