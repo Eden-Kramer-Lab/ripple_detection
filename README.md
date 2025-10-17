@@ -243,16 +243,18 @@ pip install -e .[dev,examples]
 
 ### Run Tests
 
-The package has comprehensive test coverage (98%) across 107 tests organized in 4 modules:
+The package has comprehensive test coverage (93%) across 163 tests organized in 6 modules:
 
 ```bash
 # Run all tests with coverage
 pytest --cov=ripple_detection --cov-report=term-missing tests/
 
 # Run specific test modules
-pytest tests/test_core.py          # Core signal processing tests (52 tests)
+pytest tests/test_core.py          # Core signal processing tests (70 tests)
 pytest tests/test_detectors.py     # Detector integration tests (25 tests)
-pytest tests/test_simulate.py      # Simulation module tests (40 tests)
+pytest tests/test_simulate.py      # Simulation module tests (36 tests)
+pytest tests/test_properties.py    # Property-based tests (23 tests)
+pytest tests/test_snapshots.py     # Snapshot/regression tests (9 tests)
 
 # Run specific test
 pytest tests/test_core.py::TestSegmentBooleanSeries::test_single_segment
@@ -263,10 +265,10 @@ pytest --cov=ripple_detection --cov-report=html tests/
 ```
 
 **Test Coverage:**
-- `core.py`: 100%
-- `detectors.py`: 100%
-- `simulate.py`: 92%
-- **Overall: 98%**
+- `core.py`: 93%
+- `detectors.py`: 92%
+- `simulate.py`: 100%
+- **Overall: 93%**
 
 ### Code Quality
 

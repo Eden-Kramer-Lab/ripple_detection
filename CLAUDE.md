@@ -26,7 +26,7 @@ pip install -e .
 ### Testing
 
 ```bash
-# Run all tests with coverage (98% coverage achieved!)
+# Run all tests with coverage (93% coverage achieved!)
 pytest --cov=ripple_detection tests/
 
 # Run specific test module
@@ -45,6 +45,7 @@ open htmlcov/index.html
 # Test notebooks (as done in CI)
 jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/detection_examples.ipynb
 jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/test_individual_algorithm_components.ipynb
+jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/ripple_detection_tutorial.ipynb
 ```
 
 ### Code Quality
@@ -203,22 +204,23 @@ All detectors return rich event statistics via `_get_event_stats()`:
 
 ## Testing Strategy
 
-**Test Coverage: 98%** (100% on core modules)
+**Test Coverage: 93%** (100% on core and detector modules)
 
-The test suite is organized into four modules:
+The test suite is organized into six modules:
 
 1. **[tests/conftest.py](tests/conftest.py)** - Shared pytest fixtures
-   - 15 fixtures providing reusable test data
+   - 15+ fixtures providing reusable test data
    - LFP simulations with various ripple patterns
    - Speed data (stationary and movement scenarios)
    - Multiunit spike train data
    - Edge cases (no ripples, short duration, close ripples)
 
-2. **[tests/test_core.py](tests/test_core.py)** - Core signal processing (52 tests, 100% coverage)
+2. **[tests/test_core.py](tests/test_core.py)** - Core signal processing (70 tests, 100% coverage)
    - Boolean series segmentation (start/end time extraction)
    - Interval finding and extension
    - Overlapping range merging
    - Z-score thresholding and movement exclusion
+   - Signal normalization (z-score and median/MAD methods)
    - Ripple band filtering
    - Hilbert transform envelope extraction
    - Gaussian smoothing
@@ -233,7 +235,7 @@ The test suite is organized into four modules:
    - Error handling (5 tests): NaN values, empty arrays, mismatched lengths
    - Helper functions (2 tests): consensus trace generation
 
-4. **[tests/test_simulate.py](tests/test_simulate.py)** - Simulation module (40 tests, 92% coverage)
+4. **[tests/test_simulate.py](tests/test_simulate.py)** - Simulation module (36 tests, 100% coverage)
    - Time array generation
    - Noise generation (white, pink, brown) with frequency analysis
    - LFP simulation with embedded ripples
@@ -241,7 +243,15 @@ The test suite is organized into four modules:
    - Statistical validation and power spectrum analysis
    - Error handling for edge cases
 
-**Test Execution**: 107 tests pass in <1 second
+5. **[tests/test_properties.py](tests/test_properties.py)** - Property-based tests (23 tests)
+   - Hypothesis-driven tests for signal processing functions
+   - Tests invariants and properties across parameter ranges
+
+6. **[tests/test_snapshots.py](tests/test_snapshots.py)** - Snapshot/regression tests (9 tests)
+   - Detector output consistency tests
+   - Prevents regression in detector behavior
+
+**Test Execution**: 163 tests (157 passed, 6 skipped) in ~2 seconds
 
 The package also validates that example notebooks run without errors in CI.
 
@@ -292,7 +302,7 @@ The package also validates that example notebooks run without errors in CI.
 - Numpy Docstrings for all public functions and classes using numpy docstring best practices
 - Uses f-strings for formatting
 - Modular functions with single responsibility
-- Comprehensive test coverage: 98% overall, 100% on core modules
+- Comprehensive test coverage: 93% overall, 100% on core and detector modules
 - **Code quality tools**: Black (formatting), Ruff (linting), Mypy (type checking)
 - Continuous integration with GitHub Actions (tests on Python 3.10, 3.11, 3.12, 3.13)
 
