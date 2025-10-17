@@ -276,9 +276,9 @@ The package also validates that example notebooks run without errors in CI.
 
 **Core** (minimum versions):
 
-- numpy >= 1.23.0
-- scipy >= 1.9.0
-- pandas >= 1.5.0
+- numpy >= 1.24
+- scipy >= 1.10
+- pandas >= 2.0
 
 **Development** (minimum versions):
 
@@ -287,6 +287,8 @@ The package also validates that example notebooks run without errors in CI.
 - black[jupyter] >= 23.0.0
 - ruff >= 0.3.0
 - mypy >= 1.8.0
+- hypothesis >= 6.0.0 (property-based testing)
+- pytest-snapshot >= 0.9.0 (snapshot testing)
 - flake8 >= 6.0.0 (legacy, use ruff instead)
 
 **Examples** (minimum versions):
