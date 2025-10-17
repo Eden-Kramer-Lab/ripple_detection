@@ -2,6 +2,7 @@
 from ripple_detection.core import (
     filter_ripple_band,
     get_multiunit_population_firing_rate,
+    normalize_signal,
 )
 from ripple_detection.detectors import (
     Karlsson_ripple_detector,

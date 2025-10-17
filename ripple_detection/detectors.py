@@ -5,7 +5,6 @@ from itertools import chain
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike, NDArray
-from scipy.stats import zscore
 
 from ripple_detection.core import (
     exclude_close_events,
@@ -14,8 +13,163 @@ from ripple_detection.core import (
     get_envelope,
     get_multiunit_population_firing_rate,
     merge_overlapping_ranges,
+    normalize_signal,
     threshold_by_zscore,
 )
+
+
+def _validate_lfp_dimensions(filtered_lfps: NDArray) -> None:
+    """Validate that LFP array is 2D with shape (n_time, n_channels).
+
+    Parameters
+    ----------
+    filtered_lfps : ndarray
+        LFP array to validate.
+
+    Raises
+    ------
+    ValueError
+        If array is not 2D with appropriate shape.
+
+    """
+    if filtered_lfps.ndim == 0:
+        raise ValueError(
+            "filtered_lfps must be a 2D array with shape (n_time, n_channels).\n"
+            "Received a scalar value.\n"
+            "Expected: A 2D array where each row is a time point and each column is a channel."
+        )
+    elif filtered_lfps.ndim == 1:
+        raise ValueError(
+            "filtered_lfps must be a 2D array with shape (n_time, n_channels).\n"
+            f"Received a 1D array with shape {filtered_lfps.shape}.\n"
+            "If you have a single channel, reshape your data using:\n"
+            "  filtered_lfps = filtered_lfps.reshape(-1, 1)"
+        )
+    elif filtered_lfps.ndim > 2:
+        raise ValueError(
+            "filtered_lfps must be a 2D array with shape (n_time, n_channels).\n"
+            f"Received a {filtered_lfps.ndim}D array with shape {filtered_lfps.shape}.\n"
+            "Expected: 2D array with rows as time points and columns as channels."
+        )
+
+
+def _validate_array_lengths(time: NDArray, filtered_lfps: NDArray, speed: NDArray) -> None:
+    """Validate that time, LFP, and speed arrays have matching lengths.
+
+    Parameters
+    ----------
+    time : ndarray
+        Time array.
+    filtered_lfps : ndarray
+        LFP array.
+    speed : ndarray
+        Speed array.
+
+    Raises
+    ------
+    ValueError
+        If array lengths don't match.
+
+    """
+    n_time_samples = len(time)
+    n_lfp_samples = len(filtered_lfps)
+    n_speed_samples = len(speed)
+
+    if not (n_time_samples == n_lfp_samples == n_speed_samples):
+        raise ValueError(
+            "Array length mismatch detected. All inputs must have the same length.\n"
+            f"  time:         {n_time_samples} samples\n"
+            f"  filtered_lfps: {n_lfp_samples} samples\n"
+            f"  speed:        {n_speed_samples} samples\n"
+            "Ensure your time, LFP, and speed arrays are aligned and have matching lengths."
+        )
+
+
+def _validate_time_units(time: NDArray, sampling_frequency: float, n_samples: int) -> None:
+    """Validate that time array is in seconds (not samples).
+
+    Parameters
+    ----------
+    time : ndarray
+        Time array to validate.
+    sampling_frequency : float
+        Expected sampling frequency in Hz.
+    n_samples : int
+        Number of samples.
+
+    Raises
+    ------
+    ValueError
+        If time appears to be in samples instead of seconds.
+
+    Warnings
+    --------
+    UserWarning
+        If time step differs significantly from expected.
+
+    """
+    import warnings
+
+    if n_samples > 1:
+        median_dt = np.median(np.diff(time))
+        expected_dt = 1.0 / sampling_frequency
+
+        # Check if time appears to be in samples instead of seconds
+        if median_dt > 10 * expected_dt:
+            raise ValueError(
+                f"Time array appears to be in samples, not seconds.\n"
+                f"Median time step: {median_dt:.6f} (expected ~{expected_dt:.6f} for {sampling_frequency} Hz)\n"
+                f"\n"
+                f"Solution: Convert sample indices to seconds:\n"
+                f"  time_seconds = time_samples / {sampling_frequency}"
+            )
+        # Check if time step is suspiciously different from sampling frequency
+        elif not np.isclose(median_dt, expected_dt, rtol=0.2):
+            warnings.warn(
+                f"Time array step ({median_dt:.6f} s) differs from expected sampling interval "
+                f"({expected_dt:.6f} s at {sampling_frequency} Hz).\n"
+                f"Verify that:\n"
+                f"  1. time is in seconds (not milliseconds or samples)\n"
+                f"  2. sampling_frequency ({sampling_frequency} Hz) is correct",
+                UserWarning,
+                stacklevel=4,
+            )
+
+
+def _validate_speed_units(speed: NDArray, speed_threshold: float) -> None:
+    """Validate that speed is in cm/s (not m/s).
+
+    Parameters
+    ----------
+    speed : ndarray
+        Speed array to validate.
+    speed_threshold : float
+        Speed threshold in cm/s.
+
+    Warnings
+    --------
+    UserWarning
+        If speed values appear to be in m/s instead of cm/s.
+
+    """
+    import warnings
+
+    non_nan_speed = speed[pd.notna(speed)]
+    if len(non_nan_speed) > 0:
+        non_zero_speed = non_nan_speed[non_nan_speed > 0]
+        if len(non_zero_speed) > 0:
+            median_speed = np.median(non_zero_speed)
+            # If median speed is very small and threshold is typical (> 1 cm/s),
+            # user likely passed speed in m/s instead of cm/s
+            if median_speed < 0.5 and speed_threshold > 1.0:
+                warnings.warn(
+                    f"Speed values appear very small (median non-zero: {median_speed:.4f}).\n"
+                    f"Speed should be in cm/s, not m/s.\n"
+                    f"If your speed is in m/s, multiply by 100:\n"
+                    f"  speed_cms = speed_ms * 100",
+                    UserWarning,
+                    stacklevel=4,
+                )
 
 
 def _preprocess_detector_inputs(
@@ -66,92 +220,19 @@ def _preprocess_detector_inputs(
         If speed values appear to be in wrong units (m/s instead of cm/s).
 
     """
-    import warnings
-
+    # Convert to arrays
     filtered_lfps = np.asarray(filtered_lfps)
     speed = np.asarray(speed)
     time = np.asarray(time)
 
-    # Validate LFP dimensions
-    if filtered_lfps.ndim == 0:
-        raise ValueError(
-            "filtered_lfps must be a 2D array with shape (n_time, n_channels).\n"
-            "Received a scalar value.\n"
-            "Expected: A 2D array where each row is a time point and each column is a channel."
-        )
-    elif filtered_lfps.ndim == 1:
-        raise ValueError(
-            "filtered_lfps must be a 2D array with shape (n_time, n_channels).\n"
-            f"Received a 1D array with shape {filtered_lfps.shape}.\n"
-            "If you have a single channel, reshape your data using:\n"
-            "  filtered_lfps = filtered_lfps.reshape(-1, 1)"
-        )
-    elif filtered_lfps.ndim > 2:
-        raise ValueError(
-            "filtered_lfps must be a 2D array with shape (n_time, n_channels).\n"
-            f"Received a {filtered_lfps.ndim}D array with shape {filtered_lfps.shape}.\n"
-            "Expected: 2D array with rows as time points and columns as channels."
-        )
+    # Run all validations
+    _validate_lfp_dimensions(filtered_lfps)
+    _validate_array_lengths(time, filtered_lfps, speed)
+    _validate_time_units(time, sampling_frequency, len(time))
+    _validate_speed_units(speed, speed_threshold)
 
-    # Validate array lengths
-    n_time_samples = len(time)
-    n_lfp_samples = len(filtered_lfps)
-    n_speed_samples = len(speed)
-
-    if not (n_time_samples == n_lfp_samples == n_speed_samples):
-        raise ValueError(
-            "Array length mismatch detected. All inputs must have the same length.\n"
-            f"  time:         {n_time_samples} samples\n"
-            f"  filtered_lfps: {n_lfp_samples} samples\n"
-            f"  speed:        {n_speed_samples} samples\n"
-            "Ensure your time, LFP, and speed arrays are aligned and have matching lengths."
-        )
-
-    # Validate time units (should be in seconds, not samples)
-    if n_time_samples > 1:
-        median_dt = np.median(np.diff(time))
-        expected_dt = 1.0 / sampling_frequency
-
-        # Check if time appears to be in samples instead of seconds
-        if median_dt > 10 * expected_dt:
-            raise ValueError(
-                f"Time array appears to be in samples, not seconds.\n"
-                f"Median time step: {median_dt:.6f} (expected ~{expected_dt:.6f} for {sampling_frequency} Hz)\n"
-                f"\n"
-                f"Solution: Convert sample indices to seconds:\n"
-                f"  time_seconds = time_samples / {sampling_frequency}"
-            )
-        # Check if time step is suspiciously different from sampling frequency
-        elif not np.isclose(median_dt, expected_dt, rtol=0.2):
-            warnings.warn(
-                f"Time array step ({median_dt:.6f} s) differs from expected sampling interval "
-                f"({expected_dt:.6f} s at {sampling_frequency} Hz).\n"
-                f"Verify that:\n"
-                f"  1. time is in seconds (not milliseconds or samples)\n"
-                f"  2. sampling_frequency ({sampling_frequency} Hz) is correct",
-                UserWarning,
-                stacklevel=3,
-            )
-
-    # Validate speed units (should be in cm/s, not m/s)
-    non_nan_speed = speed[pd.notnull(speed)]
-    if len(non_nan_speed) > 0:
-        non_zero_speed = non_nan_speed[non_nan_speed > 0]
-        if len(non_zero_speed) > 0:
-            median_speed = np.median(non_zero_speed)
-            # If median speed is very small and threshold is typical (> 1 cm/s),
-            # user likely passed speed in m/s instead of cm/s
-            if median_speed < 0.5 and speed_threshold > 1.0:
-                warnings.warn(
-                    f"Speed values appear very small (median non-zero: {median_speed:.4f}).\n"
-                    f"Speed should be in cm/s, not m/s.\n"
-                    f"If your speed is in m/s, multiply by 100:\n"
-                    f"  speed_cms = speed_ms * 100",
-                    UserWarning,
-                    stacklevel=3,
-                )
-
-    not_null = np.all(pd.notnull(filtered_lfps), axis=1) & pd.notnull(speed)
+    # Remove NaN values
+    not_null = np.all(pd.notna(filtered_lfps), axis=1) & pd.notna(speed)
 
     return time[not_null], filtered_lfps[not_null], speed[not_null]
 
@@ -187,7 +268,7 @@ def get_Kay_ripple_consensus_trace(
 
     """
     ripple_consensus_trace = np.full_like(ripple_filtered_lfps, np.nan)
-    not_null = np.all(pd.notnull(ripple_filtered_lfps), axis=1)
+    not_null = np.all(pd.notna(ripple_filtered_lfps), axis=1)
 
     ripple_consensus_trace[not_null] = get_envelope(np.asarray(ripple_filtered_lfps)[not_null])
     ripple_consensus_trace = np.sum(ripple_consensus_trace**2, axis=1)
@@ -207,6 +288,9 @@ def Kay_ripple_detector(
     zscore_threshold: float = 2.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
+    normalization_method: str = "zscore",
+    normalization_mask: ArrayLike | None = None,
+    normalization_time_range: tuple[float, float] | None = None,
 ) -> pd.DataFrame:
     """Detect sharp-wave ripple events using multi-channel consensus method.
 
@@ -249,6 +333,19 @@ def Kay_ripple_detector(
         Minimum time in **seconds** between ripples. Events closer than this
         are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
         closely-spaced events.
+    normalization_method : {'zscore', 'median_mad'}, optional
+        Method for normalizing the consensus trace. Default is 'zscore' (mean/std).
+        Use 'median_mad' for more robust normalization when data contains outliers.
+        The median/MAD method is more resistant to extreme values.
+    normalization_mask : array_like, shape (n_time,), optional
+        Boolean mask to specify which samples to use for computing normalization
+        statistics. For example, use `speed < speed_threshold` to compute
+        statistics only during immobility. Cannot be used with
+        `normalization_time_range`. Default is None (use all data).
+    normalization_time_range : tuple of (float, float), optional
+        Time range (start_time, end_time) in seconds for computing normalization
+        statistics. Useful for baseline normalization. Cannot be used with
+        `normalization_mask`. Default is None (use all data).
 
     Returns
     -------
@@ -298,7 +395,13 @@ def Kay_ripple_detector(
     combined_filtered_lfps = get_Kay_ripple_consensus_trace(
         filtered_lfps, sampling_frequency, smoothing_sigma=smoothing_sigma
     )
-    combined_filtered_lfps = zscore(combined_filtered_lfps, nan_policy="omit")
+    combined_filtered_lfps = normalize_signal(
+        combined_filtered_lfps,
+        time=time,
+        method=normalization_method,
+        normalization_mask=normalization_mask,
+        normalization_time_range=normalization_time_range,
+    )
     candidate_ripple_times = threshold_by_zscore(
         combined_filtered_lfps, time, minimum_duration, zscore_threshold
     )
@@ -322,6 +425,9 @@ def Karlsson_ripple_detector(
     zscore_threshold: float = 3.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
+    normalization_method: str = "zscore",
+    normalization_mask: ArrayLike | None = None,
+    normalization_time_range: tuple[float, float] | None = None,
 ) -> pd.DataFrame:
     """Detect sharp-wave ripples using per-channel detection with merging.
 
@@ -363,6 +469,19 @@ def Karlsson_ripple_detector(
         Minimum time in **seconds** between ripples. Events closer than this
         are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
         closely-spaced events.
+    normalization_method : {'zscore', 'median_mad'}, optional
+        Method for normalizing each channel. Default is 'zscore' (mean/std).
+        Use 'median_mad' for more robust normalization when data contains outliers.
+        The median/MAD method is more resistant to extreme values.
+    normalization_mask : array_like, shape (n_time,), optional
+        Boolean mask to specify which samples to use for computing normalization
+        statistics. For example, use `speed < speed_threshold` to compute
+        statistics only during immobility. Cannot be used with
+        `normalization_time_range`. Default is None (use all data).
+    normalization_time_range : tuple of (float, float), optional
+        Time range (start_time, end_time) in seconds for computing normalization
+        statistics. Useful for baseline normalization. Cannot be used with
+        `normalization_mask`. Default is None (use all data).
 
     Returns
     -------
@@ -390,7 +509,13 @@ def Karlsson_ripple_detector(
     filtered_lfps = gaussian_smooth(
         filtered_lfps, sigma=smoothing_sigma, sampling_frequency=sampling_frequency
     )
-    filtered_lfps = zscore(filtered_lfps, nan_policy="omit")
+    filtered_lfps = normalize_signal(
+        filtered_lfps,
+        time=time,
+        method=normalization_method,
+        normalization_mask=normalization_mask,
+        normalization_time_range=normalization_time_range,
+    )
     candidate_ripple_times = [
         threshold_by_zscore(filtered_lfp, time, minimum_duration, zscore_threshold)
         for filtered_lfp in filtered_lfps.T
@@ -416,6 +541,9 @@ def Roumis_ripple_detector(
     zscore_threshold: float = 2.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
+    normalization_method: str = "zscore",
+    normalization_mask: ArrayLike | None = None,
+    normalization_time_range: tuple[float, float] | None = None,
 ) -> pd.DataFrame:
     """Detect sharp-wave ripples using averaged square-root envelope method.
 
@@ -457,6 +585,19 @@ def Roumis_ripple_detector(
         Minimum time in **seconds** between ripples. Events closer than this
         are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
         closely-spaced events.
+    normalization_method : {'zscore', 'median_mad'}, optional
+        Method for normalizing the combined trace. Default is 'zscore' (mean/std).
+        Use 'median_mad' for more robust normalization when data contains outliers.
+        The median/MAD method is more resistant to extreme values.
+    normalization_mask : array_like, shape (n_time,), optional
+        Boolean mask to specify which samples to use for computing normalization
+        statistics. For example, use `speed < speed_threshold` to compute
+        statistics only during immobility. Cannot be used with
+        `normalization_time_range`. Default is None (use all data).
+    normalization_time_range : tuple of (float, float), optional
+        Time range (start_time, end_time) in seconds for computing normalization
+        statistics. Useful for baseline normalization. Cannot be used with
+        `normalization_mask`. Default is None (use all data).
 
     Returns
     -------
@@ -480,7 +621,13 @@ def Roumis_ripple_detector(
         filtered_lfps, sigma=smoothing_sigma, sampling_frequency=sampling_frequency
     )
     combined_filtered_lfps = np.mean(np.sqrt(filtered_lfps), axis=1)
-    combined_filtered_lfps = zscore(combined_filtered_lfps, nan_policy="omit")
+    combined_filtered_lfps = normalize_signal(
+        combined_filtered_lfps,
+        time=time,
+        method=normalization_method,
+        normalization_mask=normalization_mask,
+        normalization_time_range=normalization_time_range,
+    )
     candidate_ripple_times = threshold_by_zscore(
         combined_filtered_lfps, time, minimum_duration, zscore_threshold
     )
@@ -505,6 +652,9 @@ def multiunit_HSE_detector(
     smoothing_sigma: float = 0.015,
     close_event_threshold: float = 0.0,
     use_speed_threshold_for_zscore: bool = False,
+    normalization_method: str = "zscore",
+    normalization_mask: ArrayLike | None = None,
+    normalization_time_range: tuple[float, float] | None = None,
 ) -> pd.DataFrame:
     """Detect High Synchrony Events from multiunit spiking activity.
 
@@ -552,8 +702,26 @@ def multiunit_HSE_detector(
         are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
         closely-spaced events.
     use_speed_threshold_for_zscore : bool, optional
-        If True, compute z-score statistics (mean/std) using only immobility
-        periods (speed < threshold). Default is False (use all time points).
+        **DEPRECATED**: Use `normalization_mask` instead. If True, compute
+        z-score statistics (mean/std) using only immobility periods (speed <
+        threshold). Default is False (use all time points). This parameter is
+        maintained for backwards compatibility but will be removed in a future
+        version.
+    normalization_method : {'zscore', 'median_mad'}, optional
+        Method for normalizing the firing rate. Default is 'zscore' (mean/std).
+        Use 'median_mad' for more robust normalization when data contains outliers.
+        The median/MAD method is more resistant to extreme values.
+    normalization_mask : array_like, shape (n_time,), optional
+        Boolean mask to specify which samples to use for computing normalization
+        statistics. For example, use `speed < speed_threshold` to compute
+        statistics only during immobility. Cannot be used with
+        `normalization_time_range` or `use_speed_threshold_for_zscore`.
+        Default is None (use all data).
+    normalization_time_range : tuple of (float, float), optional
+        Time range (start_time, end_time) in seconds for computing normalization
+        statistics. Useful for baseline normalization. Cannot be used with
+        `normalization_mask` or `use_speed_threshold_for_zscore`.
+        Default is None (use all data).
 
     Returns
     -------
@@ -570,7 +738,7 @@ def multiunit_HSE_detector(
     References
     ----------
     .. [1] Davidson, T.J., Kloosterman, F., and Wilson, M.A. (2009).
-       Hippocampal Replay of Extended Experience. Neuron 63, 497–507.
+       Hippocampal Replay of Extended Experience. Neuron 63, 497-507.
 
     """
     multiunit = np.asarray(multiunit)
@@ -581,14 +749,27 @@ def multiunit_HSE_detector(
         multiunit, sampling_frequency, smoothing_sigma
     )
 
+    # Handle backwards compatibility with use_speed_threshold_for_zscore
     if use_speed_threshold_for_zscore:
-        mean = np.nanmean(firing_rate[speed < speed_threshold])
-        std = np.nanstd(firing_rate[speed < speed_threshold])
-    else:
-        mean = np.nanmean(firing_rate)
-        std = np.nanstd(firing_rate)
+        import warnings
 
-    firing_rate = (firing_rate - mean) / std
+        warnings.warn(
+            "The 'use_speed_threshold_for_zscore' parameter is deprecated. "
+            "Use 'normalization_mask=speed < speed_threshold' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        # If old parameter is used, override normalization_mask unless explicitly set
+        if normalization_mask is None and normalization_time_range is None:
+            normalization_mask = speed < speed_threshold
+
+    firing_rate = normalize_signal(
+        firing_rate,
+        time=time,
+        method=normalization_method,
+        normalization_mask=normalization_mask,
+        normalization_time_range=normalization_time_range,
+    )
     candidate_high_synchrony_events = threshold_by_zscore(
         firing_rate, time, minimum_duration, zscore_threshold
     )

@@ -41,7 +41,8 @@ class TestFilterRippleBandProperties:
     @settings(max_examples=20, deadline=2000)
     def test_filter_multichannel_shape(self, n_samples):
         """Filtering should work with multiple channels."""
-        data = np.random.randn(n_samples, 3)
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal((n_samples, 3))
         filtered = filter_ripple_band(data)
         assert filtered.shape == data.shape
 
@@ -126,8 +127,8 @@ class TestGaussianSmoothProperties:
     def test_smooth_reduces_variance(self, n_samples, sigma):
         """Smoothing should reduce signal variance (for random noisy signals)."""
         # Generate noisy signal with significant variance
-        np.random.seed(42)
-        data = np.random.randn(n_samples) * 10.0
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(n_samples) * 10.0
 
         smoothed = gaussian_smooth(data, sigma, sampling_frequency=1500)
 
@@ -179,8 +180,8 @@ class TestThresholdByZscoreProperties:
     def test_threshold_output_is_list(self, n_samples, time_above_thresh, zscore_threshold):
         """Thresholding should return a list of tuples."""
         # Generate data with some variance
-        np.random.seed(42)
-        data = np.random.randn(n_samples) * 2.0
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(n_samples) * 2.0
 
         time = np.linspace(0, n_samples / 1500, n_samples)
         result = threshold_by_zscore(data, time, time_above_thresh, zscore_threshold)
@@ -195,8 +196,8 @@ class TestThresholdByZscoreProperties:
     @settings(max_examples=20, deadline=1000)
     def test_higher_threshold_fewer_detections(self, n_samples):
         """Higher z-score threshold should result in fewer or equal detections."""
-        np.random.seed(42)
-        data = np.random.randn(n_samples) * 2.0
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(n_samples) * 2.0
 
         time = np.linspace(0, n_samples / 1500, n_samples)
         result_low = threshold_by_zscore(data, time, 0.01, 1.0)
@@ -340,8 +341,9 @@ class TestSimulationProperties:
     @settings(max_examples=20, deadline=1000)
     def test_normalize_scales_power(self, n, amplitude):
         """Normalize should scale signal to match reference power."""
-        signal = np.random.randn(n)
-        reference = amplitude * np.random.randn(n)
+        rng = np.random.default_rng(42)
+        signal = rng.standard_normal(n)
+        reference = amplitude * rng.standard_normal(n)
 
         normalized = normalize(signal, reference)
 
@@ -407,8 +409,8 @@ class TestSegmentBooleanSeriesProperties:
     def test_segment_start_before_end(self, n_samples, true_fraction):
         """Start times should always be before or equal to end times."""
         # Create random boolean series
-        np.random.seed(42)
-        bool_array = np.random.random(n_samples) < true_fraction
+        rng = np.random.default_rng(42)
+        bool_array = rng.random(n_samples) < true_fraction
         time = np.linspace(0, n_samples / 1500, n_samples)
         series = pd.Series(bool_array, index=time)
 
@@ -425,8 +427,8 @@ class TestSegmentBooleanSeriesProperties:
     @settings(max_examples=50, deadline=1000)
     def test_segment_count_reasonable(self, n_samples, true_fraction):
         """Number of segments should be reasonable given the data."""
-        np.random.seed(42)
-        bool_array = np.random.random(n_samples) < true_fraction
+        rng = np.random.default_rng(42)
+        bool_array = rng.random(n_samples) < true_fraction
         time = np.linspace(0, n_samples / 1500, n_samples)
         series = pd.Series(bool_array, index=time)
 

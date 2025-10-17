@@ -155,18 +155,18 @@ def speed_with_movement(time_3s):
 @pytest.fixture
 def multiunit_data(time_3s):
     """Generate synthetic multiunit spike data."""
+    rng = np.random.default_rng(42)
     n_units = 20
     n_samples = len(time_3s)
     # Create sparse spike trains with Poisson-like statistics
-    np.random.seed(42)
     baseline_rate = 0.01
-    multiunit = np.random.random((n_samples, n_units)) < baseline_rate
+    multiunit = rng.random((n_samples, n_units)) < baseline_rate
 
     # Add high synchrony events at specific times
     hse_times = [1.0, 2.0]
     hse_rate = 0.3
     for hse_time in hse_times:
         time_mask = np.abs(time_3s - hse_time) < 0.05
-        multiunit[time_mask, :] = np.random.random((time_mask.sum(), n_units)) < hse_rate
+        multiunit[time_mask, :] = rng.random((time_mask.sum(), n_units)) < hse_rate
 
     return multiunit.astype(float)

@@ -12,6 +12,7 @@ from scipy.fftpack import next_fast_len
 from scipy.io import loadmat
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import filtfilt, hilbert, remez
+from scipy.stats import median_abs_deviation, zscore
 
 
 def ripple_bandpass_filter(sampling_frequency: float) -> tuple[NDArray, float]:
@@ -448,6 +449,315 @@ def gaussian_smooth(
     )
 
 
+def _validate_normalization_params(
+    method: str,
+    normalization_mask: ArrayLike | None,
+    normalization_time_range: tuple[float, float] | None,
+    time: ArrayLike | None,
+) -> None:
+    """Validate normalization parameters.
+
+    Parameters
+    ----------
+    method : str
+        Normalization method to validate.
+    normalization_mask : array_like or None
+        Boolean mask for normalization subset.
+    normalization_time_range : tuple or None
+        Time range for normalization subset.
+    time : array_like or None
+        Time array required if time_range is specified.
+
+    Raises
+    ------
+    ValueError
+        If parameters are invalid or incompatible.
+
+    """
+    if normalization_mask is not None and normalization_time_range is not None:
+        raise ValueError(
+            "Cannot specify both 'normalization_mask' and 'normalization_time_range'. "
+            "Choose one method for defining the normalization subset."
+        )
+
+    if normalization_time_range is not None and time is None:
+        raise ValueError(
+            "'time' parameter is required when using 'normalization_time_range'. "
+            "Provide the time array corresponding to your data samples."
+        )
+
+    if method not in ("zscore", "median_mad"):
+        raise ValueError(
+            f"Invalid normalization method: '{method}'. "
+            "Must be either 'zscore' or 'median_mad'."
+        )
+
+
+def _get_normalization_mask(
+    data_shape: tuple[int, ...],
+    time: ArrayLike | None,
+    normalization_mask: ArrayLike | None,
+    normalization_time_range: tuple[float, float] | None,
+) -> NDArray | None:
+    """Determine which data subset to use for computing normalization statistics.
+
+    Parameters
+    ----------
+    data_shape : tuple
+        Shape of the data array.
+    time : array_like or None
+        Time values for each sample.
+    normalization_mask : array_like or None
+        Boolean mask specifying samples to use.
+    normalization_time_range : tuple or None
+        Time range (start, end) for computing statistics.
+
+    Returns
+    -------
+    mask : ndarray or None
+        Boolean mask indicating which samples to use, or None to use all data.
+
+    Raises
+    ------
+    ValueError
+        If mask length doesn't match data, or time range is empty.
+
+    """
+    if normalization_mask is not None:
+        mask = np.asarray(normalization_mask, dtype=bool)
+        if mask.shape[0] != data_shape[0]:
+            raise ValueError(
+                f"normalization_mask length ({mask.shape[0]}) must match "
+                f"data length ({data_shape[0]})."
+            )
+        return mask
+    elif normalization_time_range is not None:
+        time_arr = np.asarray(time)
+        start_time, end_time = normalization_time_range
+        mask = (time_arr >= start_time) & (time_arr <= end_time)
+        if not np.any(mask):
+            raise ValueError(
+                f"normalization_time_range ({start_time}, {end_time}) does not "
+                "contain any data points. Check that the time range is valid."
+            )
+        return mask
+    else:
+        return None
+
+
+def _normalize_zscore(data: NDArray, mask: NDArray | None) -> NDArray:
+    """Apply z-score normalization (mean/std).
+
+    Parameters
+    ----------
+    data : ndarray
+        Data to normalize.
+    mask : ndarray or None
+        Boolean mask for subset to compute statistics from, or None for all data.
+
+    Returns
+    -------
+    normalized : ndarray
+        Z-score normalized data.
+
+    """
+    if mask is not None:
+        # Compute mean and std from subset, apply to all data
+        if data.ndim == 1:
+            subset = data[mask]
+            mean = np.nanmean(subset)
+            std = np.nanstd(subset, ddof=0)
+            if std == 0 or np.isnan(std):
+                # Avoid division by zero
+                return np.zeros_like(data)
+            normalized = (data - mean) / std
+        else:
+            # Handle multi-channel data (n_time, n_channels)
+            mean = np.nanmean(data[mask], axis=0, keepdims=True)
+            std = np.nanstd(data[mask], axis=0, ddof=0, keepdims=True)
+            std[std == 0] = 1.0  # Avoid division by zero
+            normalized = (data - mean) / std
+    else:
+        # Use scipy's zscore with nan_policy='omit' for consistency
+        normalized = zscore(data, axis=0, nan_policy="omit", ddof=0)
+
+    return normalized
+
+
+def _normalize_median_mad(data: NDArray, mask: NDArray | None) -> NDArray:
+    """Apply median/MAD normalization.
+
+    Parameters
+    ----------
+    data : ndarray
+        Data to normalize.
+    mask : ndarray or None
+        Boolean mask for subset to compute statistics from, or None for all data.
+
+    Returns
+    -------
+    normalized : ndarray
+        Median/MAD normalized data.
+
+    """
+    if mask is not None:
+        # Compute median and MAD from subset, apply to all data
+        if data.ndim == 1:
+            subset = data[mask]
+            median = np.nanmedian(subset)
+            mad = median_abs_deviation(subset, scale="normal", nan_policy="omit")
+            if mad == 0 or np.isnan(mad):
+                # Avoid division by zero
+                return np.zeros_like(data)
+            normalized = (data - median) / mad
+        else:
+            # Handle multi-channel data (n_time, n_channels)
+            median = np.nanmedian(data[mask], axis=0, keepdims=True)
+            mad = median_abs_deviation(data[mask], axis=0, scale="normal", nan_policy="omit")
+            # Reshape mad for broadcasting
+            mad = mad.reshape(1, -1)
+            mad[mad == 0] = 1.0  # Avoid division by zero
+            normalized = (data - median) / mad
+    else:
+        # Compute from all data
+        if data.ndim == 1:
+            median = np.nanmedian(data)
+            mad = median_abs_deviation(data, scale="normal", nan_policy="omit")
+            if mad == 0 or np.isnan(mad):
+                return np.zeros_like(data)
+            normalized = (data - median) / mad
+        else:
+            # Handle multi-channel data
+            median = np.nanmedian(data, axis=0, keepdims=True)
+            mad = median_abs_deviation(data, axis=0, scale="normal", nan_policy="omit")
+            mad = mad.reshape(1, -1)
+            mad[mad == 0] = 1.0
+            normalized = (data - median) / mad
+
+    return normalized
+
+
+def normalize_signal(
+    data: ArrayLike,
+    time: ArrayLike | None = None,
+    method: str = "zscore",
+    normalization_mask: ArrayLike | None = None,
+    normalization_time_range: tuple[float, float] | None = None,
+) -> NDArray:
+    """Normalize signal using mean/std (z-score) or median/MAD.
+
+    Provides flexible normalization options for ripple detection. The statistics
+    (mean/std or median/MAD) can be computed from the entire signal or from a
+    custom subset specified by a mask or time range.
+
+    Parameters
+    ----------
+    data : array_like, shape (n_time,) or (n_time, n_channels)
+        Input signal to normalize. Can be 1D or 2D.
+    time : array_like, shape (n_time,), optional
+        Time values for each sample. Required if `normalization_time_range`
+        is specified. Default is None.
+    method : {'zscore', 'median_mad'}, optional
+        Normalization method:
+
+        - 'zscore': (data - mean) / std
+        - 'median_mad': (data - median) / MAD, where MAD is scaled to be
+          comparable to standard deviation for normally distributed data
+
+        Default is 'zscore'. Use 'median_mad' for more robust normalization
+        when data contains outliers.
+    normalization_mask : array_like, shape (n_time,), optional
+        Boolean mask specifying which samples to use for computing normalization
+        statistics. True indicates samples to include. For example, use
+        `speed < speed_threshold` to compute statistics only during immobility.
+        Cannot be used with `normalization_time_range`. Default is None (use all data).
+    normalization_time_range : tuple of (float, float), optional
+        Time range (start_time, end_time) for computing normalization statistics.
+        Requires `time` parameter. Cannot be used with `normalization_mask`.
+        Default is None (use all data).
+
+    Returns
+    -------
+    normalized_data : ndarray, shape matches input
+        Normalized signal with the same shape as input.
+
+    Raises
+    ------
+    ValueError
+        If both `normalization_mask` and `normalization_time_range` are specified,
+        if `normalization_time_range` is used without `time`, or if `method` is
+        not recognized.
+
+    Notes
+    -----
+    The 'median_mad' method uses `scipy.stats.median_abs_deviation` with
+    `scale='normal'`, which applies a scaling factor of ~1.4826 to make MAD
+    comparable to standard deviation for Gaussian data. This is equivalent to:
+
+    .. math::
+
+        \\text{normalized} = \\frac{x - \\text{median}(x)}{1.4826 \\cdot \\text{MAD}(x)}
+
+    where MAD is the median absolute deviation from the median.
+
+    Both methods use `nan_policy='omit'` to handle NaN values gracefully.
+
+    Examples
+    --------
+    Basic z-score normalization:
+
+    >>> import numpy as np
+    >>> from ripple_detection import normalize_signal
+    >>> data = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    >>> normalized = normalize_signal(data, method='zscore')
+
+    Robust median/MAD normalization with outliers:
+
+    >>> data_with_outliers = np.array([1.0, 2.0, 3.0, 4.0, 100.0])
+    >>> normalized = normalize_signal(data_with_outliers, method='median_mad')
+
+    Normalize using only immobility periods:
+
+    >>> time = np.arange(1000) / 1500  # 1500 Hz sampling
+    >>> speed = np.random.rand(1000) * 10  # Speed in cm/s
+    >>> lfp = np.random.randn(1000)
+    >>> immobility_mask = speed < 4.0
+    >>> normalized = normalize_signal(lfp, normalization_mask=immobility_mask)
+
+    Normalize using baseline period:
+
+    >>> baseline_range = (0.0, 10.0)  # First 10 seconds
+    >>> normalized = normalize_signal(lfp, time=time,
+    ...                               normalization_time_range=baseline_range)
+
+    See Also
+    --------
+    scipy.stats.zscore : Standard z-score normalization
+    scipy.stats.median_abs_deviation : Median absolute deviation
+
+    References
+    ----------
+    .. [1] Leys, C., et al. (2013). Detecting outliers: Do not use standard
+       deviation around the mean, use absolute deviation around the median.
+       Journal of Experimental Social Psychology, 49(4), 764-766.
+
+    """
+    # Validate parameters
+    _validate_normalization_params(method, normalization_mask, normalization_time_range, time)
+
+    # Convert to array and determine mask
+    data_arr = np.asarray(data, dtype=float)
+    mask = _get_normalization_mask(
+        data_arr.shape, time, normalization_mask, normalization_time_range
+    )
+
+    # Apply normalization
+    if method == "zscore":
+        return _normalize_zscore(data_arr, mask)
+    else:  # method == "median_mad"
+        return _normalize_median_mad(data_arr, mask)
+
+
 def threshold_by_zscore(
     zscored_data: ArrayLike,
     time: ArrayLike,
@@ -543,13 +853,14 @@ def exclude_close_events(
     time units of a previous event's end, keeping only the first event in
     each cluster of closely-spaced events.
 
-    Implementation uses iterative filtering: for each kept event, mark all
-    subsequent events that start too soon as excluded.
+    Uses vectorized implementation: computes gaps between consecutive events
+    and keeps events with sufficient separation from the previous event.
 
     Parameters
     ----------
     candidate_event_times : array_like, shape (n_events, 2)
         Array of event times with columns [start_time, end_time].
+        Must be sorted by start time.
     close_event_threshold : float, optional
         Minimum time between events. Events starting within this time after
         a previous event ends are excluded. Default is 1.0 (seconds).
@@ -560,26 +871,31 @@ def exclude_close_events(
         Filtered event times with shape (n_filtered_events, 2), or empty
         list if no events remain.
 
+    Notes
+    -----
+    This function assumes events are sorted by start time. If the input
+    is not sorted, results may be incorrect.
+
     """
     candidate_event_times = np.array(candidate_event_times)
 
     if candidate_event_times.size == 0:
         return []
 
-    n_events = candidate_event_times.shape[0]
-    keep_mask = np.ones(n_events, dtype=bool)
+    # For single event, no filtering needed
+    if candidate_event_times.shape[0] == 1:
+        return candidate_event_times
 
-    for i in range(n_events):
-        if not keep_mask[i]:
-            continue
+    # Extract start and end times
+    starts = candidate_event_times[:, 0]
+    ends = candidate_event_times[:, 1]
 
-        end_time = candidate_event_times[i, 1]
-        # Mark subsequent events that start too soon as excluded
-        later_indices = np.arange(i + 1, n_events)
-        is_too_close = candidate_event_times[later_indices, 0] < (
-            end_time + close_event_threshold
-        )
-        keep_mask[later_indices] = keep_mask[later_indices] & ~is_too_close
+    # Compute gaps: time from end of event i to start of event i+1
+    gaps = starts[1:] - ends[:-1]
+
+    # Keep first event and any event with sufficient gap from previous
+    keep_mask = np.ones(len(candidate_event_times), dtype=bool)
+    keep_mask[1:] = gaps >= close_event_threshold
 
     filtered_events = candidate_event_times[keep_mask]
     return filtered_events if filtered_events.size > 0 else []

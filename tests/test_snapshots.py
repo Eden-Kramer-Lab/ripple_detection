@@ -18,7 +18,7 @@ from ripple_detection.simulate import simulate_LFP
 @pytest.fixture
 def reproducible_seed():
     """Set random seed for reproducibility."""
-    np.random.seed(42)
+    return np.random.default_rng(42)
 
 
 @pytest.fixture
@@ -61,6 +61,7 @@ def test_multichannel_lfp_data(reproducible_seed):
 @pytest.fixture
 def test_multiunit_data(reproducible_seed):
     """Generate reproducible multiunit data."""
+    rng = reproducible_seed
     time = np.arange(0, 3.0, 1 / 1500)
     n_neurons = 10
 
@@ -68,7 +69,7 @@ def test_multiunit_data(reproducible_seed):
     multiunit = np.zeros((len(time), n_neurons))
 
     # Add background spikes
-    background_spikes = np.random.random((len(time), n_neurons)) < 0.01
+    background_spikes = rng.random((len(time), n_neurons)) < 0.01
     multiunit[background_spikes] = 1
 
     # Add synchronous events at specific times
@@ -295,11 +296,11 @@ class TestRegressionPrevention:
 
     def test_no_false_positives_in_noise(self, snapshot):
         """Ensure detectors don't trigger on pure noise."""
-        np.random.seed(42)
+        rng = np.random.default_rng(42)
         time = np.arange(0, 2.0, 1 / 1500)
 
         # Pure noise, no ripples
-        lfp = np.random.randn(len(time), 1) * 0.5
+        lfp = rng.standard_normal((len(time), 1)) * 0.5
         filtered_lfp = filter_ripple_band(lfp)
         speed = np.ones(len(time)) * 2.0
 
@@ -317,7 +318,6 @@ class TestRegressionPrevention:
 
     def test_high_amplitude_ripple_detected(self, snapshot):
         """Ensure obvious ripples are always detected."""
-        np.random.seed(42)
         time = np.arange(0, 2.0, 1 / 1500)
 
         # Very strong ripple

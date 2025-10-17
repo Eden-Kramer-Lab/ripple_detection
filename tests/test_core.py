@@ -17,6 +17,7 @@ from ripple_detection.core import (
     get_envelope,
     get_multiunit_population_firing_rate,
     merge_overlapping_ranges,
+    normalize_signal,
     ripple_bandpass_filter,
     segment_boolean_series,
     threshold_by_zscore,
@@ -260,8 +261,8 @@ class TestGaussianSmooth:
 
     def test_smooths_noisy_signal(self):
         """Test that smoothing reduces noise."""
-        np.random.seed(42)
-        signal = np.random.randn(1500)
+        rng = np.random.default_rng(42)
+        signal = rng.standard_normal(1500)
         sampling_frequency = 1500
         sigma = 0.01  # 10 ms
 
@@ -300,8 +301,8 @@ class TestGaussianSmooth:
 
     def test_2d_signal(self):
         """Test smoothing 2D array along axis."""
-        np.random.seed(42)
-        signal = np.random.randn(1500, 3)
+        rng = np.random.default_rng(42)
+        signal = rng.standard_normal((1500, 3))
         sampling_frequency = 1500
         sigma = 0.01
 
@@ -358,9 +359,10 @@ class TestGetMultiunitPopulationFiringRate:
 
     def test_firing_rate_shape(self):
         """Test output shape matches input time dimension."""
+        rng = np.random.default_rng(42)
         n_samples = 1500
         n_units = 10
-        multiunit = np.random.random((n_samples, n_units)) < 0.05
+        multiunit = rng.random((n_samples, n_units)) < 0.05
         sampling_frequency = 1500
 
         firing_rate = get_multiunit_population_firing_rate(
@@ -371,9 +373,10 @@ class TestGetMultiunitPopulationFiringRate:
 
     def test_firing_rate_positive(self):
         """Test that firing rates are non-negative."""
+        rng = np.random.default_rng(42)
         n_samples = 1500
         n_units = 10
-        multiunit = np.random.random((n_samples, n_units)) < 0.05
+        multiunit = rng.random((n_samples, n_units)) < 0.05
         sampling_frequency = 1500
 
         firing_rate = get_multiunit_population_firing_rate(
@@ -384,15 +387,16 @@ class TestGetMultiunitPopulationFiringRate:
 
     def test_high_synchrony_increases_rate(self):
         """Test that high synchrony periods have higher firing rates."""
+        rng = np.random.default_rng(42)
         n_samples = 1500
         n_units = 20
         sampling_frequency = 1500
 
         # Create baseline firing
-        multiunit = np.random.random((n_samples, n_units)) < 0.01
+        multiunit = rng.random((n_samples, n_units)) < 0.01
 
         # Add high synchrony event at middle
-        multiunit[700:800, :] = np.random.random((100, n_units)) < 0.3
+        multiunit[700:800, :] = rng.random((100, n_units)) < 0.3
 
         firing_rate = get_multiunit_population_firing_rate(
             multiunit.astype(float), sampling_frequency, smoothing_sigma=0.015
@@ -465,3 +469,270 @@ class TestCoreErrorHandling:
         except (ValueError, RuntimeWarning):
             # May raise warning about constant data
             pass
+
+
+# Tests for normalize_signal function
+
+
+class TestNormalizeSignal:
+    """Tests for normalize_signal function."""
+
+    def test_zscore_normalization_basic(self):
+        """Test basic z-score normalization."""
+        data = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        normalized = normalize_signal(data, method="zscore")
+
+        # Check that mean is close to 0 and std is close to 1
+        assert np.abs(np.mean(normalized)) < 1e-10
+        assert np.abs(np.std(normalized, ddof=0) - 1.0) < 1e-10
+
+    def test_median_mad_normalization_basic(self):
+        """Test basic median/MAD normalization."""
+        data = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        normalized = normalize_signal(data, method="median_mad")
+
+        # Check that median is close to 0
+        assert np.abs(np.median(normalized)) < 1e-10
+        # MAD should be scaled appropriately
+        assert normalized.shape == data.shape
+
+    def test_zscore_with_outliers(self):
+        """Test that z-score is affected by outliers."""
+        data = np.array([1.0, 2.0, 3.0, 4.0, 100.0])
+        normalized = normalize_signal(data, method="zscore")
+
+        # The outlier should strongly affect the normalization
+        assert normalized[-1] > 1.5  # Outlier will have large z-score
+
+    def test_median_mad_robust_to_outliers(self):
+        """Test that median/MAD is robust to outliers."""
+        data_no_outlier = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        data_with_outlier = np.array([1.0, 2.0, 3.0, 4.0, 100.0])
+
+        norm_no_outlier = normalize_signal(data_no_outlier, method="median_mad")
+        norm_with_outlier = normalize_signal(data_with_outlier, method="median_mad")
+
+        # First 4 values should be similar despite outlier
+        assert np.allclose(norm_no_outlier[:4], norm_with_outlier[:4], rtol=0.3)
+
+    def test_normalization_mask_zscore(self):
+        """Test z-score normalization with custom mask."""
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(100) + 5.0  # Mean of 5
+        mask = np.zeros(100, dtype=bool)
+        mask[:50] = True  # Use first 50 samples for normalization
+
+        normalized = normalize_signal(data, method="zscore", normalization_mask=mask)
+
+        # Mean of first 50 samples should be ~0, but all data is normalized
+        assert len(normalized) == 100
+        assert np.abs(np.mean(data[mask])) > 1.0  # Original has non-zero mean
+        # After normalization, the masked region should have mean close to 0
+        assert np.abs(np.mean(normalized[mask])) < 0.5
+
+    def test_normalization_mask_median_mad(self):
+        """Test median/MAD normalization with custom mask."""
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(100) + 5.0
+        mask = np.zeros(100, dtype=bool)
+        mask[:50] = True
+
+        normalized = normalize_signal(data, method="median_mad", normalization_mask=mask)
+
+        # Median of first 50 samples should be ~0 after normalization
+        assert len(normalized) == 100
+        assert np.abs(np.median(normalized[mask])) < 0.5
+
+    def test_normalization_time_range(self):
+        """Test normalization with time range."""
+        rng = np.random.default_rng(42)
+        time = np.arange(100) / 100.0  # 0 to 0.99 seconds
+        data = rng.standard_normal(100) + 5.0
+
+        # Normalize using first 50 time points (0 to 0.49 seconds)
+        normalized = normalize_signal(
+            data, time=time, method="zscore", normalization_time_range=(0.0, 0.49)
+        )
+
+        assert len(normalized) == 100
+        # First half should have mean ~0
+        assert np.abs(np.mean(normalized[:50])) < 0.5
+
+    def test_multichannel_zscore(self):
+        """Test z-score normalization with multi-channel data."""
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal((100, 4)) * np.array([1, 2, 3, 4])  # Different scales
+
+        normalized = normalize_signal(data, method="zscore")
+
+        # Each channel should be independently normalized
+        assert normalized.shape == (100, 4)
+        for ch in range(4):
+            assert np.abs(np.mean(normalized[:, ch])) < 1e-10
+            assert np.abs(np.std(normalized[:, ch], ddof=0) - 1.0) < 1e-10
+
+    def test_multichannel_median_mad(self):
+        """Test median/MAD normalization with multi-channel data."""
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal((100, 4)) * np.array([1, 2, 3, 4])
+
+        normalized = normalize_signal(data, method="median_mad")
+
+        # Each channel should be independently normalized
+        assert normalized.shape == (100, 4)
+        for ch in range(4):
+            assert np.abs(np.median(normalized[:, ch])) < 1e-1
+
+    def test_multichannel_with_mask(self):
+        """Test multi-channel normalization with mask."""
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal((100, 4)) + 5.0
+        mask = np.zeros(100, dtype=bool)
+        mask[:50] = True
+
+        normalized = normalize_signal(data, method="zscore", normalization_mask=mask)
+
+        assert normalized.shape == (100, 4)
+        # Masked region of each channel should have mean ~0
+        for ch in range(4):
+            assert np.abs(np.mean(normalized[mask, ch])) < 0.5
+
+    def test_nan_handling_zscore(self):
+        """Test that NaN values are handled correctly."""
+        data = np.array([1.0, 2.0, np.nan, 4.0, 5.0])
+        normalized = normalize_signal(data, method="zscore")
+
+        # NaN should remain NaN
+        assert np.isnan(normalized[2])
+        # Other values should be normalized
+        assert not np.isnan(normalized[0])
+
+    def test_nan_handling_median_mad(self):
+        """Test that NaN values are handled correctly with median/MAD."""
+        data = np.array([1.0, 2.0, np.nan, 4.0, 5.0])
+        normalized = normalize_signal(data, method="median_mad")
+
+        # NaN should remain NaN
+        assert np.isnan(normalized[2])
+        # Other values should be normalized
+        assert not np.isnan(normalized[0])
+
+    def test_constant_data_zscore(self):
+        """Test z-score normalization with constant data."""
+        data = np.ones(100)
+        normalized = normalize_signal(data, method="zscore")
+
+        # scipy.stats.zscore returns NaN for constant data (std=0)
+        # This is expected behavior - constant data has undefined z-score
+        assert np.all(np.isnan(normalized))
+
+    def test_constant_data_median_mad(self):
+        """Test median/MAD normalization with constant data."""
+        data = np.ones(100)
+        normalized = normalize_signal(data, method="median_mad")
+
+        # Should return zeros (MAD is 0, avoid division by zero)
+        assert np.allclose(normalized, 0.0)
+
+    def test_invalid_method(self):
+        """Test that invalid method raises ValueError."""
+        data = np.array([1.0, 2.0, 3.0])
+        with pytest.raises(ValueError, match="Invalid normalization method"):
+            normalize_signal(data, method="invalid")
+
+    def test_mask_and_time_range_both_specified(self):
+        """Test that using both mask and time_range raises error."""
+        data = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        time = np.arange(5) / 5.0
+        mask = np.array([True, True, False, False, False])
+
+        with pytest.raises(ValueError, match="Cannot specify both"):
+            normalize_signal(
+                data,
+                time=time,
+                normalization_mask=mask,
+                normalization_time_range=(0.0, 0.5),
+            )
+
+    def test_time_range_without_time(self):
+        """Test that time_range without time raises error."""
+        data = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+
+        with pytest.raises(ValueError, match="'time' parameter is required"):
+            normalize_signal(data, normalization_time_range=(0.0, 2.0))
+
+    def test_mask_length_mismatch(self):
+        """Test that mask length mismatch raises error."""
+        data = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        mask = np.array([True, True, False])  # Too short
+
+        with pytest.raises(ValueError, match="normalization_mask length"):
+            normalize_signal(data, normalization_mask=mask)
+
+    def test_empty_time_range(self):
+        """Test that empty time range raises error."""
+        data = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        time = np.array([0.0, 0.1, 0.2, 0.3, 0.4])
+
+        with pytest.raises(ValueError, match="does not contain any data points"):
+            normalize_signal(data, time=time, normalization_time_range=(1.0, 2.0))
+
+    def test_comparison_with_scipy_zscore(self):
+        """Test that default zscore matches scipy.stats.zscore."""
+        rng = np.random.default_rng(42)
+        data = rng.standard_normal(100)
+
+        our_result = normalize_signal(data, method="zscore")
+        scipy_result = zscore(data, ddof=0, nan_policy="omit")
+
+        assert np.allclose(our_result, scipy_result)
+
+    def test_immobility_normalization_use_case(self):
+        """Test realistic use case: normalize using only immobility periods."""
+        rng = np.random.default_rng(42)
+        n_samples = 1000
+        # Simulate LFP with different baseline during movement vs immobility
+        speed = rng.random(n_samples) * 10  # 0-10 cm/s
+        lfp = rng.standard_normal(n_samples)
+        lfp[speed > 4] += 2.0  # Higher baseline during movement
+
+        # Normalize using only immobility (speed < 4)
+        immobility_mask = speed < 4.0
+        normalized = normalize_signal(lfp, normalization_mask=immobility_mask)
+
+        # Immobility periods should have mean ~0
+        assert np.abs(np.mean(normalized[immobility_mask])) < 0.2
+        # But entire signal is normalized
+        assert len(normalized) == n_samples
+
+    def test_baseline_normalization_use_case(self):
+        """Test realistic use case: normalize using baseline period."""
+        rng = np.random.default_rng(42)
+        n_samples = 1500
+        time = np.arange(n_samples) / 1500.0  # 0 to 1 second
+        # Simulate LFP with baseline in first 0.2 seconds
+        lfp = rng.standard_normal(n_samples)
+        lfp[300:] += 3.0  # Shift after baseline period
+
+        # Normalize using baseline (0 to 0.2 seconds)
+        normalized = normalize_signal(lfp, time=time, normalization_time_range=(0.0, 0.2))
+
+        # Baseline period should have mean ~0
+        baseline_mask = time < 0.2
+        assert np.abs(np.mean(normalized[baseline_mask])) < 0.2
+        # Entire signal is normalized
+        assert len(normalized) == n_samples
+
+    def test_speed_based_normalization_for_detectors(self):
+        """Test use case matching multiunit_HSE_detector pattern."""
+        rng = np.random.default_rng(42)
+        firing_rate = rng.standard_normal(1000) + 5.0
+        speed = rng.random(1000) * 10.0
+
+        speed_threshold = 4.0
+        # This mimics what multiunit_HSE_detector does with use_speed_threshold_for_zscore
+        normalized = normalize_signal(firing_rate, normalization_mask=speed < speed_threshold)
+
+        # Should work and return full-length normalized data
+        assert len(normalized) == 1000
+        assert not np.all(normalized == 0)

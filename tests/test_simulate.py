@@ -76,8 +76,8 @@ class TestNormalize:
 
     def test_normalize_to_unit_power(self):
         """Test normalization to unit power (standard normal)."""
-        np.random.seed(42)
-        signal = np.random.randn(1000) * 5  # Mean power ~25
+        rng = np.random.default_rng(42)
+        signal = rng.standard_normal(1000) * 5  # Mean power ~25
         normalized = normalize(signal)
 
         # Normalized signal should have mean power ~1
@@ -85,9 +85,9 @@ class TestNormalize:
 
     def test_normalize_to_reference_signal(self):
         """Test normalization to match power of reference signal."""
-        np.random.seed(42)
-        signal = np.random.randn(1000) * 2
-        reference = np.random.randn(1000) * 5
+        rng = np.random.default_rng(42)
+        signal = rng.standard_normal(1000) * 2
+        reference = rng.standard_normal(1000) * 5
 
         normalized = normalize(signal, reference)
 
@@ -113,7 +113,6 @@ class TestWhiteNoise:
 
     def test_white_noise_statistics(self):
         """Test that white noise has approximately correct statistics."""
-        np.random.seed(42)
         N = 10000
         noise = white(N)
 
@@ -167,7 +166,6 @@ class TestPinkNoise:
     def test_pink_noise_frequency_content(self):
         """Test that pink noise has 1/f power spectrum."""
         N = 8192
-        np.random.seed(42)
         noise = pink(N)
 
         # Compute power spectrum
@@ -215,7 +213,6 @@ class TestBrownNoise:
     def test_brown_noise_frequency_content(self):
         """Test that brown noise has 1/f^2 power spectrum."""
         N = 8192
-        np.random.seed(42)
         noise = brown(N)
 
         # Compute power spectrum

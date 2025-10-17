@@ -68,7 +68,7 @@ def normalize(y: NDArray, x: NDArray | None = None) -> NDArray:
 
     Notes
     -----
-    The mean power of a Gaussian with μ=0 and σ=1 is 1.
+    The mean power of a Gaussian with mu=0 and sigma=1 is 1.
 
     If the input signal `y` has zero power (e.g., all zeros), the function
     will return NaN values due to division by zero. This is expected behavior,
@@ -235,7 +235,7 @@ def simulate_LFP(
     -----
     Ripple frequency is fixed at 200 Hz (RIPPLE_FREQUENCY constant).
     The Gaussian envelope has sigma = ripple_duration / 6, so the ripple
-    amplitude decays to ~1% at ±3σ from the center.
+    amplitude decays to ~1% at +/-3*sigma from the center.
 
     Examples
     --------
