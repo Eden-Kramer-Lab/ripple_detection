@@ -856,6 +856,12 @@ def _get_event_stats(
         - max_speed, min_speed, median_speed, mean_speed: Speed statistics
 
     """
+    try:
+        from numpy import trapezoid
+    except ImportError:
+        # NumPy 1.x
+        from numpy import trapz as trapezoid
+
     event_times_arr = np.asarray(event_times)
     time_arr = np.asarray(time)
     zscore_metric_arr = np.asarray(zscore_metric)
@@ -892,8 +898,8 @@ def _get_event_stats(
         median_zscore.append(np.median(event_zscore))
         max_zscore.append(np.max(event_zscore))
         min_zscore.append(np.min(event_zscore))
-        area.append(np.trapezoid(event_zscore, time_arr[ind]))
-        total_energy.append(np.trapezoid(event_zscore**2, time_arr[ind]))
+        area.append(trapezoid(event_zscore, time_arr[ind]))
+        total_energy.append(trapezoid(event_zscore**2, time_arr[ind]))
         duration.append(end_time - start_time)
         max_speed.append(np.max(speed_arr[ind]))
         min_speed.append(np.min(speed_arr[ind]))
