@@ -17,6 +17,9 @@ from ripple_detection.core import (
     threshold_by_zscore,
 )
 
+# NumPy 2.x renamed trapz to trapezoid; use getattr for compatibility
+trapezoid = getattr(np, "trapezoid", np.trapz)  # type: ignore[attr-defined]  # noqa: NPY201
+
 
 def _validate_lfp_dimensions(filtered_lfps: NDArray) -> None:
     """Validate that LFP array is 2D with shape (n_time, n_channels).
@@ -856,12 +859,6 @@ def _get_event_stats(
         - max_speed, min_speed, median_speed, mean_speed: Speed statistics
 
     """
-    try:
-        from numpy import trapezoid
-    except ImportError:
-        # NumPy 1.x
-        from numpy import trapz as trapezoid
-
     event_times_arr = np.asarray(event_times)
     time_arr = np.asarray(time)
     zscore_metric_arr = np.asarray(zscore_metric)
