@@ -17,8 +17,11 @@ from ripple_detection.core import (
     threshold_by_zscore,
 )
 
-# NumPy 2.x renamed trapz to trapezoid; use getattr for compatibility
-trapezoid = getattr(np, "trapezoid", np.trapz)  # type: ignore[attr-defined]  # noqa: NPY201
+# NumPy 2.x renamed trapz to trapezoid
+if hasattr(np, "trapezoid"):
+    trapezoid = np.trapezoid
+else:
+    trapezoid = np.trapz  # type: ignore[attr-defined]  # noqa: NPY201
 
 
 def _validate_lfp_dimensions(filtered_lfps: NDArray) -> None:
