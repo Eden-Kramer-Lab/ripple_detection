@@ -981,13 +981,55 @@ def merge_overlapping_ranges(
     yield current_start, current_stop
 
 
+def _peak_concurrent_channels(members: list[tuple[float, float, int]]) -> set:
+    """Return the channels active at the instant of peak concurrency.
+
+    Given the ``(start, end, channel)`` threshold-crossing intervals that make up
+    one merged event, sweep over their endpoints and return the largest set of
+    *distinct* channels that are simultaneously active. Intervals that merely
+    touch (one ends exactly where the next begins) are not counted as
+    simultaneous. Assumes each channel's intervals are disjoint (as produced by
+    `threshold_by_zscore`).
+
+    Parameters
+    ----------
+    members : list of (start, end, channel)
+        Per-channel intervals belonging to one merged event.
+
+    Returns
+    -------
+    peak_channels : set
+        Channels active at the first instant achieving maximum concurrency.
+    """
+    # Tag enters as 1 and exits as 0 so that, sorted by (time, tag), exits are
+    # processed before enters at equal times -- touching intervals do not overlap.
+    endpoints = []
+    for start, end, channel in members:
+        endpoints.append((start, 1, channel))
+        endpoints.append((end, 0, channel))
+    endpoints.sort(key=lambda x: (x[0], x[1]))
+
+    active: set = set()
+    peak: set = set()
+    for _time, is_enter, channel in endpoints:
+        if is_enter:
+            active.add(channel)
+            if len(active) > len(peak):
+                peak = set(active)
+        else:
+            active.discard(channel)
+    return peak
+
+
 def merge_overlapping_ranges_track_participation(
     candidate_ripple_times: list[list[tuple[float, float]]],
 ) -> NDArray:
     """Merge overlapping/adjacent per-channel ranges, tracking participation.
 
-    Like `merge_overlapping_ranges`, but also records which channels contribute
-    to each merged interval.
+    Like `merge_overlapping_ranges`, but also records the participating channels
+    for each merged event. Participation is the *peak* number of channels active
+    at the same instant within the event: channels active at disjoint times
+    within a transitively-merged event are not counted together.
 
     Parameters
     ----------
@@ -998,7 +1040,9 @@ def merge_overlapping_ranges_track_participation(
     -------
     merged : ndarray, shape (n_merged, 3), dtype=object
         Each row is ``[start_time, end_time, participating_channels]``, where
-        ``participating_channels`` is a set of channel indices.
+        ``participating_channels`` is the set of channels active at the instant
+        of peak concurrency (its size is the maximum number simultaneously
+        active within the event).
     """
     all_intervals = []
     for e_idx, intervals in enumerate(candidate_ripple_times):
@@ -1007,31 +1051,23 @@ def merge_overlapping_ranges_track_participation(
 
     all_intervals.sort(key=lambda x: x[0])
 
+    # Merge transitively-overlapping intervals, keeping each event's member
+    # (start, end, channel) intervals so peak concurrency can be computed.
     merged: list[list] = []
-
     for start, end, e_idx in all_intervals:
-        # initialize the merged list
-        if not merged:
-            merged.append([start, end, {e_idx}])
-            continue
-
-        # fetch the lastmost interval in merged
-        last_end = merged[-1][1]
-
-        # if the new interval overlaps with the most recent merged interval:
-        if start <= last_end:
-            # extend the interval if needed
-            merged[-1][1] = max(last_end, end)
-            # add current electrode to the existing set
-            merged[-1][2].add(e_idx)
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+            merged[-1][2].append((start, end, e_idx))
         else:
-            # otherwise create a new merged interval
-            merged.append([start, end, {e_idx}])
+            merged.append([start, end, [(start, end, e_idx)]])
 
     if not merged:
         return np.empty((0, 3), dtype=object)
 
-    return np.asarray(merged, dtype=object)
+    result = [
+        [start, end, _peak_concurrent_channels(members)] for start, end, members in merged
+    ]
+    return np.asarray(result, dtype=object)
 
 
 def exclude_close_events(

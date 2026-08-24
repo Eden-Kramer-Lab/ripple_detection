@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `random_state` parameter to `simulate_LFP()` for reproducible synthetic LFP generation (used to make the test suite deterministic).
 
+### Changed
+
+- `Shvartsman_ripple_detector` participation is now the *peak* number of channels active at the same instant within an event, rather than the union of all channels active anywhere in a transitively-merged event. This affects `n_participants`, `frac_participants`, the `participation_threshold` filter, and the per-event z-score statistics; channels active at disjoint times are no longer counted together. Event boundaries are unchanged.
+
 ### Fixed
 
 - `normalization_mask` is now filtered by the same NaN-row removal as the LFP/speed data in the LFP detectors (Kay, Karlsson, Roumis, Shvartsman), fixing a length-mismatch `ValueError` when the input contained NaN samples.
