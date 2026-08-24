@@ -422,7 +422,9 @@ def Shvartsman_ripple_detector(
         speed,
         sampling_frequency,
         speed_threshold,
-        normalization_mask=normalization_mask,
+        # normalization_mask is ignored under manual normalization, so don't
+        # validate/filter it in that mode (the docstring promises it is unused).
+        normalization_mask=None if manual_normalization else normalization_mask,
     )
 
     filtered_lfps = get_envelope(filtered_lfps)

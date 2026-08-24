@@ -1075,6 +1075,30 @@ class TestDetectorErrorHandling:
                 elec_deviations=deviations,
             )
 
+    def test_manual_norm_ignores_normalization_mask(
+        self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
+    ):
+        """normalization_mask is ignored (not validated) under manual normalization."""
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        env = gaussian_smooth(
+            get_envelope(filtered_lfps), sigma=0.004, sampling_frequency=sampling_frequency
+        )
+        # A wrong-length, all-False mask that would raise if it were validated --
+        # but the docstring promises it is ignored under manual normalization.
+        bad_mask = np.zeros(len(time_3s) - 5, dtype=bool)
+
+        ripples = Shvartsman_ripple_detector(
+            time_3s,
+            filtered_lfps,
+            stationary_speed,
+            sampling_frequency,
+            manual_normalization=True,
+            elec_baselines=env.mean(axis=0),
+            elec_deviations=env.std(axis=0),
+            normalization_mask=bad_mask,
+        )
+        assert isinstance(ripples, pd.DataFrame)
+
     def test_mismatched_lengths(self, time_3s, single_lfp_with_ripples, sampling_frequency):
         """Test with mismatched time and LFP lengths."""
         # Create speed array with different length
