@@ -40,6 +40,7 @@ def single_lfp_with_ripples(time_3s):
         ripple_times=[1.1, 2.1],
         noise_amplitude=1.2,
         ripple_amplitude=1.5,
+        random_state=0,
     )
     return lfp[:, np.newaxis]
 
@@ -52,12 +53,14 @@ def dual_lfp_with_ripples(time_3s):
         ripple_times=[1.1, 2.1],
         noise_amplitude=1.2,
         ripple_amplitude=1.5,
+        random_state=1,
     )
     lfp2 = simulate_LFP(
         time_3s,
         ripple_times=[0.5, 2.5],
         noise_amplitude=1.2,
         ripple_amplitude=1.5,
+        random_state=2,
     )
     return np.column_stack([lfp1, lfp2])
 
@@ -70,12 +73,14 @@ def dual_lfp_with_cooccur_ripples(time_3s):
         ripple_times=[1.1, 2.1],
         noise_amplitude=1.2,
         ripple_amplitude=1.5,
+        random_state=3,
     )
     lfp2 = simulate_LFP(
         time_3s,
         ripple_times=[1.1, 2.1],
         noise_amplitude=1.2,
         ripple_amplitude=1.5,
+        random_state=4,
     )
     return np.column_stack([lfp1, lfp2])
 
@@ -88,12 +93,14 @@ def dual_lfp_close_ripples(time_3s):
         ripple_times=[1.100, 2.100],
         noise_amplitude=1.2,
         ripple_amplitude=1.5,
+        random_state=5,
     )
     lfp2 = simulate_LFP(
         time_3s,
         ripple_times=[1.150, 2.150],
         noise_amplitude=1.2,
         ripple_amplitude=1.5,
+        random_state=6,
     )
     return np.column_stack([lfp1, lfp2])
 
@@ -106,12 +113,14 @@ def dual_lfp_with_close_cooccur_ripples(time_3s):
         ripple_times=[1.1, 1.3],
         noise_amplitude=1.2,
         ripple_amplitude=1.5,
+        random_state=7,
     )
     lfp2 = simulate_LFP(
         time_3s,
         ripple_times=[1.1, 1.3],
         noise_amplitude=1.2,
         ripple_amplitude=1.5,
+        random_state=8,
     )
     return np.column_stack([lfp1, lfp2])
 
@@ -126,6 +135,7 @@ def multi_lfp_sparse_ripples(time_3s):
             ripple_times=[1.1, 2.1],
             noise_amplitude=1.2,
             ripple_amplitude=1.5,
+            random_state=9,
         )
     )
     lfps.append(
@@ -134,16 +144,18 @@ def multi_lfp_sparse_ripples(time_3s):
             ripple_times=[0.5, 2.5],
             noise_amplitude=1.2,
             ripple_amplitude=1.5,
+            random_state=10,
         )
     )
     # Add 11 channels without ripples
-    for _ in range(11):
+    for i in range(11):
         lfps.append(
             simulate_LFP(
                 time_3s,
                 ripple_times=[],
                 noise_amplitude=1.2,
                 ripple_amplitude=1.5,
+                random_state=100 + i,
             )
         )
     return np.column_stack(lfps)
@@ -159,6 +171,7 @@ def multi_lfp_sparse_cooccur_ripples(time_3s):
             ripple_times=[1.1, 2.1],
             noise_amplitude=1.2,
             ripple_amplitude=1.5,
+            random_state=11,
         )
     )
     lfps.append(
@@ -167,16 +180,18 @@ def multi_lfp_sparse_cooccur_ripples(time_3s):
             ripple_times=[1.1, 2.1],
             noise_amplitude=1.2,
             ripple_amplitude=1.5,
+            random_state=12,
         )
     )
     # Add 11 channels without ripples
-    for _ in range(11):
+    for i in range(11):
         lfps.append(
             simulate_LFP(
                 time_3s,
                 ripple_times=[],
                 noise_amplitude=1.2,
                 ripple_amplitude=1.5,
+                random_state=200 + i,
             )
         )
     return np.column_stack(lfps)
@@ -190,12 +205,14 @@ def lfp_no_ripples(time_3s):
         ripple_times=[],
         noise_amplitude=1.0,
         ripple_amplitude=1.5,
+        random_state=13,
     )
     lfp2 = simulate_LFP(
         time_3s,
         ripple_times=[],
         noise_amplitude=1.0,
         ripple_amplitude=1.5,
+        random_state=14,
     )
     return np.column_stack([lfp1, lfp2])
 
@@ -209,6 +226,7 @@ def lfp_short_duration_ripples(time_3s):
         noise_amplitude=1.2,
         ripple_amplitude=1.5,
         ripple_duration=0.001,  # Too short to detect
+        random_state=15,
     )
     return lfp[:, np.newaxis]
 
@@ -222,6 +240,7 @@ def dual_lfp_with_cooccur_short_ripples(time_3s):
         noise_amplitude=1.2,
         ripple_amplitude=1.5,
         ripple_duration=0.001,
+        random_state=16,
     )
     lfp2 = simulate_LFP(
         time_3s,
@@ -229,6 +248,7 @@ def dual_lfp_with_cooccur_short_ripples(time_3s):
         noise_amplitude=1.2,
         ripple_amplitude=1.5,
         ripple_duration=0.001,
+        random_state=17,
     )
     return np.column_stack([lfp1, lfp2])
 
