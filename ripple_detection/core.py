@@ -887,7 +887,9 @@ def normalize_signal_manually(
         warnings.warn(
             "Zeroing channel(s) with a zero/NaN deviation or NaN baseline during "
             f"manual normalization: {degenerate_channels.tolist()}. These channels "
-            "will not participate in detection.",
+            "will not participate in detection, but still count toward the total "
+            "channel count used for frac_participants and fractional "
+            "participation thresholds.",
             UserWarning,
             stacklevel=2,
         )

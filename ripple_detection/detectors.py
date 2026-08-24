@@ -400,6 +400,14 @@ def Shvartsman_ripple_detector(
         channels, not one). If > 1, interpreted as an absolute *number* of
         channels. Default is 2.
 
+        The denominator for the fraction (and for `frac_participants`) is the
+        total number of channels in `filtered_lfps`, including any channel that
+        was dropped as degenerate during manual normalization (zero/NaN
+        deviation or NaN baseline). A dead channel therefore lowers
+        `frac_participants` and makes a fractional threshold of 1.0
+        unsatisfiable; drop known-bad channels before calling, or use an
+        absolute (> 1) threshold, if that is a concern.
+
     Returns
     -------
     ripple_times : pd.DataFrame
