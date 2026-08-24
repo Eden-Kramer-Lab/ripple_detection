@@ -271,6 +271,11 @@ class TestShvartsmanRippleDetector:
         assert np.allclose(
             ripples["frac_participants"], 2 / 13
         ), "frac_participants should be 2/13"
+        # Stats are computed over the participating channels {0, 1} only; averaging
+        # over all 13 channels would dilute mean_zscore to well below 1.
+        assert all(
+            ripples["mean_zscore"] > 1.0
+        ), "z-score stats must use participating channels only, not all channels"
 
     def test_no_ripples(self, time_3s, lfp_no_ripples, stationary_speed, sampling_frequency):
         """Test with noise-only signal (no ripples)."""

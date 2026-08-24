@@ -438,7 +438,7 @@ def Shvartsman_ripple_detector(
     )
 
     if manual_normalization:
-        # make sure to multiple mad by 1.4826 if using median_mad to get std equivalent
+        # make sure to multiply mad by 1.4826 if using median_mad to get std equivalent
         if elec_baselines is None or elec_deviations is None:
             raise ValueError(
                 "Must provide elec_baselines and elec_deviations for manual normalization."
@@ -449,7 +449,7 @@ def Shvartsman_ripple_detector(
             )
         if len(elec_baselines) != filtered_lfps.shape[1]:
             raise ValueError(
-                "Provided elec_baselines/elec_deviations must have one entry per"
+                "Provided elec_baselines/elec_deviations must have one entry per "
                 f"channel (n_channels={filtered_lfps.shape[1]}), got {len(elec_baselines)}."
             )
         filtered_lfps = normalize_signal_manually(
@@ -1097,8 +1097,10 @@ def _get_event_stats(
     time : array_like, shape (n_time,)
         Time values for each sample.
     zscore_metric : array_like, if participants is None: shape (n_time,); else shape (n_time, n_channels)
-        Z-scored signal used for detection. If participants is None, this should include the z-scored signal for all channels
-        so metrics can be calculated based only on data from participants.
+        Z-scored signal used for detection. When participants is None, pass a
+        single 1-D trace of shape (n_time,). When participants is provided,
+        pass the per-channel z-scored signal of shape (n_time, n_channels) so that
+        each event's metrics are computed from its participating channels only.
     speed : array_like, shape (n_time,)
         Animal's speed at each time point.
     minimum_duration : float, optional
@@ -1203,50 +1205,28 @@ def _get_event_stats(
         event_start_times = []
         event_end_times = []
 
-    if participants is None:
-        return pd.DataFrame(
-            {
-                "start_time": event_start_times,
-                "end_time": event_end_times,
-                "duration": duration,
-                "max_thresh": max_thresh,
-                "mean_zscore": mean_zscore,
-                "median_zscore": median_zscore,
-                "max_zscore": max_zscore,
-                "min_zscore": min_zscore,
-                "area": area,
-                "total_energy": total_energy,
-                "speed_at_start": speed_at_start,
-                "speed_at_end": speed_at_end,
-                "max_speed": max_speed,
-                "min_speed": min_speed,
-                "median_speed": median_speed,
-                "mean_speed": mean_speed,
-            },
-            index=index,
-        )
-    else:
-        return pd.DataFrame(
-            {
-                "start_time": event_start_times,
-                "end_time": event_end_times,
-                "duration": duration,
-                "max_thresh": max_thresh,
-                "mean_zscore": mean_zscore,
-                "median_zscore": median_zscore,
-                "max_zscore": max_zscore,
-                "min_zscore": min_zscore,
-                "area": area,
-                "total_energy": total_energy,
-                "speed_at_start": speed_at_start,
-                "speed_at_end": speed_at_end,
-                "max_speed": max_speed,
-                "min_speed": min_speed,
-                "median_speed": median_speed,
-                "mean_speed": mean_speed,
-                "participants": participants,
-                "n_participants": n_participants,
-                "frac_participants": frac_participants,
-            },
-            index=index,
-        )
+    event_stats = {
+        "start_time": event_start_times,
+        "end_time": event_end_times,
+        "duration": duration,
+        "max_thresh": max_thresh,
+        "mean_zscore": mean_zscore,
+        "median_zscore": median_zscore,
+        "max_zscore": max_zscore,
+        "min_zscore": min_zscore,
+        "area": area,
+        "total_energy": total_energy,
+        "speed_at_start": speed_at_start,
+        "speed_at_end": speed_at_end,
+        "max_speed": max_speed,
+        "min_speed": min_speed,
+        "median_speed": median_speed,
+        "mean_speed": mean_speed,
+    }
+    # Shvartsman_ripple_detector passes participation info; the other detectors do not.
+    if participants is not None:
+        event_stats["participants"] = participants
+        event_stats["n_participants"] = n_participants
+        event_stats["frac_participants"] = frac_participants
+
+    return pd.DataFrame(event_stats, index=index)

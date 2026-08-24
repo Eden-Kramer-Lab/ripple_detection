@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `random_state` parameter to `simulate_LFP()` for reproducible synthetic LFP generation (used to make the test suite deterministic).
+
+### Fixed
+
+- `normalization_mask` is now filtered by the same NaN-row removal as the LFP/speed data in all detectors, fixing a length-mismatch `ValueError` when the input contained NaN samples. A mask that selects no samples now raises a clear error instead of silently returning no events.
+- `normalize_signal_manually` (used by `Shvartsman_ripple_detector` for manual normalization) now treats a NaN baseline as a degenerate channel — zeroing it consistently with zero/NaN deviations rather than producing NaN — and warns when channels are dropped.
+
 ## [1.7.1] - 2026-01-22
 
 ### Fixed

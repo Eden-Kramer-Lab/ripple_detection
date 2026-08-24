@@ -847,25 +847,46 @@ def normalize_signal_manually(
     -------
     normalized_data : ndarray, shape matches input
         Normalized signal with the same shape as input.
+
+    Notes
+    -----
+    Channels with a zero or NaN deviation, or a NaN baseline, are treated as
+    degenerate and returned as zeros so they cannot cross a detection threshold.
+    A warning naming those channels is emitted for multi-channel input.
     """
     data = np.asarray(data)
-    elec_baselines = np.asarray(elec_baselines)
+    elec_baselines = np.asarray(elec_baselines, dtype=float)
     elec_deviations = np.asarray(elec_deviations, dtype=float)
 
     if data.ndim == 1:
-        if elec_deviations == 0 or np.isnan(elec_deviations):
+        if elec_deviations == 0 or np.isnan(elec_deviations) or np.isnan(elec_baselines):
             return np.zeros_like(data)
         return (data - elec_baselines) / elec_deviations
 
-    # Multi-channel data (n_time, n_channels): zero/NaN-deviation channels are
-    # degenerate, so zero them out (matching the 1-D branch) rather than dividing
-    # by a placeholder 1.0, which would let a dead channel cross threshold and
-    # inflate participation counts.
+    # Multi-channel data (n_time, n_channels): channels with a zero/NaN deviation
+    # or a NaN baseline are degenerate, so zero them out (matching the 1-D branch)
+    # rather than dividing by a placeholder 1.0 or subtracting a NaN baseline, which
+    # would let a dead channel cross threshold or NaN-poison it and silently distort
+    # participation counts.
     elec_deviations = elec_deviations.reshape(1, -1)
-    degenerate = (elec_deviations == 0) | np.isnan(elec_deviations)
+    elec_baselines = elec_baselines.reshape(1, -1)
+    degenerate = (elec_deviations == 0) | np.isnan(elec_deviations) | np.isnan(elec_baselines)
     safe_deviations = np.where(degenerate, 1.0, elec_deviations)
-    normalized_data = (data - elec_baselines) / safe_deviations
+    safe_baselines = np.where(degenerate, 0.0, elec_baselines)
+    normalized_data = (data - safe_baselines) / safe_deviations
     normalized_data[:, degenerate[0]] = 0.0
+
+    degenerate_channels = np.flatnonzero(degenerate[0])
+    if degenerate_channels.size > 0:
+        import warnings
+
+        warnings.warn(
+            "Zeroing channel(s) with a zero/NaN deviation or NaN baseline during "
+            f"manual normalization: {degenerate_channels.tolist()}. These channels "
+            "will not participate in detection.",
+            UserWarning,
+            stacklevel=2,
+        )
 
     return normalized_data
 
@@ -957,8 +978,8 @@ def merge_overlapping_ranges(
 
 
 def merge_overlapping_ranges_track_participation(
-    candidate_ripple_times: list[tuple[float, float]],
-):
+    candidate_ripple_times: list[list[tuple[float, float]]],
+) -> NDArray:
     """Merge overlapping/adjacent per-channel ranges, tracking participation.
 
     Like `merge_overlapping_ranges`, but also records which channels contribute
