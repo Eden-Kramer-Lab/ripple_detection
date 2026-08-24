@@ -999,6 +999,22 @@ class TestDetectorErrorHandling:
         # Should handle NaN in speed data
         assert isinstance(ripples, pd.DataFrame)
 
+    def test_integer_lfp_not_truncated(
+        self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
+    ):
+        """Integer LFP input is cast to float, not truncated, through the pipeline."""
+        lfp_int = np.round(dual_lfp_with_cooccur_ripples * 100).astype(np.int32)
+
+        filtered = filter_ripple_band(lfp_int)
+        # Before the fix, filter output kept the integer dtype (truncated values).
+        assert np.issubdtype(filtered.dtype, np.floating)
+
+        # Kay consensus stays finite (no int-overflow -> sqrt(negative) -> NaN)
+        # and the ripples are still detected.
+        ripples = Kay_ripple_detector(time_3s, filtered, stationary_speed, sampling_frequency)
+        assert isinstance(ripples, pd.DataFrame)
+        assert len(ripples) >= 1
+
     def test_normalization_mask_with_nan_rows(
         self, time_3s, dual_lfp_with_ripples, stationary_speed, sampling_frequency
     ):

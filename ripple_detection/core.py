@@ -192,7 +192,9 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
     filter_numerator, filter_denominator = _get_ripplefilter_kernel()
 
     # Validate data length
-    data_array = np.asarray(data)
+    # Cast to float so integer (e.g. raw ADC) input is not truncated by the
+    # NaN-preserving output buffer or the filter arithmetic.
+    data_array = np.asarray(data, dtype=float)
 
     # Check if data is multi-dimensional - handle NaN checking appropriately
     if data_array.ndim > 1:

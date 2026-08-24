@@ -237,7 +237,7 @@ def _preprocess_detector_inputs(
 
     """
     # Convert to arrays
-    filtered_lfps = np.asarray(filtered_lfps)
+    filtered_lfps = np.asarray(filtered_lfps, dtype=float)
     speed = np.asarray(speed)
     time = np.asarray(time)
 
@@ -294,6 +294,9 @@ def get_Kay_ripple_consensus_trace(
        during immobility and sleep. Nature, 531(7593), 185-190.
 
     """
+    # Cast to float so integer input is not truncated and the squared envelope
+    # cannot overflow before the square root.
+    ripple_filtered_lfps = np.asarray(ripple_filtered_lfps, dtype=float)
     ripple_consensus_trace = np.full_like(ripple_filtered_lfps, np.nan)
     not_null = np.all(pd.notna(ripple_filtered_lfps), axis=1)
 
