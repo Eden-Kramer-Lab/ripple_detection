@@ -63,6 +63,24 @@ def dual_lfp_with_ripples(time_3s):
 
 
 @pytest.fixture
+def dual_lfp_with_cooccur_ripples(time_3s):
+    """Generate two LFP channels with ripples at the same times."""
+    lfp1 = simulate_LFP(
+        time_3s,
+        ripple_times=[1.1, 2.1],
+        noise_amplitude=1.2,
+        ripple_amplitude=1.5,
+    )
+    lfp2 = simulate_LFP(
+        time_3s,
+        ripple_times=[1.1, 2.1],
+        noise_amplitude=1.2,
+        ripple_amplitude=1.5,
+    )
+    return np.column_stack([lfp1, lfp2])
+
+
+@pytest.fixture
 def dual_lfp_close_ripples(time_3s):
     """Generate two LFP channels with closely spaced ripples."""
     lfp1 = simulate_LFP(
@@ -74,6 +92,24 @@ def dual_lfp_close_ripples(time_3s):
     lfp2 = simulate_LFP(
         time_3s,
         ripple_times=[1.150, 2.150],
+        noise_amplitude=1.2,
+        ripple_amplitude=1.5,
+    )
+    return np.column_stack([lfp1, lfp2])
+
+
+@pytest.fixture
+def dual_lfp_with_close_cooccur_ripples(time_3s):
+    """Generate two LFP channels with ripples at the same times."""
+    lfp1 = simulate_LFP(
+        time_3s,
+        ripple_times=[1.1, 1.3],
+        noise_amplitude=1.2,
+        ripple_amplitude=1.5,
+    )
+    lfp2 = simulate_LFP(
+        time_3s,
+        ripple_times=[1.1, 1.3],
         noise_amplitude=1.2,
         ripple_amplitude=1.5,
     )
@@ -96,6 +132,39 @@ def multi_lfp_sparse_ripples(time_3s):
         simulate_LFP(
             time_3s,
             ripple_times=[0.5, 2.5],
+            noise_amplitude=1.2,
+            ripple_amplitude=1.5,
+        )
+    )
+    # Add 11 channels without ripples
+    for _ in range(11):
+        lfps.append(
+            simulate_LFP(
+                time_3s,
+                ripple_times=[],
+                noise_amplitude=1.2,
+                ripple_amplitude=1.5,
+            )
+        )
+    return np.column_stack(lfps)
+
+
+@pytest.fixture
+def multi_lfp_sparse_cooccur_ripples(time_3s):
+    """Generate many LFP channels with ripples only in first two channels."""
+    lfps = []
+    lfps.append(
+        simulate_LFP(
+            time_3s,
+            ripple_times=[1.1, 2.1],
+            noise_amplitude=1.2,
+            ripple_amplitude=1.5,
+        )
+    )
+    lfps.append(
+        simulate_LFP(
+            time_3s,
+            ripple_times=[1.1, 2.1],
             noise_amplitude=1.2,
             ripple_amplitude=1.5,
         )
@@ -145,10 +214,37 @@ def lfp_short_duration_ripples(time_3s):
 
 
 @pytest.fixture
+def dual_lfp_with_cooccur_short_ripples(time_3s):
+    """Generate two LFP channels with short ripples at the same times."""
+    lfp1 = simulate_LFP(
+        time_3s,
+        ripple_times=[1.1, 2.1],
+        noise_amplitude=1.2,
+        ripple_amplitude=1.5,
+        ripple_duration=0.001,
+    )
+    lfp2 = simulate_LFP(
+        time_3s,
+        ripple_times=[1.1, 2.1],
+        noise_amplitude=1.2,
+        ripple_amplitude=1.5,
+        ripple_duration=0.001,
+    )
+    return np.column_stack([lfp1, lfp2])
+
+
+@pytest.fixture
 def speed_with_movement(time_3s):
     """Generate speed data where animal is moving after t=1.5s."""
     speed = np.ones_like(time_3s)
     speed[time_3s > 1.5] = 5  # Above typical threshold of 4
+    return speed
+
+
+@pytest.fixture
+def speed_with_all_movement(time_3s):
+    """Generate speed data where animal is always moving."""
+    speed = np.ones_like(time_3s) * 5  # Above typical threshold of 4
     return speed
 
 
