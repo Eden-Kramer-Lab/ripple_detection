@@ -367,8 +367,8 @@ def Shvartsman_ripple_detector(
         noisier data.
     close_ripple_threshold : float, optional
         Minimum time in **seconds** between ripples. Events closer than this
-        are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
-        closely-spaced events.
+        are excluded -- the later event is dropped, not merged. Default is 0.0
+        (no exclusion). Set to 0.05-0.1 s to drop closely-spaced events.
     normalization_method : {'zscore', 'median_mad'}, optional
         Method for normalizing each channel. Default is 'zscore' (mean/std).
         Use 'median_mad' for more robust normalization when data contains outliers.
@@ -577,8 +577,8 @@ def Kay_ripple_detector(
         noisier data.
     close_ripple_threshold : float, optional
         Minimum time in **seconds** between ripples. Events closer than this
-        are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
-        closely-spaced events.
+        are excluded -- the later event is dropped, not merged. Default is 0.0
+        (no exclusion). Set to 0.05-0.1 s to drop closely-spaced events.
     normalization_method : {'zscore', 'median_mad'}, optional
         Method for normalizing the consensus trace. Default is 'zscore' (mean/std).
         Use 'median_mad' for more robust normalization when data contains outliers.
@@ -718,8 +718,8 @@ def Karlsson_ripple_detector(
         noisier data.
     close_ripple_threshold : float, optional
         Minimum time in **seconds** between ripples. Events closer than this
-        are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
-        closely-spaced events.
+        are excluded -- the later event is dropped, not merged. Default is 0.0
+        (no exclusion). Set to 0.05-0.1 s to drop closely-spaced events.
     normalization_method : {'zscore', 'median_mad'}, optional
         Method for normalizing each channel. Default is 'zscore' (mean/std).
         Use 'median_mad' for more robust normalization when data contains outliers.
@@ -839,8 +839,8 @@ def Roumis_ripple_detector(
         noisier data.
     close_ripple_threshold : float, optional
         Minimum time in **seconds** between ripples. Events closer than this
-        are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
-        closely-spaced events.
+        are excluded -- the later event is dropped, not merged. Default is 0.0
+        (no exclusion). Set to 0.05-0.1 s to drop closely-spaced events.
     normalization_method : {'zscore', 'median_mad'}, optional
         Method for normalizing the combined trace. Default is 'zscore' (mean/std).
         Use 'median_mad' for more robust normalization when data contains outliers.
@@ -960,8 +960,8 @@ def multiunit_HSE_detector(
         population firing rate estimates).
     close_event_threshold : float, optional
         Minimum time in **seconds** between events. Events closer than this
-        are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
-        closely-spaced events.
+        are excluded -- the later event is dropped, not merged. Default is 0.0
+        (no exclusion). Set to 0.05-0.1 s to drop closely-spaced events.
     use_speed_threshold_for_zscore : bool, optional
         **DEPRECATED**: Use `normalization_mask` instead. If True, compute
         z-score statistics (mean/std) using only immobility periods (speed <
