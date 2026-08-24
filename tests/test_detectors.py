@@ -16,6 +16,7 @@ from ripple_detection.core import (
 )
 from ripple_detection.detectors import (
     Roumis_ripple_detector,
+    _event_participation,
     get_Kay_ripple_consensus_trace,
     multiunit_HSE_detector,
 )
@@ -181,12 +182,23 @@ class TestShvartsmanRippleDetector:
     def test_close_ripples(
         self, time_3s, dual_lfp_close_ripples, stationary_speed, sampling_frequency
     ):
-        """Test detection of closely spaced ripples."""
+        """Closely-spaced but offset ripples (ch0 at 1.10s, ch1 at 1.15s) never
+        overlap above threshold, so peak participation is 1: the default 2-channel
+        cutoff rejects them, but a single-channel cutoff detects them."""
         filtered_lfps = filter_ripple_band(dual_lfp_close_ripples)
-        ripples = Shvartsman_ripple_detector(
+
+        ripples_default = Shvartsman_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
+        assert ripples_default.empty
 
+        ripples = Shvartsman_ripple_detector(
+            time_3s,
+            filtered_lfps,
+            stationary_speed,
+            sampling_frequency,
+            participation_threshold=0,
+        )
         assert isinstance(ripples, pd.DataFrame)
         assert len(ripples) > 0
 
@@ -1161,3 +1173,33 @@ class TestDetectorErrorHandling:
         except (ValueError, IndexError):
             # May raise error for insufficient data
             pass
+
+
+class TestEventParticipation:
+    def test_peak_is_max_simultaneous_not_union(self):
+        """P2: n_participants is the peak simultaneous count; participants is the
+        (possibly larger) union of channels active anywhere in the event."""
+        time = np.arange(6, dtype=float)
+        qualified = np.zeros((6, 5), dtype=bool)
+        qualified[0:2, [0, 1, 2]] = True  # early peak: channels {0, 1, 2}
+        qualified[4:6, [2, 3, 4]] = True  # later peak: channels {2, 3, 4}
+        peak, participants = _event_participation(qualified, time, 0.0, 5.0)
+        assert peak == 3
+        assert participants == {0, 1, 2, 3, 4}
+
+    def test_non_simultaneous_channels_not_counted(self):
+        """P1: channels above threshold at disjoint times give a peak count of 1."""
+        time = np.arange(6, dtype=float)
+        qualified = np.zeros((6, 2), dtype=bool)
+        qualified[0:2, 0] = True  # channel 0 early
+        qualified[4:6, 1] = True  # channel 1 late
+        peak, participants = _event_participation(qualified, time, 0.0, 5.0)
+        assert peak == 1
+        assert participants == {0, 1}
+
+    def test_empty_window_returns_zero(self):
+        time = np.arange(6, dtype=float)
+        qualified = np.zeros((6, 2), dtype=bool)
+        peak, participants = _event_participation(qualified, time, 10.0, 20.0)
+        assert peak == 0
+        assert participants == set()

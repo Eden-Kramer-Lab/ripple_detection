@@ -17,7 +17,6 @@ from ripple_detection.core import (
     get_envelope,
     get_multiunit_population_firing_rate,
     merge_overlapping_ranges,
-    merge_overlapping_ranges_track_participation,
     normalize_signal,
     normalize_signal_manually,
     ripple_bandpass_filter,
@@ -749,38 +748,3 @@ class TestNormalizeSignalManually:
         assert np.all(normalize_signal_manually(data, 0.0, 0.0) == 0)
         assert np.all(normalize_signal_manually(data, 0.0, np.nan) == 0)
         assert np.all(normalize_signal_manually(data, np.nan, 2.0) == 0)
-
-
-class TestMergeOverlappingRangesTrackParticipation:
-    def test_cooccurring_channels_full_participation(self):
-        """Channels active at the same time all count as participants."""
-        merged = merge_overlapping_ranges_track_participation([[(1.0, 1.1)], [(1.0, 1.1)]])
-        assert merged.shape == (1, 3)
-        assert merged[0, 2] == {0, 1}
-
-    def test_chained_overlap_uses_peak_concurrency(self):
-        """Channels active at disjoint times within a chained-merge event are
-        not counted together: participation is the peak simultaneous count."""
-        # ch0 [0,1], ch1 [0.9,2], ch2 [1.9,3] merge into one event [0,3], but at
-        # most two channels are ever active at once.
-        merged = merge_overlapping_ranges_track_participation(
-            [[(0.0, 1.0)], [(0.9, 2.0)], [(1.9, 3.0)]]
-        )
-        assert merged.shape == (1, 3)
-        assert merged[0, 0] == 0.0 and merged[0, 1] == 3.0
-        assert len(merged[0, 2]) == 2
-
-    def test_touching_intervals_not_simultaneous(self):
-        """Intervals that only touch at an endpoint are not co-active."""
-        merged = merge_overlapping_ranges_track_participation([[(0.0, 1.0)], [(1.0, 2.0)]])
-        assert merged.shape == (1, 3)
-        assert len(merged[0, 2]) == 1
-
-    def test_disjoint_events_kept_separate(self):
-        merged = merge_overlapping_ranges_track_participation([[(0.0, 1.0)], [(5.0, 6.0)]])
-        assert merged.shape == (2, 3)
-        assert all(len(row[2]) == 1 for row in merged)
-
-    def test_empty_returns_shaped_array(self):
-        merged = merge_overlapping_ranges_track_participation([[], []])
-        assert merged.shape == (0, 3)

@@ -14,9 +14,9 @@ from ripple_detection.core import (
     get_envelope,
     get_multiunit_population_firing_rate,
     merge_overlapping_ranges,
-    merge_overlapping_ranges_track_participation,
     normalize_signal,
     normalize_signal_manually,
+    segment_boolean_series,
     threshold_by_zscore,
 )
 
@@ -308,6 +308,36 @@ def get_Kay_ripple_consensus_trace(
     return np.sqrt(ripple_consensus_trace)
 
 
+def _event_participation(
+    qualified: NDArray, time: NDArray, start: float, end: float
+) -> tuple[int, set]:
+    """Peak simultaneous participation and the participant union for one event.
+
+    Parameters
+    ----------
+    qualified : ndarray, shape (n_time, n_channels), dtype bool
+        Per-channel duration-qualified supra-threshold mask.
+    time : ndarray, shape (n_time,)
+        Time values for each sample.
+    start, end : float
+        Event boundaries (inclusive).
+
+    Returns
+    -------
+    peak_count : int
+        Maximum number of channels simultaneously above threshold in the event.
+    participants : set
+        Channels above threshold at any point in the event. Its size can exceed
+        ``peak_count`` when different channels peak at different times.
+    """
+    event_qualified = qualified[(time >= start) & (time <= end)]
+    if event_qualified.size == 0:
+        return 0, set()
+    peak_count = int(event_qualified.sum(axis=1).max())
+    participants = set(np.flatnonzero(event_qualified.any(axis=0)))
+    return peak_count, participants
+
+
 def Shvartsman_ripple_detector(
     time: ArrayLike,
     filtered_lfps: ArrayLike,
@@ -416,9 +446,12 @@ def Shvartsman_ripple_detector(
     ripple_times : pd.DataFrame
         DataFrame with detected ripples and comprehensive statistics (see
         Kay_ripple_detector for the shared columns). This detector additionally
-        returns ``participants`` (set of channel indices active in the event),
-        ``n_participants`` (count), and ``frac_participants`` (count / total
-        channels).
+        returns ``participants`` (set of every channel above threshold anywhere
+        in the event), ``n_participants`` (the *peak* number of channels above
+        threshold simultaneously, which may be smaller than ``len(participants)``
+        when channels peak at different times), and ``frac_participants``
+        (``n_participants`` / total channels). The per-event z-score statistics
+        are averaged over the ``participants`` union.
 
         Returns empty DataFrame if no ripples detected. If this occurs, try:
         - Lowering zscore_threshold (e.g., from 3.0 to 2.0)
@@ -478,8 +511,32 @@ def Shvartsman_ripple_detector(
         for filtered_lfp in filtered_lfps.T
     ]
 
-    # merging overlapping candidate ripple times
-    merged_candidates = merge_overlapping_ranges_track_participation(candidate_ripple_times)
+    # Event boundaries: merge every channel's mean-crossing-extended interval.
+    merged_events = np.array(
+        list(merge_overlapping_ranges(chain.from_iterable(candidate_ripple_times)))
+    ).reshape(-1, 2)
+
+    # Participation is measured on where channels are actually above threshold for at
+    # least minimum_duration -- not the wider mean-crossing intervals used for the
+    # event boundaries, and not brief (sub-minimum_duration) noise crossings. Build a
+    # per-channel duration-qualified supra-threshold mask.
+    time_arr = np.asarray(time)
+    filtered_arr = np.asarray(filtered_lfps)
+    qualified = np.zeros(filtered_arr.shape, dtype=bool)
+    for channel in range(filtered_arr.shape[1]):
+        supra = pd.Series(filtered_arr[:, channel] >= zscore_threshold, index=time_arr)
+        for start, end in segment_boolean_series(supra, minimum_duration):
+            qualified[(time_arr >= start) & (time_arr <= end), channel] = True
+
+    # For each event: peak number of channels simultaneously above threshold, and the
+    # set of channels above threshold anywhere in the event (count and identity differ
+    # -- the count is the peak concurrency, the set is the union over the event).
+    peak_counts = np.zeros(len(merged_events), dtype=int)
+    participant_sets = np.empty(len(merged_events), dtype=object)
+    for i, (start, end) in enumerate(merged_events):
+        peak_counts[i], participant_sets[i] = _event_participation(
+            qualified, time_arr, start, end
+        )
 
     # account for different ways to specify participation threshold (fraction or number of electrodes)
     n_elecs = filtered_lfps.shape[1]
@@ -492,10 +549,10 @@ def Shvartsman_ripple_detector(
         # interpret as an absolute number of channels
         n_elecs_thresh = participation_threshold
 
-    participation_mask = (
-        np.asarray([len(interval[2]) for interval in merged_candidates]) >= n_elecs_thresh
-    )
-    candidate_ripple_times = merged_candidates[participation_mask, :2]
+    participation_mask = peak_counts >= n_elecs_thresh
+    candidate_ripple_times = merged_events[participation_mask]
+    peak_counts = peak_counts[participation_mask]
+    participant_sets = participant_sets[participation_mask]
 
     candidate_ripple_times, included_ripple_inds = exclude_movement_by_majority(
         candidate_ripple_times, speed, time, speed_threshold=speed_threshold
@@ -504,12 +561,10 @@ def Shvartsman_ripple_detector(
         candidate_ripple_times, close_ripple_threshold, included_ripple_inds
     )
 
-    # find participant information
-    participants = merged_candidates[participation_mask, 2]  # filter by participation mask
-    participants = participants[
-        included_ripple_inds
-    ]  # filter by included ripple inds from other exclusion functions above
-    n_participants = np.array([len(p) for p in participants])
+    # find participant information: n_participants is the peak simultaneous count,
+    # participants is the (possibly larger) set of channels active during the event
+    participants = participant_sets[included_ripple_inds]
+    n_participants = peak_counts[included_ripple_inds]
     frac_participants = n_participants / n_elecs
 
     # get final event stats
