@@ -1007,7 +1007,7 @@ def merge_overlapping_ranges_track_participation(
 
     all_intervals.sort(key=lambda x: x[0])
 
-    merged = []
+    merged: list[list] = []
 
     for start, end, e_idx in all_intervals:
         # initialize the merged list
@@ -1038,7 +1038,7 @@ def exclude_close_events(
     candidate_event_times: ArrayLike,
     close_event_threshold: float = 1.0,
     included_ripple_inds: list | None = None,
-) -> NDArray | list:
+) -> NDArray | list | tuple[NDArray | list, NDArray | list]:
     """Remove events that occur too close together in time.
 
     Filters out successive events that start within `close_event_threshold`

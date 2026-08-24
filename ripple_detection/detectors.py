@@ -1193,6 +1193,8 @@ def _get_event_stats(
         median_speed.append(np.median(speed_arr[time_mask]))
         mean_speed.append(np.mean(speed_arr[time_mask]))
 
+    event_start_times: NDArray | list
+    event_end_times: NDArray | list
     try:
         event_start_times = event_times_arr[:, 0]
         event_end_times = event_times_arr[:, 1]
