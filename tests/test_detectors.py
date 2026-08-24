@@ -10,14 +10,14 @@ from ripple_detection import (
     Shvartsman_ripple_detector,
     filter_ripple_band,
 )
+from ripple_detection.core import (
+    gaussian_smooth,
+    get_envelope,
+)
 from ripple_detection.detectors import (
     Roumis_ripple_detector,
     get_Kay_ripple_consensus_trace,
     multiunit_HSE_detector,
-)
-from ripple_detection.core import (
-    get_envelope,
-    gaussian_smooth,
 )
 
 
