@@ -158,16 +158,11 @@ class TestRippleBandpassFilter:
     """Test ripple bandpass filter generation."""
 
     def test_filter_shape(self):
-        """Test that filter has correct shape."""
+        """Test that filter has correct shape and generates on supported SciPy."""
         sampling_frequency = 1500
-        try:
-            filter_numerator, filter_denominator = ripple_bandpass_filter(sampling_frequency)
-            assert len(filter_numerator) == 101  # ORDER = 101
-            assert filter_denominator == 1.0
-        except TypeError:
-            # Older scipy versions use Hz, newer use fs
-            # This function may not work with all scipy versions
-            pytest.skip("ripple_bandpass_filter API incompatibility with scipy version")
+        filter_numerator, filter_denominator = ripple_bandpass_filter(sampling_frequency)
+        assert len(filter_numerator) == 101  # ORDER = 101
+        assert filter_denominator == 1.0
 
 
 class TestGetRipplefilterKernel:

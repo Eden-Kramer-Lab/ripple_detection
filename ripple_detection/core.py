@@ -46,7 +46,7 @@ def ripple_bandpass_filter(sampling_frequency: float) -> tuple[NDArray, float]:
         RIPPLE_BAND[1] + TRANSITION_BAND,
         nyquist,
     ]
-    return remez(ORDER, desired, [0, 1, 0], Hz=sampling_frequency), 1.0
+    return remez(ORDER, desired, [0, 1, 0], fs=sampling_frequency), 1.0
 
 
 def _get_series_start_end_times(series: pd.Series) -> tuple[NDArray, NDArray]:
