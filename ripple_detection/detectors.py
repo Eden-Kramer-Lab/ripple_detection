@@ -187,7 +187,8 @@ def _preprocess_detector_inputs(
     speed: ArrayLike,
     sampling_frequency: float,
     speed_threshold: float = 4.0,
-) -> tuple[NDArray, NDArray, NDArray]:
+    normalization_mask: ArrayLike | None = None,
+) -> tuple[NDArray, NDArray, NDArray, NDArray | None]:
     """Remove NaN values from detector inputs and validate units.
 
     Ensures all inputs are aligned by removing any time points where
@@ -207,6 +208,9 @@ def _preprocess_detector_inputs(
         Sampling rate in Hz, used to validate time units.
     speed_threshold : float, optional
         Speed threshold in cm/s, used to validate speed units. Default is 4.0.
+    normalization_mask : array_like, shape (n_time,), optional
+        Boolean mask over the original time samples. Filtered by the same NaN
+        removal so it stays aligned with the cleaned data. Default is None.
 
     Returns
     -------
@@ -216,6 +220,9 @@ def _preprocess_detector_inputs(
         LFP array with NaN rows removed.
     speed_clean : ndarray, shape (n_clean_time,)
         Speed array with NaN values removed.
+    normalization_mask_clean : ndarray or None, shape (n_clean_time,)
+        The normalization mask with the same NaN rows removed, or None if no
+        mask was provided.
 
     Raises
     ------
@@ -243,7 +250,25 @@ def _preprocess_detector_inputs(
     # Remove NaN values
     not_null = np.all(pd.notna(filtered_lfps), axis=1) & pd.notna(speed)
 
-    return time[not_null], filtered_lfps[not_null], speed[not_null]
+    # Filter the normalization mask by the same rows so it stays aligned with
+    # the cleaned data (otherwise its length no longer matches after NaN removal).
+    if normalization_mask is not None:
+        normalization_mask = np.asarray(normalization_mask)
+        if len(normalization_mask) != len(not_null):
+            raise ValueError(
+                f"normalization_mask length ({len(normalization_mask)}) must match "
+                f"the number of time samples ({len(not_null)})."
+            )
+        normalization_mask = normalization_mask[not_null]
+        # Fail loudly rather than normalizing over an empty selection (which would
+        # yield an all-NaN trace and silently report "no ripples").
+        if not np.any(normalization_mask):
+            raise ValueError(
+                "normalization_mask selects no samples (after NaN removal); "
+                "cannot compute normalization statistics."
+            )
+
+    return time[not_null], filtered_lfps[not_null], speed[not_null], normalization_mask
 
 
 def get_Kay_ripple_consensus_trace(
@@ -398,8 +423,13 @@ def Shvartsman_ripple_detector(
         - Verifying your data contains ripple oscillations (150-250 Hz)
 
     """
-    time, filtered_lfps, speed = _preprocess_detector_inputs(
-        time, filtered_lfps, speed, sampling_frequency, speed_threshold
+    time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
+        time,
+        filtered_lfps,
+        speed,
+        sampling_frequency,
+        speed_threshold,
+        normalization_mask=normalization_mask,
     )
 
     filtered_lfps = get_envelope(filtered_lfps)
@@ -601,8 +631,13 @@ def Kay_ripple_detector(
        immobility and sleep. Nature 531, 185-190.
 
     """
-    time, filtered_lfps, speed = _preprocess_detector_inputs(
-        time, filtered_lfps, speed, sampling_frequency, speed_threshold
+    time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
+        time,
+        filtered_lfps,
+        speed,
+        sampling_frequency,
+        speed_threshold,
+        normalization_mask=normalization_mask,
     )
 
     combined_filtered_lfps = get_Kay_ripple_consensus_trace(
@@ -714,8 +749,13 @@ def Karlsson_ripple_detector(
        experiences in the hippocampus. Nature Neuroscience 12, 913-918.
 
     """
-    time, filtered_lfps, speed = _preprocess_detector_inputs(
-        time, filtered_lfps, speed, sampling_frequency, speed_threshold
+    time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
+        time,
+        filtered_lfps,
+        speed,
+        sampling_frequency,
+        speed_threshold,
+        normalization_mask=normalization_mask,
     )
 
     filtered_lfps = get_envelope(filtered_lfps)
@@ -825,8 +865,13 @@ def Roumis_ripple_detector(
         - Verifying your data contains ripple oscillations (150-250 Hz)
 
     """
-    time, filtered_lfps, speed = _preprocess_detector_inputs(
-        time, filtered_lfps, speed, sampling_frequency, speed_threshold
+    time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
+        time,
+        filtered_lfps,
+        speed,
+        sampling_frequency,
+        speed_threshold,
+        normalization_mask=normalization_mask,
     )
 
     filtered_lfps = get_envelope(filtered_lfps) ** 2

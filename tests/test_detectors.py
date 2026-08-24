@@ -994,6 +994,60 @@ class TestDetectorErrorHandling:
         # Should handle NaN in speed data
         assert isinstance(ripples, pd.DataFrame)
 
+    def test_normalization_mask_with_nan_rows(
+        self, time_3s, dual_lfp_with_ripples, stationary_speed, sampling_frequency
+    ):
+        """normalization_mask stays position-aligned after NaN rows are removed."""
+        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
+        filtered_lfps[100:150, :] = np.nan
+
+        # A mask with genuine False entries (not coinciding with the NaN rows),
+        # spanning the original pre-NaN-removal time samples. Before the fix this
+        # raised a length-mismatch ValueError once NaN rows were dropped.
+        normalization_mask = np.ones(len(time_3s), dtype=bool)
+        normalization_mask[1000:1500] = False
+
+        ripples = Kay_ripple_detector(
+            time_3s,
+            filtered_lfps,
+            stationary_speed,
+            sampling_frequency,
+            normalization_mask=normalization_mask,
+        )
+        assert isinstance(ripples, pd.DataFrame)
+
+        # Equivalence check: manually dropping the NaN rows and slicing the mask
+        # to match must give an identical result. This confirms the internal
+        # filtering keeps the mask aligned by position, not merely by length -- an
+        # off-by-rows misalignment would shift the normalization window and change
+        # the z-scores, so the two runs would diverge.
+        not_null = np.all(~np.isnan(filtered_lfps), axis=1)
+        ripples_manual = Kay_ripple_detector(
+            time_3s[not_null],
+            filtered_lfps[not_null],
+            stationary_speed[not_null],
+            sampling_frequency,
+            normalization_mask=normalization_mask[not_null],
+        )
+        pd.testing.assert_frame_equal(ripples, ripples_manual)
+
+    def test_normalization_mask_selects_no_samples(
+        self, time_3s, dual_lfp_with_ripples, stationary_speed, sampling_frequency
+    ):
+        """An all-False normalization_mask raises rather than silently returning
+        an empty result from an all-NaN normalized trace."""
+        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
+        normalization_mask = np.zeros(len(time_3s), dtype=bool)
+
+        with pytest.raises(ValueError, match="selects no samples"):
+            Kay_ripple_detector(
+                time_3s,
+                filtered_lfps,
+                stationary_speed,
+                sampling_frequency,
+                normalization_mask=normalization_mask,
+            )
+
     def test_mismatched_lengths(self, time_3s, single_lfp_with_ripples, sampling_frequency):
         """Test with mismatched time and LFP lengths."""
         # Create speed array with different length
