@@ -18,6 +18,7 @@ from ripple_detection.core import (
     get_multiunit_population_firing_rate,
     merge_overlapping_ranges,
     normalize_signal,
+    normalize_signal_manually,
     ripple_bandpass_filter,
     segment_boolean_series,
     threshold_by_zscore,
@@ -736,3 +737,19 @@ class TestNormalizeSignal:
         # Should work and return full-length normalized data
         assert len(normalized) == 1000
         assert not np.all(normalized == 0)
+
+
+class TestNormalizeSignalManually:
+    def test_1d_scalar_baseline_deviation(self):
+        """1-D manual normalization uses the scalar baseline/deviation."""
+        data = np.arange(5.0)
+        np.testing.assert_allclose(
+            normalize_signal_manually(data, 1.0, 2.0), (data - 1.0) / 2.0
+        )
+
+    def test_1d_degenerate_returns_zeros(self):
+        """1-D input with a zero/NaN deviation or NaN baseline returns zeros."""
+        data = np.arange(5.0)
+        assert np.all(normalize_signal_manually(data, 0.0, 0.0) == 0)
+        assert np.all(normalize_signal_manually(data, 0.0, np.nan) == 0)
+        assert np.all(normalize_signal_manually(data, np.nan, 2.0) == 0)

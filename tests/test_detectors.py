@@ -1054,6 +1054,20 @@ class TestDetectorErrorHandling:
                 normalization_mask=normalization_mask,
             )
 
+    def test_normalization_mask_wrong_length(
+        self, time_3s, dual_lfp_with_ripples, stationary_speed, sampling_frequency
+    ):
+        """A normalization_mask whose length doesn't match the data raises."""
+        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
+        with pytest.raises(ValueError, match="normalization_mask length"):
+            Kay_ripple_detector(
+                time_3s,
+                filtered_lfps,
+                stationary_speed,
+                sampling_frequency,
+                normalization_mask=np.ones(len(time_3s) - 5, dtype=bool),
+            )
+
     def test_manual_normalization_warns_on_degenerate_channel(
         self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
     ):
