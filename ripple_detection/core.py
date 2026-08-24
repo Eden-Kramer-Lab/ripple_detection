@@ -591,6 +591,11 @@ def _get_normalization_mask(
                 f"normalization_mask length ({mask.shape[0]}) must match "
                 f"data length ({data_shape[0]})."
             )
+        if not np.any(mask):
+            raise ValueError(
+                "normalization_mask selects no samples; cannot compute "
+                "normalization statistics."
+            )
         return mask
     elif normalization_time_range is not None:
         time_arr = np.asarray(time)
@@ -864,16 +869,15 @@ def normalize_signal_manually(
         return (data - elec_baselines) / elec_deviations
 
     # Multi-channel data (n_time, n_channels): channels with a zero/NaN deviation
-    # or a NaN baseline are degenerate, so zero them out (matching the 1-D branch)
-    # rather than dividing by a placeholder 1.0 or subtracting a NaN baseline, which
-    # would let a dead channel cross threshold or NaN-poison it and silently distort
-    # participation counts.
+    # or a NaN baseline are degenerate. safe_deviations avoids a divide-by-zero
+    # RuntimeWarning, and the explicit overwrite below zeros those columns so a dead
+    # channel can neither cross threshold nor NaN-poison the output and silently
+    # distort participation counts (matching the 1-D branch).
     elec_deviations = elec_deviations.reshape(1, -1)
     elec_baselines = elec_baselines.reshape(1, -1)
     degenerate = (elec_deviations == 0) | np.isnan(elec_deviations) | np.isnan(elec_baselines)
     safe_deviations = np.where(degenerate, 1.0, elec_deviations)
-    safe_baselines = np.where(degenerate, 0.0, elec_baselines)
-    normalized_data = (data - safe_baselines) / safe_deviations
+    normalized_data = (data - elec_baselines) / safe_deviations
     normalized_data[:, degenerate[0]] = 0.0
 
     degenerate_channels = np.flatnonzero(degenerate[0])

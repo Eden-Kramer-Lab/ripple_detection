@@ -1026,7 +1026,8 @@ class TestDetectorErrorHandling:
         # filtering keeps the mask aligned by position, not merely by length -- an
         # off-by-rows misalignment would shift the normalization window and change
         # the z-scores, so the two runs would diverge.
-        not_null = np.all(~np.isnan(filtered_lfps), axis=1)
+        # (mirror the detector's own not_null: NaN in the LFP *or* the speed)
+        not_null = np.all(~np.isnan(filtered_lfps), axis=1) & ~np.isnan(stationary_speed)
         ripples_manual = Kay_ripple_detector(
             time_3s[not_null],
             filtered_lfps[not_null],
@@ -1040,7 +1041,7 @@ class TestDetectorErrorHandling:
         self, time_3s, dual_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
         """An all-False normalization_mask raises rather than silently returning
-        an empty result from an all-NaN normalized trace."""
+        an empty result from a degenerate normalization."""
         filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
         normalization_mask = np.zeros(len(time_3s), dtype=bool)
 
@@ -1051,6 +1052,27 @@ class TestDetectorErrorHandling:
                 stationary_speed,
                 sampling_frequency,
                 normalization_mask=normalization_mask,
+            )
+
+    def test_manual_normalization_warns_on_degenerate_channel(
+        self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
+    ):
+        """normalize_signal_manually zeroes a NaN-baseline channel and warns."""
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        n_channels = filtered_lfps.shape[1]
+        baselines = np.zeros(n_channels)
+        baselines[1] = np.nan  # degenerate channel
+        deviations = np.ones(n_channels)
+
+        with pytest.warns(UserWarning, match="Zeroing channel"):
+            Shvartsman_ripple_detector(
+                time_3s,
+                filtered_lfps,
+                stationary_speed,
+                sampling_frequency,
+                manual_normalization=True,
+                elec_baselines=baselines,
+                elec_deviations=deviations,
             )
 
     def test_mismatched_lengths(self, time_3s, single_lfp_with_ripples, sampling_frequency):

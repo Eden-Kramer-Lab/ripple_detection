@@ -260,13 +260,6 @@ def _preprocess_detector_inputs(
                 f"the number of time samples ({len(not_null)})."
             )
         normalization_mask = normalization_mask[not_null]
-        # Fail loudly rather than normalizing over an empty selection (which would
-        # yield an all-NaN trace and silently report "no ripples").
-        if not np.any(normalization_mask):
-            raise ValueError(
-                "normalization_mask selects no samples (after NaN removal); "
-                "cannot compute normalization statistics."
-            )
 
     return time[not_null], filtered_lfps[not_null], speed[not_null], normalization_mask
 
