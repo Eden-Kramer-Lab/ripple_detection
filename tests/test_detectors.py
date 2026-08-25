@@ -17,6 +17,7 @@ from ripple_detection.core import (
 from ripple_detection.detectors import (
     Roumis_ripple_detector,
     _event_participation,
+    _find_max_thresh,
     get_Kay_ripple_consensus_trace,
     multiunit_HSE_detector,
 )
@@ -1321,3 +1322,61 @@ class TestShvartsmanParticipationSemantics:
         assert all(ripples["n_participants"] == 1)
         # ...but the denominator still includes it (1 of 2 channels).
         assert all(ripples["frac_participants"] == 0.5)
+
+
+class TestFindMaxThresh:
+    def test_respects_minimum_duration(self):
+        """max_thresh is the largest value sustained for minimum_duration, so a
+        longer required duration yields a smaller (or equal) result."""
+        time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
+        data = np.array([10.0, 8.0, 6.0, 4.0, 2.0])
+        assert _find_max_thresh(time, data, minimum_duration=0.005) == 8.0
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 6.0
+        assert _find_max_thresh(time, data, minimum_duration=0.035) == 2.0
+
+    def test_short_event_is_bounds_safe(self):
+        """An event shorter than minimum_duration cannot be expanded to reach it;
+        the search must stop at the event edges rather than index out of bounds."""
+        time = np.array([0.0, 0.001])
+        data = np.array([10.0, 0.0])
+        # Previously ran peak_left_ind negative -> IndexError; now returns the
+        # min over the whole (too-short) event.
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 0.0
+
+    def test_single_sample_event(self):
+        """A one-sample event returns that sample without expanding out of bounds."""
+        time = np.array([1.0])
+        data = np.array([7.0])
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 7.0
+
+
+class TestMaxThreshMinimumDuration:
+    """Karlsson and multiunit_HSE must honour the caller's minimum_duration for
+    max_thresh, not silently fall back to the 15 ms default."""
+
+    def test_karlsson_small_minimum_duration_is_bounds_safe(
+        self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
+    ):
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        ripples = Karlsson_ripple_detector(
+            time_3s,
+            filtered_lfps,
+            stationary_speed,
+            sampling_frequency,
+            minimum_duration=0.001,
+        )
+        assert len(ripples) > 0
+        assert np.all(np.isfinite(ripples["max_thresh"].to_numpy()))
+
+    def test_hse_small_minimum_duration_is_bounds_safe(self, time_3s, sampling_frequency):
+        # A sharp, few-sample synchrony burst detected with a 1 ms minimum used to
+        # crash inside max_thresh because it fell back to the 15 ms window.
+        multiunit = np.zeros((len(time_3s), 5))
+        idx = int(1.0 * sampling_frequency)
+        multiunit[idx : idx + 3, :] = 1
+        speed = np.ones(len(time_3s)) * 2.0
+        hse = multiunit_HSE_detector(
+            time_3s, multiunit, speed, sampling_frequency, minimum_duration=0.001
+        )
+        assert len(hse) > 0
+        assert np.all(np.isfinite(hse["max_thresh"].to_numpy()))

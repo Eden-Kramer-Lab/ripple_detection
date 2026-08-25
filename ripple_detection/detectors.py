@@ -851,7 +851,9 @@ def Karlsson_ripple_detector(
     )
     ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
 
-    return _get_event_stats(ripple_times, time, filtered_lfps.mean(axis=1), speed)
+    return _get_event_stats(
+        ripple_times, time, filtered_lfps.mean(axis=1), speed, minimum_duration
+    )
 
 
 def Roumis_ripple_detector(
@@ -1106,7 +1108,7 @@ def multiunit_HSE_detector(
     )
     high_synchrony_events = exclude_close_events(high_synchrony_events, close_event_threshold)
 
-    return _get_event_stats(high_synchrony_events, time, firing_rate, speed)
+    return _get_event_stats(high_synchrony_events, time, firing_rate, speed, minimum_duration)
 
 
 def _find_max_thresh(
@@ -1134,9 +1136,16 @@ def _find_max_thresh(
 
     # Expand the window until the time difference exceeds the minimum duration
     while time[peak_right_ind] - time[peak_left_ind] < minimum_duration:
+        can_expand_right = peak_right_ind < len(time) - 1
+        can_expand_left = peak_left_ind > 0
+        # The window already spans the whole event but is still shorter than
+        # minimum_duration (e.g. a very short event); stop rather than run an
+        # index out of bounds.
+        if not (can_expand_right or can_expand_left):
+            break
         # Determine the direction to expand
-        if peak_right_ind < len(time) - 1 and (
-            peak_left_ind == 0 or data[peak_right_ind + 1] > data[peak_left_ind - 1]
+        if can_expand_right and (
+            not can_expand_left or data[peak_right_ind + 1] > data[peak_left_ind - 1]
         ):
             peak_right_ind += 1
         else:
