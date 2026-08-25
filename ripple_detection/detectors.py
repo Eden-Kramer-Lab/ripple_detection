@@ -1175,13 +1175,20 @@ def _get_event_stats(
         Animal's speed at each time point.
     minimum_duration : float, optional
         Minimum duration for max_thresh calculation. Default is 0.015 (15 ms).
-    participants: array_like, shape (n_events,)
-        Which channels participate in each ripple event. Used by Shvartsman_ripple_detector. Optional, default is None.
+    participants: array_like of set, shape (n_events,)
+        Set of channels that participate in each event; z-score metrics are
+        averaged over these channels. Used by Shvartsman_ripple_detector.
+        Optional, default is None.
     n_participants: array_like, shape (n_events,)
-        Number of participating channels for each ripple event. Used by Shvartsman_ripple_detector. Optional, default is None.
+        Participation count per event, as supplied by the caller. For
+        Shvartsman_ripple_detector this is the *peak* number of channels active
+        simultaneously, which may be smaller than ``len(participants[i])`` when
+        channels peak at different times; it is stored as-is, not recomputed
+        from ``participants``. Optional, default is None.
     frac_participants: array_like, shape (n_events,)
-        Fraction of (# of participating channels) / (total channels) per
-        each ripple event. Used by Shvartsman_ripple_detector. Optional, default is None.
+        ``n_participants`` divided by the total channel count, per event, as
+        supplied by the caller. Used by Shvartsman_ripple_detector. Optional,
+        default is None.
 
     Returns
     -------
