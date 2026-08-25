@@ -310,7 +310,7 @@ def get_Kay_ripple_consensus_trace(
 
 def _event_participation(
     qualified: NDArray, time: NDArray, start: float, end: float
-) -> tuple[int, set]:
+) -> tuple[int, set[int]]:
     """Peak simultaneous participation and the participant union for one event.
 
     Parameters
@@ -334,7 +334,7 @@ def _event_participation(
     if event_qualified.size == 0:
         return 0, set()
     peak_count = int(event_qualified.sum(axis=1).max())
-    participants = set(np.flatnonzero(event_qualified.any(axis=0)))
+    participants = {int(channel) for channel in np.flatnonzero(event_qualified.any(axis=0))}
     return peak_count, participants
 
 
@@ -477,7 +477,6 @@ def Shvartsman_ripple_detector(
     )
 
     if manual_normalization:
-        # make sure to multiply mad by 1.4826 if using median_mad to get std equivalent
         if elec_baselines is None or elec_deviations is None:
             raise ValueError(
                 "Must provide elec_baselines and elec_deviations for manual normalization."
@@ -491,6 +490,8 @@ def Shvartsman_ripple_detector(
                 "Provided elec_baselines/elec_deviations must have one entry per "
                 f"channel (n_channels={filtered_lfps.shape[1]}), got {len(elec_baselines)}."
             )
+        # elec_deviations must be std-equivalent: if it was computed as a MAD,
+        # multiply by 1.4826 before passing it in.
         filtered_lfps = normalize_signal_manually(
             filtered_lfps,
             elec_baselines,

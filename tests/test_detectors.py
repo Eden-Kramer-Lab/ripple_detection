@@ -20,6 +20,7 @@ from ripple_detection.detectors import (
     get_Kay_ripple_consensus_trace,
     multiunit_HSE_detector,
 )
+from ripple_detection.simulate import simulate_LFP
 
 
 class TestShvartsmanRippleDetector:
@@ -1203,3 +1204,120 @@ class TestEventParticipation:
         peak, participants = _event_participation(qualified, time, 10.0, 20.0)
         assert peak == 0
         assert participants == set()
+
+
+class TestShvartsmanParticipationSemantics:
+    """Detector-level participation behaviour beyond the _event_participation unit."""
+
+    def test_participant_metadata_stays_aligned_after_exclusion(
+        self, time_3s, stationary_speed, sampling_frequency
+    ):
+        """When movement exclusion drops an event, the survivor keeps its OWN
+        participant count/set. Guards the ``participant_sets[included_ripple_inds]``
+        bookkeeping, which uniform-participation fixtures cannot exercise."""
+        # Channel 0 ripples at 1.1s and 2.1s; channels 1 and 2 only at 1.1s, so the
+        # event near 1.1s has 3 participants and the event near 2.1s has just 1.
+        ch0 = simulate_LFP(
+            time_3s, [1.1, 2.1], noise_amplitude=1.2, ripple_amplitude=1.5, random_state=0
+        )
+        ch1 = simulate_LFP(
+            time_3s, [1.1], noise_amplitude=1.2, ripple_amplitude=1.5, random_state=1
+        )
+        ch2 = simulate_LFP(
+            time_3s, [1.1], noise_amplitude=1.2, ripple_amplitude=1.5, random_state=2
+        )
+        filtered = filter_ripple_band(np.column_stack([ch0, ch1, ch2]))
+
+        # Sanity: with no movement both events survive with differing participation.
+        both = Shvartsman_ripple_detector(
+            time_3s, filtered, stationary_speed, sampling_frequency, participation_threshold=0
+        )
+        assert both["n_participants"].tolist() == [3, 1]
+
+        # A movement burst covering only the first (3-participant) event excludes it.
+        speed = np.asarray(stationary_speed, dtype=float).copy()
+        speed[(time_3s >= 0.95) & (time_3s <= 1.35)] = 100.0
+        ripples = Shvartsman_ripple_detector(
+            time_3s,
+            filtered,
+            speed,
+            sampling_frequency,
+            participation_threshold=0,
+            speed_threshold=4.0,
+        )
+        # Only the 1-participant event near 2.1s survives, and it must carry its own
+        # metadata (a misaligned index would report the excluded event's count of 3).
+        assert len(ripples) == 1
+        assert ripples["n_participants"].iloc[0] == 1
+        assert ripples["participants"].iloc[0] == {0}
+
+    def test_participation_threshold_fraction_means_all_channels(
+        self,
+        time_3s,
+        dual_lfp_close_ripples,
+        dual_lfp_with_cooccur_ripples,
+        stationary_speed,
+        sampling_frequency,
+    ):
+        """A fractional participation_threshold is a fraction of channels, and 1.0
+        means *all* channels (not one)."""
+        # Offset ripples never overlap -> peak concurrency is 1 across 2 channels.
+        filtered_close = filter_ripple_band(dual_lfp_close_ripples)
+        # 1.0 requires both channels simultaneously -> excluded (peak is 1).
+        assert Shvartsman_ripple_detector(
+            time_3s,
+            filtered_close,
+            stationary_speed,
+            sampling_frequency,
+            participation_threshold=1.0,
+        ).empty
+        # 0.5 requires 1 of 2 -> detected (a genuine fraction in (0, 1)).
+        assert not Shvartsman_ripple_detector(
+            time_3s,
+            filtered_close,
+            stationary_speed,
+            sampling_frequency,
+            participation_threshold=0.5,
+        ).empty
+
+        # Co-occurring ripples reach peak concurrency 2, so 1.0 (all 2) detects them.
+        filtered_co = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        assert not Shvartsman_ripple_detector(
+            time_3s,
+            filtered_co,
+            stationary_speed,
+            sampling_frequency,
+            participation_threshold=1.0,
+        ).empty
+
+    def test_degenerate_channel_zeroed_and_counts_in_denominator(
+        self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
+    ):
+        """A degenerate (NaN-baseline) channel is zeroed so it never participates,
+        yet still counts in the frac_participants denominator."""
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        env = gaussian_smooth(
+            get_envelope(filtered_lfps), sigma=0.004, sampling_frequency=sampling_frequency
+        )
+        baselines = env.mean(axis=0).copy()
+        deviations = env.std(axis=0).copy()
+        baselines[1] = np.nan  # channel 1 degenerate
+
+        with pytest.warns(UserWarning, match="Zeroing channel"):
+            ripples = Shvartsman_ripple_detector(
+                time_3s,
+                filtered_lfps,
+                stationary_speed,
+                sampling_frequency,
+                manual_normalization=True,
+                elec_baselines=baselines,
+                elec_deviations=deviations,
+                participation_threshold=0,
+            )
+
+        assert len(ripples) > 0
+        # The dead channel never appears among participants...
+        assert all(1 not in participants for participants in ripples["participants"])
+        assert all(ripples["n_participants"] == 1)
+        # ...but the denominator still includes it (1 of 2 channels).
+        assert all(ripples["frac_participants"] == 0.5)
