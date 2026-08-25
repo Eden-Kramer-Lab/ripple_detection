@@ -857,29 +857,39 @@ def normalize_signal_manually(
 
     Notes
     -----
-    Channels with a zero or NaN deviation, or a NaN baseline, are treated as
-    degenerate and returned as zeros so they cannot cross a detection threshold.
-    A warning naming those channels is emitted for multi-channel input.
+    A channel with a zero or NaN deviation, or a NaN baseline, is degenerate.
+    Individual degenerate channels are zeroed so they cannot cross a detection
+    threshold, and a warning naming them is emitted. If *every* channel is
+    degenerate (including 1-D input whose single channel is degenerate) the
+    result would be uniformly zero and carry no signal, so a ``ValueError`` is
+    raised instead -- mirroring the empty-mask guard in ``normalize_signal``.
     """
     data = np.asarray(data)
     elec_baselines = np.asarray(elec_baselines, dtype=float)
     elec_deviations = np.asarray(elec_deviations, dtype=float)
 
-    if data.ndim == 1:
-        if elec_deviations == 0 or np.isnan(elec_deviations) or np.isnan(elec_baselines):
-            return np.zeros_like(data)
-        return (data - elec_baselines) / elec_deviations
+    # Handle 1-D and multi-channel data uniformly by working in (n_time,
+    # n_channels) shape; reshape the result back to 1-D on return.
+    is_1d = data.ndim == 1
+    data_2d = data.reshape(-1, 1) if is_1d else data
+    baselines = elec_baselines.reshape(1, -1)
+    deviations = elec_deviations.reshape(1, -1)
 
-    # Multi-channel data (n_time, n_channels): channels with a zero/NaN deviation
-    # or a NaN baseline are degenerate. safe_deviations avoids a divide-by-zero
-    # RuntimeWarning, and the explicit overwrite below zeros those columns so a dead
-    # channel can neither cross threshold nor NaN-poison the output and silently
-    # distort participation counts (matching the 1-D branch).
-    elec_deviations = elec_deviations.reshape(1, -1)
-    elec_baselines = elec_baselines.reshape(1, -1)
-    degenerate = (elec_deviations == 0) | np.isnan(elec_deviations) | np.isnan(elec_baselines)
-    safe_deviations = np.where(degenerate, 1.0, elec_deviations)
-    normalized_data = (data - elec_baselines) / safe_deviations
+    # Channels with a zero/NaN deviation or a NaN baseline are degenerate.
+    degenerate = (deviations == 0) | np.isnan(deviations) | np.isnan(baselines)
+    if degenerate.all():
+        raise ValueError(
+            "All channels have a zero/NaN deviation or NaN baseline during manual "
+            "normalization; the normalized signal would be uniformly zero. Check "
+            "the baseline/deviation statistics (e.g. computed over an empty or "
+            "all-NaN window)."
+        )
+
+    # safe_deviations avoids a divide-by-zero RuntimeWarning; the explicit overwrite
+    # below zeros degenerate columns so a dead channel can neither cross threshold nor
+    # NaN-poison the output and silently distort participation counts.
+    safe_deviations = np.where(degenerate, 1.0, deviations)
+    normalized_data = (data_2d - baselines) / safe_deviations
     normalized_data[:, degenerate[0]] = 0.0
 
     degenerate_channels = np.flatnonzero(degenerate[0])
@@ -896,7 +906,7 @@ def normalize_signal_manually(
             stacklevel=2,
         )
 
-    return normalized_data
+    return normalized_data.reshape(data.shape) if is_1d else normalized_data
 
 
 def threshold_by_zscore(

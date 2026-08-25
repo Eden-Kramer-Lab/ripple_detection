@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `normalization_mask` is now filtered by the same NaN-row removal as the LFP/speed data in the LFP detectors (Kay, Karlsson, Roumis, Shvartsman), fixing a length-mismatch `ValueError` when the input contained NaN samples.
 - A `normalization_mask` that selects no samples now raises a clear error from `normalize_signal` (matching the existing `normalization_time_range` behaviour) instead of silently returning no events from a degenerate all-NaN/all-zero normalized trace.
-- `normalize_signal_manually` (used by `Shvartsman_ripple_detector` for manual normalization) now treats a NaN baseline as a degenerate channel — zeroing it consistently with zero/NaN deviations rather than producing NaN — and warns (for multi-channel input) when channels are dropped.
+- `normalize_signal_manually` (used by `Shvartsman_ripple_detector` for manual normalization) now treats a NaN baseline as a degenerate channel — zeroing it consistently with zero/NaN deviations rather than producing NaN — and warns naming the dropped channels. When *every* channel is degenerate (including 1-D input whose single channel is degenerate) the normalized signal would be uniformly zero, so it now raises `ValueError` instead of silently returning a signal-free array that yields no events — mirroring the empty-`normalization_mask` guard.
 
 ## [1.7.1] - 2026-01-22
 
