@@ -70,18 +70,22 @@ pip install -e .[dev,examples]
 ### Basic Usage
 
 ```python
-from ripple_detection import Kay_ripple_detector
+from ripple_detection import Kay_ripple_detector, filter_ripple_band
 import numpy as np
 
-# Your data
-time = np.arange(0, 10, 0.001)  # 10 seconds at 1000 Hz
-LFPs = np.random.randn(len(time), 4)  # 4 channels of LFP data
-speed = np.abs(np.random.randn(len(time)))  # Animal speed
-sampling_frequency = 1000  # Hz
+# Your data (replace the random arrays with real recordings)
+sampling_frequency = 1500  # Hz (the built-in filter needs >= 1200 Hz)
+time = np.arange(0, 10, 1 / sampling_frequency)  # 10 seconds
+LFPs = np.random.randn(len(time), 4)  # 4 channels of raw LFP data
+speed = np.abs(np.random.randn(len(time)))  # Animal speed (cm/s)
+
+# Filter into the ripple band (150-250 Hz) first: the detectors expect
+# ripple-band-filtered LFPs, not raw signal.
+filtered_lfps = filter_ripple_band(LFPs)
 
 # Detect ripples
 ripple_times = Kay_ripple_detector(
-    time, LFPs, speed, sampling_frequency,
+    time, filtered_lfps, speed, sampling_frequency,
     speed_threshold=4.0,        # cm/s
     minimum_duration=0.015,     # seconds
     zscore_threshold=2.0
@@ -95,9 +99,9 @@ print(ripple_times)
 ```python
 from ripple_detection import Karlsson_ripple_detector
 
-# Detect ripples with custom parameters
+# Detect ripples with custom parameters (filtered_lfps from the Basic example)
 ripples = Karlsson_ripple_detector(
-    time, LFPs, speed, sampling_frequency,
+    time, filtered_lfps, speed, sampling_frequency,
     speed_threshold=4.0,
     minimum_duration=0.015,
     zscore_threshold=3.0,
