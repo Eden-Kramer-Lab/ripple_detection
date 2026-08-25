@@ -1,9 +1,12 @@
 """Integration tests for ripple detection algorithms."""
 
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
 import pytest
 
+import ripple_detection.detectors as detectors_module
 from ripple_detection import (
     Karlsson_ripple_detector,
     Kay_ripple_detector,
@@ -1327,48 +1330,106 @@ class TestShvartsmanParticipationSemantics:
 class TestFindMaxThresh:
     def test_respects_minimum_duration(self):
         """max_thresh is the largest value sustained for minimum_duration, so a
-        longer required duration yields a smaller (or equal) result."""
+        longer required duration yields a smaller (or equal) result. Peak at
+        index 0 -> only rightward expansion."""
         time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
         data = np.array([10.0, 8.0, 6.0, 4.0, 2.0])
         assert _find_max_thresh(time, data, minimum_duration=0.005) == 8.0
         assert _find_max_thresh(time, data, minimum_duration=0.015) == 6.0
         assert _find_max_thresh(time, data, minimum_duration=0.035) == 2.0
 
-    def test_short_event_is_bounds_safe(self):
-        """An event shorter than minimum_duration cannot be expanded to reach it;
-        the search must stop at the event edges rather than index out of bounds."""
-        time = np.array([0.0, 0.001])
+    def test_mid_peak_expands_both_directions(self):
+        """A mid-array peak exercises the leftward-expansion branch and the
+        neighbour tie-break. From peak 10 at index 2: the window first steps left
+        (neighbour 5 > 3), then right (3 > 1), spanning indices 1..3 -> min(5, 3)."""
+        time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
+        data = np.array([1.0, 5.0, 10.0, 3.0, 2.0])
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 3.0
+        assert _find_max_thresh(time, data, minimum_duration=0.035) == 1.0
+
+    def test_peak_at_last_index_expands_left(self):
+        """Peak at the last index forces leftward-only expansion."""
+        time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
+        data = np.array([2.0, 4.0, 6.0, 8.0, 10.0])
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 6.0
+        assert _find_max_thresh(time, data, minimum_duration=0.035) == 2.0
+
+    def test_all_equal_data(self):
+        """A flat plateau returns the (shared) value."""
+        time = np.array([0.0, 0.01, 0.02, 0.03])
+        data = np.array([5.0, 5.0, 5.0, 5.0])
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 5.0
+
+    def test_two_sample_event_long_enough(self):
+        """A two-sample event already spanning minimum_duration needs no expansion
+        and returns the min of its endpoints."""
+        time = np.array([0.0, 0.02])
         data = np.array([10.0, 0.0])
-        # Previously ran peak_left_ind negative -> IndexError; now returns the
-        # min over the whole (too-short) event.
         assert _find_max_thresh(time, data, minimum_duration=0.015) == 0.0
 
-    def test_single_sample_event(self):
-        """A one-sample event returns that sample without expanding out of bounds."""
+    def test_short_event_returns_nan(self):
+        """An event shorter than minimum_duration cannot sustain the threshold, so
+        the value is undefined -> nan (previously ran an index out of bounds)."""
+        time = np.array([0.0, 0.001])
+        data = np.array([10.0, 0.0])
+        assert np.isnan(_find_max_thresh(time, data, minimum_duration=0.015))
+
+    def test_single_sample_event_returns_nan(self):
+        """A one-sample event cannot sustain any duration -> nan (no out-of-bounds)."""
         time = np.array([1.0])
         data = np.array([7.0])
-        assert _find_max_thresh(time, data, minimum_duration=0.015) == 7.0
+        assert np.isnan(_find_max_thresh(time, data, minimum_duration=0.015))
 
 
 class TestMaxThreshMinimumDuration:
     """Karlsson and multiunit_HSE must honour the caller's minimum_duration for
     max_thresh, not silently fall back to the 15 ms default."""
 
-    def test_karlsson_small_minimum_duration_is_bounds_safe(
+    @staticmethod
+    def _spy_on_find_max_thresh():
+        """Patch _find_max_thresh to record the minimum_duration it receives while
+        still delegating to the real implementation."""
+        real = detectors_module._find_max_thresh
+        seen: list[float] = []
+
+        def spy(time, data, minimum_duration=0.015):
+            seen.append(minimum_duration)
+            return real(time, data, minimum_duration)
+
+        return patch.object(detectors_module, "_find_max_thresh", spy), seen
+
+    def test_karlsson_forwards_minimum_duration_to_max_thresh(
         self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
     ):
         filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
-        ripples = Karlsson_ripple_detector(
-            time_3s,
-            filtered_lfps,
-            stationary_speed,
-            sampling_frequency,
-            minimum_duration=0.001,
-        )
+        patcher, seen = self._spy_on_find_max_thresh()
+        with patcher:
+            ripples = Karlsson_ripple_detector(
+                time_3s,
+                filtered_lfps,
+                stationary_speed,
+                sampling_frequency,
+                minimum_duration=0.005,
+            )
         assert len(ripples) > 0
-        assert np.all(np.isfinite(ripples["max_thresh"].to_numpy()))
+        # max_thresh must be computed with the caller's 0.005, not the 0.015 default
+        # (this fails if the minimum_duration argument is dropped from the call).
+        assert seen and all(md == 0.005 for md in seen)
 
-    def test_hse_small_minimum_duration_is_bounds_safe(self, time_3s, sampling_frequency):
+    def test_hse_forwards_minimum_duration_to_max_thresh(self, time_3s, sampling_frequency):
+        multiunit = np.zeros((len(time_3s), 5))
+        idx = int(1.0 * sampling_frequency)
+        multiunit[idx : idx + 30, :] = 1
+        speed = np.ones(len(time_3s)) * 2.0
+        patcher, seen = self._spy_on_find_max_thresh()
+        with patcher:
+            hse = multiunit_HSE_detector(
+                time_3s, multiunit, speed, sampling_frequency, minimum_duration=0.005
+            )
+        assert len(hse) > 0
+        assert seen and all(md == 0.005 for md in seen)
+
+    def test_hse_tiny_minimum_duration_is_bounds_safe(self, time_3s, sampling_frequency):
         # A sharp, few-sample synchrony burst detected with a 1 ms minimum used to
         # crash inside max_thresh because it fell back to the 15 ms window.
         multiunit = np.zeros((len(time_3s), 5))

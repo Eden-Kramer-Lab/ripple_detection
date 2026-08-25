@@ -1114,8 +1114,11 @@ def multiunit_HSE_detector(
 def _find_max_thresh(
     time: np.ndarray, data: np.ndarray, minimum_duration: float = 0.015
 ) -> float:
-    """Find the maximum value of a peak that exceeds a
-    threshold for a minimum duration.
+    """Find the largest value sustained around the peak for a minimum duration.
+
+    Starting at the peak, expand a window (toward the higher neighbouring sample)
+    until it spans ``minimum_duration``, then return the smaller of the two window
+    edges -- the largest value held across the whole window.
 
     Parameters
     ----------
@@ -1126,6 +1129,11 @@ def _find_max_thresh(
     Returns
     -------
     max_thresh : float
+        The largest value sustained for ``minimum_duration`` around the peak.
+        ``nan`` if the event is shorter than ``minimum_duration`` (the sustained
+        value is then undefined). Public detectors never produce such events --
+        their segments are ``>= minimum_duration`` by construction -- so this
+        only affects direct/edge callers.
     """
     # Find the peak of the data points
     peak_ind = np.argmax(data)
@@ -1138,11 +1146,12 @@ def _find_max_thresh(
     while time[peak_right_ind] - time[peak_left_ind] < minimum_duration:
         can_expand_right = peak_right_ind < len(time) - 1
         can_expand_left = peak_left_ind > 0
-        # The window already spans the whole event but is still shorter than
-        # minimum_duration (e.g. a very short event); stop rather than run an
-        # index out of bounds.
+        # The window already spans the whole event yet is still shorter than
+        # minimum_duration, so a value "sustained for minimum_duration" is
+        # undefined. Return nan rather than a misleading endpoint value (and
+        # rather than running an index out of bounds).
         if not (can_expand_right or can_expand_left):
-            break
+            return float("nan")
         # Determine the direction to expand
         if can_expand_right and (
             not can_expand_left or data[peak_right_ind + 1] > data[peak_left_ind - 1]
@@ -1205,7 +1214,8 @@ def _get_event_stats(
         DataFrame with one row per event and columns:
         - start_time, end_time: Event boundaries
         - duration: Event duration (end - start)
-        - max_thresh: Maximum z-score sustained for minimum_duration
+        - max_thresh: Maximum z-score sustained for minimum_duration (nan for an
+            event shorter than minimum_duration; not produced by the detectors)
         - mean_zscore, median_zscore, max_zscore, min_zscore: Z-score statistics
         - area: Integral of z-score over event duration
         - total_energy: Integral of squared z-score
