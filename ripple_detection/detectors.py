@@ -318,7 +318,7 @@ def _event_participation(
     qualified : ndarray, shape (n_time, n_channels), dtype bool
         Per-channel duration-qualified supra-threshold mask.
     time : ndarray, shape (n_time,)
-        Time values for each sample.
+        Monotonically increasing time values for each sample.
     start, end : float
         Event boundaries (inclusive).
 
@@ -330,7 +330,11 @@ def _event_participation(
         Channels above threshold at any point in the event. Its size can exceed
         ``peak_count`` when different channels peak at different times.
     """
-    event_qualified = qualified[(time >= start) & (time <= end)]
+    # Slice the [start, end] window by index (time is sorted) instead of building
+    # a full-length boolean mask per event, so cost is O(event) not O(recording).
+    left = np.searchsorted(time, start, side="left")
+    right = np.searchsorted(time, end, side="right")
+    event_qualified = qualified[left:right]
     if event_qualified.size == 0:
         return 0, set()
     peak_count = int(event_qualified.sum(axis=1).max())
@@ -527,7 +531,11 @@ def Shvartsman_ripple_detector(
     for channel in range(filtered_arr.shape[1]):
         supra = pd.Series(filtered_arr[:, channel] >= zscore_threshold, index=time_arr)
         for start, end in segment_boolean_series(supra, minimum_duration):
-            qualified[(time_arr >= start) & (time_arr <= end), channel] = True
+            # Slice by index (time is sorted) rather than masking the whole
+            # recording per interval.
+            left = np.searchsorted(time_arr, start, side="left")
+            right = np.searchsorted(time_arr, end, side="right")
+            qualified[left:right, channel] = True
 
     # For each event: peak number of channels simultaneously above threshold, and the
     # set of channels above threshold anywhere in the event (count and identity differ

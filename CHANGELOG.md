@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `Shvartsman_ripple_detector` participation now decouples *how many* channels overlap from *which* channels are involved. `n_participants` (and the `participation_threshold` filter and `frac_participants`) is the *peak* number of channels above threshold at the same instant within an event, rather than the union of all channels active anywhere in a transitively-merged event, so channels active at disjoint times are no longer counted together. `participants` remains the union of every channel above threshold anywhere in the event, and the per-event z-score statistics are averaged over that union. Participation is also now measured only where a channel is above threshold for at least `minimum_duration` (matching detection), not on the wider mean-crossing intervals used for event boundaries. Event boundaries are unchanged.
+- `Shvartsman_ripple_detector` participation is computed by slicing each interval by index via `np.searchsorted` instead of building a full-length boolean mask per channel-interval and per event. Output is unchanged, but the participation step no longer scales with recording length × event count, making hour-long multi-channel recordings practical (roughly 3x faster end-to-end on a 20-minute 8-channel example).
 
 ### Fixed
 
