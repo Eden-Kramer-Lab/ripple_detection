@@ -181,7 +181,7 @@ def _validate_speed_units(speed: NDArray, speed_threshold: float) -> None:
                     f"Speed values appear very small (median non-zero: {median_speed:.4f}).\n"
                     f"Speed should be in cm/s, not m/s.\n"
                     f"If your speed is in m/s, multiply by 100:\n"
-                    f"  speed_cms = speed_ms * 100",
+                    "  speed_cms = speed_ms * 100",
                     UserWarning,
                     stacklevel=4,
                 )
