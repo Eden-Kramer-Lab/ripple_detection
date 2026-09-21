@@ -553,6 +553,26 @@ class TestSimulateLFPRealism:
         )
         np.testing.assert_array_equal(y, again)
 
+    def test_inverted_range_raises(self):
+        t = simulate_time(4500, self.FS)
+        with pytest.raises(ValueError, match="low <= high"):
+            simulate_LFP(t, [1.0], ripple_duration=(0.15, 0.03), random_state=0)
+        with pytest.raises(ValueError, match="low <= high"):
+            simulate_LFP(t, [1.0], ripple_frequency=(220.0, 180.0), random_state=0)
+
+    def test_random_state_instance_matches_seed(self):
+        t = simulate_time(4500, self.FS)
+        from_seed = simulate_LFP(
+            t, [1.0, 2.0], ripple_frequency=(150.0, 250.0), random_state=7
+        )
+        from_state = simulate_LFP(
+            t,
+            [1.0, 2.0],
+            ripple_frequency=(150.0, 250.0),
+            random_state=np.random.RandomState(7),
+        )
+        np.testing.assert_array_equal(from_seed, from_state)
+
     def test_noise_draw_is_unchanged_by_the_new_parameters(self):
         # with a scalar frequency and duration and no ripples, output equals the
         # pre-existing noise for the same seed
