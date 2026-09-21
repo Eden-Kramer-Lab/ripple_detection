@@ -5,6 +5,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import pytest
+from scipy.signal import freqz
 from scipy.stats import zscore
 
 from ripple_detection.core import (
@@ -19,11 +20,13 @@ from ripple_detection.core import (
     gaussian_smooth,
     get_envelope,
     get_multiunit_population_firing_rate,
+    merge_close_events,
     merge_overlapping_ranges,
     merge_overlapping_ranges_track_participation,
     nearest_sample_index,
     normalize_signal,
     normalize_signal_manually,
+    require_overlap,
     ripple_bandpass_filter,
     sample_count_within,
     segment_boolean_series,
@@ -1221,3 +1224,400 @@ class TestNearestSampleIndex:
     def test_empty_time_raises(self):
         with pytest.raises(ValueError, match="time is empty"):
             nearest_sample_index(np.empty(0), [1.0])
+
+
+class TestMergeCloseEvents:
+    """Test merging of events separated by a short gap."""
+
+    def test_merges_events_closer_than_the_gap(self):
+        """Two events separated by less than the gap become one."""
+        events = np.array([(0.0, 0.1), (0.13, 0.2)])
+
+        merged = merge_close_events(events, 0.05)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.2]])
+
+    def test_keeps_events_separated_by_more_than_the_gap(self):
+        """A gap at or above the threshold is not bridged."""
+        events = np.array([(0.0, 0.1), (0.15, 0.2)])
+
+        merged = merge_close_events(events, 0.05)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.1], [0.15, 0.2]])
+
+    def test_merges_a_chain_of_events(self):
+        """Three events each close to the next collapse into one."""
+        events = np.array([(0.0, 0.1), (0.12, 0.2), (0.22, 0.3)])
+
+        merged = merge_close_events(events, 0.05)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.3]])
+
+    def test_maximum_duration_stops_a_merge(self):
+        """A merge that would exceed the span cap does not happen."""
+        events = np.array([(0.0, 0.1), (0.12, 0.5)])
+
+        merged = merge_close_events(events, 0.05, maximum_duration=0.3)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.1], [0.12, 0.5]])
+
+    def test_maximum_duration_allows_a_merge_that_fits(self):
+        """The cap is inclusive of spans below it."""
+        events = np.array([(0.0, 0.1), (0.12, 0.2)])
+
+        merged = merge_close_events(events, 0.05, maximum_duration=0.3)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.2]])
+
+    def test_overlapping_events_are_merged(self):
+        """A negative gap counts as close."""
+        events = np.array([(0.0, 0.2), (0.1, 0.3)])
+
+        merged = merge_close_events(events, 0.05)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.3]])
+
+    def test_nested_event_does_not_shorten_the_outer_one(self):
+        """Merging keeps the later of the two end times."""
+        events = np.array([(0.0, 0.5), (0.1, 0.2)])
+
+        merged = merge_close_events(events, 0.05)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.5]])
+
+    def test_zero_gap_is_a_no_op(self):
+        """The default threshold leaves separated events alone."""
+        events = np.array([(0.0, 0.1), (0.2, 0.3)])
+
+        merged = merge_close_events(events, 0.0)
+
+        np.testing.assert_allclose(merged, events)
+
+    def test_empty_input(self):
+        """An empty event list stays empty and keeps its shape."""
+        merged = merge_close_events(np.empty((0, 2)), 0.05)
+
+        assert merged.shape == (0, 2)
+
+    def test_single_event(self):
+        """One event is returned unchanged."""
+        merged = merge_close_events(np.array([(0.0, 0.1)]), 0.05)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.1]])
+
+    def test_unsorted_input_raises(self):
+        """Events must arrive sorted by start time."""
+        events = np.array([(1.0, 1.1), (0.0, 0.1)])
+
+        with pytest.raises(ValueError, match="sorted by start time"):
+            merge_close_events(events, 0.05)
+
+    def test_negative_gap_raises(self):
+        """A negative gap threshold is meaningless."""
+        with pytest.raises(ValueError, match="close_event_threshold"):
+            merge_close_events(np.array([(0.0, 0.1)]), -1.0)
+
+
+class TestCustomFrequencyBand:
+    """The band is a parameter: 13 of the 29 surveyed papers do not use 150-250 Hz."""
+
+    FS = 2000.0
+
+    def test_default_band_is_unchanged(self):
+        """Omitting the band designs the same filter as before."""
+        default, _ = ripple_bandpass_filter(self.FS)
+        explicit, _ = ripple_bandpass_filter(self.FS, band=(150.0, 250.0))
+
+        np.testing.assert_allclose(default, explicit)
+
+    def test_a_custom_band_passes_its_own_frequencies(self):
+        """An 80-250 Hz design passes 100 Hz, which the default rejects."""
+        wide, _ = ripple_bandpass_filter(self.FS, band=(80.0, 250.0))
+        default, _ = ripple_bandpass_filter(self.FS)
+
+        _, wide_response = freqz(wide, worN=[100.0], fs=self.FS)
+        _, default_response = freqz(default, worN=[100.0], fs=self.FS)
+
+        assert np.abs(wide_response[0]) > 0.9
+        assert np.abs(default_response[0]) < 0.05
+
+    def test_a_custom_band_rejects_outside_frequencies(self):
+        """A 100-200 Hz design stops 250 Hz."""
+        narrow, _ = ripple_bandpass_filter(self.FS, band=(100.0, 200.0))
+
+        _, response = freqz(narrow, worN=[250.0], fs=self.FS)
+
+        assert np.abs(response[0]) < 0.05
+
+    def test_filter_ripple_band_takes_a_band(self):
+        """The band reaches the filtering entry point."""
+        rng = np.random.default_rng(0)
+        signal = np.sin(2 * np.pi * 100.0 * np.arange(4000) / self.FS)
+        signal += 0.01 * rng.normal(size=4000)
+
+        wide = filter_ripple_band(signal, self.FS, band=(80.0, 250.0))
+        default = filter_ripple_band(signal, self.FS)
+
+        assert wide.std() > 0.5
+        assert default.std() < 0.1
+
+    def test_band_needs_a_sampling_frequency(self):
+        """The shipped 1500 Hz kernel cannot be redesigned."""
+        with pytest.raises(ValueError, match="sampling_frequency"):
+            filter_ripple_band(np.zeros(4000), band=(80.0, 250.0))
+
+    def test_band_at_1500_hz_bypasses_the_shipped_kernel(self):
+        """A custom band is designed even at the shipped kernel's rate."""
+        signal = np.sin(2 * np.pi * 100.0 * np.arange(6000) / 1500.0)
+
+        wide = filter_ripple_band(signal, 1500.0, band=(80.0, 250.0))
+
+        assert wide.std() > 0.5
+
+    def test_inverted_band_raises(self):
+        with pytest.raises(ValueError, match="band"):
+            ripple_bandpass_filter(self.FS, band=(250.0, 150.0))
+
+    def test_band_above_nyquist_raises(self):
+        with pytest.raises(ValueError, match="Nyquist"):
+            ripple_bandpass_filter(1000.0, band=(150.0, 480.0))
+
+    def test_band_below_zero_raises(self):
+        with pytest.raises(ValueError, match="band"):
+            ripple_bandpass_filter(self.FS, band=(-10.0, 250.0))
+
+    def test_transition_band_is_adjustable(self):
+        """A narrower transition needs more taps."""
+        wide_transition, _ = ripple_bandpass_filter(self.FS, transition_width=25.0)
+        narrow_transition, _ = ripple_bandpass_filter(self.FS, transition_width=10.0)
+
+        assert len(narrow_transition) > len(wide_transition)
+
+
+class TestRequireOverlap:
+    """Thirteen of the 57 surveyed papers require a ripple and a burst together."""
+
+    def test_keeps_an_overlapping_event(self):
+        events = np.array([(0.0, 0.1)])
+        reference = np.array([(0.05, 0.2)])
+
+        np.testing.assert_allclose(require_overlap(events, reference), [[0.0, 0.1]])
+
+    def test_drops_a_non_overlapping_event(self):
+        events = np.array([(0.0, 0.1)])
+        reference = np.array([(0.2, 0.3)])
+
+        assert len(require_overlap(events, reference)) == 0
+
+    def test_touching_events_do_not_overlap(self):
+        """Overlap has to be positive, the project's event-level convention."""
+        events = np.array([(0.0, 0.1)])
+        reference = np.array([(0.1, 0.2)])
+
+        assert len(require_overlap(events, reference)) == 0
+
+    def test_keeps_the_event_bounds_not_the_intersection(self):
+        """This is a filter, not an intersection."""
+        events = np.array([(0.0, 1.0)])
+        reference = np.array([(0.4, 0.5)])
+
+        np.testing.assert_allclose(require_overlap(events, reference), [[0.0, 1.0]])
+
+    def test_filters_a_mixture(self):
+        events = np.array([(0.0, 0.1), (1.0, 1.1), (2.0, 2.1)])
+        reference = np.array([(1.05, 1.5)])
+
+        np.testing.assert_allclose(require_overlap(events, reference), [[1.0, 1.1]])
+
+    def test_minimum_overlap_drops_a_brief_touch(self):
+        events = np.array([(0.0, 0.1), (1.0, 1.1)])
+        reference = np.array([(0.099, 0.5), (1.0, 1.1)])
+
+        kept = require_overlap(events, reference, minimum_overlap=0.01)
+
+        np.testing.assert_allclose(kept, [[1.0, 1.1]])
+
+    def test_overlap_with_several_references_adds_up(self):
+        """Two short references together can meet the minimum."""
+        events = np.array([(0.0, 1.0)])
+        reference = np.array([(0.1, 0.2), (0.5, 0.6)])
+
+        assert len(require_overlap(events, reference, minimum_overlap=0.15)) == 1
+        assert len(require_overlap(events, reference, minimum_overlap=0.25)) == 0
+
+    def test_event_starting_inside_a_reference_counts_only_its_own_span(self):
+        """The reference's part before the event start is not overlap."""
+        events = np.array([(0.5, 1.0)])
+        reference = np.array([(0.0, 0.7)])
+
+        assert len(require_overlap(events, reference, minimum_overlap=0.15)) == 1
+        assert len(require_overlap(events, reference, minimum_overlap=0.25)) == 0
+
+    def test_event_ending_inside_a_reference_counts_only_its_own_span(self):
+        """The reference's part after the event end is not overlap either."""
+        events = np.array([(0.0, 0.5)])
+        reference = np.array([(0.3, 1.0)])
+
+        assert len(require_overlap(events, reference, minimum_overlap=0.15)) == 1
+        assert len(require_overlap(events, reference, minimum_overlap=0.25)) == 0
+
+    def test_event_inside_one_reference_counts_its_whole_span(self):
+        """Both ends trimmed at once."""
+        events = np.array([(0.4, 0.6)])
+        reference = np.array([(0.0, 1.0)])
+
+        assert len(require_overlap(events, reference, minimum_overlap=0.15)) == 1
+        assert len(require_overlap(events, reference, minimum_overlap=0.25)) == 0
+
+    def test_overlapping_references_are_not_double_counted(self):
+        """The reference is reduced to its union first."""
+        events = np.array([(0.0, 1.0)])
+        reference = np.array([(0.1, 0.5), (0.2, 0.6)])
+
+        assert len(require_overlap(events, reference, minimum_overlap=0.45)) == 1
+        assert len(require_overlap(events, reference, minimum_overlap=0.55)) == 0
+
+    def test_accepts_and_returns_dataframes(self):
+        """Detector output goes straight in and comes back with every column."""
+        events = pd.DataFrame(
+            {"start_time": [0.0, 1.0], "end_time": [0.1, 1.1], "max_thresh": [3.0, 4.0]}
+        )
+        reference = pd.DataFrame({"start_time": [1.05], "end_time": [1.5]})
+
+        kept = require_overlap(events, reference)
+
+        assert isinstance(kept, pd.DataFrame)
+        assert list(kept.index) == [1]
+        assert list(kept.max_thresh) == [4.0]
+
+    def test_empty_reference_keeps_nothing(self):
+        events = np.array([(0.0, 0.1)])
+
+        assert len(require_overlap(events, np.empty((0, 2)))) == 0
+
+    def test_empty_events_stay_empty(self):
+        kept = require_overlap(np.empty((0, 2)), np.array([(0.0, 0.1)]))
+
+        assert kept.shape == (0, 2)
+
+    def test_unsorted_reference_is_handled(self):
+        """The reference does not have to arrive in order."""
+        events = np.array([(1.0, 1.1)])
+        reference = np.array([(2.0, 2.5), (1.05, 1.5)])
+
+        assert len(require_overlap(events, reference)) == 1
+
+    def test_negative_minimum_overlap_raises(self):
+        with pytest.raises(ValueError, match="minimum_overlap"):
+            require_overlap(np.array([(0.0, 0.1)]), np.array([(0.0, 0.1)]), -1.0)
+
+
+class TestCloseEventBoundaryAgreement:
+    """The merge and drop conventions decide the same gap the same way."""
+
+    EVENTS = np.array([(0.0, 0.1), (0.15, 0.2)])  # gap is 0.05, below it in binary
+
+    def test_a_gap_equal_to_the_threshold_is_not_close_for_either_convention(self):
+        merged = merge_close_events(self.EVENTS, 0.05)
+        kept = exclude_close_events(self.EVENTS, 0.05)
+
+        assert len(merged) == 2
+        assert len(kept) == 2
+
+    def test_a_gap_below_the_threshold_is_close_for_both(self):
+        events = np.array([(0.0, 0.1), (0.12, 0.2)])
+
+        assert len(merge_close_events(events, 0.05)) == 1
+        assert len(exclude_close_events(events, 0.05)) == 1
+
+    def test_merging_is_monotonic_in_the_threshold(self):
+        """Raising the gap can only merge more, never less."""
+        events = np.array([(0.0, 0.1), (0.1, 0.2)])
+
+        counts = [len(merge_close_events(events, gap)) for gap in (0.0, 1e-9, 1e-6, 0.05)]
+
+        assert counts == sorted(counts, reverse=True)
+        assert counts[0] == 1  # touching events merge at every threshold
+
+
+class TestHelperBoundaries:
+    """The comparisons at the edge of each new rule."""
+
+    def test_a_merged_span_exactly_at_the_cap_is_allowed(self):
+        events = np.array([(0.0, 0.1), (0.12, 0.3)])
+
+        merged = merge_close_events(events, 0.05, maximum_duration=0.3)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.3]])
+
+    def test_overlap_exactly_at_the_minimum_is_kept(self):
+        events = np.array([(0.0, 0.1)])
+        reference = np.array([(0.0, 0.1)])
+
+        assert len(require_overlap(events, reference, minimum_overlap=0.1)) == 1
+
+    def test_merge_does_not_modify_its_argument(self):
+        events = np.array([(0.0, 0.1), (0.12, 0.2)])
+        before = events.copy()
+
+        merge_close_events(events, 0.05)
+
+        np.testing.assert_array_equal(events, before)
+
+    def test_require_overlap_does_not_modify_its_arguments(self):
+        events = np.array([(0.0, 0.1), (1.0, 1.1)])
+        reference = np.array([(1.05, 1.2), (0.5, 0.6)])
+        before_events, before_reference = events.copy(), reference.copy()
+
+        require_overlap(events, reference)
+
+        np.testing.assert_array_equal(events, before_events)
+        np.testing.assert_array_equal(reference, before_reference)
+
+    def test_a_non_positive_transition_width_raises(self):
+        with pytest.raises(ValueError, match="transition_width"):
+            ripple_bandpass_filter(2000.0, transition_width=0.0)
+
+    def test_a_band_edge_exactly_at_the_transition_raises(self):
+        """The lower edge must leave room for the whole transition above 0 Hz."""
+        with pytest.raises(ValueError, match="transition"):
+            ripple_bandpass_filter(2000.0, band=(25.0, 250.0), transition_width=25.0)
+
+    def test_a_band_edge_exactly_at_nyquist_raises(self):
+        with pytest.raises(ValueError, match="Nyquist"):
+            ripple_bandpass_filter(1000.0, band=(150.0, 475.0), transition_width=25.0)
+
+    def test_the_default_transition_width_is_25_hz(self):
+        """Changing it silently redesigns the filter at every non-1500 Hz rate."""
+        default, _ = ripple_bandpass_filter(2000.0)
+
+        # Kaiser's estimate for 45 dB over a 25 Hz transition at 2 kHz, made odd
+        assert len(default) == 207
+        explicit, _ = ripple_bandpass_filter(2000.0, transition_width=25.0)
+        np.testing.assert_allclose(default, explicit)
+
+
+def test_merge_close_events_rejects_a_flat_array_of_the_wrong_length():
+    """A 1-D input has to be pairs of bounds."""
+    with pytest.raises(ValueError):
+        merge_close_events(np.array([0.0, 1.0, 2.0]), 0.05)
+
+
+def test_transition_width_raises_where_the_shipped_kernel_is_used():
+    """A silently ignored keyword would give the caller the wrong filter."""
+    signal = np.random.default_rng(0).normal(size=4000)
+
+    with pytest.raises(ValueError, match="transition_width"):
+        filter_ripple_band(signal, 1500.0, transition_width=10.0)
+    with pytest.raises(ValueError, match="transition_width"):
+        filter_ripple_band(signal, transition_width=10.0)
+
+
+def test_transition_width_applies_without_a_band_at_other_rates():
+    """Designing a filter honors the transition width even with the default band."""
+    default = filter_ripple_band(np.random.default_rng(0).normal(size=6000), 2000.0)
+    narrow = filter_ripple_band(
+        np.random.default_rng(0).normal(size=6000), 2000.0, transition_width=10.0
+    )
+
+    assert not np.allclose(default, narrow)

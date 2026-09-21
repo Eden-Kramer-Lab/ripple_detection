@@ -15,17 +15,36 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.signal import filtfilt, hilbert, remez
 from scipy.stats import median_abs_deviation, zscore
 
+DEFAULT_RIPPLE_BAND = (150.0, 250.0)
+"""Default passband in Hz, the most common choice in the replay literature."""
 
-def ripple_bandpass_filter(sampling_frequency: float) -> tuple[NDArray, float]:
-    """Generate a bandpass filter for the ripple frequency band (150-250 Hz).
+DEFAULT_TRANSITION_WIDTH = 25.0
+"""Default width in Hz of the transition on each side of the passband."""
+
+
+def ripple_bandpass_filter(
+    sampling_frequency: float,
+    band: tuple[float, float] = DEFAULT_RIPPLE_BAND,
+    transition_width: float = DEFAULT_TRANSITION_WIDTH,
+) -> tuple[NDArray, float]:
+    """Generate a bandpass filter for a ripple frequency band.
 
     Uses the Remez exchange algorithm to design a finite impulse response (FIR)
-    filter with 101 taps and 25 Hz transition bands.
+    filter. The band defaults to 150-250 Hz with 25 Hz transition bands; both
+    are parameters, since published ripple bands vary.
 
     Parameters
     ----------
     sampling_frequency : float
         Sampling rate of the signal in Hz.
+    band : tuple of (float, float), optional
+        Passband edges in Hz. Default is (150.0, 250.0), the most common
+        choice. Published bands vary, with lower edges from about 80 to
+        180 Hz and upper edges from 200 to 300 Hz.
+    transition_width : float, optional
+        Width in Hz of the transition on each side of the passband. Default is
+        25.0. A narrower transition needs more taps, and therefore a longer
+        signal to filter.
 
     Returns
     -------
@@ -43,23 +62,38 @@ def ripple_bandpass_filter(sampling_frequency: float) -> tuple[NDArray, float]:
     is about 0.004 at rates from 600 Hz to 30 kHz.
 
     """
-    nyquist = 0.5 * sampling_frequency
-    TRANSITION_BAND = 25.0
-    RIPPLE_BAND = (150.0, 250.0)
     STOPBAND_ATTENUATION_DB = 45.0
     MINIMUM_NUMTAPS = 101
+
+    low, high = float(band[0]), float(band[1])
+    nyquist = 0.5 * sampling_frequency
+    if transition_width <= 0:
+        raise ValueError(f"transition_width must be positive, got {transition_width} Hz.")
+    if low >= high:
+        raise ValueError(f"band must be (low, high) with low < high, got {band} Hz.")
+    if low - transition_width <= 0:
+        raise ValueError(
+            f"band lower edge {low} Hz leaves no room for a {transition_width} Hz "
+            "transition above 0 Hz. Raise the edge or narrow the transition."
+        )
+    if high + transition_width >= nyquist:
+        raise ValueError(
+            f"band upper edge {high} Hz plus a {transition_width} Hz transition reaches "
+            f"the Nyquist frequency {nyquist} Hz of a {sampling_frequency} Hz signal."
+        )
+
     # Kaiser's estimate: the tap count needed for a given attenuation grows as
     # the transition band narrows relative to the sampling rate. A fixed count
     # would meet the specification at one rate only.
-    transition = 2.0 * np.pi * TRANSITION_BAND / sampling_frequency
+    transition = 2.0 * np.pi * transition_width / sampling_frequency
     numtaps = int(np.ceil((STOPBAND_ATTENUATION_DB - 8.0) / (2.285 * transition)))
     numtaps = max(MINIMUM_NUMTAPS, numtaps + 1 - numtaps % 2)
     desired = [
         0,
-        RIPPLE_BAND[0] - TRANSITION_BAND,
-        RIPPLE_BAND[0],
-        RIPPLE_BAND[1],
-        RIPPLE_BAND[1] + TRANSITION_BAND,
+        low - transition_width,
+        low,
+        high,
+        high + transition_width,
         nyquist,
     ]
     return remez(numtaps, desired, [0, 1, 0], fs=sampling_frequency), 1.0
@@ -188,14 +222,21 @@ def segment_boolean_series(
     return [(index[start], index[stop - 1]) for start, stop in bounds]
 
 
-def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None) -> NDArray:
-    """Bandpass filter signal(s) to the ripple band (150-250 Hz).
+def filter_ripple_band(
+    data: ArrayLike,
+    sampling_frequency: float | None = None,
+    band: tuple[float, float] | None = None,
+    transition_width: float = DEFAULT_TRANSITION_WIDTH,
+) -> NDArray:
+    """Bandpass filter signal(s) to the ripple band, 150-250 Hz by default.
 
     At 1500 Hz (or when no rate is given) the pre-computed 318-tap FIR kernel
-    shipped with the package is used. At any other rate a 101-tap FIR is
-    designed for that rate with ``ripple_bandpass_filter``, so the passband is
-    150-250 Hz in hertz regardless of the sampling rate. The filter is applied
-    forward and backward (``filtfilt``) for zero phase distortion.
+    shipped with the package is used. At any other rate an FIR is designed for
+    that rate with ``ripple_bandpass_filter``, so the passband is the same in
+    hertz regardless of the sampling rate. Passing `band` designs the filter
+    at any rate, including 1500 Hz, since the shipped kernel is fixed. The
+    filter is applied forward and backward (``filtfilt``) for zero phase
+    distortion.
 
     NaN samples are removed before filtering and restored at their original
     positions afterwards; the samples on either side of a NaN run are
@@ -208,6 +249,14 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
     sampling_frequency : float, optional
         Sampling rate of the input data in Hz. Default is None, which assumes
         1500 Hz and uses the shipped kernel.
+    band : tuple of (float, float), optional
+        Passband edges in Hz. Default is None, which uses the 150-250 Hz
+        design. A custom band needs `sampling_frequency`, because the shipped
+        kernel is fixed.
+    transition_width : float, optional
+        Width in Hz of the transition on each side of the passband. Default is
+        25.0. The shipped kernel is a fixed design, so a value other than the
+        default raises when that kernel would be used.
 
     Returns
     -------
@@ -218,10 +267,14 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
     Raises
     ------
     ValueError
-        If the sampling rate cannot represent the band. That is, the Nyquist
-        frequency is at or below 275 Hz, the 250 Hz upper edge plus the 25 Hz
-        transition band. Also if the signal holds fewer non-NaN samples than
-        ``filtfilt`` needs, which is one more than three times the tap count.
+        If the sampling rate cannot represent the default band, that is, the
+        Nyquist frequency is at or below 275 Hz, the 250 Hz upper edge plus
+        the 25 Hz transition band. If `band` is given without a
+        `sampling_frequency`, or `transition_width` is changed where the fixed
+        shipped kernel would be used, since neither can retune that kernel. If
+        the band itself is unusable, from `ripple_bandpass_filter`. And if the
+        signal holds fewer non-NaN samples than ``filtfilt`` needs, which is
+        one more than three times the tap count.
 
     See Also
     --------
@@ -238,9 +291,24 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
     SHIPPED_KERNEL_SAMPLING_FREQUENCY = 1500.0
     MINIMUM_NYQUIST = 250.0 + 25.0  # upper band edge plus the transition band
 
-    if sampling_frequency is None or np.isclose(
+    if band is not None:
+        if sampling_frequency is None:
+            raise ValueError(
+                "A custom band needs a sampling_frequency: the shipped kernel is a fixed "
+                "150-250 Hz design for 1500 Hz data and cannot be retuned."
+            )
+        filter_numerator, filter_denominator = ripple_bandpass_filter(
+            sampling_frequency, band=band, transition_width=transition_width
+        )
+    elif sampling_frequency is None or np.isclose(
         sampling_frequency, SHIPPED_KERNEL_SAMPLING_FREQUENCY
     ):
+        if transition_width != DEFAULT_TRANSITION_WIDTH:
+            raise ValueError(
+                f"transition_width={transition_width} cannot apply here: with no band and "
+                "1500 Hz data the shipped kernel is used, and it is a fixed design. Pass "
+                "`band` to design a filter instead."
+            )
         filter_numerator, filter_denominator = _get_ripplefilter_kernel()
     else:
         if 0.5 * sampling_frequency <= MINIMUM_NYQUIST:
@@ -249,7 +317,9 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
                 f"{0.5 * sampling_frequency} Hz, which cannot represent the 150-250 Hz "
                 f"ripple band with its 25 Hz transition band (need > {2 * MINIMUM_NYQUIST} Hz)."
             )
-        filter_numerator, filter_denominator = ripple_bandpass_filter(sampling_frequency)
+        filter_numerator, filter_denominator = ripple_bandpass_filter(
+            sampling_frequency, transition_width=transition_width
+        )
 
     data_array = np.asarray(data, dtype=float)
     if data_array.ndim > 1:
@@ -1140,6 +1210,38 @@ def merge_overlapping_ranges_track_participation(
     return np.asarray(merged, dtype=object)
 
 
+_GAP_TOLERANCE = 1e-9
+"""Relative tolerance for comparing an inter-event gap with a threshold."""
+
+
+def _is_gap_below(gap: NDArray | float, close_event_threshold: float) -> NDArray | np.bool_:
+    """Whether an inter-event gap is shorter than the threshold.
+
+    The boundary rule that :func:`exclude_close_events` and
+    :func:`merge_close_events` share: a gap equal to the threshold is treated
+    as equal rather than as shorter, which binary floating point would
+    otherwise decide for it, since 0.15 - 0.1 is 4.999...e-2, just under 0.05.
+    The tolerance is relative only, with no absolute term, so the rule stays
+    monotonic in the threshold: a default ``atol`` would make a threshold near
+    zero merge less than a threshold of zero.
+
+    Parameters
+    ----------
+    gap : ndarray, shape (n_gaps,), or float
+        Time from one event's end to the next event's start.
+    close_event_threshold : float
+        Separation below which events count as close.
+
+    Returns
+    -------
+    is_below : ndarray of bool, shape (n_gaps,), or bool
+
+    """
+    return (gap < close_event_threshold) & ~np.isclose(
+        gap, close_event_threshold, rtol=_GAP_TOLERANCE, atol=0.0
+    )
+
+
 def exclude_close_events(
     candidate_event_times: ArrayLike,
     close_event_threshold: float = 1.0,
@@ -1208,7 +1310,8 @@ def exclude_close_events(
     keep_mask[0] = True
     last_retained_end = ends[0]
     for event in range(1, len(candidate_event_times)):
-        if starts[event] - last_retained_end >= close_event_threshold:
+        gap = starts[event] - last_retained_end
+        if not _is_gap_below(gap, close_event_threshold):
             keep_mask[event] = True
             last_retained_end = ends[event]
 
@@ -1220,6 +1323,188 @@ def exclude_close_events(
         )
     else:
         return filtered_events if filtered_events.size > 0 else []
+
+
+def merge_close_events(
+    event_times: ArrayLike,
+    close_event_threshold: float = 0.0,
+    maximum_duration: float | None = None,
+) -> NDArray:
+    """Join events separated by less than a gap into one longer event.
+
+    The other convention for closely spaced events is
+    :func:`exclude_close_events`, which keeps the first of a cluster and drops
+    the rest. This one keeps every event's content: a merged event runs from
+    the first start to the last end. Both conventions are used in the
+    literature; the Frank lab ``extractevents`` routine merges.
+
+    Merging is repeated until nothing more can be joined, so a chain of events
+    each close to the next becomes one event. Events that overlap or nest have
+    a gap at or below zero and are therefore always merged.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2)
+        ``[start_time, end_time]`` per event, sorted by start time.
+    close_event_threshold : float, optional
+        Events separated by strictly less than this gap are merged. A gap equal
+        to the threshold does not merge, within floating-point tolerance.
+        Default is 0.0, which merges only events that touch or overlap.
+    maximum_duration : float, optional
+        Ceiling on the merged span. A merge that would produce an event longer
+        than this does not happen and both events are kept as they are.
+        Default is None (no ceiling).
+
+    Returns
+    -------
+    merged_event_times : ndarray, shape (n_merged_events, 2)
+        Merged events, sorted by start time. Shape ``(0, 2)`` when there is
+        no input.
+
+    Raises
+    ------
+    ValueError
+        If `close_event_threshold` is negative, or the events are not sorted
+        by start time.
+
+    Examples
+    --------
+    >>> events = np.array([(0.0, 0.1), (0.13, 0.2)])
+    >>> merge_close_events(events, 0.05)
+    array([[0. , 0.2]])
+
+    """
+    if close_event_threshold < 0:
+        raise ValueError(
+            f"close_event_threshold must be non-negative, got {close_event_threshold}. "
+            "It is a gap between events, in the units of event_times."
+        )
+    events = np.asarray(event_times, dtype=float)
+    if events.size == 0:
+        return np.empty((0, 2))
+    # reshape rather than atleast_2d, so a flat array of the wrong length raises
+    # instead of becoming one very wide row that is returned unmerged
+    events = events.reshape(-1, 2).copy()
+    if np.any(np.diff(events[:, 0]) < 0):
+        raise ValueError(
+            "event_times must be sorted by start time. Sort the events before merging: "
+            "event_times[np.argsort(event_times[:, 0])]."
+        )
+
+    while len(events) > 1:
+        gap = events[1:, 0] - events[:-1, 1]
+        if close_event_threshold > 0:
+            to_merge = _is_gap_below(gap, close_event_threshold)
+        else:
+            # events that touch merge, which _is_gap_below would exclude
+            to_merge = gap <= 0
+        if maximum_duration is not None:
+            merged_span = np.maximum(events[1:, 1], events[:-1, 1]) - events[:-1, 0]
+            to_merge &= (merged_span <= maximum_duration) | np.isclose(
+                merged_span, maximum_duration
+            )
+        if not np.any(to_merge):
+            break
+        # merge one neighbor per pass, taking the first of each run so a chain
+        # collapses left to right rather than skipping a link
+        padded = np.concatenate([[False], to_merge])
+        run_starts = np.flatnonzero(~padded[:-1] & padded[1:])
+        events[run_starts, 1] = np.maximum(events[run_starts, 1], events[run_starts + 1, 1])
+        events = np.delete(events, run_starts + 1, axis=0)
+
+    return events
+
+
+def require_overlap(
+    event_times: ArrayLike | pd.DataFrame,
+    reference_event_times: ArrayLike | pd.DataFrame,
+    minimum_overlap: float = 0.0,
+) -> NDArray | pd.DataFrame:
+    """Keep the events that overlap an event in a second inventory.
+
+    Many studies require a ripple and a population burst together, usually by
+    keeping the multiunit bursts that overlap a detected ripple. This composes
+    any two detectors into that conjunction::
+
+        bursts = multiunit_HSE_detector(time, multiunit, speed, fs)
+        ripples = Kay_ripple_detector(time, lfps, speed, fs)
+        both = require_overlap(bursts, ripples)
+
+    The returned events keep their own bounds. This is a filter on
+    `event_times`, not an intersection of the two inventories, and it is not
+    symmetric: swapping the arguments asks the other question.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2), or pd.DataFrame
+        The events to filter. A DataFrame needs ``start_time`` and
+        ``end_time`` columns and is returned as a DataFrame, with every column
+        and its index preserved.
+    reference_event_times : array_like, shape (n_reference, 2), or pd.DataFrame
+        The events to overlap with. Reduced to its union first, so references
+        that overlap each other are not counted twice. Need not be sorted.
+    minimum_overlap : float, optional
+        Least total overlap, in the units of the event times, for an event to
+        be kept. Default is 0.0, which requires overlap of positive duration:
+        events that merely touch at an endpoint are dropped, the convention
+        the project uses for event-level overlap.
+
+    Returns
+    -------
+    kept_events : ndarray, shape (n_kept, 2), or pd.DataFrame
+        The subset of `event_times` meeting the criterion, in its input order
+        and type.
+
+    Raises
+    ------
+    ValueError
+        If `minimum_overlap` is negative.
+
+    Examples
+    --------
+    >>> bursts = np.array([(0.0, 0.1), (1.0, 1.1)])
+    >>> ripples = np.array([(1.05, 1.5)])
+    >>> require_overlap(bursts, ripples)
+    array([[1. , 1.1]])
+
+    """
+    if minimum_overlap < 0:
+        raise ValueError(
+            f"minimum_overlap must be non-negative, got {minimum_overlap}. "
+            "It is a duration in the units of the event times."
+        )
+
+    is_frame = isinstance(event_times, pd.DataFrame)
+    if is_frame:
+        events = event_times[["start_time", "end_time"]].to_numpy(dtype=float)
+    else:
+        events = np.asarray(event_times, dtype=float).reshape(-1, 2)
+    if isinstance(reference_event_times, pd.DataFrame):
+        reference = reference_event_times[["start_time", "end_time"]].to_numpy(dtype=float)
+    else:
+        reference = np.asarray(reference_event_times, dtype=float).reshape(-1, 2)
+
+    keep = np.zeros(len(events), dtype=bool)
+    if len(events) and len(reference):
+        reference = reference[np.argsort(reference[:, 0], kind="stable")]
+        reference = merge_close_events(reference)
+        starts, ends = events[:, 0], events[:, 1]
+        ref_start, ref_end = reference[:, 0], reference[:, 1]
+        # the reference is disjoint and sorted, so the intervals that can meet
+        # an event form one contiguous run; cumulative lengths then give the
+        # total overlap without looping over the pairs
+        cumulative = np.concatenate([[0.0], np.cumsum(ref_end - ref_start)])
+        first = np.searchsorted(ref_end, starts, side="right")
+        last = np.searchsorted(ref_start, ends, side="left")
+        meets = last > first
+        head = np.maximum(0.0, starts - ref_start[np.clip(first, 0, len(reference) - 1)])
+        tail = np.maximum(0.0, ref_end[np.clip(last - 1, 0, len(reference) - 1)] - ends)
+        overlap = np.where(meets, cumulative[last] - cumulative[first] - head - tail, 0.0)
+        keep = (overlap > 0) & (overlap >= minimum_overlap)
+
+    if is_frame:
+        return event_times.iloc[np.flatnonzero(keep)].copy()
+    return events[keep]
 
 
 YU_HISTOGRAM_EDGES = np.round(np.arange(-10.0, 50.0 + 0.005, 0.01), 6)

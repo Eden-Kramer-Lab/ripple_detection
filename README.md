@@ -28,10 +28,16 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
   - Movement metrics (speed during event)
 
 - **Flexible Signal Processing**
-  - Bandpass filtering (150-250 Hz)
+  - Bandpass filtering, 150-250 Hz by default and any band on request
   - Envelope extraction via Hilbert transform
   - Gaussian smoothing with configurable parameters
   - Movement exclusion based on speed thresholds
+
+- **Combining Detectors**
+  - `require_overlap` - keep the events of one detector that overlap another's,
+    for studies that require a ripple and a population burst together
+  - `merge_close_events` / `exclude_close_events` - the two conventions for
+    events separated by a short gap: join them, or keep the first and drop the rest
 
 - **Simulation Tools**
   - Generate synthetic LFPs with embedded ripples
@@ -171,9 +177,31 @@ The index is `event_number`. Some detectors add columns:
 | `Zugaro_ripple_detector` | `peak_time` |
 | `Long_sharp_wave_ripple_detector` | `peak_time`, `sharp_wave_zscore`, `sharp_wave_local_percentile`, `ripple_power_zscore`, `ripple_power_local_percentile`, `sharp_wave_duration`, `ripple_duration` |
 | `Carey_candidate_detector` | `n_active_units` |
-| `mean_speed` | Mean speed during event |
+| `multiunit_HSE_detector` | `n_active_units` |
 
 ## Examples
+
+### Combining two detectors
+
+Many studies require a ripple and a population burst together. `require_overlap`
+keeps the events of one inventory that overlap an event of another, so any two
+detectors compose into that criterion. The events keep their own bounds.
+
+```python
+from ripple_detection import Kay_ripple_detector, multiunit_HSE_detector, require_overlap
+
+# time, speed, filtered_lfps and sampling_frequency from the Basic Usage example
+multiunit = np.random.poisson(0.01, (len(time), 20))  # (n_time, n_units) spike counts
+
+ripples = Kay_ripple_detector(time, filtered_lfps, speed, sampling_frequency)
+bursts = multiunit_HSE_detector(time, multiunit, speed, sampling_frequency)
+
+bursts_with_a_ripple = require_overlap(bursts, ripples)
+ripples_with_a_burst = require_overlap(ripples, bursts)  # the other direction
+```
+
+`require_overlap` takes a detector's DataFrame or an `(n_events, 2)` array of
+start and end times, and `minimum_overlap` raises the bar above "any overlap".
 
 ### Simulating realistic ripples
 
@@ -278,7 +306,55 @@ ripples = Kay_ripple_detector(
 | `smoothing_sigma` | 0.004 s | Gaussian smoothing window (4 ms) | Rarely needs adjustment; increase for noisier data |
 | `percentile` | 99.99 (Yu) | Percentile of the mirrored immobility-noise distribution used as the threshold | Lower for more detections; the threshold is estimated per call, so it adapts to each recording |
 | `close_ripple_threshold` (`close_event_threshold` on the HSE detector) | 0.0 s | Events closer than this are treated as one: the later event is dropped | Raise (e.g. 0.05) to suppress fragments; Zugaro merges instead via `minimum_inter_ripple_interval` |
+| `maximum_duration` | `None` (no limit; `Zugaro` 0.100 s, `Long` 0.500 s for the sharp wave) | Longest allowed event, applied to the event as reported rather than to the run above threshold. A sample count like the minimum, so the ceiling is one sample shorter in elapsed time than the value given | Published limits run from a few hundred milliseconds to a couple of seconds |
+| `minimum_active_units` | 0 on `multiunit_HSE_detector` (no criterion), 5 on `Carey_candidate_detector` | Units with at least one spike inside the event; every event reports `n_active_units` | Published criteria are most often around five units |
+| `band`, `transition_width` on `filter_ripple_band` | (150.0, 250.0) Hz, 25.0 Hz | Passband of the designed filter. A custom band needs a `sampling_frequency`, since the shipped 1500 Hz kernel is fixed | Published bands run from about 80-180 Hz at the lower edge to 200-300 Hz at the upper |
 | `low_threshold`, `high_threshold` | 2.0, 5.0 (Zugaro) | Boundary and peak thresholds of the two-threshold rule | Lower `high_threshold` for more detections; `low_threshold` sets where events start and end |
+
+### Published parameter values
+
+Where the package's defaults sit relative to the literature. Compiled from 57
+papers that decode replay content (1999-2025), each value read from the paper's
+Methods; counts are of papers stating a bare number for that parameter, so
+entries like ">4" or "33% of the ensemble" are excluded rather than coerced.
+
+The per-paper table ships with the package, so you can ask it your own question
+rather than take the summary below:
+
+```python
+from ripple_detection import load_literature_parameters
+
+parameters = load_literature_parameters()
+parameters.groupby("Detection")["SWR Z-score Thresh. (STD)"].median()
+parameters.loc[parameters["Spike sorting"] == "Clusterless", ["First Author", "Year", "DOI"]]
+```
+
+| Parameter | Papers | Published range | Median | Most common | Package default |
+|---|---|---|---|---|---|
+| `zscore_threshold` (ripple) | 27 | 1-8 SD | 3 SD | 3, 2, 4 | 2.0 Kay/Roumis, 3.0 Karlsson/Shvartsman |
+| `zscore_threshold` (multiunit) | 27 | 2-4 SD | 3 SD | 3, 2, 4 | 2.0 |
+| ripple band | 30 | 80-180 Hz low, 200-300 Hz high | 150-250 Hz | 150-250 Hz (16 papers) | 150-250 Hz |
+| `smoothing_sigma` (ripple) | 18 | 4-100 ms | 12.5 ms | 4, 12.5, 15 | 4 ms |
+| `smoothing_sigma` (multiunit) | 28 | 5-30 ms | 15 ms | 15, 10, 5 | 15 ms |
+| `speed_threshold` | 42 | 0.05-10 cm/s | 5 cm/s | 5, 4, 2 | 4 cm/s |
+| `minimum_duration` | 41 | 15-100 ms | 50 ms | 50, 100, 15 | 15 ms, 20 ms on Yu/Zugaro/Carey |
+| `maximum_duration` | 25 | 400-2000 ms | 600 ms | 500, 2000, 750 | none, except Zugaro 100 ms |
+| merge or drop gap | 14 | 20-100 ms | 50 ms | 50, 20, 40 | 0 (no exclusion) |
+| `minimum_active_units` | 27 | 3-10 units | 5 units | 5, 4, 3 | 0 on the burst detector, 5 on Carey |
+| channels required | 27 | 13 papers use one, 10 more than one, 4 a small number | one | one | one is enough; Kay, Roumis and Zugaro pool all, Long needs two |
+
+Three cautions before treating this as a recipe:
+
+- **The defaults are each source's, not a consensus.** They reproduce the published
+  or lab settings of the algorithm each detector is named for, so the same recording
+  gives different event counts under different detectors by design.
+- **Our thresholds and minimum duration sit at the permissive end.** A 2 SD threshold
+  held for 15 ms admits more than the field's median of 3 SD and 50 ms. Tightening to
+  the median is a defensible sensitivity check, not an extreme one.
+- **Some published speed values restrict analysis rather than detection**, so that row
+  overstates how many papers gate detection on speed. `minimum_duration` also means
+  different things across papers: here it is the run above threshold, while many papers
+  report the duration of the final event.
 
 ### Getting Help
 
@@ -319,6 +395,8 @@ Notes:
   detectors do not take these arguments.
 - Two conventions are the package's, not each source's: every duration limit is an inclusive
   round-half-up sample count (`sample_count_within`), and immobility is `speed <= speed_threshold`.
+- "Close events" above says what each detector does by default. `merge_close_events` applies
+  the other convention, joining nearby events into one, to any inventory afterwards.
   The gating rule itself (endpoints, majority, interval containment) stays as each source defines it.
 - The other defaults reproduce each source's published or lab settings where one exists; they are
   not harmonized across detectors, so the same recording yields different event counts under
@@ -435,6 +513,45 @@ reimplemented from is named there. FMAToolbox, buzcode, neurocode, and the
 van der Meer lab code are MATLAB; this package reimplements the published
 algorithms rather than translating those files, which carry GPL-3 headers
 (FMAToolbox, buzcode) or no license at all (neurocode).
+
+## Other tools
+
+Every detector here thresholds a hand-designed feature. Two other approaches are
+worth knowing about, neither reimplemented here.
+
+**Machine-learning detectors**, from Liset M. de la Prida's lab at the Cajal
+Institute ([hippo-circuitlab.es](https://hippo-circuitlab.es/)):
+
+- [rippl-AI](https://github.com/PridaLab/rippl-AI) is a toolbox of five trained
+  architectures (1D-CNN, 2D-CNN, LSTM, SVM, XGBoost) with pre-trained models, so
+  no threshold is chosen by hand. Navas-Olive, Rubio, Abbaspoor, Hoffman & de la
+  Prida (2024), *Communications Biology* 7:211,
+  [10.1038/s42003-024-05871-w](https://doi.org/10.1038/s42003-024-05871-w).
+- [cnn-ripple](https://github.com/PridaLab/cnn-ripple) is the 1D convolutional
+  network those build on, with a
+  [MATLAB port](https://github.com/PridaLab/cnn-matlab) and an
+  [Open Ephys plugin](https://github.com/PridaLab/CNNRippleDetectorOEPlugin) for
+  detecting online. Navas-Olive, Amaducci, Jurado-Parras, Sebastián & de la
+  Prida (2022), *eLife* 11:e77772,
+  [10.7554/eLife.77772](https://doi.org/10.7554/eLife.77772).
+
+These want a linear probe rather than tetrodes: most rippl-AI models take exactly
+eight channels, "ideally centered in the SP [stratum pyramidale], with a positive
+deflection on the first channels ... and a negative deflection on the last". If
+your recordings span the layers that way, they detect events no amplitude
+threshold will separate, and they need no threshold chosen per recording. If you
+record with tetrodes, they do not apply.
+
+**Replay scoring**, which is the step after detection and outside this package's
+scope: [RnR_methods](https://github.com/DavidTingley/RnR_methods) implements
+Bayesian replay scores (Radon and weighted correlation), rank-order correlation,
+and reactivation strength, together with scripts comparing those methods against
+each other, across bin sizes, under added noise, and for rank-order false
+positives. It accompanies Tingley & Peyrache (2020), *Phil Trans R Soc B*
+375:20190231, [10.1098/rstb.2019.0231](https://doi.org/10.1098/rstb.2019.0231).
+
+Both de la Prida's `cnn-ripple` and `RnR_methods` are GPL-3, and `rippl-AI` ships
+no license file, so none of them is translated into this MIT package.
 
 ## License
 

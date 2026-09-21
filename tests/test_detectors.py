@@ -26,6 +26,7 @@ from ripple_detection.core import (
 from ripple_detection.detectors import (
     Roumis_ripple_detector,
     _contained_in_intervals,
+    _exclude_long_events,
     _extract_Yu_ripple_events,
     _find_max_thresh,
     _firfilt,
@@ -1913,7 +1914,13 @@ class TestLongSharpWaveRippleDetector:
     def test_no_event_survives_a_tiny_maximum_sharp_wave_duration(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
         events = Long_sharp_wave_ripple_detector(
-            time, lfp, stationary, self.FS, maximum_sharp_wave_duration=0.001, random_state=0
+            time,
+            lfp,
+            stationary,
+            self.FS,
+            minimum_sharp_wave_duration=0.001,
+            maximum_sharp_wave_duration=0.002,
+            random_state=0,
         )
         assert events.empty
         assert "start_time" in events.columns and "sharp_wave_duration" in events.columns
@@ -2841,4 +2848,366 @@ class TestEventStatisticsShapeValidation:
         with pytest.raises(ValueError, match=r"\(n_time, n_channels\)"):
             _get_event_stats(
                 events, time, np.zeros(1000).tolist(), speed, 0.015, participants=[{0}]
+            )
+
+
+LFP_DETECTORS_WITHOUT_A_CEILING = [
+    Kay_ripple_detector,
+    Karlsson_ripple_detector,
+    Roumis_ripple_detector,
+    Shvartsman_ripple_detector,
+    Yu_ripple_detector,
+]
+
+
+class TestMaximumDuration:
+    """A ceiling on event duration, which 25 of the 57 surveyed papers impose.
+
+    Covers the ceiling's boundary too, and the columns that travel with an event.
+    """
+
+    FS = 1000
+    N_TIME = 20_000  # long enough for the Yu noise threshold
+    # the long burst comes first on purpose: if the dropped event were last,
+    # a wrong mask on the per-event columns would look the same as a right one
+    LONG = (5_000, 5_500, 20.0)  # 500 ms burst
+    SHORT = (12_000, 12_060, 20.0)  # 60 ms burst
+
+    @pytest.fixture
+    def time(self):
+        return np.arange(self.N_TIME) / self.FS
+
+    @pytest.fixture
+    def stationary(self):
+        return np.full(self.N_TIME, 2.0)
+
+    @pytest.fixture
+    def lfps(self):
+        return _synthetic_ripple_band(self.N_TIME, self.FS, [self.LONG, self.SHORT])
+
+    @pytest.mark.parametrize("detector", LFP_DETECTORS_WITHOUT_A_CEILING)
+    def test_none_detects_what_the_default_detects(self, detector, time, lfps, stationary):
+        """Passing None explicitly changes nothing."""
+        default = detector(time, lfps, stationary, self.FS)
+        explicit = detector(time, lfps, stationary, self.FS, maximum_duration=None)
+
+        pd.testing.assert_frame_equal(default, explicit)
+
+    @pytest.mark.parametrize("detector", LFP_DETECTORS_WITHOUT_A_CEILING)
+    def test_ceiling_drops_the_long_event(self, detector, time, lfps, stationary):
+        """Both bursts are found; a ceiling between them keeps only the short one."""
+        without = detector(time, lfps, stationary, self.FS)
+        assert len(without) == 2
+
+        with_ceiling = detector(time, lfps, stationary, self.FS, maximum_duration=0.2)
+
+        assert len(with_ceiling) == 1
+        assert with_ceiling.iloc[0].start_time > 11.0
+
+    @pytest.mark.parametrize("detector", LFP_DETECTORS_WITHOUT_A_CEILING)
+    def test_every_kept_event_is_within_the_ceiling(self, detector, time, lfps, stationary):
+        """The limit applies to the reported event, not the suprathreshold run."""
+        events = detector(time, lfps, stationary, self.FS, maximum_duration=0.2)
+
+        # the limit is a sample count, so the longest kept event spans one
+        # sample less than the ceiling in elapsed time
+        durations = events.end_time - events.start_time
+        assert (durations <= 0.2 - 1 / self.FS + 1e-12).all()
+
+    @pytest.mark.parametrize("detector", LFP_DETECTORS_WITHOUT_A_CEILING)
+    def test_ceiling_never_adds_events(self, detector, time, lfps, stationary):
+        """Tightening the ceiling can only remove events."""
+        loose = detector(time, lfps, stationary, self.FS, maximum_duration=1.0)
+        tight = detector(time, lfps, stationary, self.FS, maximum_duration=0.2)
+
+        assert set(tight.start_time) <= set(loose.start_time)
+
+    def test_multiunit_detector_takes_a_ceiling(self, time, stationary):
+        """The burst detector gets the same limit."""
+        rng = np.random.default_rng(0)
+        multiunit = rng.poisson(0.02, (self.N_TIME, 20)).astype(float)
+        multiunit[5_000:5_060] += rng.poisson(0.6, (60, 20))
+        multiunit[12_000:12_500] += rng.poisson(0.6, (500, 20))
+
+        without = multiunit_HSE_detector(time, multiunit, stationary, self.FS)
+        with_ceiling = multiunit_HSE_detector(
+            time, multiunit, stationary, self.FS, maximum_duration=0.2
+        )
+
+        assert len(with_ceiling) < len(without)
+        durations = with_ceiling.end_time - with_ceiling.start_time
+        assert (durations <= 0.2 + 1 / self.FS).all()
+
+    def test_a_ceiling_below_the_minimum_raises(self, time, lfps, stationary):
+        """The two limits have to leave a usable window."""
+        with pytest.raises(ValueError, match="maximum_duration"):
+            Kay_ripple_detector(
+                time,
+                lfps,
+                stationary,
+                self.FS,
+                minimum_duration=0.050,
+                maximum_duration=0.010,
+            )
+
+    def test_an_event_of_exactly_the_sample_limit_is_kept(self, time):
+        """The limit is round(maximum_duration * sampling_frequency) samples."""
+        limit_samples = minimum_sample_count(time, 0.2)
+        events = np.array([[0.0, (limit_samples - 1) / self.FS]])
+
+        kept, keep = _exclude_long_events(events, time, 0.2)
+
+        assert keep.tolist() == [True]
+        assert len(kept) == 1
+
+    def test_one_sample_more_than_the_limit_is_dropped(self, time):
+        limit_samples = minimum_sample_count(time, 0.2)
+        events = np.array([[0.0, limit_samples / self.FS]])
+
+        _, keep = _exclude_long_events(events, time, 0.2)
+
+        assert keep.tolist() == [False]
+
+    def test_an_event_spanning_exactly_the_ceiling_in_seconds_is_dropped(self, time):
+        """Elapsed time and sample count differ by one sample; the rule is samples."""
+        events = np.array([[0.0, 0.2]])
+
+        _, keep = _exclude_long_events(events, time, 0.2)
+
+        assert keep.tolist() == [False]
+
+    def test_yu_keeps_the_surviving_events_own_columns(self, time, lfps, stationary):
+        """A wrong mask would carry the dropped event's values across."""
+        without = Yu_ripple_detector(time, lfps, stationary, self.FS)
+        with_ceiling = Yu_ripple_detector(
+            time, lfps, stationary, self.FS, maximum_duration=0.2
+        )
+
+        assert len(without) == 2 and len(with_ceiling) == 1
+        assert (
+            with_ceiling.iloc[0].n_suprathreshold_samples
+            == without.iloc[1].n_suprathreshold_samples
+        )
+        assert with_ceiling.iloc[0].clipped_start == without.iloc[1].clipped_start
+
+    def test_shvartsman_keeps_the_surviving_events_own_participants(self, time, stationary):
+        """participants selects the channels the z-score statistics average over."""
+        # the two events must differ in their channels, or carrying the dropped
+        # event's participants across would look identical to keeping the right ones
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [self.LONG], n_channels=3)
+        short_only = _synthetic_ripple_band(
+            self.N_TIME, self.FS, [self.SHORT], n_channels=3, seed=1
+        )
+        lfps[:, :2] += (
+            short_only[:, :2]
+            - _synthetic_ripple_band(self.N_TIME, self.FS, [], n_channels=3, seed=1)[:, :2]
+        )
+
+        without = Shvartsman_ripple_detector(time, lfps, stationary, self.FS)
+        with_ceiling = Shvartsman_ripple_detector(
+            time, lfps, stationary, self.FS, maximum_duration=0.2
+        )
+
+        assert len(without) == 2 and len(with_ceiling) == 1
+        assert without.iloc[0].n_participants != without.iloc[1].n_participants
+        assert with_ceiling.iloc[0].n_participants == without.iloc[1].n_participants
+        assert with_ceiling.iloc[0].mean_zscore == pytest.approx(without.iloc[1].mean_zscore)
+
+    def test_carey_takes_a_ceiling_and_keeps_its_own_unit_count(self, time, stationary):
+        """Carey was the one detector whose ceiling no test exercised."""
+        rng = np.random.default_rng(0)
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [self.LONG, self.SHORT])
+        multiunit = rng.poisson(0.002, (self.N_TIME, 20)).astype(float)
+        multiunit[5_000:5_500, :12] += rng.poisson(0.4, (500, 12))
+        multiunit[12_000:12_060, :6] += rng.poisson(0.4, (60, 6))
+
+        without = Carey_candidate_detector(
+            time, lfps, multiunit, stationary, self.FS, minimum_active_units=3
+        )
+        with_ceiling = Carey_candidate_detector(
+            time,
+            lfps,
+            multiunit,
+            stationary,
+            self.FS,
+            minimum_active_units=3,
+            maximum_duration=0.2,
+        )
+
+        assert len(with_ceiling) < len(without)
+        assert with_ceiling.iloc[0].n_active_units == without.iloc[-1].n_active_units
+
+    def test_equal_minimum_and_maximum_are_accepted(self, time, lfps, stationary):
+        """A single admissible duration is a degenerate window, not an error."""
+        events = Kay_ripple_detector(
+            time,
+            lfps,
+            stationary,
+            self.FS,
+            minimum_duration=0.05,
+            maximum_duration=0.05,
+        )
+
+        assert len(events) == 0 or (events.end_time - events.start_time).max() < 0.06
+
+
+class TestMultiunitActiveUnits:
+    """Most multiunit papers require a minimum number of units in a burst.
+
+    Covers the count's two edges too: the last sample, and the threshold itself.
+    """
+
+    FS = 1000
+    N_TIME = 5_000
+    N_UNITS = 20
+
+    @pytest.fixture
+    def time(self):
+        return np.arange(self.N_TIME) / self.FS
+
+    @pytest.fixture
+    def stationary(self):
+        return np.full(self.N_TIME, 2.0)
+
+    @pytest.fixture
+    def multiunit(self):
+        """A three-unit burst at 1.0 s and a ten-unit burst at 3.0 s."""
+        multiunit = np.zeros((self.N_TIME, self.N_UNITS))
+        multiunit[1_000:1_060, :3] = 4.0
+        multiunit[3_000:3_060, :10] = 1.2
+        return multiunit
+
+    def test_reports_the_active_unit_count(self, time, multiunit, stationary):
+        """Every event carries the number of units that spiked inside it."""
+        events = multiunit_HSE_detector(time, multiunit, stationary, self.FS)
+
+        assert "n_active_units" in events
+        assert sorted(events.n_active_units) == [3, 10]
+
+    def test_minimum_drops_the_sparse_burst(self, time, multiunit, stationary):
+        """A five-unit minimum keeps only the ten-unit burst."""
+        events = multiunit_HSE_detector(
+            time, multiunit, stationary, self.FS, minimum_active_units=5
+        )
+
+        assert len(events) == 1
+        assert events.iloc[0].n_active_units == 10
+        assert events.iloc[0].start_time > 2.0
+
+    def test_index_is_renumbered_after_filtering(self, time, multiunit, stationary):
+        """Every detector returns event_number 1..n with no holes."""
+        events = multiunit_HSE_detector(
+            time, multiunit, stationary, self.FS, minimum_active_units=5
+        )
+
+        assert list(events.index) == list(range(1, len(events) + 1))
+        assert events.index.name == "event_number"
+
+    def test_default_drops_nothing(self, time, multiunit, stationary):
+        """The default keeps what the detector found before the criterion existed."""
+        default = multiunit_HSE_detector(time, multiunit, stationary, self.FS)
+        explicit = multiunit_HSE_detector(
+            time, multiunit, stationary, self.FS, minimum_active_units=0
+        )
+
+        pd.testing.assert_frame_equal(default, explicit)
+
+    def test_counts_units_not_spikes(self, time, stationary):
+        """One unit firing many times is one active unit."""
+        multiunit = np.zeros((self.N_TIME, self.N_UNITS))
+        multiunit[1_000:1_060, 0] = 20.0
+
+        events = multiunit_HSE_detector(time, multiunit, stationary, self.FS)
+
+        assert (events.n_active_units == 1).all()
+
+    def test_empty_result_still_has_the_column(self, time, stationary):
+        """A detector that finds nothing returns the column anyway."""
+        multiunit = np.zeros((self.N_TIME, self.N_UNITS))
+
+        events = multiunit_HSE_detector(
+            time, multiunit, stationary, self.FS, minimum_active_units=5
+        )
+
+        assert len(events) == 0
+        assert "n_active_units" in events
+
+    def test_negative_minimum_raises(self, time, multiunit, stationary):
+        """A negative unit count is not a criterion."""
+        with pytest.raises(ValueError, match="minimum_active_units"):
+            multiunit_HSE_detector(
+                time, multiunit, stationary, self.FS, minimum_active_units=-1
+            )
+
+    def test_exactly_the_minimum_number_of_units_is_kept(self, time, stationary):
+        multiunit = np.zeros((self.N_TIME, 20))
+        multiunit[1_000:1_060, :5] = 3.0
+
+        events = multiunit_HSE_detector(
+            time, multiunit, stationary, self.FS, minimum_active_units=5
+        )
+
+        assert len(events) == 1
+        assert events.iloc[0].n_active_units == 5
+
+    def test_a_unit_spiking_only_on_the_last_sample_counts(self, time, stationary):
+        """The event's own final sample is inside it.
+
+        The burst runs to the end of the recording, so the event's last sample
+        is the record's last sample and cannot move. Anywhere else, adding a
+        spike extends the event past it and the question does not arise.
+        """
+        multiunit = np.zeros((self.N_TIME, 20))
+        multiunit[self.N_TIME - 60 :, :4] = 3.0
+
+        events = multiunit_HSE_detector(time, multiunit, stationary, self.FS)
+        assert len(events) == 1 and events.iloc[0].end_time == time[-1]
+
+        with_late_unit = multiunit.copy()
+        with_late_unit[-1, 7] = 1.0
+        late = multiunit_HSE_detector(time, with_late_unit, stationary, self.FS)
+
+        assert late.iloc[0].end_time == time[-1]
+        assert late.iloc[0].n_active_units == events.iloc[0].n_active_units + 1
+
+
+class TestDurationLimitValidation:
+    """The two detectors that always had a ceiling validate it like the rest."""
+
+    FS = 1000
+    N_TIME = 5_000
+
+    @pytest.fixture
+    def time(self):
+        return np.arange(self.N_TIME) / self.FS
+
+    @pytest.fixture
+    def stationary(self):
+        return np.full(self.N_TIME, 2.0)
+
+    @pytest.fixture
+    def lfps(self):
+        return _synthetic_ripple_band(self.N_TIME, self.FS, [(1_000, 1_060, 20.0)])
+
+    def test_zugaro_rejects_a_ceiling_below_the_minimum(self, time, lfps, stationary):
+        with pytest.raises(ValueError, match="maximum_duration"):
+            Zugaro_ripple_detector(
+                time,
+                lfps,
+                stationary,
+                self.FS,
+                minimum_duration=0.500,
+                maximum_duration=0.100,
+            )
+
+    def test_long_rejects_a_sharp_wave_ceiling_below_its_minimum(self, time, stationary):
+        raw = _synthetic_two_channel_lfp(self.N_TIME, self.FS, [1_000])
+        with pytest.raises(ValueError, match="maximum"):
+            Long_sharp_wave_ripple_detector(
+                time,
+                raw,
+                stationary,
+                self.FS,
+                minimum_sharp_wave_duration=0.500,
+                maximum_sharp_wave_duration=0.100,
             )
