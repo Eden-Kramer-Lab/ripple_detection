@@ -200,10 +200,12 @@ class TestRippleBandpassFilter:
     """Test ripple bandpass filter generation."""
 
     def test_filter_shape(self):
-        """Test that filter has correct shape and generates on supported SciPy."""
-        sampling_frequency = 1500
-        filter_numerator, filter_denominator = ripple_bandpass_filter(sampling_frequency)
-        assert len(filter_numerator) == 101  # ORDER = 101
+        """The tap count is odd and grows with the sampling rate."""
+        low_rate, _ = ripple_bandpass_filter(1500)
+        high_rate, filter_denominator = ripple_bandpass_filter(30000)
+        assert len(low_rate) % 2 == 1 and len(high_rate) % 2 == 1
+        assert len(low_rate) >= 101
+        assert len(high_rate) > len(low_rate)
         assert filter_denominator == 1.0
 
 
@@ -1115,3 +1117,66 @@ class TestExcludeMovementEventLookup:
         time = np.arange(0, 6, 0.01)
         speed = np.full(len(time), 2.0)
         assert len(exclude_movement(np.empty((0, 2)), speed, time)) == 0
+
+
+class TestRippleBandpassFilterAcrossRates:
+    """The designed filter must hold its specification at every sampling rate."""
+
+    @staticmethod
+    def _response(sampling_frequency, frequencies):
+        from scipy.signal import freqz
+
+        numerator, _ = ripple_bandpass_filter(sampling_frequency)
+        _, response = freqz(numerator, worN=2 * np.pi * frequencies / sampling_frequency)
+        return np.abs(response)
+
+    @pytest.mark.parametrize("sampling_frequency", [600.0, 1000.0, 1500.0, 3000.0, 30000.0])
+    def test_passband_is_flat_and_stopband_is_attenuated(self, sampling_frequency):
+        passband = self._response(sampling_frequency, np.linspace(155, 245, 40))
+        np.testing.assert_allclose(passband, 1.0, atol=0.06)
+        stopband = np.concatenate(
+            [
+                self._response(sampling_frequency, np.linspace(1, 125, 40)),
+                self._response(
+                    sampling_frequency,
+                    np.linspace(275, 0.5 * sampling_frequency - 1, 40),
+                ),
+            ]
+        )
+        assert stopband.max() < 0.06, stopband.max()
+
+
+class TestFilterRippleBandLengthGuard:
+    def test_shortest_accepted_signal_filters_without_a_scipy_error(self):
+        kernel, _ = _get_ripplefilter_kernel()
+        shortest = 3 * len(kernel) + 1
+        filtered = filter_ripple_band(np.random.default_rng(0).normal(size=shortest))
+        assert np.isfinite(filtered).all()
+
+    def test_one_sample_shorter_raises_this_package_s_error(self):
+        kernel, _ = _get_ripplefilter_kernel()
+        with pytest.raises(ValueError, match="samples"):
+            filter_ripple_band(np.random.default_rng(0).normal(size=3 * len(kernel)))
+
+
+class TestExcludeCloseEventsChaining:
+    def test_separation_is_measured_from_the_last_retained_event(self):
+        # the middle event is dropped, so the third is 1.1 s after the last
+        # retained event's end and must be kept
+        events = np.array([[0.0, 0.1], [0.5, 0.6], [1.2, 1.3]])
+        np.testing.assert_allclose(exclude_close_events(events, 1.0), [[0.0, 0.1], [1.2, 1.3]])
+
+    def test_indices_track_the_retained_events(self):
+        events = np.array([[0.0, 0.1], [0.5, 0.6], [1.2, 1.3]])
+        kept, inds = exclude_close_events(events, 1.0, included_ripple_inds=[10, 11, 12])
+        assert len(kept) == 2
+        np.testing.assert_array_equal(np.asarray(inds), [10, 12])
+
+
+class TestCoreInputConversion:
+    def test_get_envelope_accepts_a_sequence(self):
+        assert get_envelope([1.0, 2.0, 3.0, 2.0, 1.0]).shape == (5,)
+
+    def test_population_firing_rate_accepts_a_sequence(self):
+        rate = get_multiunit_population_firing_rate([[0, 1], [1, 0], [0, 0]], 1000.0)
+        assert rate.shape == (3,)

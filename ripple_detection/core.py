@@ -29,16 +29,31 @@ def ripple_bandpass_filter(sampling_frequency: float) -> tuple[NDArray, float]:
 
     Returns
     -------
-    filter_numerator : ndarray
-        Numerator coefficients of the filter.
+    filter_numerator : ndarray, shape (n_taps,)
+        Numerator coefficients of the filter. The tap count scales with
+        ``sampling_frequency`` so the design holds its specification at every
+        rate: at least 101 taps, 155 at 1500 Hz, 3093 at 30 kHz.
     filter_denominator : float
         Denominator coefficient (always 1.0 for FIR filters).
 
+    Notes
+    -----
+    A 150-250 Hz equiripple FIR with 25 Hz transition bands, designed for
+    about 45 dB of stopband attenuation. Measured passband and stopband error
+    is about 0.004 at rates from 600 Hz to 30 kHz.
+
     """
-    ORDER = 101
     nyquist = 0.5 * sampling_frequency
-    TRANSITION_BAND = 25
-    RIPPLE_BAND = [150, 250]
+    TRANSITION_BAND = 25.0
+    RIPPLE_BAND = (150.0, 250.0)
+    STOPBAND_ATTENUATION_DB = 45.0
+    MINIMUM_NUMTAPS = 101
+    # Kaiser's estimate: the tap count needed for a given attenuation grows as
+    # the transition band narrows relative to the sampling rate. A fixed count
+    # would meet the specification at one rate only.
+    transition = 2.0 * np.pi * TRANSITION_BAND / sampling_frequency
+    numtaps = int(np.ceil((STOPBAND_ATTENUATION_DB - 8.0) / (2.285 * transition)))
+    numtaps = max(MINIMUM_NUMTAPS, numtaps + 1 - numtaps % 2)
     desired = [
         0,
         RIPPLE_BAND[0] - TRANSITION_BAND,
@@ -47,7 +62,7 @@ def ripple_bandpass_filter(sampling_frequency: float) -> tuple[NDArray, float]:
         RIPPLE_BAND[1] + TRANSITION_BAND,
         nyquist,
     ]
-    return remez(ORDER, desired, [0, 1, 0], fs=sampling_frequency), 1.0
+    return remez(numtaps, desired, [0, 1, 0], fs=sampling_frequency), 1.0
 
 
 def minimum_sample_count(time: ArrayLike, minimum_duration: float) -> int:
@@ -235,7 +250,8 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
         is_nan = np.isnan(data_array)
 
     non_nan_length = np.sum(~is_nan)
-    min_required_length = 3 * len(filter_numerator)
+    # filtfilt needs strictly more samples than its padlen of 3 x the taps
+    min_required_length = 3 * len(filter_numerator) + 1
     if non_nan_length < min_required_length:
         raise ValueError(
             f"Signal too short for filtering: {non_nan_length} non-NaN samples, "
@@ -527,6 +543,7 @@ def get_envelope(data: ArrayLike, axis: int = 0) -> NDArray:
         Instantaneous amplitude (envelope) of the signal, same shape as input.
 
     """
+    data = np.asarray(data, dtype=float)
     n_samples = data.shape[axis]
     instantaneous_amplitude = np.abs(hilbert(data, N=next_fast_len(n_samples), axis=axis))
     return np.take(instantaneous_amplitude, np.arange(n_samples), axis=axis)
@@ -537,7 +554,7 @@ def gaussian_smooth(
     sigma: float,
     sampling_frequency: float,
     axis: int = 0,
-    truncate: int = 8,
+    truncate: float = 8,
 ) -> NDArray:
     """Apply 1D Gaussian smoothing to data.
 
@@ -953,8 +970,6 @@ def normalize_signal_manually(
 
     degenerate_channels = np.flatnonzero(degenerate[0])
     if degenerate_channels.size > 0:
-        import warnings
-
         warnings.warn(
             "Zeroing channel(s) with a zero/NaN deviation or NaN baseline during "
             f"manual normalization: {degenerate_channels.tolist()}. These channels "
@@ -1109,11 +1124,12 @@ def exclude_close_events(
     """Remove events that occur too close together in time.
 
     Filters out successive events that start within `close_event_threshold`
-    time units of a previous event's end, keeping only the first event in
-    each cluster of closely-spaced events.
+    time units of the last retained event's end, keeping only the first event
+    in each cluster of closely-spaced events.
 
-    Uses vectorized implementation: computes gaps between consecutive events
-    and keeps events with sufficient separation from the previous event.
+    The Frank lab ``extractevents`` routine instead *merges* events separated
+    by less than its minimum separation into one longer event. This function
+    drops the later event, so the retained events keep their original bounds.
 
     Parameters
     ----------
@@ -1158,16 +1174,19 @@ def exclude_close_events(
             return candidate_event_times, included_ripple_inds
         return candidate_event_times
 
-    # Extract start and end times
+    # Each event is compared with the last *retained* event, so a cluster is
+    # reduced to its first event. Comparing with the immediately preceding
+    # candidate instead would let a dropped event go on excluding its
+    # successors, removing more than the first-of-each-cluster rule.
     starts = candidate_event_times[:, 0]
     ends = candidate_event_times[:, 1]
-
-    # Compute gaps: time from end of event i to start of event i+1
-    gaps = starts[1:] - ends[:-1]
-
-    # Keep first event and any event with sufficient gap from previous
-    keep_mask = np.ones(len(candidate_event_times), dtype=bool)
-    keep_mask[1:] = gaps >= close_event_threshold
+    keep_mask = np.zeros(len(candidate_event_times), dtype=bool)
+    keep_mask[0] = True
+    last_retained_end = ends[0]
+    for event in range(1, len(candidate_event_times)):
+        if starts[event] - last_retained_end >= close_event_threshold:
+            keep_mask[event] = True
+            last_retained_end = ends[event]
 
     filtered_events = candidate_event_times[keep_mask]
     if included_ripple_inds is not None:
@@ -1421,6 +1440,7 @@ def get_multiunit_population_firing_rate(
     multiunit_population_firing_rate : ndarray, shape (n_time,)
 
     """
+    multiunit = np.asarray(multiunit, dtype=float)
     return gaussian_smooth(
         multiunit.sum(axis=1) * sampling_frequency, smoothing_sigma, sampling_frequency
     )
