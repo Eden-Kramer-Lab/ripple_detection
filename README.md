@@ -32,8 +32,12 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
   - Envelope extraction via Hilbert transform
   - Gaussian smoothing with configurable parameters
   - Movement exclusion based on speed thresholds
-  - Combining inventories: `require_overlap` for a ripple and a burst together,
-    `merge_close_events` or `exclude_close_events` for events that nearly touch
+
+- **Combining Detectors**
+  - `require_overlap` - keep the events of one detector that overlap another's,
+    for studies that require a ripple and a population burst together
+  - `merge_close_events` / `exclude_close_events` - the two conventions for
+    events separated by a short gap: join them, or keep the first and drop the rest
 
 - **Simulation Tools**
   - Generate synthetic LFPs with embedded ripples
