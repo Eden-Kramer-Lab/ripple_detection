@@ -1831,8 +1831,8 @@ def Carey_candidate_detector(
       never zero, so a burst without a ripple can be. The joint score is
       therefore closer to "burst, weighted by ripple power" than to a
       symmetric conjunction. Candidates are runs strictly above ``edge_threshold`` whose
-      maximum is strictly above ``peak_threshold``, at least
-      ``minimum_duration`` long.
+      maximum is strictly above ``peak_threshold``, longer than
+      ``minimum_duration``.
     - **State**: a candidate is kept only if it lies entirely inside a
       low-speed interval (speed below ``speed_threshold``, runs merged across
       gaps under ``state_merge_gap`` and dropped under
@@ -1866,7 +1866,8 @@ def Carey_candidate_detector(
         Boundary and peak thresholds on the z-scored joint score. Defaults 1
         and 3 (the original's ``DetectorThreshold`` and ``DetectorThreshold2``).
     minimum_duration : float, optional
-        Minimum candidate duration in seconds. Default 0.020.
+        Candidates must be longer than this, in seconds (strict, as the
+        original's ``RemoveIV``). Default 0.020.
     minimum_active_units : int, optional
         Minimum number of units with a spike inside the candidate. Default 5.
     ripple_smoothing_sigma, spike_kernel_sigma, baseline_sigma : float, optional
@@ -1878,7 +1879,7 @@ def Carey_candidate_detector(
         Raw LFP of a theta channel; when given, candidates during elevated
         theta are excluded. Default None (no theta exclusion).
     theta_band : tuple of (float, float), optional
-        Theta pass-band in Hz, Butterworth order 4. Default (6, 10).
+        Theta pass-band in Hz, Butterworth of total order 4 (order 2 per edge, as MATLAB's `fdesign` 'N' counts it). Default (6, 10).
     theta_threshold : float, optional
         Theta-envelope z-score at or above which a period is excluded. Default 2.
     state_merge_gap, state_minimum_length : float, optional
@@ -1950,7 +1951,6 @@ def Carey_candidate_detector(
     multiunit_score = np.maximum(0.0, (summed - baseline - cap) / mean_summed)
 
     joint = np.sqrt(ripple_score * multiunit_score)
-    joint = joint * (0.5 / joint.mean()) if joint.mean() > 0 else joint
     zscored = normalize_signal(joint)
 
     # two-threshold segmentation (TSDtoIV2): runs above the edge, kept if peak above
@@ -1974,7 +1974,7 @@ def Carey_candidate_detector(
         theta_lfp = np.asarray(theta_lfp, dtype=float)
         if theta_lfp.shape != (n_time,):
             raise ValueError(f"theta_lfp must have shape ({n_time},), got {theta_lfp.shape}.")
-        b, a = butter(4, np.asarray(theta_band) / (0.5 * sampling_frequency), btype="bandpass")
+        b, a = butter(2, np.asarray(theta_band) / (0.5 * sampling_frequency), btype="bandpass")
         theta_envelope = get_envelope(filtfilt(b, a, theta_lfp))
         low_theta = _state_intervals(
             normalize_signal(theta_envelope) < theta_threshold,
