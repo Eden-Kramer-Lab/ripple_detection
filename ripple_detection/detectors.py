@@ -5,6 +5,8 @@ from itertools import chain, pairwise
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike, NDArray
+from scipy.cluster.vq import kmeans2
+from scipy.signal import lfilter
 
 from ripple_detection.core import (
     _get_normalization_mask,
@@ -1368,6 +1370,333 @@ def Zugaro_ripple_detector(
         event_times, time, normalized, speed, minimum_duration=minimum_duration
     )
     events["peak_time"] = peak_times
+    return events
+
+
+def _gaussian_lowpass_fir(
+    cutoff: float, sampling_frequency: float, n_sd: float = 6.0
+) -> NDArray:
+    """Unit-area Gaussian low-pass kernel with standard deviation
+    ``fs / (2 pi cutoff)`` samples, truncated at ``n_sd`` standard deviations
+    (Eran Stark's ``makegausslpfir``)."""
+    sd = sampling_frequency / (2.0 * np.pi * cutoff)
+    half = int(np.ceil(max(n_sd, 3.0) * sd))
+    x = np.arange(-half, half + 1)
+    kernel = np.exp(-(x**2) / (2.0 * sd**2))
+    return kernel / kernel.sum()
+
+
+def _firfilt(x: NDArray, kernel: NDArray) -> NDArray:
+    """Zero-phase FIR filtering with symmetric end padding (Stark's ``firfilt``).
+
+    The signal is extended at both ends by its own mirror image (kernel length
+    samples), filtered causally, and cropped so the output is centred.
+    """
+    x = np.asarray(x, dtype=float)
+    was_1d = x.ndim == 1
+    if was_1d:
+        x = x[:, np.newaxis]
+    n_kernel = len(kernel)
+    if n_kernel > x.shape[0]:
+        return np.full(x.shape[0] if was_1d else x.shape, np.nan)
+    delay = int(np.ceil(n_kernel / 2)) - 1
+    padded = np.concatenate([x[:n_kernel][::-1], x, x[-n_kernel:][::-1]], axis=0)
+    filtered = lfilter(kernel, 1.0, padded, axis=0)
+    out = filtered[n_kernel + delay : len(padded) - n_kernel + delay]
+    return out[:, 0] if was_1d else out
+
+
+def _difference_of_gaussians_band(
+    x: NDArray, band: tuple[float, float], sampling_frequency: float
+) -> NDArray:
+    """Band-pass as the difference of two Gaussian low-passes: low-pass at the
+    band's upper edge, minus a low-pass of that at the band's lower edge."""
+    low_passed = _firfilt(x, _gaussian_lowpass_fir(band[1], sampling_frequency))
+    slow = _firfilt(low_passed, _gaussian_lowpass_fir(band[0], sampling_frequency))
+    return low_passed - slow
+
+
+def _matlab_percentile(values: NDArray, percent: float) -> float:
+    """MATLAB ``prctile``: linear interpolation between order statistics placed
+    at percentiles 100 (k - 0.5) / n (NumPy's ``hazen`` method)."""
+    return float(np.percentile(values, percent, method="hazen"))
+
+
+def Long_sharp_wave_ripple_detector(
+    time: ArrayLike,
+    lfp: ArrayLike,
+    speed: ArrayLike,
+    sampling_frequency: float,
+    speed_threshold: float = 4.0,
+    sharp_wave_band: tuple[float, float] = (2.0, 50.0),
+    ripple_band: tuple[float, float] = (80.0, 250.0),
+    sharp_wave_percentile: float = 10.0,
+    ripple_power_percentile: float = 50.0,
+    window_size: float = 0.040,
+    local_window: float = 5.0,
+    sharp_wave_thresholds: tuple[float, float] = (0.5, 2.5),
+    ripple_thresholds: tuple[float, float] = (0.5, 2.5),
+    minimum_separation: float = 0.050,
+    minimum_sharp_wave_duration: float = 0.020,
+    maximum_sharp_wave_duration: float = 0.500,
+    minimum_ripple_duration: float = 0.025,
+    random_state: int | np.random.Generator | None = None,
+) -> pd.DataFrame:
+    """Detect sharp-wave ripples from a pyramidal-layer and a stratum radiatum channel.
+
+    John D. Long II's two-channel detector (buzcode ``bz_DetectSWR`` [1]_,
+    converted to buzcode by Andrea Navas-Olive; filtering routines adapted
+    from Eran Stark's ``detect_hfos``; carried into AYA-lab neurocode as
+    ``DetectSWR`` [2]_). It requires a channel that records the ripple, in or
+    just above the CA1 pyramidal layer, and a deeper channel that records the
+    sharp wave in stratum radiatum; it cannot run on a single layer.
+
+    **Unlike the other detectors, this one takes raw, unfiltered LFP**, shape
+    ``(n_time, 2)`` with the ripple channel first, because it filters both
+    bands itself. The sharp-wave feature is the ripple channel minus the
+    radiatum channel after a 2-50 Hz difference-of-Gaussians band-pass; the
+    ripple feature is the smoothed rectified 80-250 Hz band of the
+    common-average-referenced pair, maximum over the two channels. In each
+    non-overlapping 40 ms block the sharp-wave maximum and the ripple maximum
+    within +/-20 ms of it form a feature pair; two-cluster k-means on those
+    pairs separates sharp-wave ripples (the smaller cluster) from the rest,
+    and candidates must exceed the 10th sharp-wave percentile of the SWR
+    cluster and the 50th ripple-power percentile of the other. Because that
+    sharp-wave cut is taken from the SWR cluster itself, the detector discards
+    roughly the weakest tenth of its own events by construction. Each candidate
+    is then tested against **local** statistics over +/-5 s: its sharp wave and
+    ripple power must each be at least median + 2.5 SD, its boundaries are
+    where the sharp wave falls back below median + 0.5 SD, candidates closer
+    than 50 ms to the previous candidate are dropped, and duration limits
+    apply. Event bounds are the sharp-wave bounds.
+
+    Reimplemented from the algorithm as read; the source states no licence.
+    Departures, all documented: k-means is seeded through ``random_state``
+    (MATLAB's is not); candidates whose local window has no sample below the
+    boundary threshold are rejected (the original errors); the package's
+    endpoint speed rule is applied afterwards; NaN input raises because the
+    local statistics need contiguous data.
+
+    Parameters
+    ----------
+    time : array_like, shape (n_time,)
+        Time values for each sample in seconds.
+    lfp : array_like, shape (n_time, 2)
+        **Raw** LFP: column 0 the ripple (pyramidal-layer) channel, column 1
+        the sharp-wave (stratum radiatum) channel. No NaN.
+    speed : array_like, shape (n_time,)
+        Animal's running speed in cm/s.
+    sampling_frequency : float
+        Sampling rate in Hz.
+    speed_threshold : float, optional
+        Endpoint speed rule (``exclude_movement``); not part of the original.
+        Default is 4.0.
+    sharp_wave_band, ripple_band : tuple of (float, float), optional
+        Difference-of-Gaussians pass-bands in Hz. Defaults (2, 50) and
+        (80, 250).
+    sharp_wave_percentile, ripple_power_percentile : float, optional
+        Cluster-derived thresholds: a candidate must exceed this percentile
+        of the SWR cluster's sharp-wave feature and this percentile of the
+        non-SWR cluster's ripple power. Defaults 10 and 50.
+    window_size : float, optional
+        Candidate block length in seconds. Default is 0.040.
+    local_window : float, optional
+        Half-width in seconds of the window for local statistics. Candidates
+        closer than this to either end of the record are not evaluated.
+        Default is 5.0.
+    sharp_wave_thresholds, ripple_thresholds : tuple of (float, float), optional
+        ``(boundary, peak)`` in local standard deviations. Defaults (0.5, 2.5).
+    minimum_separation : float, optional
+        Minimum time from the previous candidate, in seconds. Default 0.050.
+    minimum_sharp_wave_duration, maximum_sharp_wave_duration : float, optional
+        Sharp-wave duration limits in seconds. A candidate is rejected when it
+        fails the sharp-wave minimum **and** the ripple minimum, or exceeds
+        the sharp-wave maximum. Defaults 0.020 and 0.500.
+    minimum_ripple_duration : float, optional
+        Ripple duration minimum in seconds. Default 0.025.
+    random_state : int or numpy Generator, optional
+        Seed for the k-means initialization. Default None.
+
+    Returns
+    -------
+    ripple_times : pd.DataFrame
+        One row per event, indexed by ``event_number``: ``start_time``,
+        ``end_time``, ``peak_time`` (sharp-wave peak), ``duration``, the
+        package's z-score statistics computed on the globally z-scored ripple
+        power, the speed statistics, and ``sharp_wave_zscore``,
+        ``sharp_wave_percentile``, ``ripple_power_zscore``,
+        ``ripple_power_percentile`` (peak values against the local window),
+        ``sharp_wave_duration`` and ``ripple_duration`` in seconds.
+
+    References
+    ----------
+    .. [1] Long, J. D. II. ``bz_DetectSWR.m`` in buzcode
+       (``analysis/SharpWaveRipples/``), https://github.com/buzsakilab/buzcode
+    .. [2] AYA lab, neurocode, ``SharpWaveRipples/DetectSWR.m``,
+       https://github.com/ayalab1/neurocode, doi:10.5281/zenodo.7819979
+
+    """
+    lfp = np.asarray(lfp, dtype=float)
+    speed = np.asarray(speed, dtype=float)
+    time = np.asarray(time, dtype=float)
+    if lfp.ndim != 2 or lfp.shape[1] != 2:
+        raise ValueError(
+            "lfp must have exactly two channels, shape (n_time, 2): the ripple channel "
+            f"first and the sharp-wave channel second; got shape {lfp.shape}."
+        )
+    _validate_array_lengths(time, lfp, speed)
+    _validate_time_units(time, sampling_frequency, len(time))
+    _validate_speed_units(speed, speed_threshold)
+    if np.any(np.isnan(lfp)) or np.any(np.isnan(speed)):
+        raise ValueError(
+            "lfp and speed must not contain NaN: this detector's local statistics need "
+            "contiguous data. Pass a contiguous epoch instead."
+        )
+    n_time = len(time)
+    rng = np.random.default_rng(random_state)
+
+    # features
+    sharp_wave_band_lfp = _difference_of_gaussians_band(
+        lfp, sharp_wave_band, sampling_frequency
+    )
+    sharp_wave_diff = sharp_wave_band_lfp[:, 0] - sharp_wave_band_lfp[:, 1]
+    referenced = lfp - lfp.mean(axis=1, keepdims=True)
+    ripple = np.abs(_difference_of_gaussians_band(referenced, ripple_band, sampling_frequency))
+    power_kernel = _gaussian_lowpass_fir(np.mean(ripple_band) / np.pi, sampling_frequency)
+    ripple_power = _firfilt(ripple, power_kernel).max(axis=1)
+
+    # candidate feature pairs, one per non-overlapping block
+    block = int(np.floor(window_size * sampling_frequency))
+    half_block = block // 2
+    starts = np.arange(0, n_time, block)
+    feature_index, sharp_wave_feature, ripple_feature = [], [], []
+    for b0, b1 in pairwise(starts):
+        segment = sharp_wave_diff[b0:b1]
+        local_arg = int(np.argmax(segment))
+        peak = b0 + local_arg
+        if local_arg in (0, block - 1):
+            if peak in (0, n_time - 1):
+                continue
+            neighbours = sharp_wave_diff[peak - 1 : peak + 2]
+            if int(np.argmax(neighbours)) != 1:
+                continue
+        feature_index.append(peak)
+        sharp_wave_feature.append(segment[local_arg])
+        lo, hi = max(peak - half_block, 0), min(peak + half_block, n_time - 1)
+        ripple_feature.append(ripple_power[lo : hi + 1].max())
+    feature_index = np.asarray(feature_index)
+    sharp_wave_feature = np.asarray(sharp_wave_feature)
+    ripple_feature = np.asarray(ripple_feature)
+    if len(feature_index) < 2:
+        raise ValueError("Too few candidate blocks to cluster; the recording is too short.")
+
+    features = np.column_stack([sharp_wave_feature, ripple_feature])
+    _, labels = kmeans2(features, 2, minit="++", seed=rng)
+    is_swr_cluster = labels == (0 if np.sum(labels == 0) <= np.sum(labels == 1) else 1)
+    if not np.any(is_swr_cluster) or np.all(is_swr_cluster):
+        raise ValueError("k-means did not separate the candidate features into two clusters.")
+    sharp_wave_cut = _matlab_percentile(
+        sharp_wave_feature[is_swr_cluster], sharp_wave_percentile
+    )
+    ripple_cut = _matlab_percentile(ripple_feature[~is_swr_cluster], ripple_power_percentile)
+    is_candidate = (
+        is_swr_cluster & (sharp_wave_feature > sharp_wave_cut) & (ripple_feature > ripple_cut)
+    )
+
+    bound = int(local_window * sampling_frequency)
+    candidate_peaks = feature_index[is_candidate]
+    candidate_sharp = sharp_wave_feature[is_candidate]
+    candidate_ripple = ripple_feature[is_candidate]
+    in_range = (candidate_peaks - bound >= 0) & (candidate_peaks + bound <= n_time - 1)
+    candidate_peaks, candidate_sharp, candidate_ripple = (
+        candidate_peaks[in_range],
+        candidate_sharp[in_range],
+        candidate_ripple[in_range],
+    )
+    separation = np.diff(np.concatenate([[0.0], candidate_peaks / sampling_frequency]))
+
+    min_sw = int(np.floor(minimum_sharp_wave_duration * sampling_frequency))
+    max_sw = int(np.floor(maximum_sharp_wave_duration * sampling_frequency))
+    min_rp = int(np.floor(minimum_ripple_duration * sampling_frequency))
+    sw_boundary, sw_peak = sharp_wave_thresholds
+    rp_boundary, rp_peak = ripple_thresholds
+
+    records = []
+    n_candidates = len(candidate_peaks)
+    for ii, peak in enumerate(candidate_peaks):
+        sw_window = sharp_wave_diff[peak - bound : peak + bound + 1]
+        sw_median, sw_sd = np.median(sw_window), np.std(sw_window, ddof=1)
+        if sw_window[bound] < sw_median + sw_peak * sw_sd:
+            continue
+        rp_window = ripple_power[peak - bound : peak + bound + 1]
+        rp_median, rp_sd = np.median(rp_window), np.std(rp_window, ddof=1)
+        if candidate_ripple[ii] < rp_median + rp_peak * rp_sd:
+            continue
+        if ii < n_candidates - 1 and separation[ii] < minimum_separation:
+            continue
+        below_before = np.flatnonzero(sw_window[: bound + 1] < sw_median + sw_boundary * sw_sd)
+        below_after = np.flatnonzero(sw_window[bound:] < sw_median + sw_boundary * sw_sd)
+        if len(below_before) == 0 or len(below_after) == 0:
+            continue
+        start_offset = bound - below_before[-1]  # samples before the peak
+        stop_offset = below_after[0]  # samples after the peak
+        sharp_wave_samples = start_offset + stop_offset + 1
+        rp_peak_local = (bound - half_block) + int(
+            np.argmax(rp_window[bound - half_block : bound + half_block + 1])
+        )
+        rp_before = np.flatnonzero(
+            rp_window[: rp_peak_local + 1] < rp_median + rp_boundary * rp_sd
+        )
+        rp_after = np.flatnonzero(rp_window[rp_peak_local:] < rp_median + rp_boundary * rp_sd)
+        if len(rp_before) == 0 or len(rp_after) == 0:
+            continue
+        ripple_samples = (rp_peak_local + rp_after[0]) - rp_before[-1]
+        if ripple_samples < min_rp and sharp_wave_samples < min_sw:
+            continue
+        if sharp_wave_samples > max_sw:
+            continue
+        records.append(
+            {
+                "peak": peak,
+                "start": peak - start_offset,
+                "end": peak + stop_offset,
+                "sharp_wave_zscore": (candidate_sharp[ii] - sw_median) / sw_sd,
+                "sharp_wave_percentile": np.mean(sw_window < candidate_sharp[ii]),
+                "ripple_power_zscore": (candidate_ripple[ii] - rp_median) / rp_sd,
+                "ripple_power_percentile": np.mean(rp_window < candidate_ripple[ii]),
+                "sharp_wave_duration": sharp_wave_samples / sampling_frequency,
+                "ripple_duration": ripple_samples / sampling_frequency,
+            }
+        )
+
+    if records:
+        detected = pd.DataFrame(records)
+        event_times = np.column_stack([time[detected["start"]], time[detected["end"]]])
+        keep = (speed[detected["start"]] <= speed_threshold) & (
+            speed[detected["end"]] <= speed_threshold
+        )
+        detected = detected[keep].reset_index(drop=True)
+        event_times = event_times[keep]
+    else:
+        detected = pd.DataFrame(records)
+        event_times = np.empty((0, 2))
+
+    ripple_power_z = normalize_signal(ripple_power)
+    events = _get_event_stats(
+        event_times, time, ripple_power_z, speed, minimum_duration=minimum_ripple_duration
+    )
+    events["peak_time"] = (
+        time[detected["peak"].to_numpy(dtype=int)] if len(detected) else np.empty(0)
+    )
+    for column in (
+        "sharp_wave_zscore",
+        "sharp_wave_percentile",
+        "ripple_power_zscore",
+        "ripple_power_percentile",
+        "sharp_wave_duration",
+        "ripple_duration",
+    ):
+        events[column] = detected[column].to_numpy() if len(detected) else np.empty(0)
     return events
 
 
