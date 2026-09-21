@@ -21,6 +21,7 @@ from ripple_detection.core import (
     get_multiunit_population_firing_rate,
     merge_overlapping_ranges,
     merge_overlapping_ranges_track_participation,
+    nearest_sample_index,
     normalize_signal,
     normalize_signal_manually,
     ripple_bandpass_filter,
@@ -1210,3 +1211,13 @@ class TestSegmentBooleanSeriesMissingValues:
         series = pd.Series([np.nan] * 50, index=np.arange(50) / 1000.0)
         with pytest.raises(ValueError, match="missing"):
             segment_boolean_series(series, minimum_duration=0.005)
+
+
+class TestNearestSampleIndex:
+    def test_returns_the_closest_sample_in_query_order(self):
+        time = np.arange(0.0, 1.0, 0.1)
+        np.testing.assert_array_equal(nearest_sample_index(time, [0.52, 0.0, 0.98]), [5, 0, 9])
+
+    def test_empty_time_raises(self):
+        with pytest.raises(ValueError, match="time is empty"):
+            nearest_sample_index(np.empty(0), [1.0])

@@ -29,6 +29,7 @@ from ripple_detection.detectors import (
     _extract_Yu_ripple_events,
     _find_max_thresh,
     _firfilt,
+    _get_event_stats,
     _state_intervals,
     _two_threshold_events,
     _zugaro_smoothing_window,
@@ -2819,3 +2820,25 @@ class TestLongMaxThreshIsFinite:
         )
         assert len(events) >= 1
         assert np.isfinite(events.max_thresh).all(), events.max_thresh.to_numpy()
+
+
+class TestEventStatisticsShapeValidation:
+    """The shape checks run on the converted array, so sequences raise ValueError."""
+
+    FS = 1000
+
+    def _inputs(self):
+        time = np.arange(1000) / self.FS
+        return time, [[0.100, 0.150]], np.full(1000, 2.0)
+
+    def test_two_dimensional_metric_without_participants_raises(self):
+        time, events, speed = self._inputs()
+        with pytest.raises(ValueError, match=r"must have shape \(n_time,\)"):
+            _get_event_stats(events, time, np.zeros((1000, 3)).tolist(), speed, 0.015)
+
+    def test_one_dimensional_metric_with_participants_raises(self):
+        time, events, speed = self._inputs()
+        with pytest.raises(ValueError, match=r"\(n_time, n_channels\)"):
+            _get_event_stats(
+                events, time, np.zeros(1000).tolist(), speed, 0.015, participants=[{0}]
+            )
