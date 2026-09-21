@@ -22,8 +22,10 @@ from ripple_detection.core import (
 )
 from ripple_detection.detectors import (
     Roumis_ripple_detector,
+    _contained_in_intervals,
     _extract_Yu_ripple_events,
     _find_max_thresh,
+    _state_intervals,
     get_Kay_ripple_consensus_trace,
     get_Yu_ripple_consensus_trace,
     multiunit_HSE_detector,
@@ -1458,6 +1460,22 @@ def _synthetic_joint_inputs(
     return lfps, multiunit
 
 
+class TestCareyStateHelpers:
+    def test_state_intervals_with_no_true_sample_is_empty(self):
+        time = np.arange(100) / 1000.0
+        intervals = _state_intervals(np.zeros(100, dtype=bool), time, 0.05, 0.05)
+        assert intervals.shape == (0, 2)
+
+    def test_contained_in_intervals_degenerate_inputs(self):
+        assert _contained_in_intervals(
+            np.empty((0, 2), dtype=int), np.array([[0, 10]])
+        ).shape == (0,)
+        result = _contained_in_intervals(
+            np.array([[2, 5], [7, 9]]), np.empty((0, 2), dtype=int)
+        )
+        assert result.shape == (2,) and not result.any()
+
+
 class TestCareyCandidateDetector:
     FS = 1000
     N_TIME = 20_000
@@ -1559,6 +1577,32 @@ class TestCareyCandidateDetector:
         bad[10, 0] = np.nan
         with pytest.raises(ValueError, match="NaN"):
             Carey_candidate_detector(time, lfps, bad, stationary, self.FS)
+
+    def test_multiunit_without_spikes_raises(self, time, stationary):
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        with pytest.raises(ValueError, match="no spikes"):
+            Carey_candidate_detector(time, lfps, np.zeros_like(multiunit), stationary, self.FS)
+
+    def test_theta_lfp_with_wrong_shape_raises(self, time, stationary):
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        with pytest.raises(ValueError, match="theta_lfp must have shape"):
+            Carey_candidate_detector(
+                time, lfps, multiunit, stationary, self.FS, theta_lfp=np.zeros(self.N_TIME - 1)
+            )
+
+    def test_unreachable_peak_threshold_gives_an_empty_table(self, time, stationary):
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        events = Carey_candidate_detector(
+            time,
+            lfps,
+            multiunit,
+            stationary,
+            self.FS,
+            peak_threshold=1e6,
+            theta_lfp=lfps[:, 0],
+        )
+        assert events.empty
+        assert "n_active_units" in events.columns
 
     def test_exported_from_package_root(self):
         import ripple_detection
