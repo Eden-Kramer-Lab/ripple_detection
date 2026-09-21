@@ -442,13 +442,10 @@ class TestSegmentBooleanSeriesProperties:
 
 def _brute_force_overlap(event, reference):
     """Total overlap of one event with a set of reference intervals, by union."""
-    covered = 0.0
     step = 1e-4
-    grid = np.arange(event[0], event[1], step)
-    for point in grid:
-        if np.any((reference[:, 0] <= point) & (point < reference[:, 1])):
-            covered += step
-    return covered
+    grid = np.arange(event[0], event[1], step)[:, np.newaxis]
+    is_covered = np.any((reference[:, 0] <= grid) & (grid < reference[:, 1]), axis=1)
+    return float(np.sum(is_covered) * step)
 
 
 @settings(max_examples=50, deadline=None)

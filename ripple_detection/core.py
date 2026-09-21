@@ -99,17 +99,6 @@ def ripple_bandpass_filter(
     return remez(numtaps, desired, [0, 1, 0], fs=sampling_frequency), 1.0
 
 
-_GAP_TOLERANCE = 1e-9
-"""Relative tolerance for comparing an inter-event gap with a threshold.
-
-Applied by :func:`exclude_close_events` and :func:`merge_close_events` so that
-a gap equal to the threshold is treated as equal rather than as smaller, which
-binary floating point would otherwise decide for it: 0.15 - 0.1 is 4.999...e-2,
-just under 0.05. The tolerance is relative only, with no absolute term, so the
-comparison stays monotonic in the threshold.
-"""
-
-
 def minimum_sample_count(time: ArrayLike, minimum_duration: float) -> int:
     """Number of consecutive samples that ``minimum_duration`` spans.
 
@@ -302,28 +291,24 @@ def filter_ripple_band(
     SHIPPED_KERNEL_SAMPLING_FREQUENCY = 1500.0
     MINIMUM_NYQUIST = 250.0 + 25.0  # upper band edge plus the transition band
 
-    if band is not None and sampling_frequency is None:
-        raise ValueError(
-            "A custom band needs a sampling_frequency: the shipped kernel is a fixed "
-            "150-250 Hz design for 1500 Hz data and cannot be retuned."
-        )
-    uses_shipped_kernel = band is None and (
-        sampling_frequency is None
-        or np.isclose(sampling_frequency, SHIPPED_KERNEL_SAMPLING_FREQUENCY)
-    )
-    if uses_shipped_kernel and transition_width != DEFAULT_TRANSITION_WIDTH:
-        raise ValueError(
-            f"transition_width={transition_width} cannot apply here: with no band and "
-            "1500 Hz data the shipped kernel is used, and it is a fixed design. Pass "
-            "`band` to design a filter instead."
-        )
     if band is not None:
+        if sampling_frequency is None:
+            raise ValueError(
+                "A custom band needs a sampling_frequency: the shipped kernel is a fixed "
+                "150-250 Hz design for 1500 Hz data and cannot be retuned."
+            )
         filter_numerator, filter_denominator = ripple_bandpass_filter(
-            sampling_frequency,  # type: ignore[arg-type]
-            band=band,
-            transition_width=transition_width,
+            sampling_frequency, band=band, transition_width=transition_width
         )
-    elif uses_shipped_kernel:
+    elif sampling_frequency is None or np.isclose(
+        sampling_frequency, SHIPPED_KERNEL_SAMPLING_FREQUENCY
+    ):
+        if transition_width != DEFAULT_TRANSITION_WIDTH:
+            raise ValueError(
+                f"transition_width={transition_width} cannot apply here: with no band and "
+                "1500 Hz data the shipped kernel is used, and it is a fixed design. Pass "
+                "`band` to design a filter instead."
+            )
         filter_numerator, filter_denominator = _get_ripplefilter_kernel()
     else:
         if 0.5 * sampling_frequency <= MINIMUM_NYQUIST:
@@ -1225,6 +1210,38 @@ def merge_overlapping_ranges_track_participation(
     return np.asarray(merged, dtype=object)
 
 
+_GAP_TOLERANCE = 1e-9
+"""Relative tolerance for comparing an inter-event gap with a threshold."""
+
+
+def _is_gap_below(gap: NDArray | float, close_event_threshold: float) -> NDArray | np.bool_:
+    """Whether an inter-event gap is shorter than the threshold.
+
+    The boundary rule that :func:`exclude_close_events` and
+    :func:`merge_close_events` share: a gap equal to the threshold is treated
+    as equal rather than as shorter, which binary floating point would
+    otherwise decide for it, since 0.15 - 0.1 is 4.999...e-2, just under 0.05.
+    The tolerance is relative only, with no absolute term, so the rule stays
+    monotonic in the threshold: a default ``atol`` would make a threshold near
+    zero merge less than a threshold of zero.
+
+    Parameters
+    ----------
+    gap : ndarray, shape (n_gaps,), or float
+        Time from one event's end to the next event's start.
+    close_event_threshold : float
+        Separation below which events count as close.
+
+    Returns
+    -------
+    is_below : ndarray of bool, shape (n_gaps,), or bool
+
+    """
+    return (gap < close_event_threshold) & ~np.isclose(
+        gap, close_event_threshold, rtol=_GAP_TOLERANCE, atol=0.0
+    )
+
+
 def exclude_close_events(
     candidate_event_times: ArrayLike,
     close_event_threshold: float = 1.0,
@@ -1294,11 +1311,7 @@ def exclude_close_events(
     last_retained_end = ends[0]
     for event in range(1, len(candidate_event_times)):
         gap = starts[event] - last_retained_end
-        # the same boundary rule as merge_close_events: a gap equal to the
-        # threshold is far enough apart, and round-off does not decide it
-        if gap >= close_event_threshold or np.isclose(
-            gap, close_event_threshold, rtol=_GAP_TOLERANCE, atol=0.0
-        ):
+        if not _is_gap_below(gap, close_event_threshold):
             keep_mask[event] = True
             last_retained_end = ends[event]
 
@@ -1380,19 +1393,13 @@ def merge_close_events(
 
     while len(events) > 1:
         gap = events[1:, 0] - events[:-1, 1]
-        merged_span = np.maximum(events[1:, 1], events[:-1, 1]) - events[:-1, 0]
         if close_event_threshold > 0:
-            # a gap equal to the threshold does not merge; the relative tolerance
-            # keeps that boundary from turning on round-off, since 0.15 - 0.1 is
-            # below 0.05 in binary. atol is 0 so the rule stays monotonic in the
-            # threshold: a default atol would make a threshold near zero merge
-            # less than a threshold of zero.
-            to_merge = (gap < close_event_threshold) & ~np.isclose(
-                gap, close_event_threshold, rtol=_GAP_TOLERANCE, atol=0.0
-            )
+            to_merge = _is_gap_below(gap, close_event_threshold)
         else:
+            # events that touch merge, which _is_gap_below would exclude
             to_merge = gap <= 0
         if maximum_duration is not None:
+            merged_span = np.maximum(events[1:, 1], events[:-1, 1]) - events[:-1, 0]
             to_merge &= (merged_span <= maximum_duration) | np.isclose(
                 merged_span, maximum_duration
             )

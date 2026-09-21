@@ -2861,7 +2861,10 @@ LFP_DETECTORS_WITHOUT_A_CEILING = [
 
 
 class TestMaximumDuration:
-    """A ceiling on event duration, which 25 of the 57 surveyed papers impose."""
+    """A ceiling on event duration, which 25 of the 57 surveyed papers impose.
+
+    Covers the ceiling's boundary too, and the columns that travel with an event.
+    """
 
     FS = 1000
     N_TIME = 20_000  # long enough for the Yu noise threshold
@@ -2946,155 +2949,6 @@ class TestMaximumDuration:
                 minimum_duration=0.050,
                 maximum_duration=0.010,
             )
-
-
-class TestMultiunitActiveUnits:
-    """Most multiunit papers require a minimum number of units in a burst."""
-
-    FS = 1000
-    N_TIME = 5_000
-    N_UNITS = 20
-
-    @pytest.fixture
-    def time(self):
-        return np.arange(self.N_TIME) / self.FS
-
-    @pytest.fixture
-    def stationary(self):
-        return np.full(self.N_TIME, 2.0)
-
-    @pytest.fixture
-    def multiunit(self):
-        """A three-unit burst at 1.0 s and a ten-unit burst at 3.0 s."""
-        multiunit = np.zeros((self.N_TIME, self.N_UNITS))
-        multiunit[1_000:1_060, :3] = 4.0
-        multiunit[3_000:3_060, :10] = 1.2
-        return multiunit
-
-    def test_reports_the_active_unit_count(self, time, multiunit, stationary):
-        """Every event carries the number of units that spiked inside it."""
-        events = multiunit_HSE_detector(time, multiunit, stationary, self.FS)
-
-        assert "n_active_units" in events
-        assert sorted(events.n_active_units) == [3, 10]
-
-    def test_minimum_drops_the_sparse_burst(self, time, multiunit, stationary):
-        """A five-unit minimum keeps only the ten-unit burst."""
-        events = multiunit_HSE_detector(
-            time, multiunit, stationary, self.FS, minimum_active_units=5
-        )
-
-        assert len(events) == 1
-        assert events.iloc[0].n_active_units == 10
-        assert events.iloc[0].start_time > 2.0
-
-    def test_index_is_renumbered_after_filtering(self, time, multiunit, stationary):
-        """Every detector returns event_number 1..n with no holes."""
-        events = multiunit_HSE_detector(
-            time, multiunit, stationary, self.FS, minimum_active_units=5
-        )
-
-        assert list(events.index) == list(range(1, len(events) + 1))
-        assert events.index.name == "event_number"
-
-    def test_default_drops_nothing(self, time, multiunit, stationary):
-        """The default keeps what the detector found before the criterion existed."""
-        default = multiunit_HSE_detector(time, multiunit, stationary, self.FS)
-        explicit = multiunit_HSE_detector(
-            time, multiunit, stationary, self.FS, minimum_active_units=0
-        )
-
-        pd.testing.assert_frame_equal(default, explicit)
-
-    def test_counts_units_not_spikes(self, time, stationary):
-        """One unit firing many times is one active unit."""
-        multiunit = np.zeros((self.N_TIME, self.N_UNITS))
-        multiunit[1_000:1_060, 0] = 20.0
-
-        events = multiunit_HSE_detector(time, multiunit, stationary, self.FS)
-
-        assert (events.n_active_units == 1).all()
-
-    def test_empty_result_still_has_the_column(self, time, stationary):
-        """A detector that finds nothing returns the column anyway."""
-        multiunit = np.zeros((self.N_TIME, self.N_UNITS))
-
-        events = multiunit_HSE_detector(
-            time, multiunit, stationary, self.FS, minimum_active_units=5
-        )
-
-        assert len(events) == 0
-        assert "n_active_units" in events
-
-    def test_negative_minimum_raises(self, time, multiunit, stationary):
-        """A negative unit count is not a criterion."""
-        with pytest.raises(ValueError, match="minimum_active_units"):
-            multiunit_HSE_detector(
-                time, multiunit, stationary, self.FS, minimum_active_units=-1
-            )
-
-
-class TestDurationLimitValidation:
-    """The two detectors that always had a ceiling validate it like the rest."""
-
-    FS = 1000
-    N_TIME = 5_000
-
-    @pytest.fixture
-    def time(self):
-        return np.arange(self.N_TIME) / self.FS
-
-    @pytest.fixture
-    def stationary(self):
-        return np.full(self.N_TIME, 2.0)
-
-    @pytest.fixture
-    def lfps(self):
-        return _synthetic_ripple_band(self.N_TIME, self.FS, [(1_000, 1_060, 20.0)])
-
-    def test_zugaro_rejects_a_ceiling_below_the_minimum(self, time, lfps, stationary):
-        with pytest.raises(ValueError, match="maximum_duration"):
-            Zugaro_ripple_detector(
-                time,
-                lfps,
-                stationary,
-                self.FS,
-                minimum_duration=0.500,
-                maximum_duration=0.100,
-            )
-
-    def test_long_rejects_a_sharp_wave_ceiling_below_its_minimum(self, time, stationary):
-        raw = _synthetic_two_channel_lfp(self.N_TIME, self.FS, [1_000])
-        with pytest.raises(ValueError, match="maximum"):
-            Long_sharp_wave_ripple_detector(
-                time,
-                raw,
-                stationary,
-                self.FS,
-                minimum_sharp_wave_duration=0.500,
-                maximum_sharp_wave_duration=0.100,
-            )
-
-
-class TestMaximumDurationDetails:
-    """The ceiling's boundary, and the columns that travel with an event."""
-
-    FS = 1000
-    N_TIME = 20_000
-    LONG = (5_000, 5_500, 20.0)
-    SHORT = (12_000, 12_060, 20.0)
-
-    @pytest.fixture
-    def time(self):
-        return np.arange(self.N_TIME) / self.FS
-
-    @pytest.fixture
-    def stationary(self):
-        return np.full(self.N_TIME, 2.0)
-
-    @pytest.fixture
-    def lfps(self):
-        return _synthetic_ripple_band(self.N_TIME, self.FS, [self.LONG, self.SHORT])
 
     def test_an_event_of_exactly_the_sample_limit_is_kept(self, time):
         """The limit is round(maximum_duration * sampling_frequency) samples."""
@@ -3197,11 +3051,15 @@ class TestMaximumDurationDetails:
         assert len(events) == 0 or (events.end_time - events.start_time).max() < 0.06
 
 
-class TestActiveUnitBoundaries:
-    """The unit count at its two edges: the last sample, and the threshold itself."""
+class TestMultiunitActiveUnits:
+    """Most multiunit papers require a minimum number of units in a burst.
+
+    Covers the count's two edges too: the last sample, and the threshold itself.
+    """
 
     FS = 1000
     N_TIME = 5_000
+    N_UNITS = 20
 
     @pytest.fixture
     def time(self):
@@ -3210,6 +3068,76 @@ class TestActiveUnitBoundaries:
     @pytest.fixture
     def stationary(self):
         return np.full(self.N_TIME, 2.0)
+
+    @pytest.fixture
+    def multiunit(self):
+        """A three-unit burst at 1.0 s and a ten-unit burst at 3.0 s."""
+        multiunit = np.zeros((self.N_TIME, self.N_UNITS))
+        multiunit[1_000:1_060, :3] = 4.0
+        multiunit[3_000:3_060, :10] = 1.2
+        return multiunit
+
+    def test_reports_the_active_unit_count(self, time, multiunit, stationary):
+        """Every event carries the number of units that spiked inside it."""
+        events = multiunit_HSE_detector(time, multiunit, stationary, self.FS)
+
+        assert "n_active_units" in events
+        assert sorted(events.n_active_units) == [3, 10]
+
+    def test_minimum_drops_the_sparse_burst(self, time, multiunit, stationary):
+        """A five-unit minimum keeps only the ten-unit burst."""
+        events = multiunit_HSE_detector(
+            time, multiunit, stationary, self.FS, minimum_active_units=5
+        )
+
+        assert len(events) == 1
+        assert events.iloc[0].n_active_units == 10
+        assert events.iloc[0].start_time > 2.0
+
+    def test_index_is_renumbered_after_filtering(self, time, multiunit, stationary):
+        """Every detector returns event_number 1..n with no holes."""
+        events = multiunit_HSE_detector(
+            time, multiunit, stationary, self.FS, minimum_active_units=5
+        )
+
+        assert list(events.index) == list(range(1, len(events) + 1))
+        assert events.index.name == "event_number"
+
+    def test_default_drops_nothing(self, time, multiunit, stationary):
+        """The default keeps what the detector found before the criterion existed."""
+        default = multiunit_HSE_detector(time, multiunit, stationary, self.FS)
+        explicit = multiunit_HSE_detector(
+            time, multiunit, stationary, self.FS, minimum_active_units=0
+        )
+
+        pd.testing.assert_frame_equal(default, explicit)
+
+    def test_counts_units_not_spikes(self, time, stationary):
+        """One unit firing many times is one active unit."""
+        multiunit = np.zeros((self.N_TIME, self.N_UNITS))
+        multiunit[1_000:1_060, 0] = 20.0
+
+        events = multiunit_HSE_detector(time, multiunit, stationary, self.FS)
+
+        assert (events.n_active_units == 1).all()
+
+    def test_empty_result_still_has_the_column(self, time, stationary):
+        """A detector that finds nothing returns the column anyway."""
+        multiunit = np.zeros((self.N_TIME, self.N_UNITS))
+
+        events = multiunit_HSE_detector(
+            time, multiunit, stationary, self.FS, minimum_active_units=5
+        )
+
+        assert len(events) == 0
+        assert "n_active_units" in events
+
+    def test_negative_minimum_raises(self, time, multiunit, stationary):
+        """A negative unit count is not a criterion."""
+        with pytest.raises(ValueError, match="minimum_active_units"):
+            multiunit_HSE_detector(
+                time, multiunit, stationary, self.FS, minimum_active_units=-1
+            )
 
     def test_exactly_the_minimum_number_of_units_is_kept(self, time, stationary):
         multiunit = np.zeros((self.N_TIME, 20))
@@ -3241,3 +3169,45 @@ class TestActiveUnitBoundaries:
 
         assert late.iloc[0].end_time == time[-1]
         assert late.iloc[0].n_active_units == events.iloc[0].n_active_units + 1
+
+
+class TestDurationLimitValidation:
+    """The two detectors that always had a ceiling validate it like the rest."""
+
+    FS = 1000
+    N_TIME = 5_000
+
+    @pytest.fixture
+    def time(self):
+        return np.arange(self.N_TIME) / self.FS
+
+    @pytest.fixture
+    def stationary(self):
+        return np.full(self.N_TIME, 2.0)
+
+    @pytest.fixture
+    def lfps(self):
+        return _synthetic_ripple_band(self.N_TIME, self.FS, [(1_000, 1_060, 20.0)])
+
+    def test_zugaro_rejects_a_ceiling_below_the_minimum(self, time, lfps, stationary):
+        with pytest.raises(ValueError, match="maximum_duration"):
+            Zugaro_ripple_detector(
+                time,
+                lfps,
+                stationary,
+                self.FS,
+                minimum_duration=0.500,
+                maximum_duration=0.100,
+            )
+
+    def test_long_rejects_a_sharp_wave_ceiling_below_its_minimum(self, time, stationary):
+        raw = _synthetic_two_channel_lfp(self.N_TIME, self.FS, [1_000])
+        with pytest.raises(ValueError, match="maximum"):
+            Long_sharp_wave_ripple_detector(
+                time,
+                raw,
+                stationary,
+                self.FS,
+                minimum_sharp_wave_duration=0.500,
+                maximum_sharp_wave_duration=0.100,
+            )
