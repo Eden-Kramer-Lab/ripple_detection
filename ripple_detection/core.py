@@ -107,10 +107,11 @@ def sample_count_within(
 ) -> NDArray | bool:
     """Whether an event of ``n_samples`` samples meets the package's duration limits.
 
-    Every detector applies this one rule: a limit in seconds becomes a sample
-    count with ``minimum_sample_count`` (round half up from the median timestamp
-    step), and an event qualifies when its sample count is at least the minimum
-    and, if given, at most the maximum. Both comparisons are inclusive.
+    Every detector applies this one rule. ``minimum_sample_count`` turns a
+    limit in seconds into a sample count, rounding half up from the median
+    timestamp step. An event qualifies when its sample count is at least the
+    minimum and, where one is given, at most the maximum. Both comparisons are
+    inclusive.
 
     Parameters
     ----------
@@ -217,10 +218,10 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
     Raises
     ------
     ValueError
-        If the sampling rate cannot represent the band (Nyquist frequency at
-        or below the 250 Hz upper edge plus the 25 Hz transition band), or if
-        the signal has fewer non-NaN samples than ``filtfilt`` needs (three
-        times the kernel length).
+        If the sampling rate cannot represent the band. That is, the Nyquist
+        frequency is at or below 275 Hz, the 250 Hz upper edge plus the 25 Hz
+        transition band. Also if the signal holds fewer non-NaN samples than
+        ``filtfilt`` needs, which is one more than three times the tap count.
 
     See Also
     --------
@@ -927,14 +928,12 @@ def normalize_signal_manually(
     elec_deviations: ArrayLike,
 ) -> NDArray:
     """
-    Allows normalization based on the baselines and deviations input into this
-    function rather than automatically calculating them based on the passed
-    in data.
-    This is particularly useful for doing ripple detection on sleep sessions
-    when you want to use an overall baseline/deviation from the entire recording
-    day rather than just for that sleep session, which tend to have greater
-    baselines and deviation values due to a higher concentration of ripples
-    during sleep.
+    Normalize with supplied baselines and deviations.
+
+    The statistics come from the arguments rather than from ``data``. This
+    matters for sleep sessions. A sleep session holds a higher concentration
+    of ripples, so its own baseline and deviation are larger. Statistics from
+    the whole recording day avoid that bias.
 
     Parameters
     ----------
@@ -952,12 +951,12 @@ def normalize_signal_manually(
 
     Notes
     -----
-    A channel with a zero or NaN deviation, or a NaN baseline, is degenerate.
-    Individual degenerate channels are zeroed so they cannot cross a detection
-    threshold, and a warning naming them is emitted. If *every* channel is
-    degenerate (including 1-D input whose single channel is degenerate) the
-    result would be uniformly zero and carry no signal, so a ``ValueError`` is
-    raised instead -- mirroring the empty-mask guard in ``normalize_signal``.
+    A channel is degenerate when its deviation is zero or NaN, or its
+    baseline is NaN. This function zeroes each degenerate channel so it cannot
+    cross a detection threshold, and warns with the channel numbers. When
+    every channel is degenerate the result would be uniformly zero and carry
+    no signal, so it raises ``ValueError`` instead. A 1-D input counts as one
+    channel. ``normalize_signal`` guards an empty mask the same way.
     """
     data = np.asarray(data)
     elec_baselines = np.asarray(elec_baselines, dtype=float)
@@ -1275,11 +1274,11 @@ def estimate_noise_threshold(
 ) -> float | tuple[float, dict]:
     """Estimate a detection threshold from the mirrored noise distribution.
 
-    Implements the threshold rule of Yu et al. 2017: histogram the consensus
-    envelope during immobility on a fixed grid, take the mode, treat the
-    distribution below the mode as noise-only, mirror it about the mode to
-    build a symmetric empirical noise distribution, and return the value one
-    bin past the point where its cumulative distribution reaches ``percentile``.
+    The threshold rule of Yu et al. 2017. Histogram the consensus envelope
+    during immobility on a fixed grid and take the mode. Treat the part below
+    the mode as noise alone. Mirror it about the mode to build a symmetric
+    noise distribution. Return the value one bin past where that
+    distribution's cumulative sum reaches ``percentile``.
 
     This is a transliteration of the original MATLAB implementation
     (``jy_variableripthreshold_corecalculation.m``). The one deliberate
@@ -1320,10 +1319,10 @@ def estimate_noise_threshold(
     Raises
     ------
     ValueError
-        If more than 0.1 % of samples fall outside the grid, if the mode lies
-        on the first or last bin, if there are too few samples to resolve the
-        requested percentile, or if the CDF crossing lands on the last
-        mirrored bin so that "one bin past" is undefined.
+        In any of four cases: more than 0.1 % of samples fall outside the
+        grid; the mode lies on the first or last bin; there are too few
+        samples to resolve the requested percentile; or the crossing lands on
+        the last mirrored bin, which leaves "one bin past" undefined.
 
     Warns
     -----
@@ -1332,18 +1331,18 @@ def estimate_noise_threshold(
 
     Notes
     -----
-    Because the mirrored distribution is bounded above by ``2m - min(values)``,
-    the returned threshold cannot exceed roughly twice the mode's distance
-    from the smallest sample, whatever the true noise tail does. This is a
-    property of the published method, not of this implementation.
+    The mirrored distribution has an upper bound of ``2m - min(values)``. The
+    returned threshold therefore cannot exceed about twice the distance from
+    the mode to the smallest sample, whatever the true noise tail does. This
+    bound comes from the published method, not from this implementation.
 
-    It follows that the threshold lies above the sample mean only when the
-    left flank is wider than the mode-to-mean distance,
-    ``(m - min) > (mean - m)``, reported as ``flank_ratio`` in the
-    diagnostics. Ripples that are very large relative to the in-band
+    The threshold therefore lies above the sample mean only when the left
+    flank is wider than the distance from the mode to the mean, that is
+    ``(m - min) > (mean - m)``. The diagnostics report this as
+    ``flank_ratio``. Ripples that are large relative to the in-band
     background inflate the variance and pull the mean above the noise
-    ceiling, and the ratio drops below one; ``Yu_ripple_detector`` then
-    raises because its threshold-then-return-to-mean rule is undefined.
+    ceiling. The ratio then drops below one and ``Yu_ripple_detector`` raises,
+    because a threshold below the mean leaves its extension rule undefined.
 
     References
     ----------

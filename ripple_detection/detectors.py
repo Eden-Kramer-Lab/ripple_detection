@@ -486,10 +486,10 @@ def _extract_Yu_ripple_events(
     """Extract events from one contiguous block of a mean-zero consensus trace.
 
     A run of consecutive samples at or above ``threshold`` qualifies when it
-    holds at least ``minimum_sample_count(time, minimum_duration)`` samples;
-    each qualifying run is extended to the run of samples strictly above zero
-    (the immobility mean) that contains it, and one event is emitted per such
-    containing run. This is the sample-count convention of the Frank lab
+    holds at least ``minimum_sample_count(time, minimum_duration)`` samples.
+    Each qualifying run is extended to the run of samples strictly above zero,
+    the immobility mean, that contains it. One event is emitted per containing
+    run. This is the sample-count convention of the Frank lab
     ``extractevents`` routine, which the Yu et al. 2017 detector used
     (``DFFunctions/extractevents.cpp`` in
     https://github.com/droumis/FFPhy/tree/fce2048/DFFunctions).
@@ -579,17 +579,19 @@ def Shvartsman_ripple_detector(
     elec_deviations: ArrayLike | None = None,
     participation_threshold: float = 2,
 ) -> pd.DataFrame:
-    """Detect sharp-wave ripples using per-channel detection, only considering
-    times when the % of participating channels exceeds a set fraction. Acts
-    as a middle ground between Kay method (consensus method) and Karlsson
-    method (local ripples) that is less sensitive to random noise
-    fluctuations than the Karlsson method.
+    """Detect sharp-wave ripples on each channel, keeping events that enough
+    channels share.
 
-    Additionally, allows for manual normalization by passing in specific
-    inputs for the baselines and deviations for each electrode. For example,
-    if you want to normalize across all epochs throughout a day rather than
-    within one particular epoch (important for detecting ripples during sleep
-    sessions), this method allows that flexibility.
+    An event is kept when at least ``participation_threshold`` channels detect
+    it. This sits between the Kay detector, which builds one consensus trace,
+    and the Karlsson detector, which keeps a ripple from any single channel.
+    Requiring several channels makes it less sensitive than Karlsson to noise
+    on one channel.
+
+    It also accepts a baseline and a deviation per electrode through
+    ``manual_normalization``, in place of statistics computed from the data.
+    Statistics from a whole recording day rather than one epoch matter for
+    sleep sessions; see ``normalize_signal_manually``.
 
     Parameters
     ----------
@@ -832,11 +834,12 @@ def _detect_from_trace(
 ) -> pd.DataFrame:
     """Normalize one detection trace, threshold it, and summarize the events.
 
-    The shared tail of every detector that thresholds a single trace: normalize,
-    take runs above ``zscore_threshold`` that last ``minimum_duration`` and
-    extend them to the normalization center, drop events whose first or last
-    sample is above ``speed_threshold``, drop events too close to the last
-    retained one, then compute the per-event statistics.
+    The shared tail of every detector that thresholds a single trace. It
+    normalizes the trace. It takes the runs above ``zscore_threshold`` that
+    last ``minimum_duration`` and extends each to the normalization center. It
+    drops events whose first or last sample exceeds ``speed_threshold``, then
+    events too close to the last retained event. It then computes the
+    per-event statistics.
 
     Parameters
     ----------
@@ -1042,18 +1045,18 @@ def Yu_ripple_detector(
 
     The consensus trace is the median across tetrodes of each tetrode's
     smoothed, z-scored ripple-band envelope (``get_Yu_ripple_consensus_trace``).
-    Its values during immobility are taken as noise plus a signal tail; the
-    distribution below the mode is mirrored about the mode to estimate the
-    noise distribution, and the detection threshold is the ``percentile`` of
-    that mirrored distribution (``estimate_noise_threshold``). Events are runs
-    of at least ``minimum_duration`` at or above the threshold, extended to
-    where the trace returns to the immobility mean.
+    Its values during immobility are taken as noise plus a signal tail. The
+    part below the mode is mirrored about the mode to estimate the noise
+    distribution, and the detection threshold is the ``percentile`` of that
+    mirrored distribution (``estimate_noise_threshold``). An event is a run of
+    at least ``minimum_duration`` at or above the threshold, extended to where
+    the trace returns to the immobility mean.
 
-    Unlike the other detectors in this module, samples with missing data are
-    not dropped before processing: the recording is split into contiguous
-    valid blocks, and smoothing, thresholding, and event extraction never
-    cross a gap. An event truncated by a gap or by the end of the recording is
-    kept and flagged in ``clipped_start`` / ``clipped_end``.
+    This detector does not drop samples with missing data before processing,
+    as the others do. It splits the recording into contiguous valid blocks, so
+    smoothing, thresholding, and event extraction never cross a gap. An event
+    truncated by a gap or by the end of the recording is kept, and flagged in
+    ``clipped_start`` and ``clipped_end``.
 
     Parameters
     ----------
@@ -1352,30 +1355,30 @@ def Zugaro_ripple_detector(
     FMAToolbox [1]_ (``FindRipples``), carried into buzcode as
     ``bz_FindRipples`` [2]_ and into neurocode [3]_. The ripple-band signal is
     squared, summed across channels, smoothed with a short moving average and
-    z-scored. An event is bounded where the trace crosses a **low** threshold
-    and kept only if its **peak** exceeds a **high** threshold; neighboring
-    events closer than a minimum interval are merged, and events outside a
-    duration range are discarded. The summed rms-power thresholding it
-    descends from is described in Csicsvari et al. 1999 [4]_.
+    z-scored. A **low** threshold bounds each event, and an event is kept only
+    if its **peak** exceeds a **high** threshold. Neighboring events closer
+    than a minimum interval are merged, and events outside a duration range
+    are discarded. Csicsvari et al. 1999 [4]_ describe the summed rms-power
+    thresholding this rule descends from.
 
     The same two-threshold rule appears independently in the van der Meer lab's
     ``getSWR`` (vandermeerlab, ``code-matlab/tasks/Replay_Analysis/getSWR.m``):
     140-200 Hz, the Hilbert envelope rather than the squared signal, boundaries
     at 2 SD, merge within 20 ms applied before a 20 ms minimum, peak above
-    5 SD. That variant is not implemented separately; it is this detector with
-    ``low_threshold=2``, ``high_threshold=5``, ``minimum_inter_ripple_interval=0.02``,
-    ``minimum_duration=0.02`` and no maximum, up to the envelope-versus-power
-    difference.
+    5 SD. That variant is not implemented separately. It is this detector with
+    ``low_threshold=2``, ``high_threshold=5``,
+    ``minimum_inter_ripple_interval=0.02``, ``minimum_duration=0.02`` and no
+    maximum, apart from using the envelope rather than the squared signal.
 
-    This is a reimplementation from the algorithm, not a transcription (the
-    original is GPL-3). Two departures from the original, both documented
-    per parameter below: the endpoint speed rule shared by this package is
-    applied, and the peak is the maximum of the normalized power rather than
-    the trough of a single filtered channel. Missing samples are handled
-    block-wise: smoothing and segmentation never cross a gap. A run that
-    touches a gap or the record edge lacks one of its two crossings and is
-    dropped, as in the original; ``Yu_ripple_detector`` keeps and flags such
-    runs instead.
+    This is a reimplementation from the algorithm, not a transcription. The
+    original is GPL-3. Two departures, each documented per parameter below.
+    The package's endpoint speed rule is applied. The peak is the maximum of
+    the normalized power, not the trough of a single filtered channel.
+
+    Missing samples are handled block-wise, so smoothing and segmentation
+    never cross a gap. A run that touches a gap or the record edge lacks one
+    of its two crossings and is dropped, as in the original.
+    ``Yu_ripple_detector`` keeps such runs and flags them instead.
 
     Parameters
     ----------
@@ -1568,9 +1571,9 @@ def Long_sharp_wave_ripple_detector(
     John D. Long II's two-channel detector (buzcode ``bz_DetectSWR`` [1]_,
     converted to buzcode by Andrea Navas-Olive; filtering routines adapted
     from Eran Stark's ``detect_hfos``; carried into AYA-lab neurocode as
-    ``DetectSWR`` [2]_). It requires a channel that records the ripple, in or
-    just above the CA1 pyramidal layer, and a deeper channel that records the
-    sharp wave in stratum radiatum; it cannot run on a single layer.
+    ``DetectSWR`` [2]_). It needs two channels: one that records the ripple,
+    in or just above the CA1 pyramidal layer, and a deeper one that records
+    the sharp wave in stratum radiatum. It cannot run on a single layer.
 
     **Unlike the other detectors, this one takes raw, unfiltered LFP**, shape
     ``(n_time, 2)`` with the ripple channel first, because it filters both
@@ -1591,12 +1594,12 @@ def Long_sharp_wave_ripple_detector(
     than 50 ms to the previous candidate are dropped, and duration limits
     apply. Event bounds are the sharp-wave bounds.
 
-    Reimplemented from the algorithm as read; the source states no license.
-    Departures, all documented: k-means is seeded through ``random_state``
-    (MATLAB's is not); candidates whose local window has no sample below the
-    boundary threshold are rejected (the original errors); the package's
-    endpoint speed rule is applied afterwards; NaN input raises because the
-    local statistics need contiguous data.
+    Reimplemented from the algorithm as read. The source states no license.
+    Four departures, each documented below. ``random_state`` seeds the
+    k-means, where MATLAB's is unseeded. A candidate whose local window holds
+    no sample below the boundary threshold is rejected, where the original
+    errors. The package's endpoint speed rule is applied afterwards. NaN input
+    raises, because the local statistics need contiguous data.
 
     Parameters
     ----------
@@ -1935,14 +1938,15 @@ def Carey_candidate_detector(
       worth, smoothed with a 125 ms SD Gaussian) and one unit's cap are
       subtracted; divided by the mean and floored at zero.
     - **Joint score**: ``sqrt(ripple * multiunit)``, rescaled to mean 0.5 and
-      z-scored. Note the asymmetry this creates: the multiunit score is
+      z-scored. This combination is asymmetric. The multiunit score is
       floored at zero, so a ripple without a population burst cannot be a
-      candidate, but the ripple score is an envelope rescaled to mean 1 and
+      candidate. The ripple score is an envelope rescaled to mean 1 and is
       never zero, so a burst without a ripple can be. The joint score is
       therefore closer to "burst, weighted by ripple power" than to a
-      symmetric conjunction. Candidates are runs strictly above ``edge_threshold`` whose
-      maximum is strictly above ``peak_threshold`` and whose sample count
-      meets ``minimum_duration`` under the package's duration rule.
+      symmetric conjunction. A candidate is a run strictly above
+      ``edge_threshold`` whose maximum is strictly above ``peak_threshold``.
+      Its sample count must meet ``minimum_duration`` under the package's
+      duration rule.
     - **State**: a candidate is kept only if it lies entirely inside a
       low-speed interval (speed at or below ``speed_threshold``, runs merged across
       gaps under ``state_merge_gap`` and dropped under
@@ -2412,20 +2416,20 @@ def multiunit_HSE_detector(
 ) -> pd.DataFrame:
     """Detect High Synchrony Events from multiunit spiking activity.
 
-    Identifies periods of elevated population spiking activity during immobility.
-    The population firing rate (summed over units) is smoothed with a Gaussian
-    kernel, z-scored, and thresholded with the same sustained-threshold and
-    mean-crossing rules as the LFP ripple detectors: at or above
-    ``zscore_threshold`` for ``minimum_duration``, then extended to where the
-    rate returns to the mean.
+    Identifies periods of elevated population spiking during immobility. The
+    population firing rate, summed over units, is smoothed with a Gaussian
+    kernel and z-scored. It is then thresholded with the same rules as the LFP
+    detectors: at or above ``zscore_threshold`` for ``minimum_duration``, then
+    extended to where the rate returns to the mean.
 
-    The 15 ms smoothing kernel follows Davidson et al. 2009 [1]_, but the
-    selection rule does not: Davidson et al. define candidate events as periods
-    above the mean whose *peak* exceeds 3 s.d., with statistics from stopped
-    periods only and no sustained-duration requirement. To approximate that
-    convention, pass ``zscore_threshold=3.0``, ``minimum_duration=0.0`` and
-    ``normalization_mask=speed <= speed_threshold``; the default 2 s.d. for
-    15 ms with statistics over all samples is this package's own convention.
+    The 15 ms smoothing kernel follows Davidson et al. 2009 [1]_. The
+    selection rule does not. Davidson et al. define a candidate event as a
+    period above the mean whose *peak* exceeds 3 s.d. They take the statistics
+    from stopped periods only and impose no sustained-duration requirement.
+    To approximate that convention, pass ``zscore_threshold=3.0``,
+    ``minimum_duration=0.0`` and ``normalization_mask=speed < 5.0``, their
+    stopped-period criterion. The defaults here, 2 s.d. held for 15 ms with
+    statistics over all samples, are this package's own convention.
 
     Parameters
     ----------
@@ -2706,8 +2710,8 @@ def _get_event_stats(
         if participants is None:
             if zscore_metric_arr.ndim != 1:
                 raise ValueError(
-                    "If no participants are listed, the shape of zscore_metric should be (n_time,). "
-                    f"Current shape of zscore_metric is {zscore_metric_arr.shape}."
+                    "Without participants, zscore_metric must have shape "
+                    f"(n_time,). Got shape {zscore_metric_arr.shape}."
                 )
 
             event_zscore = zscore_metric_arr[time_mask]
@@ -2719,8 +2723,10 @@ def _get_event_stats(
             # check that zscore_metric is 2-D
             if zscore_metric_arr.ndim != 2:
                 raise ValueError(
-                    "If participants are listed, the shape of zscore_metric should be (n_time, n_channels) "
-                    f"so that relevant metrics can be properly calculated. Current shape of zscore_metric is {zscore_metric_arr.shape}."
+                    "With participants, zscore_metric must have shape "
+                    "(n_time, n_channels), so each event's metrics can come "
+                    f"from its participating channels. Got shape "
+                    f"{zscore_metric_arr.shape}."
                 )
 
             event_zscore = zscore_metric_arr[np.ix_(time_ind, elec_ind)].mean(
