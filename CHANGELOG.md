@@ -5,7 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.0.0] - 2026-09-21
+
+A major version because detection results change. No public name was removed or
+renamed and no signature was reordered, so code that called this package still
+calls it, but it no longer returns the same events. The ripple-band filter's
+output changes at every sampling rate other than 1500 Hz, the minimum-duration
+rule admits more marginal events, three per-event selection bugs are fixed, and
+several inputs that used to return a result now raise. A table populated with
+1.x and repopulated with 2.0 will differ. Pin `ripple-detection>=2,<3` and
+record the version alongside any detected events.
+
+### Changed that changes results
+
+These are the reason for the major version. Each is repeated in full in its own
+section below.
+
+- The ripple-band filter's tap count now scales with the sampling rate, so
+  `filter_ripple_band` output changes at every rate other than 1500 Hz.
+- The minimum-duration test counts samples rather than comparing timestamps,
+  admitting about 20 % more marginal events at `zscore_threshold` 2.0-2.5 for
+  Kay and Karlsson.
+- `exclude_movement` and the per-event statistics looked speeds up in time
+  order rather than per event, so nested events were kept or dropped in reverse
+  and an off-grid bound could discard every event.
+- `exclude_close_events` compared each event with the preceding candidate
+  rather than the last retained one, removing more than the first of a cluster.
+- One immobility comparison (`speed <= speed_threshold`) and one duration rule
+  (inclusive round-half-up sample counts) for every detector.
+- Inputs that previously returned something now raise: an all-NaN series, a
+  negative z-score threshold, an empty normalization mask, a fully degenerate
+  manual normalization, and malformed `multiunit` input.
 
 ### Added
 
@@ -36,7 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `minimum_sample_count`, `sample_count_within`, and `nearest_sample_index` are exported from the package root.
 - `Karlsson_ripple_detector` now computes its per-event z-score statistics (`max_thresh`, `mean_zscore`, `max_zscore`, ...) on the elementwise maximum across channels of the per-channel z-scores rather than on their mean. An event triggered by one channel at 3 SD previously reported `max_thresh` as low as 0.2 because the quiet channels were averaged in; `max_thresh` is now at least `zscore_threshold` for every event. Detected events and their boundaries are unchanged.
 - Detector docstrings now state the movement rule actually applied: `Kay`, `Karlsson`, `Roumis`, and `multiunit_HSE` test the speed at an event's first and last samples only (`<=`), and `Shvartsman` keeps an event if at least half its samples are at or below the threshold. They also state the sample-count minimum-duration convention.
-- **Detection-affecting.** The minimum-duration test now counts samples: a run qualifies when it holds at least `minimum_sample_count(time, minimum_duration)` = `round(minimum_duration * sampling_frequency)` (round half up, from the median timestamp step) consecutive samples, the Frank-lab `extractevents` convention. Before, the test compared end and start timestamps, which at 1500 Hz and 15 ms needed 24 samples where the convention gives 23. It could also reject runs of exactly the minimum through floating-point round-off (8-38 % of exact-15 ms runs at 1000 Hz depending on the time offset), and a run straddling a timestamp gap is now measured by the samples it holds, not the time it spans. Kay, Karlsson, Roumis, Shvartsman, Yu, and the HSE detector all use the one helper now. On 300 s pink-noise records (four channels, four seeds), the extra sample admits about 20 % more marginal noise-only events at `zscore_threshold` 2.0–2.5 for Kay and Karlsson; strong ripples are unaffected (the snapshot fixtures are unchanged). Spyglass `RippleTimesV1` populates at these settings, so re-populated tables will gain events. This is a minor-version change.
+- **Detection-affecting.** The minimum-duration test now counts samples: a run qualifies when it holds at least `minimum_sample_count(time, minimum_duration)` = `round(minimum_duration * sampling_frequency)` (round half up, from the median timestamp step) consecutive samples, the Frank-lab `extractevents` convention. Before, the test compared end and start timestamps, which at 1500 Hz and 15 ms needed 24 samples where the convention gives 23. It could also reject runs of exactly the minimum through floating-point round-off (8-38 % of exact-15 ms runs at 1000 Hz depending on the time offset), and a run straddling a timestamp gap is now measured by the samples it holds, not the time it spans. Kay, Karlsson, Roumis, Shvartsman, Yu, and the HSE detector all use the one helper now. On 300 s pink-noise records (four channels, four seeds), the extra sample admits about 20 % more marginal noise-only events at `zscore_threshold` 2.0–2.5 for Kay and Karlsson; strong ripples are unaffected (the snapshot fixtures are unchanged). Spyglass `RippleTimesV1` populates at these settings, so re-populated tables will gain events. This is one of the changes behind the 2.0 major version.
 - Development tooling: `ruff format` replaces black as the formatter, and the legacy flake8 pin is dropped. Ruff is now the single linter and formatter (`ruff format --check`, `ruff check`), and CI checks formatting with it. Black and ruff disagreed on how to wrap long `assert` messages, so the CI formatting check failed on files that ruff had formatted.
 - Documentation: the README gains a "Choosing a detector" table (input, thresholded signal, defaults, close-event rule, missing-sample policy, speed rule, source) and lists the extra output columns per detector; every detector docstring states its missing-sample policy; `Roumis_ripple_detector` and `Shvartsman_ripple_detector` say they are unpublished lab variants; the package root exports the documented helpers and declares `__all__`.
 
