@@ -6,7 +6,7 @@ This document explains how to set up automatic PyPI publishing using the new `re
 
 The workflow automatically:
 
-1. ✅ Runs quality checks (black, ruff, mypy)
+1. ✅ Runs quality checks (ruff format, ruff check, mypy)
 2. ✅ Tests on Python 3.10, 3.11, 3.12, 3.13
 3. ✅ Builds distributions (wheel + sdist)
 4. ✅ Tests both distribution formats
@@ -106,7 +106,7 @@ Before pushing a release tag:
 - [ ] `CHANGELOG.md` updated with version number and date
 - [ ] Version tag follows semantic versioning (e.g., `v1.6.0`)
 - [ ] All tests pass locally: `pytest tests/`
-- [ ] Quality checks pass: `black --check .` and `ruff check .`
+- [ ] Quality checks pass: `ruff format --check .`, `ruff check .`, and `mypy ripple_detection/`
 - [ ] Built and tested locally: `python -m build` works
 
 ## Troubleshooting
@@ -133,7 +133,7 @@ Before pushing a release tag:
 - Run locally to see errors:
 
   ```bash
-  black --check ripple_detection/ tests/
+  ruff format --check ripple_detection/ tests/
   ruff check ripple_detection/ tests/
   mypy ripple_detection/
   ```
@@ -142,15 +142,14 @@ Before pushing a release tag:
 
 ## Workflow Files
 
-- `.github/workflows/release.yml` - Auto-release on tags
-- `.github/workflows/PR-test.yml` - PR testing (kept for compatibility)
+- `.github/workflows/release.yml` - Quality checks and tests on pushes and PRs to `master`; release on tags
 
 ## Comparison with Manual Release
 
 | Task | Manual | Automated |
 |------|--------|-----------|
 | Run tests | `pytest` | ✅ Automatic |
-| Check formatting | `black --check` | ✅ Automatic |
+| Check formatting | `ruff format --check` | ✅ Automatic |
 | Check linting | `ruff check` | ✅ Automatic |
 | Build package | `python -m build` | ✅ Automatic |
 | Test install | Manual | ✅ Automatic (wheel & sdist) |

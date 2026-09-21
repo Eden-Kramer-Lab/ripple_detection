@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `random_state` parameter to `simulate_LFP()` for reproducible synthetic LFP generation (used to make the test suite deterministic).
 - Regression tests for Shvartsman participation preserve the original count of distinct electrodes across each merged event, including chains of overlapping ripples and repeated ripples on the same electrode.
 
+### Changed
+
+- Development tooling: `ruff format` replaces black as the formatter, and the legacy flake8 pin is dropped. Ruff is now the single linter and formatter (`ruff format --check`, `ruff check`), and CI checks formatting with it. Black and ruff disagreed on how to wrap long `assert` messages, so the CI formatting check failed on files that ruff had formatted.
+
 ### Fixed
 
 - `max_thresh` now uses the same inclusive duration comparison as event detection, preventing spurious `NaN` values or underestimated thresholds from floating-point rounding at exact `minimum_duration` boundaries.
