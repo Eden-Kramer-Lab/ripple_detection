@@ -392,6 +392,9 @@ def Shvartsman_ripple_detector(
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
+        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        (per Karlsson et al. 2009); the event is then extended to the surrounding
+        mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
     zscore_threshold : float, optional
@@ -632,6 +635,9 @@ def Kay_ripple_detector(
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
+        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        (per Karlsson et al. 2009); the event is then extended to the surrounding
+        mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
     zscore_threshold : float, optional
@@ -773,6 +779,9 @@ def Karlsson_ripple_detector(
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
+        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        (per Karlsson et al. 2009); the event is then extended to the surrounding
+        mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
     zscore_threshold : float, optional
@@ -896,6 +905,9 @@ def Roumis_ripple_detector(
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
+        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        (per Karlsson et al. 2009); the event is then extended to the surrounding
+        mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
     zscore_threshold : float, optional
@@ -1017,6 +1029,9 @@ def multiunit_HSE_detector(
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum event duration in **seconds**. Default is 0.015 (15 milliseconds).
+        This is the minimum time the firing rate must stay *above* ``zscore_threshold``;
+        the event is then extended to the surrounding mean-crossings, so the reported
+        ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
     zscore_threshold : float, optional
