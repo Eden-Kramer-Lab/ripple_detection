@@ -443,6 +443,96 @@ def get_Yu_ripple_consensus_trace(
     return consensus_trace
 
 
+def _boolean_runs(mask: NDArray) -> NDArray:
+    """Start (inclusive) and stop (exclusive) indices of each run of True."""
+    padded = np.concatenate([[False], np.asarray(mask, dtype=bool), [False]])
+    changes = np.flatnonzero(padded[1:] != padded[:-1])
+    return changes.reshape(-1, 2)
+
+
+def _extract_Yu_ripple_events(
+    trace: NDArray,
+    time: NDArray,
+    sampling_frequency: float,
+    minimum_duration: float,
+    threshold: float,
+) -> tuple[NDArray, NDArray, NDArray]:
+    """Extract events from one contiguous block of a mean-zero consensus trace.
+
+    A run of consecutive samples at or above ``threshold`` qualifies when it
+    holds at least ``round(minimum_duration * sampling_frequency)`` samples;
+    each qualifying run is extended to the run of samples strictly above zero
+    (the immobility mean) that contains it, and one event is emitted per such
+    containing run. This is the sample-count convention of the Frank lab
+    ``extractevents`` routine, which the Yu et al. 2017 detector used.
+
+    Parameters
+    ----------
+    trace : ndarray, shape (n_time,)
+        Consensus trace normalized so the immobility mean is zero, for one
+        contiguous block with no missing samples.
+    time : ndarray, shape (n_time,)
+        Native timestamps of the block's samples, in seconds.
+    sampling_frequency : float
+        Sampling rate in Hz.
+    minimum_duration : float
+        Minimum time the trace must stay at or above ``threshold``, in
+        seconds; converted to a sample count with round-half-up.
+    threshold : float
+        Detection threshold in the trace's normalized units; must be finite
+        and strictly positive.
+
+    Returns
+    -------
+    event_times : ndarray, shape (n_events, 2)
+        ``[start_time, end_time]`` of each event: the native timestamps of the
+        first and last samples of the containing above-zero run.
+    is_clipped : ndarray of bool, shape (n_events, 2)
+        Whether the event's start or end coincides with the block edge, i.e.
+        the run was truncated by the end of the available data.
+    n_suprathreshold_samples : ndarray of int, shape (n_events,)
+        Sample count of the longest qualifying run inside each event.
+
+    Raises
+    ------
+    ValueError
+        If ``threshold`` is not finite or not strictly positive, since the
+        threshold-then-mean-crossing rule is undefined otherwise.
+
+    """
+    if not np.isfinite(threshold) or threshold <= 0:
+        raise ValueError(
+            f"threshold must be finite and strictly above the zero mean, got {threshold}."
+        )
+    trace = np.asarray(trace, dtype=float)
+    time = np.asarray(time, dtype=float)
+    n_min = max(1, int(np.floor(minimum_duration * sampling_frequency + 0.5)))
+
+    supra_runs = _boolean_runs(trace >= threshold)
+    supra_runs = supra_runs[(supra_runs[:, 1] - supra_runs[:, 0]) >= n_min]
+    if len(supra_runs) == 0:
+        return np.empty((0, 2)), np.empty((0, 2), dtype=bool), np.empty(0, dtype=int)
+
+    above_zero_runs = _boolean_runs(trace > 0)
+    # the above-zero run containing each qualifying run's first sample
+    containing = np.searchsorted(above_zero_runs[:, 0], supra_runs[:, 0], side="right") - 1
+    run_lengths = supra_runs[:, 1] - supra_runs[:, 0]
+
+    event_times = []
+    is_clipped = []
+    n_suprathreshold = []
+    for run_index in np.unique(containing):
+        start, stop = above_zero_runs[run_index]
+        event_times.append((time[start], time[stop - 1]))
+        is_clipped.append((start == 0, stop == len(trace)))
+        n_suprathreshold.append(int(run_lengths[containing == run_index].max()))
+    return (
+        np.asarray(event_times, dtype=float),
+        np.asarray(is_clipped, dtype=bool),
+        np.asarray(n_suprathreshold, dtype=int),
+    )
+
+
 def Shvartsman_ripple_detector(
     time: ArrayLike,
     filtered_lfps: ArrayLike,

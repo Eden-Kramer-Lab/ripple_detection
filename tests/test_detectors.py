@@ -19,6 +19,7 @@ from ripple_detection.core import (
 )
 from ripple_detection.detectors import (
     Roumis_ripple_detector,
+    _extract_Yu_ripple_events,
     _find_max_thresh,
     get_Kay_ripple_consensus_trace,
     get_Yu_ripple_consensus_trace,
@@ -1098,6 +1099,115 @@ class TestYuConsensusTrace:
             get_Yu_ripple_consensus_trace(
                 triple_lfp, sampling_frequency, time=np.arange(10) / sampling_frequency
             )
+
+
+class TestExtractYuRippleEvents:
+    """Sample-count qualification and mean-crossing extension, Yu et al. 2017."""
+
+    @staticmethod
+    def _trace(n_time, above_zero, above_threshold, level=1.0, high=5.0):
+        """Build a normalized trace: 0.5 inside above-zero runs, `high` inside
+        above-threshold runs, -0.5 elsewhere, and exactly 0 where requested."""
+        trace = np.full(n_time, -0.5)
+        for start, stop in above_zero:
+            trace[start:stop] = 0.5 * level
+        for start, stop in above_threshold:
+            trace[start:stop] = high
+        return trace
+
+    @pytest.mark.parametrize(
+        ("sampling_frequency", "n_samples", "qualifies"),
+        [
+            (1000, 19, False),
+            (1000, 20, True),
+            (1000, 21, True),
+            (1500, 29, False),
+            (1500, 30, True),
+        ],
+    )
+    def test_minimum_duration_counts_samples(self, sampling_frequency, n_samples, qualifies):
+        n_time = 500
+        time = np.arange(n_time) / sampling_frequency
+        trace = self._trace(
+            n_time, above_zero=[(100, 300)], above_threshold=[(150, 150 + n_samples)]
+        )
+        events, _, _ = _extract_Yu_ripple_events(trace, time, sampling_frequency, 0.020, 3.0)
+        assert (len(events) == 1) == qualifies
+
+    def test_extends_to_containing_above_zero_run(self):
+        fs = 1000
+        n_time = 500
+        time = np.arange(n_time) / fs
+        trace = self._trace(n_time, above_zero=[(100, 300)], above_threshold=[(150, 200)])
+        events, _, _ = _extract_Yu_ripple_events(trace, time, fs, 0.020, 3.0)
+        np.testing.assert_allclose(events, [[time[100], time[299]]])
+
+    def test_zero_sample_ends_a_run(self):
+        fs = 1000
+        n_time = 500
+        time = np.arange(n_time) / fs
+        trace = self._trace(n_time, above_zero=[(100, 300)], above_threshold=[(150, 200)])
+        trace[250] = 0.0  # equality to the mean ends the run
+        events, _, _ = _extract_Yu_ripple_events(trace, time, fs, 0.020, 3.0)
+        np.testing.assert_allclose(events, [[time[100], time[249]]])
+
+    def test_two_exceedances_in_one_run_yield_one_event(self):
+        fs = 1000
+        n_time = 500
+        time = np.arange(n_time) / fs
+        trace = self._trace(
+            n_time, above_zero=[(100, 300)], above_threshold=[(120, 160), (220, 260)]
+        )
+        events, _, n_supra = _extract_Yu_ripple_events(trace, time, fs, 0.020, 3.0)
+        assert len(events) == 1
+        assert n_supra[0] == 40  # the longest qualifying run
+
+    def test_sub_minimum_exceedance_does_not_create_event(self):
+        fs = 1000
+        n_time = 500
+        time = np.arange(n_time) / fs
+        trace = self._trace(n_time, above_zero=[(100, 300)], above_threshold=[(150, 160)])
+        events, _, _ = _extract_Yu_ripple_events(trace, time, fs, 0.020, 3.0)
+        assert len(events) == 0
+
+    def test_clipped_at_block_edges_is_flagged(self):
+        fs = 1000
+        n_time = 200
+        time = np.arange(n_time) / fs
+        # above zero from the very first sample to the last: clipped both sides
+        trace = self._trace(n_time, above_zero=[(0, 200)], above_threshold=[(50, 100)])
+        events, clipped, _ = _extract_Yu_ripple_events(trace, time, fs, 0.020, 3.0)
+        np.testing.assert_allclose(events, [[time[0], time[-1]]])
+        assert clipped.tolist() == [[True, True]]
+        trace = self._trace(n_time, above_zero=[(20, 200)], above_threshold=[(50, 100)])
+        _, clipped, _ = _extract_Yu_ripple_events(trace, time, fs, 0.020, 3.0)
+        assert clipped.tolist() == [[False, True]]
+
+    def test_uses_native_timestamps(self):
+        fs = 1000
+        n_time = 500
+        time = 100.0 + np.arange(n_time) / fs + 1e-4 * np.sin(np.arange(n_time))
+        trace = self._trace(n_time, above_zero=[(100, 300)], above_threshold=[(150, 200)])
+        events, _, _ = _extract_Yu_ripple_events(trace, time, fs, 0.020, 3.0)
+        assert events[0, 0] == time[100]
+        assert events[0, 1] == time[299]
+
+    @pytest.mark.parametrize("threshold", [0.0, -1.0, np.nan, np.inf])
+    def test_invalid_threshold_raises(self, threshold):
+        fs = 1000
+        time = np.arange(100) / fs
+        with pytest.raises(ValueError, match="threshold"):
+            _extract_Yu_ripple_events(np.zeros(100), time, fs, 0.020, threshold)
+
+    def test_empty_result_shapes(self):
+        fs = 1000
+        time = np.arange(100) / fs
+        events, clipped, n_supra = _extract_Yu_ripple_events(
+            np.full(100, -0.5), time, fs, 0.020, 3.0
+        )
+        assert events.shape == (0, 2)
+        assert clipped.shape == (0, 2)
+        assert n_supra.shape == (0,)
 
 
 class TestDetectorErrorHandling:
