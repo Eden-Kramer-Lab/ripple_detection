@@ -342,7 +342,7 @@ pytest
 
 # Run one module
 pytest tests/test_core.py          # signal processing
-pytest tests/test_detectors.py     # detector behaviour and conventions
+pytest tests/test_detectors.py     # detector behavior and conventions
 pytest tests/test_simulate.py      # synthetic LFP
 pytest tests/test_properties.py    # property-based (hypothesis)
 pytest tests/test_snapshots.py     # regression snapshots

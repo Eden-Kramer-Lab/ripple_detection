@@ -1753,8 +1753,8 @@ def _synthetic_two_channel_lfp(
     rng = np.random.default_rng(seed)
     lfp = rng.normal(0.0, 1.0, (n_time, 2))
     t = np.arange(n_time) / sampling_frequency
-    for centre in event_samples:
-        envelope = np.exp(-0.5 * ((t - t[centre]) / 0.015) ** 2)
+    for center in event_samples:
+        envelope = np.exp(-0.5 * ((t - t[center]) / 0.015) ** 2)
         if ripple:
             lfp[:, 0] += gain * 5.0 * envelope * np.sin(2 * np.pi * 200.0 * t)
         if sharp_wave:
@@ -1943,8 +1943,8 @@ def _synthetic_joint_inputs(
     base_rate = 0.004  # spikes per sample per unit
     prob = np.full((n_time, n_units), base_rate)
     t = np.arange(n_time) / sampling_frequency
-    for centre in events:
-        window = slice(centre - 30, centre + 30)
+    for center in events:
+        window = slice(center - 30, center + 30)
         if ripple:
             lfps[window] += ripple_gain * np.sin(2 * np.pi * 200.0 * t[window])[:, np.newaxis]
         if spikes:
@@ -1983,9 +1983,9 @@ class TestCareyCandidateDetector:
         return np.full(self.N_TIME, 2.0)
 
     @staticmethod
-    def _hits(events, time, centres):
+    def _hits(events, time, centers):
         return [
-            any((events.start_time <= time[c]) & (events.end_time >= time[c])) for c in centres
+            any((events.start_time <= time[c]) & (events.end_time >= time[c])) for c in centers
         ]
 
     def test_recovers_events_with_both_ripple_and_burst(self, time, stationary):
@@ -2515,8 +2515,8 @@ class TestFindMaxThresh:
 
     def test_mid_peak_expands_both_directions(self):
         """A mid-array peak exercises the leftward-expansion branch and the
-        neighbour tie-break. From peak 10 at index 2 the window first steps left
-        (neighbour 5 > 3) -> indices 1..2 -> min(5, 10); for four samples it
+        neighbor tie-break. From peak 10 at index 2 the window first steps left
+        (neighbor 5 > 3) -> indices 1..2 -> min(5, 10); for four samples it
         then steps right twice (3 > 1, 2 > 1) -> indices 1..4 -> min(5, 2)."""
         time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
         data = np.array([1.0, 5.0, 10.0, 3.0, 2.0])
@@ -2597,7 +2597,7 @@ class TestSampleCountDurationConvention:
 
 
 class TestMaxThreshMinimumDuration:
-    """Karlsson and multiunit_HSE must honour the caller's minimum_duration for
+    """Karlsson and multiunit_HSE must honor the caller's minimum_duration for
     max_thresh, not silently fall back to the 15 ms default."""
 
     @staticmethod

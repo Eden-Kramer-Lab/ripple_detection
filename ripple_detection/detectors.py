@@ -1174,7 +1174,7 @@ def _two_threshold_events(
        ends at the run's last sample, as the original's ``diff``-based
        crossing search does. A run touching the first or last sample has no
        paired crossing and is discarded.
-    2. Consecutive candidates are merged, one neighbour per pass, while the
+    2. Consecutive candidates are merged, one neighbor per pass, while the
        gap between them is under ``minimum_inter_ripple_interval`` and the
        merged span is under ``maximum_duration``.
     3. A candidate is kept only if its maximum is strictly above
@@ -1267,7 +1267,7 @@ def Zugaro_ripple_detector(
     ``bz_FindRipples`` [2]_ and into neurocode [3]_. The ripple-band signal is
     squared, summed across channels, smoothed with a short moving average and
     z-scored. An event is bounded where the trace crosses a **low** threshold
-    and kept only if its **peak** exceeds a **high** threshold; neighbouring
+    and kept only if its **peak** exceeds a **high** threshold; neighboring
     events closer than a minimum interval are merged, and events outside a
     duration range are discarded. The summed rms-power thresholding it
     descends from is described in Csicsvari et al. 1999 [4]_.
@@ -1429,7 +1429,7 @@ def _gaussian_lowpass_fir(
 def _firfilt(x: NDArray, kernel: NDArray) -> NDArray:
     """Zero-phase FIR filtering along axis 0 with the ends reflected.
 
-    A centred convolution with the signal mirrored at both ends, which is what
+    A centered convolution with the signal mirrored at both ends, which is what
     Eran Stark's ``firfilt`` (mirror-pad, causal filter, crop the delay)
     computes for the odd symmetric kernels used here.
     """
@@ -1500,7 +1500,7 @@ def Long_sharp_wave_ripple_detector(
     than 50 ms to the previous candidate are dropped, and duration limits
     apply. Event bounds are the sharp-wave bounds.
 
-    Reimplemented from the algorithm as read; the source states no licence.
+    Reimplemented from the algorithm as read; the source states no license.
     Departures, all documented: k-means is seeded through ``random_state``
     (MATLAB's is not); candidates whose local window has no sample below the
     boundary threshold are rejected (the original errors); the package's
@@ -1619,8 +1619,8 @@ def Long_sharp_wave_ripple_detector(
         if local_arg in (0, block - 1):
             if peak in (0, n_time - 1):
                 continue
-            neighbours = sharp_wave_diff[peak - 1 : peak + 2]
-            if int(np.argmax(neighbours)) != 1:
+            neighbors = sharp_wave_diff[peak - 1 : peak + 2]
+            if int(np.argmax(neighbors)) != 1:
                 continue
         feature_index.append(peak)
         sharp_wave_feature.append(segment[local_arg])

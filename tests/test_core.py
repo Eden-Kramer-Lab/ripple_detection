@@ -942,7 +942,7 @@ class TestEstimateNoiseThreshold:
     """Transliteration of the Yu et al. 2017 mirrored-histogram threshold."""
 
     def test_recovers_symmetric_percentile_within_two_bins(self):
-        # Gaussian centred below zero so every left-of-mode bin is negative.
+        # Gaussian centered below zero so every left-of-mode bin is negative.
         rng = np.random.default_rng(0)
         mean, sd = -1.0, 0.5
         values = rng.normal(mean, sd, 4_000_000)

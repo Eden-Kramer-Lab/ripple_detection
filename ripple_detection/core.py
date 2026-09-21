@@ -1123,7 +1123,7 @@ _OUT_OF_GRID_CEILING = 1e-3
 def _matlab_smooth(x: NDArray, window: int) -> NDArray:
     """Moving average with MATLAB ``smooth(x, window)`` end handling.
 
-    Interior points average ``window`` neighbours; near either end the window
+    Interior points average ``window`` neighbors; near either end the window
     shrinks symmetrically (1, 3, 5, ... points) so it never runs off the array.
     """
     x = np.asarray(x, dtype=float)
