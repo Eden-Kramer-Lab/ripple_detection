@@ -50,38 +50,42 @@ def ripple_bandpass_filter(sampling_frequency: float) -> tuple[NDArray, float]:
     return remez(ORDER, desired, [0, 1, 0], fs=sampling_frequency), 1.0
 
 
-def _get_series_start_end_times(series: pd.Series) -> tuple[NDArray, NDArray]:
-    """Extracts the start and end times of segments defined by a boolean
-    pandas Series.
+def minimum_sample_count(time: ArrayLike, minimum_duration: float) -> int:
+    """Number of consecutive samples that ``minimum_duration`` spans.
+
+    ``round(minimum_duration * sampling_frequency)`` with round-half-up, the
+    convention of the Frank lab ``extractevents`` routine, where the sampling
+    interval is the median timestamp step. A duration that is not a whole
+    number of samples rounds to the nearest count (22.5 samples -> 23).
 
     Parameters
     ----------
-    series : pandas boolean Series (n_time,)
-        Consecutive Trues define each segment.
+    time : array_like, shape (n_time,)
+        Sample timestamps in seconds. Fewer than two samples, or a
+        non-positive median step, give a count of 1.
+    minimum_duration : float
+        Duration in seconds.
 
     Returns
     -------
-    start_times : ndarray, shape (n_segments,)
-        Beginning time of each segment based on the index of the series.
-    end_times : ndarray, shape (n_segments,)
-        End time of each segment based on the index of the series.
+    n_samples : int
+        At least 1.
 
     """
-    # Identify starts and ends without using fillna to avoid pandas FutureWarning
-    # A start is where current is True AND previous is not True (False or NaN)
-    # An end is where current is True AND next is not True (False or NaN)
-    shifted_prev = series.shift(1)
-    shifted_next = series.shift(-1)
+    time = np.asarray(time, dtype=float)
+    if time.size < 2:
+        return 1
+    sample_interval = np.median(np.diff(time))
+    if not np.isfinite(sample_interval) or sample_interval <= 0:
+        return 1
+    # small tolerance so an exact half-sample product is not lost to round-off
+    return max(1, int(np.floor(minimum_duration / sample_interval + 0.5 + 1e-6)))
 
-    # Use != True instead of == False to handle NaN properly
-    # NaN != True is True, which is what we want for boundaries
-    is_start_time = series & (shifted_prev != True)  # noqa: E712
-    start_times = np.asarray(series.index[is_start_time])
 
-    is_end_time = series & (shifted_next != True)  # noqa: E712
-    end_times = np.asarray(series.index[is_end_time])
-
-    return start_times, end_times
+def _boolean_run_bounds(values: NDArray) -> NDArray:
+    """Start (inclusive) and stop (exclusive) positions of each run of True."""
+    padded = np.concatenate([[False], np.asarray(values, dtype=bool), [False]])
+    return np.flatnonzero(padded[1:] != padded[:-1]).reshape(-1, 2)
 
 
 def segment_boolean_series(
@@ -92,6 +96,13 @@ def segment_boolean_series(
     Returns a list of tuples where each tuple contains the start and end time
     of a segment. Segments are defined by consecutive True values in the input
     series, where the series index represents time.
+
+    A segment qualifies when it holds at least
+    ``minimum_sample_count(series.index, minimum_duration)`` consecutive
+    samples, i.e. ``round(minimum_duration * sampling_frequency)``. Counting
+    samples rather than subtracting timestamps makes the test exact at every
+    sampling rate and time offset, and measures a run that straddles a gap in
+    the index by the samples it contains, not by the time it spans.
 
     Parameters
     ----------
@@ -105,36 +116,38 @@ def segment_boolean_series(
     Returns
     -------
     segments : list of tuple
-        List of (start_time, end_time) tuples for each segment that meets
-        the minimum duration requirement.
+        List of (start_time, end_time) tuples, the timestamps of the first and
+        last sample of each segment that meets the minimum sample count.
 
     """
-    start_times, end_times = _get_series_start_end_times(series)
-
-    return [
-        (start_time, end_time)
-        for start_time, end_time in zip(start_times, end_times, strict=False)
-        if end_time >= (start_time + minimum_duration)
-    ]
+    values = series.to_numpy(dtype=bool)
+    index = np.asarray(series.index)
+    n_min = minimum_sample_count(index, minimum_duration)
+    bounds = _boolean_run_bounds(values)
+    bounds = bounds[(bounds[:, 1] - bounds[:, 0]) >= n_min]
+    return [(index[start], index[stop - 1]) for start, stop in bounds]
 
 
 def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None) -> NDArray:
-    """Apply bandpass filter to isolate ripple frequency band (150-250 Hz).
+    """Bandpass filter signal(s) to the ripple band (150-250 Hz).
 
-    Uses a pre-computed filter kernel from the Frank lab with 40 dB roll-off,
-    10 Hz sidebands, and 1500 Hz sampling frequency. Handles NaN values by
-    filtering only non-NaN segments.
+    At 1500 Hz (or when no rate is given) the pre-computed 318-tap FIR kernel
+    shipped with the package is used. At any other rate a 101-tap FIR is
+    designed for that rate with ``ripple_bandpass_filter``, so the passband is
+    150-250 Hz in hertz regardless of the sampling rate. The filter is applied
+    forward and backward (``filtfilt``) for zero phase distortion.
+
+    NaN samples are removed before filtering and restored at their original
+    positions afterwards; the samples on either side of a NaN run are
+    therefore filtered as if adjacent.
 
     Parameters
     ----------
     data : array_like, shape (n_time,) or (n_time, n_channels)
         Input signal(s) to be filtered. Can be 1D or 2D.
     sampling_frequency : float, optional
-        Sampling rate of the input data in Hz. If provided and not equal to
-        1500 Hz, a warning is issued since the pre-computed filter is optimized
-        for 1500 Hz. For other sampling rates, consider using
-        `ripple_bandpass_filter()` to generate a custom filter. Default is None
-        (no check performed).
+        Sampling rate of the input data in Hz. Default is None, which assumes
+        1500 Hz and uses the shipped kernel.
 
     Returns
     -------
@@ -145,81 +158,52 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
     Raises
     ------
     ValueError
-        If sampling_frequency is too low for the pre-computed filter to work properly.
-
-    Warnings
-    --------
-    UserWarning
-        If sampling_frequency is provided and differs from 1500 Hz.
+        If the sampling rate cannot represent the band (Nyquist frequency at
+        or below the 250 Hz upper edge plus the 25 Hz transition band), or if
+        the signal has fewer non-NaN samples than ``filtfilt`` needs (three
+        times the kernel length).
 
     See Also
     --------
-    ripple_bandpass_filter : Generate custom filter for arbitrary sampling rates.
+    ripple_bandpass_filter : The filter design used for rates other than 1500 Hz.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from ripple_detection import filter_ripple_band
+    >>> lfp = np.random.randn(3000)
+    >>> filtered = filter_ripple_band(lfp, sampling_frequency=1500)
 
     """
-    import warnings
+    SHIPPED_KERNEL_SAMPLING_FREQUENCY = 1500.0
+    MINIMUM_NYQUIST = 250.0 + 25.0  # upper band edge plus the transition band
 
-    EXPECTED_SAMPLING_FREQUENCY = 1500.0
-    MINIMUM_SAFE_FREQUENCY = 1200.0  # Pre-computed filter needs ~954 samples minimum
-
-    if sampling_frequency is not None and not np.isclose(
-        sampling_frequency, EXPECTED_SAMPLING_FREQUENCY
+    if sampling_frequency is None or np.isclose(
+        sampling_frequency, SHIPPED_KERNEL_SAMPLING_FREQUENCY
     ):
-        # Check if sampling frequency is too low for pre-computed filter
-        if sampling_frequency < MINIMUM_SAFE_FREQUENCY:
+        filter_numerator, filter_denominator = _get_ripplefilter_kernel()
+    else:
+        if 0.5 * sampling_frequency <= MINIMUM_NYQUIST:
             raise ValueError(
-                f"Sampling frequency ({sampling_frequency} Hz) is too low for the pre-computed filter.\n"
-                f"The pre-computed filter requires at least ~{MINIMUM_SAFE_FREQUENCY} Hz.\n"
-                f"\n"
-                f"Solution: Generate a custom filter for your sampling frequency:\n"
-                f"\n"
-                f"  from ripple_detection import ripple_bandpass_filter\n"
-                f"  from scipy.signal import filtfilt\n"
-                f"  \n"
-                f"  filter_num, filter_denom = ripple_bandpass_filter({sampling_frequency})\n"
-                f"  filtered_data = filtfilt(filter_num, filter_denom, data, axis=0)\n"
-                f"\n"
-                f"Or use a higher sampling rate when recording your data."
+                f"Sampling frequency {sampling_frequency} Hz has a Nyquist frequency of "
+                f"{0.5 * sampling_frequency} Hz, which cannot represent the 150-250 Hz "
+                f"ripple band with its 25 Hz transition band (need > {2 * MINIMUM_NYQUIST} Hz)."
             )
-        else:
-            warnings.warn(
-                f"The pre-computed ripple filter is optimized for {EXPECTED_SAMPLING_FREQUENCY} Hz sampling.\n"
-                f"Your data: {sampling_frequency} Hz. Results may be suboptimal.\n"
-                f"For best results, use ripple_bandpass_filter({sampling_frequency}) to generate a custom filter.",
-                UserWarning,
-                stacklevel=2,
-            )
+        filter_numerator, filter_denominator = ripple_bandpass_filter(sampling_frequency)
 
-    filter_numerator, filter_denominator = _get_ripplefilter_kernel()
-
-    # Validate data length
-    # Cast to float so integer (e.g. raw ADC) input is not truncated by the
-    # NaN-preserving output buffer or the filter arithmetic.
     data_array = np.asarray(data, dtype=float)
-
-    # Check if data is multi-dimensional - handle NaN checking appropriately
     if data_array.ndim > 1:
         is_nan = np.any(np.isnan(data_array), axis=-1)
     else:
         is_nan = np.isnan(data_array)
 
     non_nan_length = np.sum(~is_nan)
-
-    # filtfilt requires data length > 3 * filter_length (for padding)
     min_required_length = 3 * len(filter_numerator)
     if non_nan_length < min_required_length:
         raise ValueError(
-            f"Data is too short for the pre-computed filter.\n"
-            f"Non-NaN data length: {non_nan_length} samples\n"
-            f"Minimum required: {min_required_length} samples (~{min_required_length / sampling_frequency if sampling_frequency else 'N/A':.2f} seconds at {sampling_frequency} Hz)\n"
-            f"\n"
-            f"Solutions:\n"
-            f"  1. Use a longer recording segment\n"
-            f"  2. Generate a shorter custom filter:\n"
-            f"     from ripple_detection import ripple_bandpass_filter\n"
-            f"     from scipy.signal import filtfilt\n"
-            f"     filter_num, filter_denom = ripple_bandpass_filter({sampling_frequency})\n"
-            f"     filtered_data = filtfilt(filter_num, filter_denom, data, axis=0)"
+            f"Signal too short for filtering: {non_nan_length} non-NaN samples, "
+            f"but at least {min_required_length} are needed (3 x filter length "
+            f"{len(filter_numerator)})."
         )
 
     filtered_data = np.full_like(data_array, np.nan)

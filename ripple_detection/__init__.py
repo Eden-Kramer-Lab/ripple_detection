@@ -1,7 +1,8 @@
-# flake8: noqa
+# ruff: noqa: F401
 from ripple_detection.core import (
     filter_ripple_band,
     get_multiunit_population_firing_rate,
+    minimum_sample_count,
     normalize_signal,
     ripple_bandpass_filter,
 )
@@ -9,9 +10,11 @@ from ripple_detection.detectors import (
     Carey_candidate_detector,
     Karlsson_ripple_detector,
     Kay_ripple_detector,
+    Long_sharp_wave_ripple_detector,
     Roumis_ripple_detector,
     Shvartsman_ripple_detector,
     Yu_ripple_detector,
+    Zugaro_ripple_detector,
     multiunit_HSE_detector,
 )
 

@@ -5,7 +5,8 @@ from itertools import chain, pairwise
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike, NDArray
-from scipy.ndimage import gaussian_filter1d
+from scipy.cluster.vq import kmeans2
+from scipy.ndimage import convolve1d, gaussian_filter1d
 from scipy.signal import butter, filtfilt
 
 from ripple_detection.core import (
@@ -19,6 +20,7 @@ from ripple_detection.core import (
     get_multiunit_population_firing_rate,
     merge_overlapping_ranges,
     merge_overlapping_ranges_track_participation,
+    minimum_sample_count,
     normalize_signal,
     normalize_signal_manually,
     threshold_by_zscore,
@@ -510,7 +512,7 @@ def _extract_Yu_ripple_events(
         )
     trace = np.asarray(trace, dtype=float)
     time = np.asarray(time, dtype=float)
-    n_min = max(1, int(np.floor(minimum_duration * sampling_frequency + 0.5)))
+    n_min = minimum_sample_count(time, minimum_duration)
 
     supra_runs = _boolean_runs(trace >= threshold)
     supra_runs = supra_runs[(supra_runs[:, 1] - supra_runs[:, 0]) >= n_min]
@@ -579,15 +581,18 @@ def Shvartsman_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (in cm/s) for ripple detection. Events during movement
-        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
+        Maximum speed (in cm/s) for ripple detection. An event is kept only if
+        at least half of its samples have speed at or below this value
+        (``exclude_movement_by_majority``); movement over up to half of an
+        event does not exclude it. Default is 4.0 cm/s, which corresponds
         to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
-        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        The signal must stay at or above ``zscore_threshold`` for at least
+        ``round(minimum_duration * sampling_frequency)`` consecutive samples
         (per Karlsson et al. 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
@@ -797,15 +802,18 @@ def Kay_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (in cm/s) for ripple detection. Events during movement
-        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
+        Maximum speed (in cm/s) for ripple detection. An event is kept only if
+        the speed at its first and last sample is at or below this value
+        (``exclude_movement``); speed inside the event is not tested. Apply a
+        whole-event rule afterwards if one is needed. Default is 4.0 cm/s, which corresponds
         to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
-        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        The signal must stay at or above ``zscore_threshold`` for at least
+        ``round(minimum_duration * sampling_frequency)`` consecutive samples
         (per Karlsson et al. 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
@@ -1106,15 +1114,606 @@ def Yu_ripple_detector(
         event_times = np.asarray(event_times).reshape(-1, 2)
         is_clipped, n_suprathreshold = is_clipped[kept], n_suprathreshold[kept]
 
-    n_min = max(1, int(np.floor(minimum_duration * sampling_frequency + 0.5)))
-    stats_minimum_duration = (n_min - 1) / sampling_frequency
     events = _get_event_stats(
-        event_times, time, normalized, speed, minimum_duration=stats_minimum_duration
+        event_times, time, normalized, speed, minimum_duration=minimum_duration
     )
     events["clipped_start"] = is_clipped[:, 0]
     events["clipped_end"] = is_clipped[:, 1]
     events["n_suprathreshold_samples"] = n_suprathreshold
     events["detection_threshold_zscore"] = threshold_zscore
+    return events
+
+
+def _zugaro_smoothing_window(sampling_frequency: float) -> int:
+    """Moving-average length of the FindRipples power trace: 11 samples at 1250 Hz,
+    scaled with the rate and kept odd so the filter is zero-phase."""
+    window = round(sampling_frequency / 1250.0 * 11.0)
+    return window + 1 if window % 2 == 0 else window
+
+
+def _two_threshold_events(
+    zscored: NDArray,
+    time: NDArray,
+    low_threshold: float,
+    high_threshold: float,
+    minimum_inter_ripple_interval: float,
+    minimum_duration: float,
+    maximum_duration: float,
+) -> tuple[NDArray, NDArray]:
+    """Segment a normalized power trace with the FindRipples two-threshold rule.
+
+    Follows the segmentation rule of FMAToolbox ``FindRipples``:
+
+    1. Candidate events are runs strictly above ``low_threshold``. An event
+       starts at the last sample *below* the threshold before the run and
+       ends at the run's last sample, as the original's ``diff``-based
+       crossing search does. A run touching the first or last sample has no
+       paired crossing and is discarded.
+    2. Consecutive candidates are merged, one neighbour per pass, while the
+       gap between them is under ``minimum_inter_ripple_interval`` and the
+       merged span is under ``maximum_duration``.
+    3. A candidate is kept only if its maximum is strictly above
+       ``high_threshold``.
+    4. Candidates shorter than ``minimum_duration`` or longer than
+       ``maximum_duration`` are dropped (strict comparisons).
+
+    Parameters
+    ----------
+    zscored : ndarray, shape (n_time,)
+        Normalized smoothed power for one contiguous block.
+    time : ndarray, shape (n_time,)
+        Sample timestamps in seconds.
+    low_threshold, high_threshold : float
+        Boundary and peak thresholds in standard deviations.
+    minimum_inter_ripple_interval, minimum_duration, maximum_duration : float
+        In seconds.
+
+    Returns
+    -------
+    event_times : ndarray, shape (n_events, 2)
+        ``[start_time, end_time]`` per event.
+    peak_times : ndarray, shape (n_events,)
+        Time of the maximum of ``zscored`` within each event.
+
+    """
+    zscored = np.asarray(zscored, dtype=float)
+    time = np.asarray(time, dtype=float)
+    empty = (np.empty((0, 2)), np.empty(0))
+    # a run needs both a rising and a falling crossing, so runs that touch
+    # either end of the block are dropped; an event spans from the last sample
+    # below the low threshold before the run to the last sample of the run
+    runs = _boolean_runs(zscored > low_threshold)
+    runs = runs[(runs[:, 0] > 0) & (runs[:, 1] < len(zscored))]
+    if len(runs) == 0:
+        return empty
+    events = np.column_stack([runs[:, 0] - 1, runs[:, 1] - 1])
+
+    while len(events) > 1:
+        gap = time[events[1:, 0]] - time[events[:-1, 1]]
+        merged_span = time[events[1:, 1]] - time[events[:-1, 0]]
+        to_merge = (gap < minimum_inter_ripple_interval) & (merged_span < maximum_duration)
+        if not np.any(to_merge):
+            break
+        padded = np.concatenate([[False], to_merge])
+        run_starts = np.flatnonzero(~padded[:-1] & padded[1:])
+        events[run_starts, 1] = events[run_starts + 1, 1]
+        events = np.delete(events, run_starts + 1, axis=0)
+
+    kept = []
+    peaks = []
+    for start, stop in events:
+        segment = zscored[start : stop + 1]
+        if segment.max() > high_threshold:
+            kept.append((start, stop))
+            peaks.append(start + int(np.argmax(segment)))
+    if not kept:
+        return empty
+    events = np.asarray(kept)
+    peaks = np.asarray(peaks)
+    duration = time[events[:, 1]] - time[events[:, 0]]
+    # a tolerance so a span that is exactly the limit is not lost to round-off
+    tolerance = 1e-9
+    keep = ~(
+        (duration > maximum_duration + tolerance) | (duration < minimum_duration - tolerance)
+    )
+    events, peaks = events[keep], peaks[keep]
+    return np.column_stack([time[events[:, 0]], time[events[:, 1]]]), time[peaks]
+
+
+def Zugaro_ripple_detector(
+    time: ArrayLike,
+    filtered_lfps: ArrayLike,
+    speed: ArrayLike,
+    sampling_frequency: float,
+    speed_threshold: float = 4.0,
+    low_threshold: float = 2.0,
+    high_threshold: float = 5.0,
+    minimum_inter_ripple_interval: float = 0.030,
+    minimum_duration: float = 0.020,
+    maximum_duration: float = 0.100,
+    smoothing_window: int | None = None,
+    normalization_mask: ArrayLike | None = None,
+    normalization_time_range: tuple[float, float] | None = None,
+) -> pd.DataFrame:
+    """Detect ripples with the FMAToolbox ``FindRipples`` two-threshold algorithm.
+
+    The algorithm of Hajime Hirase as implemented by Michaël Zugaro in
+    FMAToolbox [1]_ (``FindRipples``), carried into buzcode as
+    ``bz_FindRipples`` [2]_ and into neurocode [3]_. The ripple-band signal is
+    squared, summed across channels, smoothed with a short moving average and
+    z-scored. An event is bounded where the trace crosses a **low** threshold
+    and kept only if its **peak** exceeds a **high** threshold; neighbouring
+    events closer than a minimum interval are merged, and events outside a
+    duration range are discarded. The summed rms-power thresholding it
+    descends from is described in Csicsvari et al. 1999 [4]_.
+
+    The same two-threshold rule appears independently in the van der Meer lab's
+    ``getSWR`` (vandermeerlab, ``code-matlab/tasks/Replay_Analysis/getSWR.m``):
+    140-200 Hz, the Hilbert envelope rather than the squared signal, boundaries
+    at 2 SD, merge within 20 ms applied before a 20 ms minimum, peak above
+    5 SD. That variant is not implemented separately; it is this detector with
+    ``low_threshold=2``, ``high_threshold=5``, ``minimum_inter_ripple_interval=0.02``,
+    ``minimum_duration=0.02`` and no maximum, up to the envelope-versus-power
+    difference.
+
+    This is a reimplementation from the algorithm, not a transcription (the
+    original is GPL-3). Two departures from the original, both documented
+    per parameter below: the endpoint speed rule shared by this package is
+    applied, and the peak is the maximum of the normalized power rather than
+    the trough of a single filtered channel. Missing samples are handled
+    block-wise: smoothing and segmentation never cross a gap. A run that
+    touches a gap or the record edge lacks one of its two crossings and is
+    dropped, as in the original; ``Yu_ripple_detector`` keeps and flags such
+    runs instead.
+
+    Parameters
+    ----------
+    time : array_like, shape (n_time,)
+        Time values for each sample in seconds.
+    filtered_lfps : array_like, shape (n_time, n_channels)
+        LFP signals already bandpass filtered to the ripple band. FMAToolbox
+        documents 100-200 Hz input, buzcode filters 130-200 Hz, neurocode
+        80-250 Hz; this package's ``filter_ripple_band`` gives 150-250 Hz.
+        Channels are squared and summed, as the original does. NaN marks
+        missing samples.
+    speed : array_like, shape (n_time,)
+        Animal's running speed in cm/s.
+    sampling_frequency : float
+        Sampling rate in Hz.
+    speed_threshold : float, optional
+        An event is kept only if the speed at its first and last sample is at
+        or below this value (``exclude_movement``). **Not part of the original
+        algorithm**, which has no speed criterion; pass ``np.inf`` to disable.
+        Default is 4.0.
+    low_threshold : float, optional
+        Boundary threshold in standard deviations. Default is 2.0 (FMAToolbox
+        and buzcode; neurocode's copy uses 0.5).
+    high_threshold : float, optional
+        Peak threshold in standard deviations. Default is 5.0 (FMAToolbox and
+        buzcode; neurocode's copy uses 2.5).
+    minimum_inter_ripple_interval : float, optional
+        Events separated by less than this are merged, provided the merged
+        event stays under ``maximum_duration``. Default is 0.030 s
+        (FMAToolbox; neurocode uses 0.050).
+    minimum_duration, maximum_duration : float, optional
+        Events shorter or longer than these are discarded. Defaults are
+        0.020 and 0.100 s (FMAToolbox; neurocode uses 0.025 and 0.500).
+    smoothing_window : int, optional
+        Moving-average length in samples. Default is the original's 11
+        samples at 1250 Hz scaled to ``sampling_frequency`` and kept odd. A
+        supplied value must be a positive odd integer.
+    normalization_mask : array_like, shape (n_time,), optional
+        Samples used for the z-score statistics (the original's ``restrict``).
+    normalization_time_range : tuple of (float, float), optional
+        Time range used for the z-score statistics instead of a mask.
+
+    Returns
+    -------
+    ripple_times : pd.DataFrame
+        One row per event, indexed by ``event_number``, with the columns of
+        the other detectors plus ``peak_time``, the time of the maximum
+        normalized power within the event.
+
+    References
+    ----------
+    .. [1] Zugaro, M. FMAToolbox, ``Analyses/FindRipples.m``
+       (initial algorithm by H. Hirase), https://github.com/michael-zugaro/FMAToolbox
+    .. [2] Buzsáki lab, buzcode, ``analysis/SharpWaveRipples/bz_FindRipples.m``
+       (edited by D. Tingley, 2017), https://github.com/buzsakilab/buzcode
+    .. [3] AYA lab, neurocode, ``SharpWaveRipples/FindRipples.m``,
+       https://github.com/ayalab1/neurocode, doi:10.5281/zenodo.7819979
+    .. [4] Csicsvari, J., Hirase, H., Czurkó, A., Mamiya, A., & Buzsáki, G.
+       (1999). Oscillatory coupling of hippocampal pyramidal cells and
+       interneurons in the behaving rat. J Neurosci, 19(1), 274-287.
+
+    """
+    filtered_lfps = np.asarray(filtered_lfps, dtype=float)
+    speed = np.asarray(speed, dtype=float)
+    time = np.asarray(time, dtype=float)
+    _validate_lfp_dimensions(filtered_lfps)
+    _validate_array_lengths(time, filtered_lfps, speed)
+    _validate_time_units(time, sampling_frequency, len(time))
+    _validate_speed_units(speed, speed_threshold)
+
+    is_valid = np.all(np.isfinite(filtered_lfps), axis=1) & np.isfinite(speed)
+    if not np.any(is_valid):
+        raise ValueError("No sample has finite values in every channel and in speed.")
+    window = (
+        _zugaro_smoothing_window(sampling_frequency)
+        if smoothing_window is None
+        else int(smoothing_window)
+    )
+    if window < 1 or window % 2 == 0:
+        raise ValueError(f"smoothing_window must be a positive odd integer, got {window}.")
+    kernel = np.ones(window) / window
+    power = np.sum(filtered_lfps**2, axis=1)
+    smoothed = np.full(len(time), np.nan)
+    blocks = _contiguous_valid_blocks(is_valid, time, sampling_frequency)
+    for start, stop in blocks:
+        smoothed[start:stop] = np.convolve(power[start:stop], kernel, mode="same")
+
+    mask = _get_normalization_mask(
+        smoothed.shape, time, normalization_mask, normalization_time_range
+    )
+    mask = is_valid if mask is None else (np.asarray(mask, dtype=bool) & is_valid)
+    normalized = normalize_signal(smoothed, time=time, normalization_mask=mask)
+
+    event_times = []
+    peak_times = []
+    for start, stop in blocks:
+        block_events, block_peaks = _two_threshold_events(
+            normalized[start:stop],
+            time[start:stop],
+            low_threshold,
+            high_threshold,
+            minimum_inter_ripple_interval,
+            minimum_duration,
+            maximum_duration,
+        )
+        event_times.append(block_events)
+        peak_times.append(block_peaks)
+    event_times = np.concatenate(event_times) if event_times else np.empty((0, 2))
+    peak_times = np.concatenate(peak_times) if peak_times else np.empty(0)
+
+    if len(event_times):
+        speed_at_start = speed[np.searchsorted(time, event_times[:, 0])]
+        speed_at_end = speed[np.searchsorted(time, event_times[:, 1])]
+        keep = (speed_at_start <= speed_threshold) & (speed_at_end <= speed_threshold)
+        event_times, peak_times = event_times[keep], peak_times[keep]
+
+    events = _get_event_stats(
+        event_times, time, normalized, speed, minimum_duration=minimum_duration
+    )
+    events["peak_time"] = peak_times
+    return events
+
+
+def _gaussian_lowpass_fir(
+    cutoff: float, sampling_frequency: float, n_sd: float = 6.0
+) -> NDArray:
+    """Unit-area Gaussian low-pass kernel with standard deviation
+    ``fs / (2 pi cutoff)`` samples, truncated at ``n_sd`` standard deviations
+    (Eran Stark's ``makegausslpfir``)."""
+    sd = sampling_frequency / (2.0 * np.pi * cutoff)
+    half = int(np.ceil(max(n_sd, 3.0) * sd))
+    x = np.arange(-half, half + 1)
+    kernel = np.exp(-(x**2) / (2.0 * sd**2))
+    return kernel / kernel.sum()
+
+
+def _firfilt(x: NDArray, kernel: NDArray) -> NDArray:
+    """Zero-phase FIR filtering along axis 0 with the ends reflected.
+
+    A centred convolution with the signal mirrored at both ends, which is what
+    Eran Stark's ``firfilt`` (mirror-pad, causal filter, crop the delay)
+    computes for the odd symmetric kernels used here.
+    """
+    return convolve1d(np.asarray(x, dtype=float), kernel, axis=0, mode="reflect")
+
+
+def _difference_of_gaussians_band(
+    x: NDArray, band: tuple[float, float], sampling_frequency: float
+) -> NDArray:
+    """Band-pass as the difference of two Gaussian low-passes: low-pass at the
+    band's upper edge, minus a low-pass of that at the band's lower edge."""
+    low_passed = _firfilt(x, _gaussian_lowpass_fir(band[1], sampling_frequency))
+    slow = _firfilt(low_passed, _gaussian_lowpass_fir(band[0], sampling_frequency))
+    return low_passed - slow
+
+
+def _matlab_percentile(values: NDArray, percent: float) -> float:
+    """MATLAB ``prctile``: linear interpolation between order statistics placed
+    at percentiles 100 (k - 0.5) / n (NumPy's ``hazen`` method)."""
+    return float(np.percentile(values, percent, method="hazen"))
+
+
+def Long_sharp_wave_ripple_detector(
+    time: ArrayLike,
+    lfp: ArrayLike,
+    speed: ArrayLike,
+    sampling_frequency: float,
+    speed_threshold: float = 4.0,
+    sharp_wave_band: tuple[float, float] = (2.0, 50.0),
+    ripple_band: tuple[float, float] = (80.0, 250.0),
+    sharp_wave_percentile: float = 10.0,
+    ripple_power_percentile: float = 50.0,
+    window_size: float = 0.040,
+    local_window: float = 5.0,
+    sharp_wave_thresholds: tuple[float, float] = (0.5, 2.5),
+    ripple_thresholds: tuple[float, float] = (0.5, 2.5),
+    minimum_separation: float = 0.050,
+    minimum_sharp_wave_duration: float = 0.020,
+    maximum_sharp_wave_duration: float = 0.500,
+    minimum_ripple_duration: float = 0.025,
+    random_state: int | np.random.Generator | None = None,
+) -> pd.DataFrame:
+    """Detect sharp-wave ripples from a pyramidal-layer and a stratum radiatum channel.
+
+    John D. Long II's two-channel detector (buzcode ``bz_DetectSWR`` [1]_,
+    converted to buzcode by Andrea Navas-Olive; filtering routines adapted
+    from Eran Stark's ``detect_hfos``; carried into AYA-lab neurocode as
+    ``DetectSWR`` [2]_). It requires a channel that records the ripple, in or
+    just above the CA1 pyramidal layer, and a deeper channel that records the
+    sharp wave in stratum radiatum; it cannot run on a single layer.
+
+    **Unlike the other detectors, this one takes raw, unfiltered LFP**, shape
+    ``(n_time, 2)`` with the ripple channel first, because it filters both
+    bands itself. The sharp-wave feature is the ripple channel minus the
+    radiatum channel after a 2-50 Hz difference-of-Gaussians band-pass; the
+    ripple feature is the smoothed rectified 80-250 Hz band of the
+    common-average-referenced pair, maximum over the two channels. In each
+    non-overlapping 40 ms block the sharp-wave maximum and the ripple maximum
+    within +/-20 ms of it form a feature pair; two-cluster k-means on those
+    pairs separates sharp-wave ripples (the smaller cluster) from the rest,
+    and candidates must exceed the 10th sharp-wave percentile of the SWR
+    cluster and the 50th ripple-power percentile of the other. Because that
+    sharp-wave cut is taken from the SWR cluster itself, the detector discards
+    roughly the weakest tenth of its own events by construction. Each candidate
+    is then tested against **local** statistics over +/-5 s: its sharp wave and
+    ripple power must each be at least median + 2.5 SD, its boundaries are
+    where the sharp wave falls back below median + 0.5 SD, candidates closer
+    than 50 ms to the previous candidate are dropped, and duration limits
+    apply. Event bounds are the sharp-wave bounds.
+
+    Reimplemented from the algorithm as read; the source states no licence.
+    Departures, all documented: k-means is seeded through ``random_state``
+    (MATLAB's is not); candidates whose local window has no sample below the
+    boundary threshold are rejected (the original errors); the package's
+    endpoint speed rule is applied afterwards; NaN input raises because the
+    local statistics need contiguous data.
+
+    Parameters
+    ----------
+    time : array_like, shape (n_time,)
+        Time values for each sample in seconds.
+    lfp : array_like, shape (n_time, 2)
+        **Raw** LFP: column 0 the ripple (pyramidal-layer) channel, column 1
+        the sharp-wave (stratum radiatum) channel. No NaN.
+    speed : array_like, shape (n_time,)
+        Animal's running speed in cm/s.
+    sampling_frequency : float
+        Sampling rate in Hz.
+    speed_threshold : float, optional
+        Endpoint speed rule (``exclude_movement``); not part of the original.
+        Default is 4.0.
+    sharp_wave_band, ripple_band : tuple of (float, float), optional
+        Difference-of-Gaussians pass-bands in Hz. The edges are the corner
+        frequencies of Gaussian low-passes, not a brick wall: gain is well
+        under 1 at the nominal edges and tails off gradually beyond them, as
+        in the original. Defaults (2, 50) and
+        (80, 250).
+    sharp_wave_percentile, ripple_power_percentile : float, optional
+        Cluster-derived thresholds: a candidate must exceed this percentile
+        of the SWR cluster's sharp-wave feature and this percentile of the
+        non-SWR cluster's ripple power. Defaults 10 and 50.
+    window_size : float, optional
+        Candidate block length in seconds. Default is 0.040, following
+        neurocode ``DetectSWR`` (as does ``minimum_separation`` 0.050); buzcode
+        ``bz_DetectSWR`` uses 0.200 and 0.100.
+    local_window : float, optional
+        Half-width in seconds of the window for local statistics. Candidates
+        closer than this to either end of the record are not evaluated.
+        Default is 5.0.
+    sharp_wave_thresholds, ripple_thresholds : tuple of (float, float), optional
+        ``(boundary, peak)`` in local standard deviations. Defaults (0.5, 2.5).
+    minimum_separation : float, optional
+        Minimum time from the previous candidate, in seconds. Default 0.050.
+    minimum_sharp_wave_duration, maximum_sharp_wave_duration : float, optional
+        Sharp-wave duration limits in seconds. A candidate is rejected when it
+        fails the sharp-wave minimum **and** the ripple minimum, or exceeds
+        the sharp-wave maximum. Defaults 0.020 and 0.500.
+    minimum_ripple_duration : float, optional
+        Ripple duration minimum in seconds. Default 0.025.
+    random_state : int or numpy Generator, optional
+        Seed for the k-means initialization. Default None.
+
+    Returns
+    -------
+    ripple_times : pd.DataFrame
+        One row per event, indexed by ``event_number``: ``start_time``,
+        ``end_time``, ``peak_time`` (sharp-wave peak), ``duration``, the
+        package's z-score statistics computed on the globally z-scored ripple
+        power, the speed statistics, and ``sharp_wave_zscore``,
+        ``sharp_wave_local_percentile``, ``ripple_power_zscore``,
+        ``ripple_power_local_percentile`` (peak values against the local window),
+        ``sharp_wave_duration`` and ``ripple_duration`` in seconds.
+
+    References
+    ----------
+    .. [1] Long, J. D. II. ``bz_DetectSWR.m`` in buzcode
+       (``analysis/SharpWaveRipples/``), https://github.com/buzsakilab/buzcode
+    .. [2] AYA lab, neurocode, ``SharpWaveRipples/DetectSWR.m``,
+       https://github.com/ayalab1/neurocode, doi:10.5281/zenodo.7819979
+
+    """
+    lfp = np.asarray(lfp, dtype=float)
+    speed = np.asarray(speed, dtype=float)
+    time = np.asarray(time, dtype=float)
+    if lfp.ndim != 2 or lfp.shape[1] != 2:
+        raise ValueError(
+            "lfp must have exactly two channels, shape (n_time, 2): the ripple channel "
+            f"first and the sharp-wave channel second; got shape {lfp.shape}."
+        )
+    _validate_array_lengths(time, lfp, speed)
+    _validate_time_units(time, sampling_frequency, len(time))
+    _validate_speed_units(speed, speed_threshold)
+    if np.any(np.isnan(lfp)) or np.any(np.isnan(speed)):
+        raise ValueError(
+            "lfp and speed must not contain NaN: this detector's local statistics need "
+            "contiguous data. Pass a contiguous epoch instead."
+        )
+    n_time = len(time)
+    slowest_kernel = len(_gaussian_lowpass_fir(sharp_wave_band[0], sampling_frequency))
+    if n_time < slowest_kernel:
+        raise ValueError(
+            f"lfp must hold at least {slowest_kernel} samples "
+            f"({slowest_kernel / sampling_frequency:.2f} s) for the {sharp_wave_band[0]} Hz "
+            f"sharp-wave low-pass, got {n_time}."
+        )
+    rng = np.random.default_rng(random_state)
+
+    # features
+    sharp_wave_band_lfp = _difference_of_gaussians_band(
+        lfp, sharp_wave_band, sampling_frequency
+    )
+    sharp_wave_diff = sharp_wave_band_lfp[:, 0] - sharp_wave_band_lfp[:, 1]
+    referenced = lfp - lfp.mean(axis=1, keepdims=True)
+    ripple = np.abs(_difference_of_gaussians_band(referenced, ripple_band, sampling_frequency))
+    power_kernel = _gaussian_lowpass_fir(np.mean(ripple_band) / np.pi, sampling_frequency)
+    ripple_power = _firfilt(ripple, power_kernel).max(axis=1)
+
+    # candidate feature pairs, one per non-overlapping block
+    block = int(np.floor(window_size * sampling_frequency))
+    half_block = block // 2
+    starts = np.arange(0, n_time, block)
+    feature_index, sharp_wave_feature, ripple_feature = [], [], []
+    for b0, b1 in pairwise(starts):
+        segment = sharp_wave_diff[b0:b1]
+        local_arg = int(np.argmax(segment))
+        peak = b0 + local_arg
+        if local_arg in (0, block - 1):
+            if peak in (0, n_time - 1):
+                continue
+            neighbours = sharp_wave_diff[peak - 1 : peak + 2]
+            if int(np.argmax(neighbours)) != 1:
+                continue
+        feature_index.append(peak)
+        sharp_wave_feature.append(segment[local_arg])
+        lo, hi = max(peak - half_block, 0), min(peak + half_block, n_time - 1)
+        ripple_feature.append(ripple_power[lo : hi + 1].max())
+    feature_index = np.asarray(feature_index)
+    sharp_wave_feature = np.asarray(sharp_wave_feature)
+    ripple_feature = np.asarray(ripple_feature)
+    if len(feature_index) < 2:
+        raise ValueError("Too few candidate blocks to cluster; the recording is too short.")
+
+    features = np.column_stack([sharp_wave_feature, ripple_feature])
+    _, labels = kmeans2(features, 2, iter=100, minit="++", seed=rng)
+    is_swr_cluster = labels == (0 if np.sum(labels == 0) <= np.sum(labels == 1) else 1)
+    if not np.any(is_swr_cluster) or np.all(is_swr_cluster):
+        raise ValueError("k-means did not separate the candidate features into two clusters.")
+    sharp_wave_cut = _matlab_percentile(
+        sharp_wave_feature[is_swr_cluster], sharp_wave_percentile
+    )
+    ripple_cut = _matlab_percentile(ripple_feature[~is_swr_cluster], ripple_power_percentile)
+    is_candidate = (
+        is_swr_cluster & (sharp_wave_feature > sharp_wave_cut) & (ripple_feature > ripple_cut)
+    )
+
+    bound = int(local_window * sampling_frequency)
+    candidate_peaks = feature_index[is_candidate]
+    candidate_sharp = sharp_wave_feature[is_candidate]
+    candidate_ripple = ripple_feature[is_candidate]
+    in_range = (candidate_peaks - bound >= 0) & (candidate_peaks + bound <= n_time - 1)
+    candidate_peaks, candidate_sharp, candidate_ripple = (
+        candidate_peaks[in_range],
+        candidate_sharp[in_range],
+        candidate_ripple[in_range],
+    )
+    separation = np.diff(np.concatenate([[0.0], candidate_peaks / sampling_frequency]))
+
+    min_sw = int(np.floor(minimum_sharp_wave_duration * sampling_frequency))
+    max_sw = int(np.floor(maximum_sharp_wave_duration * sampling_frequency))
+    min_rp = int(np.floor(minimum_ripple_duration * sampling_frequency))
+    sw_boundary, sw_peak = sharp_wave_thresholds
+    rp_boundary, rp_peak = ripple_thresholds
+
+    records = []
+    n_candidates = len(candidate_peaks)
+    for ii, peak in enumerate(candidate_peaks):
+        sw_window = sharp_wave_diff[peak - bound : peak + bound + 1]
+        sw_median, sw_sd = np.median(sw_window), np.std(sw_window, ddof=1)
+        if sw_window[bound] < sw_median + sw_peak * sw_sd:
+            continue
+        rp_window = ripple_power[peak - bound : peak + bound + 1]
+        rp_median, rp_sd = np.median(rp_window), np.std(rp_window, ddof=1)
+        if candidate_ripple[ii] < rp_median + rp_peak * rp_sd:
+            continue
+        if ii < n_candidates - 1 and separation[ii] < minimum_separation:
+            continue
+        below_before = np.flatnonzero(sw_window[: bound + 1] < sw_median + sw_boundary * sw_sd)
+        below_after = np.flatnonzero(sw_window[bound:] < sw_median + sw_boundary * sw_sd)
+        if len(below_before) == 0 or len(below_after) == 0:
+            continue
+        start_offset = bound - below_before[-1]  # samples before the peak
+        stop_offset = below_after[0]  # samples after the peak
+        sharp_wave_samples = start_offset + stop_offset + 1
+        rp_peak_local = (bound - half_block) + int(
+            np.argmax(rp_window[bound - half_block : bound + half_block + 1])
+        )
+        rp_before = np.flatnonzero(
+            rp_window[: rp_peak_local + 1] < rp_median + rp_boundary * rp_sd
+        )
+        rp_after = np.flatnonzero(rp_window[rp_peak_local:] < rp_median + rp_boundary * rp_sd)
+        if len(rp_before) == 0 or len(rp_after) == 0:
+            continue
+        ripple_samples = (rp_peak_local + rp_after[0]) - rp_before[-1]
+        if ripple_samples < min_rp and sharp_wave_samples < min_sw:
+            continue
+        if sharp_wave_samples > max_sw:
+            continue
+        records.append(
+            {
+                "peak": peak,
+                "start": peak - start_offset,
+                "end": peak + stop_offset,
+                "sharp_wave_zscore": (candidate_sharp[ii] - sw_median) / sw_sd,
+                "sharp_wave_local_percentile": np.mean(sw_window < candidate_sharp[ii]),
+                "ripple_power_zscore": (candidate_ripple[ii] - rp_median) / rp_sd,
+                "ripple_power_local_percentile": np.mean(rp_window < candidate_ripple[ii]),
+                "sharp_wave_duration": sharp_wave_samples / sampling_frequency,
+                "ripple_duration": ripple_samples / sampling_frequency,
+            }
+        )
+
+    if records:
+        detected = pd.DataFrame(records)
+        event_times = np.column_stack([time[detected["start"]], time[detected["end"]]])
+        keep = (speed[detected["start"]] <= speed_threshold) & (
+            speed[detected["end"]] <= speed_threshold
+        )
+        detected = detected[keep].reset_index(drop=True)
+        event_times = event_times[keep]
+    else:
+        detected = pd.DataFrame(records)
+        event_times = np.empty((0, 2))
+
+    ripple_power_z = normalize_signal(ripple_power)
+    events = _get_event_stats(
+        event_times, time, ripple_power_z, speed, minimum_duration=minimum_ripple_duration
+    )
+    events["peak_time"] = (
+        time[detected["peak"].to_numpy(dtype=int)] if len(detected) else np.empty(0)
+    )
+    for column in (
+        "sharp_wave_zscore",
+        "sharp_wave_local_percentile",
+        "ripple_power_zscore",
+        "ripple_power_local_percentile",
+        "sharp_wave_duration",
+        "ripple_duration",
+    ):
+        events[column] = detected[column].to_numpy() if len(detected) else np.empty(0)
     return events
 
 
@@ -1416,15 +2015,18 @@ def Karlsson_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (in cm/s) for ripple detection. Events during movement
-        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
+        Maximum speed (in cm/s) for ripple detection. An event is kept only if
+        the speed at its first and last sample is at or below this value
+        (``exclude_movement``); speed inside the event is not tested. Apply a
+        whole-event rule afterwards if one is needed. Default is 4.0 cm/s, which corresponds
         to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
-        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        The signal must stay at or above ``zscore_threshold`` for at least
+        ``round(minimum_duration * sampling_frequency)`` consecutive samples
         (per Karlsson et al. 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
@@ -1459,7 +2061,11 @@ def Karlsson_ripple_detector(
     -------
     ripple_times : pd.DataFrame
         DataFrame with detected ripples and comprehensive statistics (see
-        Kay_ripple_detector for column descriptions).
+        Kay_ripple_detector for column descriptions). The z-score statistics
+        (``max_thresh``, ``mean_zscore``, ``max_zscore``, ...) are computed on
+        the elementwise maximum across channels of the per-channel z-scores,
+        i.e. the strongest tetrode at each sample, so ``max_thresh`` is at
+        least ``zscore_threshold`` for every event.
 
         Returns empty DataFrame if no ripples detected. If this occurs, try:
         - Lowering zscore_threshold (e.g., from 3.0 to 2.0)
@@ -1505,8 +2111,10 @@ def Karlsson_ripple_detector(
     )
     ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
 
+    # statistics on the strongest channel at each sample, so an event that one
+    # channel triggered cannot report a sub-threshold max_thresh
     return _get_event_stats(
-        ripple_times, time, filtered_lfps.mean(axis=1), speed, minimum_duration
+        ripple_times, time, filtered_lfps.max(axis=1), speed, minimum_duration
     )
 
 
@@ -1542,15 +2150,18 @@ def Roumis_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (in cm/s) for ripple detection. Events during movement
-        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
+        Maximum speed (in cm/s) for ripple detection. An event is kept only if
+        the speed at its first and last sample is at or below this value
+        (``exclude_movement``); speed inside the event is not tested. Apply a
+        whole-event rule afterwards if one is needed. Default is 4.0 cm/s, which corresponds
         to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
-        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        The signal must stay at or above ``zscore_threshold`` for at least
+        ``round(minimum_duration * sampling_frequency)`` consecutive samples
         (per Karlsson et al. 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
@@ -1645,9 +2256,20 @@ def multiunit_HSE_detector(
 ) -> pd.DataFrame:
     """Detect High Synchrony Events from multiunit spiking activity.
 
-    Identifies periods of elevated population spiking activity during immobility,
-    following Davidson et al. 2009. The population firing rate is smoothed and
-    z-scored, then thresholded to find synchronous events.
+    Identifies periods of elevated population spiking activity during immobility.
+    The population firing rate (summed over units) is smoothed with a Gaussian
+    kernel, z-scored, and thresholded with the same sustained-threshold and
+    mean-crossing rules as the LFP ripple detectors: at or above
+    ``zscore_threshold`` for ``minimum_duration``, then extended to where the
+    rate returns to the mean.
+
+    The 15 ms smoothing kernel follows Davidson et al. 2009 [1]_, but the
+    selection rule does not: Davidson et al. define candidate events as periods
+    above the mean whose *peak* exceeds 3 s.d., with statistics from stopped
+    periods only and no sustained-duration requirement. To approximate that
+    convention, pass ``zscore_threshold=3.0``, ``minimum_duration=0.0`` and
+    ``normalization_mask=speed < speed_threshold``; the default 2 s.d. for
+    15 ms with statistics over all samples is this package's own convention.
 
     Parameters
     ----------
@@ -1674,7 +2296,8 @@ def multiunit_HSE_detector(
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum event duration in **seconds**. Default is 0.015 (15 milliseconds).
-        This is the minimum time the firing rate must stay *above* ``zscore_threshold``;
+        The firing rate must stay at or above ``zscore_threshold`` for at least
+        ``round(minimum_duration * sampling_frequency)`` consecutive samples;
         the event is then extended to the surrounding mean-crossings, so the reported
         ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
@@ -1731,9 +2354,26 @@ def multiunit_HSE_detector(
        Hippocampal Replay of Extended Experience. Neuron 63, 497-507.
 
     """
-    multiunit = np.asarray(multiunit)
-    speed = np.asarray(speed)
-    time = np.asarray(time)
+    multiunit = np.asarray(multiunit, dtype=float)
+    speed = np.asarray(speed, dtype=float)
+    time = np.asarray(time, dtype=float)
+    if multiunit.ndim != 2:
+        raise ValueError(
+            f"multiunit must be a 2D array of shape (n_time, n_units), got shape "
+            f"{multiunit.shape}. For a single unit, pass multiunit[:, np.newaxis]."
+        )
+    _validate_array_lengths(time, multiunit, speed)
+    _validate_time_units(time, sampling_frequency, len(time))
+    _validate_speed_units(speed, speed_threshold)
+    if np.any(np.isnan(multiunit)):
+        raise ValueError(
+            "multiunit contains NaN. Spike counts cannot be missing: fill absent "
+            "samples with 0, or drop those rows from time, multiunit, and speed together."
+        )
+    if np.any(np.isnan(speed)):
+        raise ValueError(
+            "speed contains NaN. Drop those rows from time, multiunit, and speed together."
+        )
 
     firing_rate = get_multiunit_population_firing_rate(
         multiunit, sampling_frequency, smoothing_sigma
@@ -1774,11 +2414,13 @@ def multiunit_HSE_detector(
 def _find_max_thresh(
     time: np.ndarray, data: np.ndarray, minimum_duration: float = 0.015
 ) -> float:
-    """Find the largest value sustained around the peak for a minimum duration.
+    """Find the largest value sustained for a minimum duration anywhere in the event.
 
-    Starting at the peak, expand a window (toward the higher neighbouring sample)
-    until it spans ``minimum_duration``, then return the smaller of the two window
-    edges -- the largest value held across the whole window.
+    The largest threshold at which the event would still be detected: the
+    maximum, over every window of ``minimum_sample_count(time, minimum_duration)``
+    consecutive samples, of that window's minimum. The sample-count convention
+    matches event detection, so an event detected at ``zscore_threshold`` has
+    ``max_thresh >= zscore_threshold``.
 
     Parameters
     ----------
@@ -1789,40 +2431,21 @@ def _find_max_thresh(
     Returns
     -------
     max_thresh : float
-        The largest value sustained for ``minimum_duration`` around the peak.
-        ``nan`` if the event is shorter than ``minimum_duration`` (the sustained
+        The largest value sustained for ``minimum_duration`` within the event.
+        ``nan`` if the event holds fewer samples than the minimum (the sustained
         value is then undefined). Public detectors never produce such events --
-        their segments are ``>= minimum_duration`` by construction -- so this
-        only affects direct/edge callers.
+        their segments meet the minimum by construction -- so this only affects
+        direct/edge callers.
+
     """
-    # Find the peak of the data points
-    peak_ind = np.argmax(data)
-
-    # Initialize the search window
-    peak_left_ind = peak_ind
-    peak_right_ind = peak_ind
-
-    # Match segment_boolean_series's inclusive duration comparison. Subtracting
-    # timestamps can round an accepted boundary below minimum_duration.
-    while time[peak_right_ind] < time[peak_left_ind] + minimum_duration:
-        can_expand_right = peak_right_ind < len(time) - 1
-        can_expand_left = peak_left_ind > 0
-        # The window already spans the whole event yet is still shorter than
-        # minimum_duration, so a value "sustained for minimum_duration" is
-        # undefined. Return nan rather than a misleading endpoint value (and
-        # rather than running an index out of bounds).
-        if not (can_expand_right or can_expand_left):
-            return float("nan")
-        # Determine the direction to expand
-        if can_expand_right and (
-            not can_expand_left or data[peak_right_ind + 1] > data[peak_left_ind - 1]
-        ):
-            peak_right_ind += 1
-        else:
-            peak_left_ind -= 1
-
-    # Return the minimum value between the left and right edges of the window
-    return min(data[peak_left_ind], data[peak_right_ind])
+    if len(data) < 2 and minimum_duration > 0:
+        # a single sample has no measurable interval, so no duration is sustained
+        return float("nan")
+    n_min = minimum_sample_count(time, minimum_duration)
+    if len(data) < n_min:
+        return float("nan")
+    windows = np.lib.stride_tricks.sliding_window_view(np.asarray(data, dtype=float), n_min)
+    return float(windows.min(axis=1).max())
 
 
 def _get_event_stats(
@@ -1848,7 +2471,7 @@ def _get_event_stats(
     zscore_metric : array_like, if participants is None: shape (n_time,); else shape (n_time, n_channels)
         Signal the per-event statistics (mean/median/max/min z-score, area,
         total_energy, max_thresh) are computed from. Its exact meaning depends on
-        the caller -- e.g. the consensus trace for Kay, the per-channel mean for
+        the caller -- e.g. the consensus trace for Kay, the per-channel maximum for
         Karlsson, or the multiunit firing rate for multiunit_HSE. When participants
         is None, pass a single 1-D trace of shape (n_time,). When participants is
         provided, pass the per-channel signal of shape (n_time, n_channels) so that

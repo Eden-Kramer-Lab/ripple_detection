@@ -12,20 +12,26 @@ from ripple_detection import (
     Carey_candidate_detector,
     Karlsson_ripple_detector,
     Kay_ripple_detector,
+    Long_sharp_wave_ripple_detector,
     Shvartsman_ripple_detector,
     Yu_ripple_detector,
+    Zugaro_ripple_detector,
     filter_ripple_band,
 )
 from ripple_detection.core import (
     gaussian_smooth,
     get_envelope,
+    minimum_sample_count,
 )
 from ripple_detection.detectors import (
     Roumis_ripple_detector,
     _contained_in_intervals,
     _extract_Yu_ripple_events,
     _find_max_thresh,
+    _firfilt,
     _state_intervals,
+    _two_threshold_events,
+    _zugaro_smoothing_window,
     get_Kay_ripple_consensus_trace,
     get_Yu_ripple_consensus_trace,
     multiunit_HSE_detector,
@@ -833,6 +839,33 @@ class TestKarlssonRippleDetector:
         assert len(ripples) <= 2
 
 
+class TestKarlssonEventStatistics:
+    """Per-event statistics reflect the strongest channel, so an event that one
+    channel triggered at 3 SD cannot report a sub-threshold max_thresh."""
+
+    def test_max_thresh_never_below_threshold(self, time_3s, sampling_frequency):
+        # ripples on one channel only, four quiet channels
+        loud = simulate_LFP(
+            time_3s,
+            ripple_times=[1.0, 2.0],
+            noise_amplitude=1.3,
+            ripple_amplitude=1.0,
+            random_state=1,
+        )
+        quiet = [
+            simulate_LFP(time_3s, ripple_times=[], noise_amplitude=1.3, random_state=s)
+            for s in (2, 3, 4, 5)
+        ]
+        lfps = filter_ripple_band(np.column_stack([loud, *quiet]))
+        speed = np.full(len(time_3s), 2.0)
+        events = Karlsson_ripple_detector(
+            time_3s, lfps, speed, sampling_frequency, zscore_threshold=3.0
+        )
+        assert len(events) >= 2
+        assert np.all(events.max_thresh >= 3.0)
+        assert np.all(events.max_zscore >= 3.0)
+
+
 class TestRoumisRippleDetector:
     """Test suite for Roumis ripple detector."""
 
@@ -938,6 +971,46 @@ class TestMultiunitHSEDetector:
         # Both should return valid DataFrames
         assert isinstance(events_all_data, pd.DataFrame)
         assert isinstance(events_stationary_zscore, pd.DataFrame)
+
+
+class TestMultiunitHSEValidation:
+    def test_nan_in_speed_raises(self, time_3s, sampling_frequency):
+        multiunit = np.zeros((len(time_3s), 3))
+        speed = np.full(len(time_3s), 2.0)
+        speed[10] = np.nan
+        with pytest.raises(ValueError, match="speed"):
+            multiunit_HSE_detector(time_3s, multiunit, speed, sampling_frequency)
+
+    """multiunit_HSE_detector validates its inputs like the LFP detectors."""
+
+    @pytest.fixture
+    def inputs(self):
+        fs = 1500
+        n = fs * 3
+        rng = np.random.default_rng(0)
+        multiunit = (rng.random((n, 4)) < 0.02).astype(float)
+        return np.arange(n) / fs, multiunit, np.full(n, 2.0), fs
+
+    def test_nan_spike_counts_raise(self, inputs):
+        time, multiunit, speed, fs = inputs
+        multiunit[100, 1] = np.nan
+        with pytest.raises(ValueError, match="NaN"):
+            multiunit_HSE_detector(time, multiunit, speed, fs)
+
+    def test_length_mismatch_raises(self, inputs):
+        time, multiunit, speed, fs = inputs
+        with pytest.raises(ValueError, match="length"):
+            multiunit_HSE_detector(time, multiunit[:-10], speed, fs)
+
+    def test_one_dimensional_multiunit_raises(self, inputs):
+        time, multiunit, speed, fs = inputs
+        with pytest.raises(ValueError, match="2D"):
+            multiunit_HSE_detector(time, multiunit[:, 0], speed, fs)
+
+    def test_time_in_samples_raises(self, inputs):
+        time, multiunit, speed, fs = inputs
+        with pytest.raises(ValueError, match="samples"):
+            multiunit_HSE_detector(np.arange(len(time), dtype=float), multiunit, speed, fs)
 
 
 class TestKayConsensusTrace:
@@ -1107,6 +1180,19 @@ class TestYuConsensusTrace:
 
 
 class TestExtractYuRippleEvents:
+    def test_sample_count_matches_the_package_convention(self):
+        # 0.145 s at 1500 Hz is 217.5 samples: the package rounds half up (218),
+        # and the Yu extractor must agree rather than lose the half to round-off
+        fs, duration = 1500, 0.145
+        time = np.arange(3000) / fs
+        n_min = minimum_sample_count(time, duration)
+        assert n_min == 218
+        for n_run, expected in [(n_min - 1, 0), (n_min, 1)]:
+            trace = np.zeros(3000)
+            trace[1000 : 1000 + n_run] = 5.0
+            events, _, _ = _extract_Yu_ripple_events(trace, time, fs, duration, 2.0)
+            assert len(events) == expected, (n_run, len(events))
+
     """Sample-count qualification and mean-crossing extension, Yu et al. 2017."""
 
     @staticmethod
@@ -1429,6 +1515,413 @@ class TestYuRippleDetector:
         import ripple_detection
 
         assert ripple_detection.Yu_ripple_detector is Yu_ripple_detector
+
+
+class TestTwoThresholdEvents:
+    """FMAToolbox FindRipples segmentation on a normalized trace."""
+
+    FS = 1000
+
+    def _trace(self, n_time, runs, base=-0.5):
+        """runs: list of (start, stop, level) index ranges set to `level`."""
+        z = np.full(n_time, base)
+        for start, stop, level in runs:
+            z[start:stop] = level
+        return z, np.arange(n_time) / self.FS
+
+    def test_start_is_the_sample_before_the_low_crossing_and_end_the_last_above(self):
+        z, t = self._trace(500, [(100, 200, 3.0), (140, 160, 6.0)])
+        events, peaks = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        np.testing.assert_allclose(events, [[t[99], t[199]]])
+        assert peaks[0] == t[140]  # first sample of the peak plateau
+
+    def test_peak_must_exceed_high_threshold(self):
+        z, t = self._trace(500, [(100, 200, 3.0)])  # above low, never above high
+        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        assert len(events) == 0
+        z, t = self._trace(500, [(100, 200, 3.0), (150, 151, 5.0)])  # equal to high: strict
+        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        assert len(events) == 0
+
+    def test_close_events_merge_when_the_merged_duration_is_under_the_maximum(self):
+        # two 30 ms events 20 ms apart: merged span 80 ms < 100 ms maximum -> one event
+        z, t = self._trace(500, [(100, 130, 6.0), (150, 180, 6.0)])
+        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        assert len(events) == 1
+        np.testing.assert_allclose(events, [[t[99], t[179]]])
+
+    def test_close_events_do_not_merge_past_the_maximum_duration(self):
+        # 60 ms + 20 ms gap + 60 ms = 140 ms > 100 ms maximum -> stay separate
+        z, t = self._trace(500, [(100, 160, 6.0), (180, 240, 6.0)])
+        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        assert len(events) == 2
+
+    def test_events_farther_apart_than_the_interval_do_not_merge(self):
+        z, t = self._trace(500, [(100, 130, 6.0), (170, 200, 6.0)])  # 40 ms apart
+        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        assert len(events) == 2
+
+    def test_duration_limits_are_strict(self):
+        # 20 samples above low: start one before -> 20 ms span; not < 20 ms, kept
+        z, t = self._trace(500, [(100, 120, 6.0)])
+        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        assert len(events) == 1
+        z, t = self._trace(500, [(100, 118, 6.0)])  # 18 ms span < 20 ms -> dropped
+        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        assert len(events) == 0
+        z, t = self._trace(500, [(100, 250, 6.0)])  # 150 ms > 100 ms -> dropped
+        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        assert len(events) == 0
+
+    def test_event_at_the_record_start_or_end_is_dropped(self):
+        # FindRipples pairs starts with stops and discards an unpaired first or last run
+        z, t = self._trace(500, [(0, 50, 6.0), (200, 250, 6.0), (470, 500, 6.0)])
+        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        np.testing.assert_allclose(events, [[t[199], t[249]]])
+
+    def test_record_that_starts_above_threshold_yields_no_event(self):
+        # only a falling crossing exists: the unpaired first stop is discarded
+        z, t = self._trace(500, [(0, 50, 6.0)])
+        events, peaks = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        assert events.shape == (0, 2) and peaks.shape == (0,)
+
+    def test_empty(self):
+        z, t = self._trace(500, [])
+        events, peaks = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        assert events.shape == (0, 2) and peaks.shape == (0,)
+
+
+class TestZugaroSmoothingWindow:
+    @pytest.mark.parametrize(
+        ("fs", "expected"), [(1250, 11), (1500, 13), (1000, 9), (2000, 19), (2500, 23)]
+    )
+    def test_scales_with_rate_and_stays_odd(self, fs, expected):
+        assert _zugaro_smoothing_window(fs) == expected
+
+
+class TestZugaroRippleDetector:
+    FS = 1000
+    N_TIME = 20_000
+
+    @pytest.fixture
+    def time(self):
+        return np.arange(self.N_TIME) / self.FS
+
+    @pytest.fixture
+    def stationary(self):
+        return np.full(self.N_TIME, 2.0)
+
+    def test_recovers_planted_bursts(self, time, stationary):
+        bursts = [(5000, 5060, 20.0), (12000, 12080, 20.0)]
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, bursts)
+        events = Zugaro_ripple_detector(time, lfps, stationary, self.FS)
+        assert len(events) == 2
+        for (start, stop, _), (_, row) in zip(bursts, events.iterrows(), strict=True):
+            assert row.start_time <= time[start] + 0.005
+            assert row.end_time >= time[stop - 1] - 0.005
+            assert time[start] <= row.peak_time <= time[stop]
+
+    def test_weak_burst_above_low_but_below_high_is_rejected(self, time, stationary):
+        # gain 1.0 peaks near 2.7 SD in the normalized power: above the 2 SD
+        # boundary threshold, below the 5 SD peak threshold
+        weak = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 1.0)])
+
+        def contains_burst(events):
+            return bool(
+                np.any((events.start_time <= time[5030]) & (events.end_time >= time[5030]))
+            )
+
+        assert not contains_burst(Zugaro_ripple_detector(time, weak, stationary, self.FS))
+        # a strong burst at the same place is detected under the same defaults
+        strong = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        assert contains_burst(Zugaro_ripple_detector(time, strong, stationary, self.FS))
+
+    def test_output_columns(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        events = Zugaro_ripple_detector(time, lfps, stationary, self.FS)
+        for column in (
+            "start_time",
+            "end_time",
+            "duration",
+            "peak_time",
+            "max_thresh",
+            "mean_zscore",
+            "max_speed",
+        ):
+            assert column in events.columns
+        assert events.index.name == "event_number"
+
+    def test_channels_are_summed_so_a_duplicated_channel_changes_nothing(
+        self, time, stationary
+    ):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)], n_channels=1)
+        one = Zugaro_ripple_detector(time, lfps, stationary, self.FS)
+        two = Zugaro_ripple_detector(time, np.hstack([lfps, lfps]), stationary, self.FS)
+        pd.testing.assert_frame_equal(one, two)
+
+    def test_missing_data_is_handled_block_wise(self, time, stationary):
+        # one burst well inside the first block is found; the burst that runs
+        # into the gap touches its block's edge and is dropped, as FindRipples
+        # drops a run without both crossings (Yu keeps and flags such runs)
+        lfps = _synthetic_ripple_band(
+            self.N_TIME, self.FS, [(7000, 7040, 20.0), (8000, 8040, 20.0)]
+        )
+        lfps[8030:8100, :] = np.nan
+        events = Zugaro_ripple_detector(time, lfps, stationary, self.FS)
+        assert len(events) == 1
+        assert time[6990] <= events.start_time.iloc[0] <= time[7010]
+        assert events.end_time.iloc[0] <= time[7060]
+
+    def test_no_finite_sample_raises(self, time, stationary):
+        lfps = np.full((self.N_TIME, 2), np.nan)
+        with pytest.raises(ValueError, match="finite"):
+            Zugaro_ripple_detector(time, lfps, stationary, self.FS)
+
+    def test_even_smoothing_window_is_rejected(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        with pytest.raises(ValueError, match="odd"):
+            Zugaro_ripple_detector(time, lfps, stationary, self.FS, smoothing_window=10)
+        explicit = Zugaro_ripple_detector(
+            time, lfps, stationary, self.FS, smoothing_window=_zugaro_smoothing_window(self.FS)
+        )
+        default = Zugaro_ripple_detector(time, lfps, stationary, self.FS)
+        pd.testing.assert_frame_equal(explicit, default)
+
+    def test_normalization_restricted_to_a_quiet_stretch_raises_the_zscores(
+        self, time, stationary
+    ):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        whole = Zugaro_ripple_detector(time, lfps, stationary, self.FS)
+        mask = np.zeros(self.N_TIME, dtype=bool)
+        mask[:4000] = True
+        masked = Zugaro_ripple_detector(
+            time, lfps, stationary, self.FS, normalization_mask=mask
+        )
+        ranged = Zugaro_ripple_detector(
+            time, lfps, stationary, self.FS, normalization_time_range=(time[0], time[3999])
+        )
+
+        def planted(events):
+            hit = events[(events.start_time <= time[5030]) & (events.end_time >= time[5030])]
+            assert len(hit) == 1
+            return hit.iloc[0]
+
+        # the burst is excluded from the normalization stretch, so its z-score rises
+        assert planted(masked).max_zscore > planted(whole).max_zscore
+        pd.testing.assert_frame_equal(masked, ranged)
+
+    def test_movement_at_endpoint_excludes_event(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        speed = stationary.copy()
+        speed[4900:5100] = 10.0
+        assert len(Zugaro_ripple_detector(time, lfps, speed, self.FS)) == 0
+
+    def test_spyglass_style_keyword_call_matches_direct_call(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        params = {
+            "speed_threshold": 4.0,
+            "low_threshold": 2.0,
+            "high_threshold": 5.0,
+            "minimum_inter_ripple_interval": 0.030,
+            "minimum_duration": 0.020,
+            "maximum_duration": 0.100,
+        }
+        via_dict = Zugaro_ripple_detector(
+            time=time,
+            filtered_lfps=lfps,
+            speed=stationary,
+            sampling_frequency=self.FS,
+            **params,
+        )
+        pd.testing.assert_frame_equal(
+            via_dict, Zugaro_ripple_detector(time, lfps, stationary, self.FS)
+        )
+
+    def test_exported_from_package_root(self):
+        import ripple_detection
+
+        assert ripple_detection.Zugaro_ripple_detector is Zugaro_ripple_detector
+
+
+def _synthetic_two_channel_lfp(
+    n_time, sampling_frequency, event_samples, seed=0, sharp_wave=True, ripple=True, gain=1.0
+):
+    """Raw two-channel LFP: column 0 pyramidal-layer (ripple) channel, column 1
+    stratum radiatum (sharp-wave) channel. Each event plants a 200 Hz burst on
+    channel 0 and a slow deflection, negative on channel 1 and positive on
+    channel 0, both with a Gaussian envelope (sigma 15 ms)."""
+    rng = np.random.default_rng(seed)
+    lfp = rng.normal(0.0, 1.0, (n_time, 2))
+    t = np.arange(n_time) / sampling_frequency
+    for centre in event_samples:
+        envelope = np.exp(-0.5 * ((t - t[centre]) / 0.015) ** 2)
+        if ripple:
+            lfp[:, 0] += gain * 5.0 * envelope * np.sin(2 * np.pi * 200.0 * t)
+        if sharp_wave:
+            lfp[:, 0] += gain * 3.0 * envelope
+            lfp[:, 1] -= gain * 8.0 * envelope
+    return lfp
+
+
+class TestFirfilt:
+    def test_one_dimensional_input_matches_a_single_column(self):
+        rng = np.random.default_rng(0)
+        x = rng.normal(size=300)
+        kernel = np.ones(7) / 7
+        np.testing.assert_allclose(
+            _firfilt(x, kernel), _firfilt(x[:, np.newaxis], kernel)[:, 0]
+        )
+        assert _firfilt(x, kernel).shape == (300,)
+
+
+class TestLongSharpWaveRippleDetector:
+    FS = 1000
+    N_TIME = 40_000  # 40 s; events must sit more than 5 s from either end
+    EVENTS = (7000, 11000, 15500, 19000, 23800, 28000, 31500, 34000)
+
+    @pytest.fixture
+    def time(self):
+        return np.arange(self.N_TIME) / self.FS
+
+    @pytest.fixture
+    def stationary(self):
+        return np.full(self.N_TIME, 2.0)
+
+    def test_recovers_planted_sharp_wave_ripples(self, time, stationary):
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp, stationary, self.FS, random_state=0
+        )
+        hits = [
+            any((events.start_time <= time[c]) & (events.end_time >= time[c]))
+            for c in self.EVENTS
+        ]
+        # the sharp-wave cut is the 10th percentile of the SWR cluster itself, so
+        # the algorithm discards roughly the weakest tenth of its own events by design
+        assert sum(hits) >= int(np.floor(0.9 * len(self.EVENTS))), hits
+        assert len(events) <= len(self.EVENTS) + 2
+
+    def test_ripple_without_sharp_wave_is_not_detected(self, time, stationary):
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS, sharp_wave=False)
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp, stationary, self.FS, random_state=0
+        )
+        hits = [
+            any((events.start_time <= time[c]) & (events.end_time >= time[c]))
+            for c in self.EVENTS
+        ]
+        assert sum(hits) <= 1
+
+    def test_sharp_wave_without_ripple_is_not_detected(self, time, stationary):
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS, ripple=False)
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp, stationary, self.FS, random_state=0
+        )
+        hits = [
+            any((events.start_time <= time[c]) & (events.end_time >= time[c]))
+            for c in self.EVENTS
+        ]
+        assert sum(hits) <= 1
+
+    def test_events_within_the_local_window_of_the_record_ends_are_not_reported(
+        self, time, stationary
+    ):
+        edge_events = [2000, 38000, *self.EVENTS]
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, edge_events)
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp, stationary, self.FS, random_state=0
+        )
+        assert np.all(events.peak_time >= 5.0)
+        assert np.all(events.peak_time <= time[-1] - 5.0)
+
+    def test_seeded_clustering_is_reproducible(self, time, stationary):
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        a = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, random_state=3)
+        b = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, random_state=3)
+        pd.testing.assert_frame_equal(a, b)
+
+    def test_output_columns(self, time, stationary):
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp, stationary, self.FS, random_state=0
+        )
+        for column in (
+            "start_time",
+            "end_time",
+            "peak_time",
+            "duration",
+            "sharp_wave_zscore",
+            "sharp_wave_local_percentile",
+            "ripple_power_zscore",
+            "ripple_power_local_percentile",
+            "sharp_wave_duration",
+            "ripple_duration",
+            "speed_at_start",
+            "max_speed",
+        ):
+            assert column in events.columns
+        assert events.index.name == "event_number"
+        assert np.all(events.sharp_wave_zscore >= 2.5)
+        assert np.all(events.ripple_power_zscore >= 2.5)
+        assert np.all(
+            (events.start_time <= events.peak_time) & (events.peak_time <= events.end_time)
+        )
+
+    def test_movement_at_endpoint_excludes_event(self, time, stationary):
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        speed = stationary.copy()
+        speed[6800:7200] = 10.0  # moving through the first event
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp, stationary, self.FS, random_state=0
+        )
+        moved = Long_sharp_wave_ripple_detector(time, lfp, speed, self.FS, random_state=0)
+        assert any((events.start_time <= time[7000]) & (events.end_time >= time[7000]))
+        assert not any((moved.start_time <= time[7000]) & (moved.end_time >= time[7000]))
+
+    def test_record_shorter_than_the_slowest_kernel_raises(self):
+        n_time = 500  # the 2 Hz Gaussian low-pass spans 957 samples at 1 kHz
+        lfp = _synthetic_two_channel_lfp(n_time, self.FS, ())
+        with pytest.raises(ValueError, match=r"at least .* samples"):
+            Long_sharp_wave_ripple_detector(
+                np.arange(n_time) / self.FS, lfp, np.full(n_time, 2.0), self.FS
+            )
+
+    def test_minimum_separation_keeps_only_the_last_of_close_candidates(
+        self, time, stationary
+    ):
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp, stationary, self.FS, minimum_separation=1e6, random_state=0
+        )
+        assert len(events) <= 1
+
+    def test_no_event_survives_a_tiny_maximum_sharp_wave_duration(self, time, stationary):
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp, stationary, self.FS, maximum_sharp_wave_duration=0.001, random_state=0
+        )
+        assert events.empty
+        assert "start_time" in events.columns and "sharp_wave_duration" in events.columns
+
+    def test_requires_exactly_two_channels(self, time, stationary):
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        with pytest.raises(ValueError, match="two"):
+            Long_sharp_wave_ripple_detector(time, lfp[:, :1], stationary, self.FS)
+        with pytest.raises(ValueError, match="two"):
+            Long_sharp_wave_ripple_detector(time, np.hstack([lfp, lfp]), stationary, self.FS)
+
+    def test_nan_raises(self, time, stationary):
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        lfp[100, 0] = np.nan
+        with pytest.raises(ValueError, match="NaN"):
+            Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS)
+
+    def test_exported_from_package_root(self):
+        import ripple_detection
+
+        assert (
+            ripple_detection.Long_sharp_wave_ripple_detector is Long_sharp_wave_ripple_detector
+        )
 
 
 def _synthetic_joint_inputs(
@@ -1992,31 +2485,50 @@ class TestShvartsmanParticipationSemantics:
 
 
 class TestFindMaxThresh:
+    def test_peak_in_a_short_excursion_does_not_hide_a_sustained_run(self):
+        # the global peak (12.0) is a single sample; the value sustained for the
+        # minimum duration anywhere in the event is the 23-sample run at 3.2
+        time = np.arange(144) / 1500
+        data = np.r_[[0.1] * 40, 12.0, [0.1] * 40, [3.2] * 23, [0.1] * 40]
+        assert _find_max_thresh(time, data, 0.015) == 3.2
+
+    def test_is_the_largest_threshold_at_which_the_event_still_qualifies(self):
+        rng = np.random.default_rng(0)
+        time = np.arange(200) / 1000
+        data = rng.normal(size=200)
+        n_min = minimum_sample_count(time, 0.020)
+        brute = max(data[k : k + n_min].min() for k in range(len(data) - n_min + 1))
+        assert _find_max_thresh(time, data, 0.020) == brute
+
+    """Samples are 10 ms apart unless stated, so a 15 ms minimum is
+    round(1.5) = 2 samples and a 35 ms minimum is round(3.5) = 4 samples."""
+
     def test_respects_minimum_duration(self):
         """max_thresh is the largest value sustained for minimum_duration, so a
         longer required duration yields a smaller (or equal) result. Peak at
         index 0 -> only rightward expansion."""
         time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
         data = np.array([10.0, 8.0, 6.0, 4.0, 2.0])
-        assert _find_max_thresh(time, data, minimum_duration=0.005) == 8.0
-        assert _find_max_thresh(time, data, minimum_duration=0.015) == 6.0
-        assert _find_max_thresh(time, data, minimum_duration=0.035) == 2.0
+        assert _find_max_thresh(time, data, minimum_duration=0.005) == 10.0  # 1 sample
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 8.0  # 2 samples
+        assert _find_max_thresh(time, data, minimum_duration=0.035) == 4.0  # 4 samples
 
     def test_mid_peak_expands_both_directions(self):
         """A mid-array peak exercises the leftward-expansion branch and the
-        neighbour tie-break. From peak 10 at index 2: the window first steps left
-        (neighbour 5 > 3), then right (3 > 1), spanning indices 1..3 -> min(5, 3)."""
+        neighbour tie-break. From peak 10 at index 2 the window first steps left
+        (neighbour 5 > 3) -> indices 1..2 -> min(5, 10); for four samples it
+        then steps right twice (3 > 1, 2 > 1) -> indices 1..4 -> min(5, 2)."""
         time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
         data = np.array([1.0, 5.0, 10.0, 3.0, 2.0])
-        assert _find_max_thresh(time, data, minimum_duration=0.015) == 3.0
-        assert _find_max_thresh(time, data, minimum_duration=0.035) == 1.0
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 5.0
+        assert _find_max_thresh(time, data, minimum_duration=0.035) == 2.0
 
     def test_peak_at_last_index_expands_left(self):
         """Peak at the last index forces leftward-only expansion."""
         time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
         data = np.array([2.0, 4.0, 6.0, 8.0, 10.0])
-        assert _find_max_thresh(time, data, minimum_duration=0.015) == 6.0
-        assert _find_max_thresh(time, data, minimum_duration=0.035) == 2.0
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 8.0
+        assert _find_max_thresh(time, data, minimum_duration=0.035) == 4.0
 
     def test_all_equal_data(self):
         """A flat plateau returns the (shared) value."""
@@ -2025,19 +2537,18 @@ class TestFindMaxThresh:
         assert _find_max_thresh(time, data, minimum_duration=0.015) == 5.0
 
     def test_two_sample_event_long_enough(self):
-        """A two-sample event already spanning minimum_duration needs no expansion
-        and returns the min of its endpoints."""
+        """With 20 ms samples, one sample already sustains 15 ms
+        (round(0.75) = 1), so the peak itself is returned."""
         time = np.array([0.0, 0.02])
         data = np.array([10.0, 0.0])
-        assert _find_max_thresh(time, data, minimum_duration=0.015) == 0.0
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 10.0
 
     def test_exact_minimum_duration_does_not_expand_further(self):
-        """Rounding at the duration boundary must not include a lower next sample."""
+        """20 ms at 1000 Hz is exactly 20 samples; the window must not take a
+        21st, lower sample because of timestamp round-off."""
         time = np.arange(200, 222) / 1000
         data = np.arange(22.0, 0.0, -1.0)
-        # The window [0.200, 0.220] meets the detector's 20 ms duration rule,
-        # although subtracting its endpoints gives 0.01999999999999999.
-        assert _find_max_thresh(time, data, minimum_duration=0.02) == 2.0
+        assert _find_max_thresh(time, data, minimum_duration=0.02) == 3.0
 
     def test_short_event_returns_nan(self):
         """An event shorter than minimum_duration cannot sustain the threshold, so
@@ -2047,9 +2558,41 @@ class TestFindMaxThresh:
         assert np.isnan(_find_max_thresh(time, data, minimum_duration=0.015))
 
     def test_single_sample_event_returns_nan(self):
-        """A one-sample event cannot sustain any duration -> nan (no out-of-bounds)."""
+        """A one-sample event has no measurable interval, so no positive
+        duration is sustained -> nan (no out-of-bounds)."""
         time = np.array([1.0])
         data = np.array([7.0])
+        assert np.isnan(_find_max_thresh(time, data, minimum_duration=0.015))
+
+
+class TestSampleCountDurationConvention:
+    """Detectors and max_thresh count samples for the minimum duration."""
+
+    def test_kay_accepts_a_run_of_round_minimum_samples(self):
+        fs = 1500
+        n = fs * 10
+        time = np.arange(n) / fs
+        rng = np.random.default_rng(0)
+        lfps = rng.normal(0.0, 1.0, (n, 2))
+        t = np.arange(n) / fs
+        burst = np.sin(2 * np.pi * 200.0 * t)
+        # make exactly 23 consecutive samples (round(0.015 * 1500)) loud
+        lfps[5000:5023] += 30.0 * burst[5000:5023, np.newaxis]
+        events = Kay_ripple_detector(time, lfps, np.full(n, 2.0), fs, minimum_duration=0.015)
+        assert len(events) >= 1
+        assert any((events.start_time <= time[5000]) & (events.end_time >= time[5022]))
+
+    @pytest.mark.parametrize("offset", [0.0, 1000.0])
+    def test_max_thresh_is_finite_for_an_event_of_exactly_minimum_samples(self, offset):
+        fs = 1000
+        time = offset + np.arange(15) / fs  # 15 samples = 15 ms at 1000 Hz
+        data = np.linspace(2.0, 3.0, 15)
+        assert np.isfinite(_find_max_thresh(time, data, minimum_duration=0.015))
+
+    def test_max_thresh_is_nan_below_minimum_samples(self):
+        fs = 1000
+        time = np.arange(14) / fs
+        data = np.linspace(2.0, 3.0, 14)
         assert np.isnan(_find_max_thresh(time, data, minimum_duration=0.015))
 
 

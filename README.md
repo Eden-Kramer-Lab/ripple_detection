@@ -17,6 +17,8 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
   - `Roumis_ripple_detector` - Alternative detection method
   - `Yu_ripple_detector` - Median consensus with a data-driven noise-percentile threshold (Yu et al. 2017)
   - `Carey_candidate_detector` - Joint ripple-power x multiunit candidate events (Carey, Tank & van der Meer 2019); takes LFP and spikes
+  - `Zugaro_ripple_detector` - The FMAToolbox/buzcode `FindRipples` two-threshold algorithm (Hirase; Zugaro)
+  - `Long_sharp_wave_ripple_detector` - Two-channel detector using the sharp wave on a stratum radiatum channel (J. D. Long II, buzcode `bz_DetectSWR`); takes **raw** LFP
   - `multiunit_HSE_detector` - High Synchrony Event detection from multiunit activity
 
 - **Comprehensive Event Statistics**
@@ -33,7 +35,8 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
 
 - **Simulation Tools**
   - Generate synthetic LFPs with embedded ripples
-  - Multiple noise types (white, pink, brown)
+  - Ripple size set relative to the ripple-band background (`ripple_snr`), which is what the detectors see
+  - Per-ripple frequency and duration drawn from ranges; multiple noise types (white, pink, brown)
   - Useful for testing and validation
 
 ## Installation
@@ -77,14 +80,14 @@ from ripple_detection import Kay_ripple_detector, filter_ripple_band
 import numpy as np
 
 # Your data (replace the random arrays with real recordings)
-sampling_frequency = 1500  # Hz (the built-in filter needs >= 1200 Hz)
+sampling_frequency = 1500  # Hz; pass your true rate to filter_ripple_band
 time = np.arange(0, 10, 1 / sampling_frequency)  # 10 seconds
 LFPs = np.random.randn(len(time), 4)  # 4 channels of raw LFP data
 speed = np.abs(np.random.randn(len(time)))  # Animal speed (cm/s)
 
 # Filter into the ripple band (150-250 Hz) first: the detectors expect
 # ripple-band-filtered LFPs, not raw signal.
-filtered_lfps = filter_ripple_band(LFPs)
+filtered_lfps = filter_ripple_band(LFPs, sampling_frequency=sampling_frequency)
 
 # Detect ripples
 ripple_times = Kay_ripple_detector(
@@ -161,6 +164,32 @@ All detectors return a pandas DataFrame with comprehensive event statistics:
 
 ## Examples
 
+### Simulating realistic ripples
+
+`simulate_LFP`'s default brown noise leaves very little power in the 150-250 Hz band (and
+less the longer the record), so a ripple of any visible amplitude dominates the band. For
+detector testing, set the ripple size relative to the ripple-band background with
+`ripple_snr` and use pink noise, which gives a band background closer to recordings:
+
+```python
+from ripple_detection.simulate import simulate_LFP, simulate_time
+
+time = simulate_time(15000, 1500)
+lfp = simulate_LFP(
+    time, [2.0, 5.0, 8.0],
+    noise_type="pink",
+    ripple_snr=5,                  # ripple peak = 5 x ripple-band noise SD
+    ripple_frequency=(150, 250),   # drawn per ripple
+    ripple_duration=(0.04, 0.12),  # drawn per ripple, seconds
+    random_state=0,
+)
+```
+
+`ripple_snr` is the ripple's peak after ripple-band filtering divided by the filtered
+noise's SD, set per ripple so it holds at the band edges and for short bursts. The
+z-score a detector reports is larger, by a factor that depends on its smoothing and
+consensus rule; measure it for the detector you use rather than assuming a mapping.
+
 See the [examples](examples/) directory for Jupyter notebooks demonstrating:
 
 - [Detection Examples](examples/detection_examples.ipynb) - Using different detectors
@@ -194,15 +223,17 @@ print(f"time: {len(time)}, LFPs: {len(lfps)}, speed: {len(speed)}")
 
 Make sure all arrays cover the same time period and sampling rate.
 
-#### "Sampling frequency is too low for the pre-computed filter"
+#### "Sampling frequency ... cannot represent the 150-250 Hz ripple band"
 
-The built-in `filter_ripple_band()` function uses a pre-computed filter designed for 1500 Hz sampling. For other sampling rates, generate a custom filter:
+`filter_ripple_band(data, sampling_frequency=...)` uses the pre-computed 1500 Hz
+kernel at 1500 Hz and designs a 150-250 Hz filter for any other rate, so pass the
+true sampling rate. Rates at or below 550 Hz cannot hold the band and raise. To
+build the filter yourself:
 
 ```python
 from ripple_detection import ripple_bandpass_filter
 from scipy.signal import filtfilt
 
-# Generate custom filter for your sampling rate
 filter_num, filter_denom = ripple_bandpass_filter(sampling_frequency)
 filtered_lfps = filtfilt(filter_num, filter_denom, raw_lfps, axis=0)
 ```
@@ -235,6 +266,7 @@ ripples = Kay_ripple_detector(
 | `zscore_threshold` | 2.0 (Kay/Roumis)<br>3.0 (Karlsson) | Detection sensitivity | Decrease for more detections; increase for fewer, higher-confidence events |
 | `smoothing_sigma` | 0.004 s | Gaussian smoothing window (4 ms) | Rarely needs adjustment; increase for noisier data |
 | `percentile` | 99.99 (Yu) | Percentile of the mirrored immobility-noise distribution used as the threshold | Lower for more detections; the threshold is estimated per call, so it adapts to each recording |
+| `low_threshold`, `high_threshold` | 2.0, 5.0 (Zugaro) | Boundary and peak thresholds of the two-threshold rule | Lower `high_threshold` for more detections; `low_threshold` sets where events start and end |
 
 ### Getting Help
 
@@ -299,17 +331,17 @@ pytest --cov=ripple_detection --cov-report=html tests/
 ### Code Quality
 
 ```bash
-# Format code with black
-black ripple_detection/ tests/
+# Format code with ruff
+ruff format ripple_detection/ tests/
 
-# Lint code with ruff (modern, fast linter)
+# Lint code with ruff
 ruff check ripple_detection/ tests/
 
 # Type check with mypy
 mypy ripple_detection/
 
 # Check formatting without modifying
-black --check ripple_detection/ tests/
+ruff format --check ripple_detection/ tests/
 ```
 
 ### Release Process
@@ -319,7 +351,7 @@ Releases are automated via GitHub Actions when a version tag is pushed:
 ```bash
 # 1. Ensure all tests pass and code quality checks pass
 pytest --cov=ripple_detection tests/
-black --check ripple_detection/ tests/
+ruff format --check ripple_detection/ tests/
 ruff check ripple_detection/ tests/
 mypy ripple_detection/
 

@@ -1,5 +1,6 @@
 """Simulation tools for generating synthetic LFP data with embedded ripples."""
 
+from collections.abc import Sequence
 from typing import Literal
 
 import numpy as np
@@ -192,20 +193,43 @@ NOISE_FUNCTION = {
 }
 
 
+def _draw_per_ripple(
+    value: float | Sequence[float] | NDArray, n_ripples: int, state: np.random.RandomState
+) -> NDArray:
+    """A scalar repeated per ripple, or one uniform draw per ripple from a range.
+
+    A scalar consumes no randomness; a two-element ``(low, high)`` sequence
+    draws ``n_ripples`` values from ``state``.
+    """
+    values = np.asarray(value, dtype=float)
+    if values.ndim == 0:
+        return np.full(n_ripples, float(values))
+    if values.shape != (2,):
+        raise ValueError(f"A range must have exactly two elements (low, high), got {value}.")
+    low, high = values
+    if not low <= high:
+        raise ValueError(f"Range must be (low, high) with low <= high, got {value}.")
+    return state.uniform(low, high, size=n_ripples)
+
+
 def simulate_LFP(
     time: NDArray,
     ripple_times: float | list[float],
-    ripple_amplitude: float = 2,
-    ripple_duration: float = 0.100,
+    ripple_amplitude: float | None = None,
+    ripple_duration: float | tuple[float, float] = 0.100,
     noise_type: Literal["white", "pink", "brown"] = "brown",
     noise_amplitude: float = 1.3,
     random_state: int | np.random.RandomState | None = None,
+    *,
+    ripple_snr: float | None = None,
+    ripple_frequency: float | tuple[float, float] = RIPPLE_FREQUENCY,
+    sampling_frequency: float | None = None,
 ) -> NDArray:
     """Simulate local field potential with embedded ripple oscillations.
 
-    Generates a synthetic LFP signal containing ripple events (200 Hz sinusoids)
-    embedded in colored noise. Ripples are amplitude-modulated by a Gaussian
-    envelope.
+    Generates a synthetic LFP signal containing ripple events (sinusoids at
+    ``ripple_frequency``) embedded in colored noise. Ripples are amplitude-
+    modulated by a Gaussian envelope.
 
     Parameters
     ----------
@@ -214,31 +238,66 @@ def simulate_LFP(
     ripple_times : float or list of float
         Center time(s) of ripple event(s) in seconds.
     ripple_amplitude : float, optional
-        Peak amplitude of ripple oscillation in **arbitrary units**. Default is 2.
-        For realistic LFPs, scale to match your recording system (typically µV or mV).
-        The ratio to noise_amplitude matters more than absolute values.
-    ripple_duration : float, optional
-        Approximate duration in **seconds** of ripple event, defined as 6 standard
-        deviations of the Gaussian envelope. Default is 0.100 (100 ms).
+        Peak-to-peak amplitude of the ripple oscillation in the signal's units
+        (the peak is half this). Default is 2 when ``ripple_snr`` is not
+        given. Cannot be combined with ``ripple_snr``.
+    ripple_duration : float or (float, float), optional
+        Approximate duration in **seconds** of a ripple event, defined as 6
+        standard deviations of its Gaussian envelope. A ``(low, high)`` pair
+        draws one duration per ripple uniformly from that range. Default is
+        0.100 (100 ms).
     noise_type : {'white', 'pink', 'brown'}, optional
-        Type of background noise. Default is 'brown' (most realistic for LFP).
+        Type of background noise. Default is 'brown'. Brown (1/f²) noise
+        leaves very little power in the 150-250 Hz band, and the fraction
+        falls further as the record lengthens (it is a random walk), so
+        ripples of any visible size dominate the band; 'pink' gives a
+        ripple-band background closer to recordings. See Notes.
     noise_amplitude : float, optional
-        Amplitude of background noise in **arbitrary units**. Default is 1.3.
-        A ratio of ripple_amplitude/noise_amplitude ≈ 1.5 provides realistic
-        signal-to-noise ratio for ripple detection.
+        Amplitude of background noise in the signal's units. Default is 1.3.
     random_state : int or np.random.RandomState, optional
-        Seed or random state for the background noise, enabling reproducible
-        signals. An ``int`` is used to seed a new ``RandomState``. Default is
-        None (nondeterministic noise from a fresh ``RandomState``).
+        Seed or random state. The noise is drawn first, then per-ripple
+        frequencies, then per-ripple durations; a scalar consumes no
+        randomness. So a given seed produces the same noise whatever the
+        ripple parameters, but giving a frequency range changes the duration
+        draws. Default is None (nondeterministic).
+    ripple_snr : float, optional
+        Ripple size relative to the **ripple-band** background: the peak
+        amplitude of each ripple after ``filter_ripple_band``, divided by the
+        standard deviation of the filtered noise. Each ripple's amplitude is
+        set from its own filtered peak, so the ratio holds at the band edges
+        and for short bursts, where the filter attenuates. Requires
+        ``noise_amplitude > 0`` and enough samples for ``filter_ripple_band``
+        (three times its kernel length). Cannot be combined with
+        ``ripple_amplitude``. Default is None.
+    ripple_frequency : float or (float, float), optional
+        Ripple oscillation frequency in Hz, or a ``(low, high)`` range drawn
+        uniformly per ripple. Default is 200.
+    sampling_frequency : float, optional
+        Sampling rate in Hz, used only with ``ripple_snr`` to filter the noise.
+        Default is None, which takes it from the median step of ``time``.
 
     Returns
     -------
     lfp : ndarray, shape (n_time,)
         Simulated LFP signal with embedded ripples.
 
+    Raises
+    ------
+    ValueError
+        If both ``ripple_amplitude`` and ``ripple_snr`` are given, if
+        ``ripple_snr`` is given with ``noise_amplitude = 0``, or if a range
+        is not a two-element ordered sequence.
+
     Notes
     -----
-    Ripple frequency is fixed at 200 Hz (RIPPLE_FREQUENCY constant).
+    ``ripple_snr`` is defined on the filtered signal, not on the z-scored
+    envelope or consensus trace a detector thresholds. Those are smoothed,
+    which lowers the background's spread more than a ripple's peak, so the
+    z-score a detector sees is larger than ``ripple_snr`` by a factor that
+    depends on the detector's smoothing and consensus rule and on how much of
+    the record the ripples occupy. Measure it for the detector in use rather
+    than assuming a fixed mapping.
+
     The Gaussian envelope has sigma = ripple_duration / 6, so the ripple
     amplitude decays to ~1% at +/-3*sigma from the center.
 
@@ -247,19 +306,55 @@ def simulate_LFP(
     >>> time = simulate_time(3000, 1000)  # 3 seconds at 1000 Hz
     >>> lfp = simulate_LFP(time, [1.0, 2.0], noise_type='brown')
 
+    Ripples five times the ripple-band background, varying in frequency and
+    duration, on a pink-noise background:
+
+    >>> time = simulate_time(15000, 1500)
+    >>> lfp = simulate_LFP(
+    ...     time, [2.0, 5.0, 8.0], noise_type='pink', ripple_snr=5,
+    ...     ripple_frequency=(150, 250), ripple_duration=(0.04, 0.12), random_state=0,
+    ... )
+
     """
+    if ripple_amplitude is not None and ripple_snr is not None:
+        raise ValueError("Give either ripple_amplitude or ripple_snr, not both.")
     if not isinstance(random_state, np.random.RandomState):
         random_state = np.random.RandomState(random_state)
     noise = (noise_amplitude / 2) * NOISE_FUNCTION[noise_type](time.size, state=random_state)
-    ripple_signal = np.sin(2 * np.pi * time * RIPPLE_FREQUENCY)
-    signal = []
 
     if isinstance(ripple_times, (int, float)):
         ripple_times = [ripple_times]
+    n_ripples = len(ripple_times)
 
-    for ripple_time in ripple_times:
-        carrier = norm(loc=ripple_time, scale=ripple_duration / 6).pdf(time)
+    if ripple_snr is not None:
+        if noise_amplitude <= 0:
+            raise ValueError("ripple_snr needs a background: noise_amplitude must be > 0.")
+        from ripple_detection.core import filter_ripple_band
+
+        if sampling_frequency is None:
+            sampling_frequency = 1.0 / np.median(np.diff(time))
+        band_noise_sd = filter_ripple_band(noise, sampling_frequency=sampling_frequency).std()
+    elif ripple_amplitude is None:
+        ripple_amplitude = 2.0
+
+    frequencies = _draw_per_ripple(ripple_frequency, n_ripples, random_state)
+    durations = _draw_per_ripple(ripple_duration, n_ripples, random_state)
+
+    signal = []
+    for ripple_time, frequency, duration in zip(
+        ripple_times, frequencies, durations, strict=True
+    ):
+        carrier = norm(loc=ripple_time, scale=duration / 6).pdf(time)
         carrier /= carrier.max()
-        signal.append((ripple_amplitude / 2) * (ripple_signal * carrier))
+        burst = np.sin(2 * np.pi * time * frequency) * carrier  # unit peak
+        if ripple_snr is not None:
+            # scale so that this burst's peak *after the filter* is ripple_snr
+            # background SDs; the filter's gain depends on frequency and duration
+            filtered_peak = np.abs(
+                filter_ripple_band(burst, sampling_frequency=sampling_frequency)
+            ).max()
+            signal.append(ripple_snr * band_noise_sd / filtered_peak * burst)
+        else:
+            signal.append((ripple_amplitude / 2) * burst)
 
     return np.sum(signal, axis=0) + noise

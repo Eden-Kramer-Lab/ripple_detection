@@ -1,5 +1,7 @@
 """Tests for core signal processing and utility functions."""
 
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -9,7 +11,6 @@ from ripple_detection.core import (
     _extend_segment,
     _find_containing_interval,
     _get_ripplefilter_kernel,
-    _get_series_start_end_times,
     estimate_noise_threshold,
     exclude_close_events,
     exclude_movement,
@@ -25,27 +26,6 @@ from ripple_detection.core import (
     segment_boolean_series,
     threshold_by_zscore,
 )
-
-
-@pytest.mark.parametrize(
-    "series, expected_segments",
-    [
-        (pd.Series([False, False, True, True, False]), (np.array([2]), np.array([3]))),
-        (
-            pd.Series([False, False, True, True, False, True, False]),
-            (np.array([2, 5]), np.array([3, 5])),
-        ),
-        (pd.Series([True, True, False, False, False]), (np.array([0]), np.array([1]))),
-        (pd.Series([False, False, True, True, True]), (np.array([2]), np.array([4]))),
-        (pd.Series([True, False, True, True, False]), (np.array([0, 2]), np.array([0, 3]))),
-    ],
-)
-def test_get_series_start_end_times(series, expected_segments):
-    tup = _get_series_start_end_times(series)
-    try:
-        assert np.all(tup[0] == expected_segments[0]) & np.all(tup[1] == expected_segments[1])
-    except IndexError:
-        assert tup == expected_segments
 
 
 @pytest.mark.parametrize(
@@ -80,14 +60,48 @@ def test_get_series_start_end_times(series, expected_segments):
     ],
 )
 def test_segment_boolean_series(series, expected_segments):
-    assert np.all(
-        [
-            (np.allclose(expected_start, test_start)) & (np.allclose(expected_end, test_end))
-            for (test_start, test_end), (expected_start, expected_end) in zip(
-                segment_boolean_series(series), expected_segments, strict=False
-            )
-        ]
-    )
+    segments = segment_boolean_series(series)
+    assert len(segments) == len(expected_segments)
+    for (test_start, test_end), (expected_start, expected_end) in zip(
+        segments, expected_segments, strict=True
+    ):
+        assert np.allclose(expected_start, test_start)
+        assert np.allclose(expected_end, test_end)
+
+
+class TestSegmentDurationCountsSamples:
+    """A run qualifies when it holds round(minimum_duration * fs) samples,
+    the lab extractevents convention, independent of timestamp round-off."""
+
+    @staticmethod
+    def _run(sampling_frequency, n_true, start, offset, n_time=100_000):
+        time = offset + np.arange(n_time) / sampling_frequency
+        series = pd.Series(False, index=time)
+        series.iloc[start : start + n_true] = True
+        return series
+
+    @pytest.mark.parametrize("offset", [0.0, 1000.0, 123_456.789])
+    @pytest.mark.parametrize("start", [0, 1, 7, 99_000, 99_984])
+    def test_exact_minimum_at_1000_hz_always_qualifies(self, offset, start):
+        series = self._run(1000, 15, start, offset)  # 15 samples = 15 ms
+        assert len(segment_boolean_series(series, 0.015)) == 1
+
+    def test_one_sample_short_does_not_qualify(self):
+        assert len(segment_boolean_series(self._run(1000, 14, 500, 1000.0), 0.015)) == 0
+
+    @pytest.mark.parametrize(("n_true", "qualifies"), [(22, False), (23, True), (24, True)])
+    def test_half_sample_products_round_half_up(self, n_true, qualifies):
+        # 0.015 s at 1500 Hz is 22.5 samples; extractevents uses round() -> 23
+        series = self._run(1500, n_true, 500, 0.0)
+        assert (len(segment_boolean_series(series, 0.015)) == 1) == qualifies
+
+    def test_gap_spanning_run_is_measured_in_samples_not_span(self):
+        # five samples whose timestamps straddle a one-second hole (as after
+        # NaN rows are dropped) cover 5 samples, not one second
+        time = np.concatenate([np.arange(0, 1.0, 0.001), np.arange(2.0, 3.0, 0.001)])
+        series = pd.Series(False, index=time)
+        series.iloc[998:1003] = True
+        assert len(segment_boolean_series(series, 0.015)) == 0
 
 
 @pytest.mark.parametrize(
@@ -229,6 +243,63 @@ class TestFilterRippleBand:
 
         assert filtered.shape == multi_channel.shape
         assert not np.all(np.isnan(filtered)), "Filtered signal should contain valid data"
+
+
+def _tone_power(x, sampling_frequency, frequency):
+    """Power of `x` at `frequency` from a single DFT bin."""
+    n = len(x)
+    k = round(frequency * n / sampling_frequency)
+    return np.abs(np.fft.rfft(x)[k]) ** 2
+
+
+class TestFilterRippleBandSamplingRate:
+    """The ripple band must be 150-250 Hz in hertz at every sampling rate."""
+
+    @staticmethod
+    def _tones(sampling_frequency, in_band=200.0, out_of_band=320.0, seconds=4.0):
+        t = np.arange(int(seconds * sampling_frequency)) / sampling_frequency
+        return t, np.sin(2 * np.pi * in_band * t) + np.sin(2 * np.pi * out_of_band * t)
+
+    @pytest.mark.parametrize(
+        ("sampling_frequency", "out_of_band"),
+        [(2000, 320.0), (3000, 400.0), (1000, 120.0), (1250, 290.0)],
+    )
+    def test_out_of_band_tone_is_attenuated(self, sampling_frequency, out_of_band):
+        # 320 Hz at 2000 Hz and 120 Hz at 1000 Hz fall *inside* the passband of
+        # the shipped 1500 Hz kernel when it is applied at the wrong rate
+        _, x = self._tones(sampling_frequency, out_of_band=out_of_band)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            y = filter_ripple_band(x, sampling_frequency=sampling_frequency)
+        in_gain = _tone_power(y, sampling_frequency, 200.0) / _tone_power(
+            x, sampling_frequency, 200.0
+        )
+        out_gain = _tone_power(y, sampling_frequency, out_of_band) / _tone_power(
+            x, sampling_frequency, out_of_band
+        )
+        assert in_gain > 0.5  # passband
+        assert 10 * np.log10(out_gain / in_gain) < -30  # at least 30 dB down
+
+    def test_1500_hz_matches_the_shipped_kernel(self):
+        _, x = self._tones(1500)
+        np.testing.assert_allclose(
+            filter_ripple_band(x, sampling_frequency=1500),
+            filter_ripple_band(x),
+            rtol=0,
+            atol=0,
+        )
+
+    def test_rate_too_low_for_the_band_raises(self):
+        _, x = self._tones(500, out_of_band=100.0)
+        with pytest.raises(ValueError, match="Nyquist"):
+            filter_ripple_band(x, sampling_frequency=500)
+
+    def test_nan_rows_are_preserved(self):
+        _, x = self._tones(2000)
+        x[100:150] = np.nan
+        y = filter_ripple_band(x, sampling_frequency=2000)
+        assert np.all(np.isnan(y[100:150]))
+        assert np.all(np.isfinite(np.delete(y, np.arange(100, 150))))
 
 
 class TestGetEnvelope:
