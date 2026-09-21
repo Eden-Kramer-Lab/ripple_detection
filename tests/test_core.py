@@ -5,6 +5,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import pytest
+from scipy.signal import freqz
 from scipy.stats import zscore
 
 from ripple_detection.core import (
@@ -1314,3 +1315,79 @@ class TestMergeCloseEvents:
         """A negative gap threshold is meaningless."""
         with pytest.raises(ValueError, match="close_event_threshold"):
             merge_close_events(np.array([(0.0, 0.1)]), -1.0)
+
+
+class TestCustomFrequencyBand:
+    """The band is a parameter: 13 of the 29 surveyed papers do not use 150-250 Hz."""
+
+    FS = 2000.0
+
+    def test_default_band_is_unchanged(self):
+        """Omitting the band designs the same filter as before."""
+        default, _ = ripple_bandpass_filter(self.FS)
+        explicit, _ = ripple_bandpass_filter(self.FS, band=(150.0, 250.0))
+
+        np.testing.assert_allclose(default, explicit)
+
+    def test_a_custom_band_passes_its_own_frequencies(self):
+        """An 80-250 Hz design passes 100 Hz, which the default rejects."""
+        wide, _ = ripple_bandpass_filter(self.FS, band=(80.0, 250.0))
+        default, _ = ripple_bandpass_filter(self.FS)
+
+        _, wide_response = freqz(wide, worN=[100.0], fs=self.FS)
+        _, default_response = freqz(default, worN=[100.0], fs=self.FS)
+
+        assert np.abs(wide_response[0]) > 0.9
+        assert np.abs(default_response[0]) < 0.05
+
+    def test_a_custom_band_rejects_outside_frequencies(self):
+        """A 100-200 Hz design stops 250 Hz."""
+        narrow, _ = ripple_bandpass_filter(self.FS, band=(100.0, 200.0))
+
+        _, response = freqz(narrow, worN=[250.0], fs=self.FS)
+
+        assert np.abs(response[0]) < 0.05
+
+    def test_filter_ripple_band_takes_a_band(self):
+        """The band reaches the filtering entry point."""
+        rng = np.random.default_rng(0)
+        signal = np.sin(2 * np.pi * 100.0 * np.arange(4000) / self.FS)
+        signal += 0.01 * rng.normal(size=4000)
+
+        wide = filter_ripple_band(signal, self.FS, band=(80.0, 250.0))
+        default = filter_ripple_band(signal, self.FS)
+
+        assert wide.std() > 0.5
+        assert default.std() < 0.1
+
+    def test_band_needs_a_sampling_frequency(self):
+        """The shipped 1500 Hz kernel cannot be redesigned."""
+        with pytest.raises(ValueError, match="sampling_frequency"):
+            filter_ripple_band(np.zeros(4000), band=(80.0, 250.0))
+
+    def test_band_at_1500_hz_bypasses_the_shipped_kernel(self):
+        """A custom band is designed even at the shipped kernel's rate."""
+        signal = np.sin(2 * np.pi * 100.0 * np.arange(6000) / 1500.0)
+
+        wide = filter_ripple_band(signal, 1500.0, band=(80.0, 250.0))
+
+        assert wide.std() > 0.5
+
+    def test_inverted_band_raises(self):
+        with pytest.raises(ValueError, match="band"):
+            ripple_bandpass_filter(self.FS, band=(250.0, 150.0))
+
+    def test_band_above_nyquist_raises(self):
+        with pytest.raises(ValueError, match="Nyquist"):
+            ripple_bandpass_filter(1000.0, band=(150.0, 480.0))
+
+    def test_band_below_zero_raises(self):
+        with pytest.raises(ValueError, match="band"):
+            ripple_bandpass_filter(self.FS, band=(-10.0, 250.0))
+
+    def test_transition_band_is_adjustable(self):
+        """A narrower transition needs more taps."""
+        wide_transition, _ = ripple_bandpass_filter(self.FS, transition_width=25.0)
+        narrow_transition, _ = ripple_bandpass_filter(self.FS, transition_width=10.0)
+
+        assert len(narrow_transition) > len(wide_transition)

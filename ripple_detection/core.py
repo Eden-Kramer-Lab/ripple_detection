@@ -16,16 +16,30 @@ from scipy.signal import filtfilt, hilbert, remez
 from scipy.stats import median_abs_deviation, zscore
 
 
-def ripple_bandpass_filter(sampling_frequency: float) -> tuple[NDArray, float]:
-    """Generate a bandpass filter for the ripple frequency band (150-250 Hz).
+def ripple_bandpass_filter(
+    sampling_frequency: float,
+    band: tuple[float, float] = (150.0, 250.0),
+    transition_width: float = 25.0,
+) -> tuple[NDArray, float]:
+    """Generate a bandpass filter for a ripple frequency band.
 
     Uses the Remez exchange algorithm to design a finite impulse response (FIR)
-    filter with 101 taps and 25 Hz transition bands.
+    filter. The band defaults to 150-250 Hz with 25 Hz transition bands; both
+    are parameters, since published ripple bands vary.
 
     Parameters
     ----------
     sampling_frequency : float
         Sampling rate of the signal in Hz.
+    band : tuple of (float, float), optional
+        Passband edges in Hz. Default is (150.0, 250.0), the band 16 of the 29
+        papers stating one use in the project's detection-parameter survey.
+        The rest range from 80 to 180 Hz at the lower edge and 200 to 300 Hz
+        at the upper.
+    transition_width : float, optional
+        Width in Hz of the transition on each side of the passband. Default is
+        25.0. A narrower transition needs more taps, and therefore a longer
+        signal to filter.
 
     Returns
     -------
@@ -43,23 +57,38 @@ def ripple_bandpass_filter(sampling_frequency: float) -> tuple[NDArray, float]:
     is about 0.004 at rates from 600 Hz to 30 kHz.
 
     """
-    nyquist = 0.5 * sampling_frequency
-    TRANSITION_BAND = 25.0
-    RIPPLE_BAND = (150.0, 250.0)
     STOPBAND_ATTENUATION_DB = 45.0
     MINIMUM_NUMTAPS = 101
+
+    low, high = float(band[0]), float(band[1])
+    nyquist = 0.5 * sampling_frequency
+    if transition_width <= 0:
+        raise ValueError(f"transition_width must be positive, got {transition_width} Hz.")
+    if low >= high:
+        raise ValueError(f"band must be (low, high) with low < high, got {band} Hz.")
+    if low - transition_width <= 0:
+        raise ValueError(
+            f"band lower edge {low} Hz leaves no room for a {transition_width} Hz "
+            "transition above 0 Hz. Raise the edge or narrow the transition."
+        )
+    if high + transition_width >= nyquist:
+        raise ValueError(
+            f"band upper edge {high} Hz plus a {transition_width} Hz transition reaches "
+            f"the Nyquist frequency {nyquist} Hz of a {sampling_frequency} Hz signal."
+        )
+
     # Kaiser's estimate: the tap count needed for a given attenuation grows as
     # the transition band narrows relative to the sampling rate. A fixed count
     # would meet the specification at one rate only.
-    transition = 2.0 * np.pi * TRANSITION_BAND / sampling_frequency
+    transition = 2.0 * np.pi * transition_width / sampling_frequency
     numtaps = int(np.ceil((STOPBAND_ATTENUATION_DB - 8.0) / (2.285 * transition)))
     numtaps = max(MINIMUM_NUMTAPS, numtaps + 1 - numtaps % 2)
     desired = [
         0,
-        RIPPLE_BAND[0] - TRANSITION_BAND,
-        RIPPLE_BAND[0],
-        RIPPLE_BAND[1],
-        RIPPLE_BAND[1] + TRANSITION_BAND,
+        low - transition_width,
+        low,
+        high,
+        high + transition_width,
         nyquist,
     ]
     return remez(numtaps, desired, [0, 1, 0], fs=sampling_frequency), 1.0
@@ -188,14 +217,21 @@ def segment_boolean_series(
     return [(index[start], index[stop - 1]) for start, stop in bounds]
 
 
-def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None) -> NDArray:
-    """Bandpass filter signal(s) to the ripple band (150-250 Hz).
+def filter_ripple_band(
+    data: ArrayLike,
+    sampling_frequency: float | None = None,
+    band: tuple[float, float] | None = None,
+    transition_width: float = 25.0,
+) -> NDArray:
+    """Bandpass filter signal(s) to the ripple band, 150-250 Hz by default.
 
     At 1500 Hz (or when no rate is given) the pre-computed 318-tap FIR kernel
-    shipped with the package is used. At any other rate a 101-tap FIR is
-    designed for that rate with ``ripple_bandpass_filter``, so the passband is
-    150-250 Hz in hertz regardless of the sampling rate. The filter is applied
-    forward and backward (``filtfilt``) for zero phase distortion.
+    shipped with the package is used. At any other rate an FIR is designed for
+    that rate with ``ripple_bandpass_filter``, so the passband is the same in
+    hertz regardless of the sampling rate. Passing `band` designs the filter
+    at any rate, including 1500 Hz, since the shipped kernel is fixed. The
+    filter is applied forward and backward (``filtfilt``) for zero phase
+    distortion.
 
     NaN samples are removed before filtering and restored at their original
     positions afterwards; the samples on either side of a NaN run are
@@ -208,7 +244,13 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
     sampling_frequency : float, optional
         Sampling rate of the input data in Hz. Default is None, which assumes
         1500 Hz and uses the shipped kernel.
-
+    band : tuple of (float, float), optional
+        Passband edges in Hz. Default is None, which uses the 150-250 Hz
+        design. A custom band needs `sampling_frequency`, because the shipped
+        kernel is fixed.
+    transition_width : float, optional
+        Width in Hz of the transition on each side of a custom band. Default
+        is 25.0. Ignored unless `band` is given.
     Returns
     -------
     filtered_data : ndarray, shape (n_time,) or (n_time, n_channels)
@@ -238,7 +280,18 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
     SHIPPED_KERNEL_SAMPLING_FREQUENCY = 1500.0
     MINIMUM_NYQUIST = 250.0 + 25.0  # upper band edge plus the transition band
 
-    if sampling_frequency is None or np.isclose(
+    if band is not None and sampling_frequency is None:
+        raise ValueError(
+            "A custom band needs a sampling_frequency: the shipped kernel is a fixed "
+            "150-250 Hz design for 1500 Hz data and cannot be retuned."
+        )
+    if band is not None:
+        filter_numerator, filter_denominator = ripple_bandpass_filter(
+            sampling_frequency,  # type: ignore[arg-type]
+            band=band,
+            transition_width=transition_width,
+        )
+    elif sampling_frequency is None or np.isclose(
         sampling_frequency, SHIPPED_KERNEL_SAMPLING_FREQUENCY
     ):
         filter_numerator, filter_denominator = _get_ripplefilter_kernel()
