@@ -23,6 +23,7 @@ from ripple_detection.core import (
     normalize_signal,
     normalize_signal_manually,
     ripple_bandpass_filter,
+    sample_count_within,
     segment_boolean_series,
     threshold_by_zscore,
 )
@@ -1061,3 +1062,22 @@ class TestEstimateNoiseThreshold:
         values = rng.normal(-1.0, 0.5, 500)
         with pytest.raises(ValueError, match="samples"):
             estimate_noise_threshold(values)
+
+
+class TestSampleCountWithin:
+    """One rule for every duration limit: round-half-up sample counts, inclusive."""
+
+    def test_minimum_is_inclusive_and_rounds_half_up(self):
+        time = np.arange(100) / 1000.0  # 0.0205 s is 20.5 samples -> 21
+        ok = sample_count_within(np.array([20, 21, 22]), time, 0.0205)
+        np.testing.assert_array_equal(ok, [False, True, True])
+
+    def test_maximum_is_inclusive(self):
+        time = np.arange(100) / 1000.0  # 0.0305 s -> 31
+        ok = sample_count_within(np.array([21, 31, 32]), time, 0.0205, 0.0305)
+        np.testing.assert_array_equal(ok, [True, True, False])
+
+    def test_scalar_input_gives_a_bool(self):
+        time = np.arange(100) / 1000.0
+        assert sample_count_within(21, time, 0.0205) is True
+        assert sample_count_within(20, time, 0.0205) is False

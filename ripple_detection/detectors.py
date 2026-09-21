@@ -23,6 +23,7 @@ from ripple_detection.core import (
     minimum_sample_count,
     normalize_signal,
     normalize_signal_manually,
+    sample_count_within,
     threshold_by_zscore,
 )
 
@@ -615,7 +616,7 @@ def Shvartsman_ripple_detector(
         Only used when ``manual_normalization=False``; ignored otherwise.
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask selecting samples used to compute normalization statistics.
-        For example, use `speed < speed_threshold` to compute statistics only
+        For example, use `speed <= speed_threshold` to compute statistics only
         during immobility. Cannot be used with `normalization_time_range`. Only
         used when ``manual_normalization=False``. Default is None (use all data).
     normalization_time_range : tuple of (float, float), optional
@@ -852,7 +853,7 @@ def Kay_ripple_detector(
         The median/MAD method is more resistant to extreme values.
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask to specify which samples to use for computing normalization
-        statistics. For example, use `speed < speed_threshold` to compute
+        statistics. For example, use `speed <= speed_threshold` to compute
         statistics only during immobility. Cannot be used with
         `normalization_time_range`. Default is None (use all data).
     normalization_time_range : tuple of (float, float), optional
@@ -985,9 +986,10 @@ def Yu_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Immobility is speed strictly below this value (cm/s); it selects the
-        noise sample for the threshold and, at event boundaries, which events
-        are kept. Default is 4.0.
+        Immobility is speed at or below this value (cm/s), the package's rule
+        (the paper says "below 4 cm/s"; the two differ only at exact equality).
+        It selects the noise sample for the threshold and, at event
+        boundaries, which events are kept. Default is 4.0.
     minimum_duration : float, optional
         Minimum time the consensus must stay at or above the threshold, in
         seconds, applied as a sample count (round-half-up). Default is 0.020.
@@ -1065,12 +1067,12 @@ def Yu_ripple_detector(
         consensus.shape, time, normalization_mask, normalization_time_range
     )
     if noise_mask is None:
-        noise_mask = speed < speed_threshold
+        noise_mask = speed <= speed_threshold
     noise_mask = noise_mask & is_valid
     if not np.any(noise_mask):
         raise ValueError(
             "No valid immobility samples to estimate the noise threshold from "
-            f"(speed < {speed_threshold} cm/s with finite LFP in every channel)."
+            f"(speed <= {speed_threshold} cm/s with finite LFP in every channel)."
         )
 
     noise_values = consensus[noise_mask]
@@ -1179,8 +1181,11 @@ def _two_threshold_events(
        merged span is under ``maximum_duration``.
     3. A candidate is kept only if its maximum is strictly above
        ``high_threshold``.
-    4. Candidates shorter than ``minimum_duration`` or longer than
-       ``maximum_duration`` are dropped (strict comparisons).
+    4. Candidates whose sample count (first to last sample, inclusive) is
+       below ``minimum_duration`` or above ``maximum_duration`` are dropped.
+       The package's duration rule (``sample_count_within``: round-half-up
+       sample counts, inclusive limits) replaces the original's elapsed-time
+       comparison; the two differ by one sample at an exact limit.
 
     Parameters
     ----------
@@ -1235,12 +1240,8 @@ def _two_threshold_events(
         return empty
     events = np.asarray(kept)
     peaks = np.asarray(peaks)
-    duration = time[events[:, 1]] - time[events[:, 0]]
-    # a tolerance so a span that is exactly the limit is not lost to round-off
-    tolerance = 1e-9
-    keep = ~(
-        (duration > maximum_duration + tolerance) | (duration < minimum_duration - tolerance)
-    )
+    n_samples = events[:, 1] - events[:, 0] + 1
+    keep = sample_count_within(n_samples, time, minimum_duration, maximum_duration)
     events, peaks = events[keep], peaks[keep]
     return np.column_stack([time[events[:, 0]], time[events[:, 1]]]), time[peaks]
 
@@ -1544,9 +1545,11 @@ def Long_sharp_wave_ripple_detector(
     minimum_separation : float, optional
         Minimum time from the previous candidate, in seconds. Default 0.050.
     minimum_sharp_wave_duration, maximum_sharp_wave_duration : float, optional
-        Sharp-wave duration limits in seconds. A candidate is rejected when it
-        fails the sharp-wave minimum **and** the ripple minimum, or exceeds
-        the sharp-wave maximum. Defaults 0.020 and 0.500.
+        Sharp-wave duration limits in seconds, applied as inclusive
+        round-half-up sample counts (``sample_count_within``). A candidate is
+        rejected when both its sharp wave and its ripple are below their
+        minimum, or when the sharp wave exceeds the maximum. Defaults 0.020
+        and 0.500.
     minimum_ripple_duration : float, optional
         Ripple duration minimum in seconds. Default 0.025.
     random_state : int or numpy Generator, optional
@@ -1657,9 +1660,6 @@ def Long_sharp_wave_ripple_detector(
     )
     separation = np.diff(np.concatenate([[0.0], candidate_peaks / sampling_frequency]))
 
-    min_sw = int(np.floor(minimum_sharp_wave_duration * sampling_frequency))
-    max_sw = int(np.floor(maximum_sharp_wave_duration * sampling_frequency))
-    min_rp = int(np.floor(minimum_ripple_duration * sampling_frequency))
     sw_boundary, sw_peak = sharp_wave_thresholds
     rp_boundary, rp_peak = ripple_thresholds
 
@@ -1693,9 +1693,21 @@ def Long_sharp_wave_ripple_detector(
         if len(rp_before) == 0 or len(rp_after) == 0:
             continue
         ripple_samples = (rp_peak_local + rp_after[0]) - rp_before[-1]
-        if ripple_samples < min_rp and sharp_wave_samples < min_sw:
+        ripple_long_enough = sample_count_within(ripple_samples, time, minimum_ripple_duration)
+        sharp_wave_long_enough = sample_count_within(
+            sharp_wave_samples, time, minimum_sharp_wave_duration
+        )
+        if not ripple_long_enough and not sharp_wave_long_enough:
             continue
-        if sharp_wave_samples > max_sw:
+        if (
+            not sample_count_within(
+                sharp_wave_samples,
+                time,
+                minimum_sharp_wave_duration,
+                maximum_sharp_wave_duration,
+            )
+            and sharp_wave_long_enough
+        ):
             continue
         records.append(
             {
@@ -1831,10 +1843,10 @@ def Carey_candidate_detector(
       never zero, so a burst without a ripple can be. The joint score is
       therefore closer to "burst, weighted by ripple power" than to a
       symmetric conjunction. Candidates are runs strictly above ``edge_threshold`` whose
-      maximum is strictly above ``peak_threshold``, longer than
-      ``minimum_duration``.
+      maximum is strictly above ``peak_threshold`` and whose sample count
+      meets ``minimum_duration`` under the package's duration rule.
     - **State**: a candidate is kept only if it lies entirely inside a
-      low-speed interval (speed below ``speed_threshold``, runs merged across
+      low-speed interval (speed at or below ``speed_threshold``, runs merged across
       gaps under ``state_merge_gap`` and dropped under
       ``state_minimum_length``) and, when ``theta_lfp`` is given, inside a
       low-theta interval (z-scored theta-band envelope below
@@ -1866,8 +1878,9 @@ def Carey_candidate_detector(
         Boundary and peak thresholds on the z-scored joint score. Defaults 1
         and 3 (the original's ``DetectorThreshold`` and ``DetectorThreshold2``).
     minimum_duration : float, optional
-        Candidates must be longer than this, in seconds (strict, as the
-        original's ``RemoveIV``). Default 0.020.
+        Minimum candidate duration in seconds, applied as an inclusive
+        round-half-up sample count (``sample_count_within``); the original's
+        ``RemoveIV`` compared elapsed time strictly. Default 0.020.
     minimum_active_units : int, optional
         Minimum number of units with a spike inside the candidate. Default 5.
     ripple_smoothing_sigma, spike_kernel_sigma, baseline_sigma : float, optional
@@ -1961,13 +1974,13 @@ def Carey_candidate_detector(
             candidates.append((start, stop - 1))
     candidates = np.asarray(candidates, dtype=int).reshape(-1, 2)
     if len(candidates):
-        duration = time[candidates[:, 1]] - time[candidates[:, 0]]
-        candidates = candidates[duration > minimum_duration]  # RemoveIV: strict
+        n_samples = candidates[:, 1] - candidates[:, 0] + 1
+        candidates = candidates[sample_count_within(n_samples, time, minimum_duration)]
 
     # state restriction: contained in a low-speed (and low-theta) interval
     if len(candidates):
         low_speed = _state_intervals(
-            speed < speed_threshold, time, state_merge_gap, state_minimum_length
+            speed <= speed_threshold, time, state_merge_gap, state_minimum_length
         )
         candidates = candidates[_contained_in_intervals(candidates, low_speed)]
     if len(candidates) and theta_lfp is not None:
@@ -2074,7 +2087,7 @@ def Karlsson_ripple_detector(
         The median/MAD method is more resistant to extreme values.
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask to specify which samples to use for computing normalization
-        statistics. For example, use `speed < speed_threshold` to compute
+        statistics. For example, use `speed <= speed_threshold` to compute
         statistics only during immobility. Cannot be used with
         `normalization_time_range`. Default is None (use all data).
     normalization_time_range : tuple of (float, float), optional
@@ -2218,7 +2231,7 @@ def Roumis_ripple_detector(
         The median/MAD method is more resistant to extreme values.
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask to specify which samples to use for computing normalization
-        statistics. For example, use `speed < speed_threshold` to compute
+        statistics. For example, use `speed <= speed_threshold` to compute
         statistics only during immobility. Cannot be used with
         `normalization_time_range`. Default is None (use all data).
     normalization_time_range : tuple of (float, float), optional
@@ -2317,7 +2330,7 @@ def multiunit_HSE_detector(
     above the mean whose *peak* exceeds 3 s.d., with statistics from stopped
     periods only and no sustained-duration requirement. To approximate that
     convention, pass ``zscore_threshold=3.0``, ``minimum_duration=0.0`` and
-    ``normalization_mask=speed < speed_threshold``; the default 2 s.d. for
+    ``normalization_mask=speed <= speed_threshold``; the default 2 s.d. for
     15 ms with statistics over all samples is this package's own convention.
 
     Parameters
@@ -2375,7 +2388,7 @@ def multiunit_HSE_detector(
         The median/MAD method is more resistant to extreme values.
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask to specify which samples to use for computing normalization
-        statistics. For example, use `speed < speed_threshold` to compute
+        statistics. For example, use `speed <= speed_threshold` to compute
         statistics only during immobility. Cannot be used with
         `normalization_time_range` or `use_speed_threshold_for_zscore`.
         Default is None (use all data).
@@ -2444,13 +2457,13 @@ def multiunit_HSE_detector(
 
         warnings.warn(
             "The 'use_speed_threshold_for_zscore' parameter is deprecated. "
-            "Use 'normalization_mask=speed < speed_threshold' instead.",
+            "Use 'normalization_mask=speed <= speed_threshold' instead.",
             DeprecationWarning,
             stacklevel=2,
         )
         # If old parameter is used, override normalization_mask unless explicitly set
         if normalization_mask is None and normalization_time_range is None:
-            normalization_mask = speed < speed_threshold
+            normalization_mask = speed <= speed_threshold
 
     firing_rate = normalize_signal(
         firing_rate,

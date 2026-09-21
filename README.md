@@ -273,7 +273,7 @@ ripples = Kay_ripple_detector(
 | Parameter | Default | Description | When to Adjust |
 |-----------|---------|-------------|----------------|
 | `speed_threshold` | 4.0 cm/s | Maximum speed for ripple detection | Increase if too many events excluded during slow movement |
-| `minimum_duration` | 0.015 s (Kay, Karlsson, Roumis, Shvartsman, HSE)<br>0.020 s (Yu, Zugaro, Carey) | Minimum event duration: counted in samples from the median timestamp step (Kay, Karlsson, Roumis, Shvartsman, HSE, Yu) or compared as elapsed time (Zugaro inclusive, Carey strict) | Decrease for shorter events; increase for stricter detection; see each detector's docstring for its rule |
+| `minimum_duration` (and every other duration limit) | 0.015 s (Kay, Karlsson, Roumis, Shvartsman, HSE)<br>0.020 s (Yu, Zugaro, Carey) | Converted to a sample count with `minimum_sample_count` (round half up from the median timestamp step); an event qualifies when its sample count is at least the minimum and at most any maximum, both inclusive (`sample_count_within`) | Decrease for shorter events; increase for stricter detection |
 | `zscore_threshold` | 2.0 (Kay, Roumis, HSE)<br>3.0 (Karlsson, Shvartsman) | Detection sensitivity | Decrease for more detections; increase for fewer, higher-confidence events |
 | `smoothing_sigma` | 0.004 s | Gaussian smoothing window (4 ms) | Rarely needs adjustment; increase for noisier data |
 | `percentile` | 99.99 (Yu) | Percentile of the mirrored immobility-noise distribution used as the threshold | Lower for more detections; the threshold is estimated per call, so it adapts to each recording |
@@ -303,10 +303,10 @@ conventions below.
 | `Karlsson_ripple_detector` | same | each channel's z-scored envelope; overlapping per-channel events merged | 3.0 | ≥ 0.015 s | same | same | same | Karlsson & Frank 2009 |
 | `Roumis_ripple_detector` | same | z-scored mean over channels of √(smoothed envelope²), 4 ms | 2.0 | ≥ 0.015 s | same | same | same | Frank-lab variant (D. Roumis), unpublished |
 | `Shvartsman_ripple_detector` | same | per-channel z-scored envelopes; event kept when ≥ `participation_threshold` channels (2) detect it | 3.0 | ≥ 0.015 s | same | same | at least half the event's samples ≤ threshold | lab variant (G. Shvartsman), unpublished |
-| `Yu_ripple_detector` | same | median over channels of each channel's z-scored 4 ms-smoothed envelope | `percentile` 99.99 of the mirrored immobility-noise distribution, estimated per call | ≥ 0.020 s, counted in samples | `close_ripple_threshold` 0.0 | block-wise: nothing smoothed or joined across a gap; clipped events flagged | noise from `speed < threshold`; event endpoints ≤ threshold | Yu et al. 2017 |
+| `Yu_ripple_detector` | same | median over channels of each channel's z-scored 4 ms-smoothed envelope | `percentile` 99.99 of the mirrored immobility-noise distribution, estimated per call | ≥ 0.020 s | `close_ripple_threshold` 0.0 | block-wise: nothing smoothed or joined across a gap; clipped events flagged | noise from `speed <= threshold`; event endpoints ≤ threshold | Yu et al. 2017 |
 | `Zugaro_ripple_detector` | same, channels summed | z-scored smoothed squared signal, two thresholds | `low_threshold` 2.0 (bounds), `high_threshold` 5.0 (peak) | 0.020–0.100 s | `minimum_inter_ripple_interval` 0.030 s, merges | block-wise | endpoints ≤ threshold | FMAToolbox `FindRipples` (Hirase; Zugaro) |
 | `Long_sharp_wave_ripple_detector` | **raw** LFP `(n_time, 2)`: ripple channel, stratum radiatum channel | sharp-wave difference and ripple power, split by k-means with local (±5 s) statistics | `sharp_wave_thresholds`, `ripple_thresholds` (0.5, 2.5) | sharp wave 0.020–0.500 s, ripple ≥ 0.025 s | `minimum_separation` 0.050 s, drops | raises | endpoints ≤ threshold | Long, buzcode/neurocode `DetectSWR` |
-| `Carey_candidate_detector` | ripple-band LFP **and** spikes `(n_time, n_units)` | geometric mean of a ripple-power score and a multiunit score | `edge_threshold` 1.0, `peak_threshold` 3.0; ≥ `minimum_active_units` 5 | > 0.020 s | none | raises | whole event inside a low-speed interval (`speed < threshold`) | Carey, Tank & van der Meer 2019 |
+| `Carey_candidate_detector` | ripple-band LFP **and** spikes `(n_time, n_units)` | geometric mean of a ripple-power score and a multiunit score | `edge_threshold` 1.0, `peak_threshold` 3.0; ≥ `minimum_active_units` 5 | ≥ 0.020 s | none | raises | whole event inside a low-speed interval (`speed <= threshold`) | Carey, Tank & van der Meer 2019 |
 | `multiunit_HSE_detector` | spikes `(n_time, n_units)`, no LFP | z-scored 15 ms-smoothed population rate | `zscore_threshold` 2.0 | ≥ 0.015 s | `close_event_threshold` 0.0 | raises | endpoints ≤ threshold | package convention; Davidson et al. 2009 lineage |
 
 Notes:
@@ -317,8 +317,11 @@ Notes:
 - Every detector normalizes over the whole recording unless `normalization_mask` or
   `normalization_time_range` restricts it (Yu defaults to immobility); the Long and Carey
   detectors do not take these arguments.
-- The defaults reproduce each source's published or lab settings where one exists; they are not
-  harmonized across detectors, so the same recording yields different event counts under
+- Two conventions are the package's, not each source's: every duration limit is an inclusive
+  round-half-up sample count (`sample_count_within`), and immobility is `speed <= speed_threshold`.
+  The gating rule itself (endpoints, majority, interval containment) stays as each source defines it.
+- The other defaults reproduce each source's published or lab settings where one exists; they are
+  not harmonized across detectors, so the same recording yields different event counts under
   different detectors by design.
 
 ## Development

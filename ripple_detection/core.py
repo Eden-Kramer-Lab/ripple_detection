@@ -82,6 +82,43 @@ def minimum_sample_count(time: ArrayLike, minimum_duration: float) -> int:
     return max(1, int(np.floor(minimum_duration / sample_interval + 0.5 + 1e-6)))
 
 
+def sample_count_within(
+    n_samples: ArrayLike,
+    time: ArrayLike,
+    minimum_duration: float,
+    maximum_duration: float | None = None,
+) -> NDArray | bool:
+    """Whether an event of ``n_samples`` samples meets the package's duration limits.
+
+    Every detector applies this one rule: a limit in seconds becomes a sample
+    count with ``minimum_sample_count`` (round half up from the median timestamp
+    step), and an event qualifies when its sample count is at least the minimum
+    and, if given, at most the maximum. Both comparisons are inclusive.
+
+    Parameters
+    ----------
+    n_samples : int or array_like of int
+        Number of samples the event spans, first to last inclusive.
+    time : array_like, shape (n_time,)
+        Sample timestamps in seconds.
+    minimum_duration : float
+        Shortest allowed duration in seconds.
+    maximum_duration : float, optional
+        Longest allowed duration in seconds. Default is None (no upper limit).
+
+    Returns
+    -------
+    qualifies : bool or ndarray of bool
+        Same shape as ``n_samples``; a Python bool for a scalar input.
+
+    """
+    counts = np.asarray(n_samples)
+    ok = counts >= minimum_sample_count(time, minimum_duration)
+    if maximum_duration is not None:
+        ok &= counts <= minimum_sample_count(time, maximum_duration)
+    return bool(ok) if counts.ndim == 0 else ok
+
+
 def _boolean_run_bounds(values: NDArray) -> NDArray:
     """Start (inclusive) and stop (exclusive) positions of each run of True."""
     padded = np.concatenate([[False], np.asarray(values, dtype=bool), [False]])

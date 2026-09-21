@@ -1328,6 +1328,12 @@ class TestYuRippleDetector:
     def stationary(self):
         return np.full(self.N_TIME, 2.0)
 
+    def test_speed_at_the_threshold_counts_as_immobile(self, time):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        at_threshold = np.full(self.N_TIME, 4.0)
+        events = Yu_ripple_detector(time, lfps, at_threshold, self.FS)
+        assert len(events) >= 1
+
     def test_recovers_planted_bursts(self, time, stationary):
         bursts = [(5000, 5060, 20.0), (12000, 12080, 20.0)]
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, bursts)
@@ -1530,9 +1536,9 @@ class TestTwoThresholdEvents:
         return z, np.arange(n_time) / self.FS
 
     def test_start_is_the_sample_before_the_low_crossing_and_end_the_last_above(self):
-        z, t = self._trace(500, [(100, 200, 3.0), (140, 160, 6.0)])
+        z, t = self._trace(500, [(100, 190, 3.0), (140, 160, 6.0)])
         events, peaks = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
-        np.testing.assert_allclose(events, [[t[99], t[199]]])
+        np.testing.assert_allclose(events, [[t[99], t[189]]])
         assert peaks[0] == t[140]  # first sample of the peak plateau
 
     def test_peak_must_exceed_high_threshold(self):
@@ -1584,6 +1590,14 @@ class TestTwoThresholdEvents:
         z, t = self._trace(500, [(0, 50, 6.0)])
         events, peaks = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
         assert events.shape == (0, 2) and peaks.shape == (0,)
+
+    def test_duration_limits_are_inclusive_sample_counts(self):
+        # an event spans from the sample before the run to the run's last sample;
+        # 0.0205 s at 1 kHz rounds half up to 21 samples, 0.0305 s to 31
+        for run_length, expected in [(19, 0), (20, 1), (30, 1), (31, 0)]:
+            z, t = self._trace(500, [(100, 100 + run_length, 6.0)])
+            events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.0205, 0.0305)
+            assert len(events) == expected, (run_length, len(events))
 
     def test_empty(self):
         z, t = self._trace(500, [])
@@ -1987,6 +2001,12 @@ class TestCareyCandidateDetector:
         return [
             any((events.start_time <= time[c]) & (events.end_time >= time[c])) for c in centers
         ]
+
+    def test_speed_at_the_threshold_counts_as_immobile(self, time):
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        at_threshold = np.full(self.N_TIME, 4.0)
+        events = Carey_candidate_detector(time, lfps, multiunit, at_threshold, self.FS)
+        assert len(events) >= 1
 
     def test_recovers_events_with_both_ripple_and_burst(self, time, stationary):
         lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)

@@ -15,6 +15,7 @@ from ripple_detection.core import (
     normalize_signal,
     normalize_signal_manually,
     ripple_bandpass_filter,
+    sample_count_within,
 )
 from ripple_detection.detectors import (
     Carey_candidate_detector,
@@ -58,6 +59,7 @@ __all__ = [
     "normalize_signal",
     "normalize_signal_manually",
     "ripple_bandpass_filter",
+    "sample_count_within",
     "simulate_LFP",
     "simulate_time",
 ]
