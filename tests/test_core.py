@@ -14,15 +14,18 @@ from ripple_detection.core import (
     estimate_noise_threshold,
     exclude_close_events,
     exclude_movement,
+    extend_threshold_to_mean,
     filter_ripple_band,
     gaussian_smooth,
     get_envelope,
     get_multiunit_population_firing_rate,
     merge_overlapping_ranges,
     merge_overlapping_ranges_track_participation,
+    nearest_sample_index,
     normalize_signal,
     normalize_signal_manually,
     ripple_bandpass_filter,
+    sample_count_within,
     segment_boolean_series,
     threshold_by_zscore,
 )
@@ -199,10 +202,12 @@ class TestRippleBandpassFilter:
     """Test ripple bandpass filter generation."""
 
     def test_filter_shape(self):
-        """Test that filter has correct shape and generates on supported SciPy."""
-        sampling_frequency = 1500
-        filter_numerator, filter_denominator = ripple_bandpass_filter(sampling_frequency)
-        assert len(filter_numerator) == 101  # ORDER = 101
+        """The tap count is odd and grows with the sampling rate."""
+        low_rate, _ = ripple_bandpass_filter(1500)
+        high_rate, filter_denominator = ripple_bandpass_filter(30000)
+        assert len(low_rate) % 2 == 1 and len(high_rate) % 2 == 1
+        assert len(low_rate) >= 101
+        assert len(high_rate) > len(low_rate)
         assert filter_denominator == 1.0
 
 
@@ -942,7 +947,7 @@ class TestEstimateNoiseThreshold:
     """Transliteration of the Yu et al. 2017 mirrored-histogram threshold."""
 
     def test_recovers_symmetric_percentile_within_two_bins(self):
-        # Gaussian centred below zero so every left-of-mode bin is negative.
+        # Gaussian centered below zero so every left-of-mode bin is negative.
         rng = np.random.default_rng(0)
         mean, sd = -1.0, 0.5
         values = rng.normal(mean, sd, 4_000_000)
@@ -1061,3 +1066,158 @@ class TestEstimateNoiseThreshold:
         values = rng.normal(-1.0, 0.5, 500)
         with pytest.raises(ValueError, match="samples"):
             estimate_noise_threshold(values)
+
+
+class TestSampleCountWithin:
+    """One rule for every duration limit: round-half-up sample counts, inclusive."""
+
+    def test_minimum_is_inclusive_and_rounds_half_up(self):
+        time = np.arange(100) / 1000.0  # 0.0205 s is 20.5 samples -> 21
+        ok = sample_count_within(np.array([20, 21, 22]), time, 0.0205)
+        np.testing.assert_array_equal(ok, [False, True, True])
+
+    def test_maximum_is_inclusive(self):
+        time = np.arange(100) / 1000.0  # 0.0305 s -> 31
+        ok = sample_count_within(np.array([21, 31, 32]), time, 0.0205, 0.0305)
+        np.testing.assert_array_equal(ok, [True, True, False])
+
+    def test_scalar_input_gives_a_bool(self):
+        time = np.arange(100) / 1000.0
+        assert sample_count_within(21, time, 0.0205) is True
+        assert sample_count_within(20, time, 0.0205) is False
+
+
+class TestExcludeMovementEventLookup:
+    """Speed must be read per event, not by matching timestamp values."""
+
+    @staticmethod
+    def _speed_with_movement_at(time, movement_times):
+        speed = np.full(len(time), 2.0)
+        for t in movement_times:
+            speed[np.argmin(np.abs(time - t))] = 20.0
+        return speed
+
+    def test_nested_events_keep_the_right_one(self):
+        time = np.arange(0, 6, 0.01)
+        speed = self._speed_with_movement_at(time, [5.0])
+        kept = exclude_movement(np.array([[1.0, 5.0], [2.0, 3.0]]), speed, time)
+        np.testing.assert_allclose(kept, [[2.0, 3.0]])
+
+    def test_events_sharing_a_start_time_are_each_evaluated(self):
+        time = np.arange(0, 6, 0.01)
+        speed = self._speed_with_movement_at(time, [1.06])
+        kept = exclude_movement(np.array([[1.0, 1.05], [1.0, 1.06], [3.0, 3.05]]), speed, time)
+        np.testing.assert_allclose(kept, [[1.0, 1.05], [3.0, 3.05]])
+
+    def test_event_bounds_off_the_sample_grid_use_the_nearest_sample(self):
+        time = np.arange(0, 6, 0.01)
+        speed = np.full(len(time), 2.0)
+        kept = exclude_movement(np.array([[1.00005, 2.00005]]), speed, time)
+        np.testing.assert_allclose(kept, [[1.00005, 2.00005]])
+
+    def test_empty_candidate_list(self):
+        time = np.arange(0, 6, 0.01)
+        speed = np.full(len(time), 2.0)
+        assert len(exclude_movement(np.empty((0, 2)), speed, time)) == 0
+
+
+class TestRippleBandpassFilterAcrossRates:
+    """The designed filter must hold its specification at every sampling rate."""
+
+    @staticmethod
+    def _response(sampling_frequency, frequencies):
+        from scipy.signal import freqz
+
+        numerator, _ = ripple_bandpass_filter(sampling_frequency)
+        _, response = freqz(numerator, worN=2 * np.pi * frequencies / sampling_frequency)
+        return np.abs(response)
+
+    @pytest.mark.parametrize("sampling_frequency", [600.0, 1000.0, 1500.0, 3000.0, 30000.0])
+    def test_passband_is_flat_and_stopband_is_attenuated(self, sampling_frequency):
+        passband = self._response(sampling_frequency, np.linspace(155, 245, 40))
+        np.testing.assert_allclose(passband, 1.0, atol=0.06)
+        stopband = np.concatenate(
+            [
+                self._response(sampling_frequency, np.linspace(1, 125, 40)),
+                self._response(
+                    sampling_frequency,
+                    np.linspace(275, 0.5 * sampling_frequency - 1, 40),
+                ),
+            ]
+        )
+        assert stopband.max() < 0.06, stopband.max()
+
+
+class TestFilterRippleBandLengthGuard:
+    def test_shortest_accepted_signal_filters_without_a_scipy_error(self):
+        kernel, _ = _get_ripplefilter_kernel()
+        shortest = 3 * len(kernel) + 1
+        filtered = filter_ripple_band(np.random.default_rng(0).normal(size=shortest))
+        assert np.isfinite(filtered).all()
+
+    def test_one_sample_shorter_raises_this_package_s_error(self):
+        kernel, _ = _get_ripplefilter_kernel()
+        with pytest.raises(ValueError, match="samples"):
+            filter_ripple_band(np.random.default_rng(0).normal(size=3 * len(kernel)))
+
+
+class TestExcludeCloseEventsChaining:
+    def test_separation_is_measured_from_the_last_retained_event(self):
+        # the middle event is dropped, so the third is 1.1 s after the last
+        # retained event's end and must be kept
+        events = np.array([[0.0, 0.1], [0.5, 0.6], [1.2, 1.3]])
+        np.testing.assert_allclose(exclude_close_events(events, 1.0), [[0.0, 0.1], [1.2, 1.3]])
+
+    def test_indices_track_the_retained_events(self):
+        events = np.array([[0.0, 0.1], [0.5, 0.6], [1.2, 1.3]])
+        kept, inds = exclude_close_events(events, 1.0, included_ripple_inds=[10, 11, 12])
+        assert len(kept) == 2
+        np.testing.assert_array_equal(np.asarray(inds), [10, 12])
+
+
+class TestCoreInputConversion:
+    def test_get_envelope_accepts_a_sequence(self):
+        assert get_envelope([1.0, 2.0, 3.0, 2.0, 1.0]).shape == (5,)
+
+    def test_population_firing_rate_accepts_a_sequence(self):
+        rate = get_multiunit_population_firing_rate([[0, 1], [1, 0], [0, 0]], 1000.0)
+        assert rate.shape == (3,)
+
+
+class TestExtendThresholdToMeanEdgeCases:
+    def test_threshold_run_inside_a_short_above_mean_run_still_extends(self):
+        # the above-mean run is shorter than the minimum duration; it must not
+        # be filtered away, or the containing run cannot be found
+        time = np.arange(40) / 1000.0
+        is_above_mean = np.zeros(40, dtype=bool)
+        is_above_mean[10:25] = True
+        is_above_threshold = np.zeros(40, dtype=bool)
+        is_above_threshold[14:22] = True
+        segments = extend_threshold_to_mean(
+            is_above_mean, is_above_threshold, time, minimum_duration=0.005
+        )
+        assert segments == [(time[10], time[24])]
+
+    def test_no_threshold_crossing_gives_no_segments(self):
+        time = np.arange(40) / 1000.0
+        segments = extend_threshold_to_mean(
+            np.ones(40, dtype=bool), np.zeros(40, dtype=bool), time, 0.005
+        )
+        assert segments == []
+
+
+class TestSegmentBooleanSeriesMissingValues:
+    def test_missing_values_raise_rather_than_counting_as_true(self):
+        series = pd.Series([np.nan] * 50, index=np.arange(50) / 1000.0)
+        with pytest.raises(ValueError, match="missing"):
+            segment_boolean_series(series, minimum_duration=0.005)
+
+
+class TestNearestSampleIndex:
+    def test_returns_the_closest_sample_in_query_order(self):
+        time = np.arange(0.0, 1.0, 0.1)
+        np.testing.assert_array_equal(nearest_sample_index(time, [0.52, 0.0, 0.98]), [5, 0, 9])
+
+    def test_empty_time_raises(self):
+        with pytest.raises(ValueError, match="time is empty"):
+            nearest_sample_index(np.empty(0), [1.0])

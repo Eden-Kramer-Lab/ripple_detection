@@ -25,6 +25,8 @@ HELPERS = [
     "get_Yu_ripple_consensus_trace",
     "get_multiunit_population_firing_rate",
     "minimum_sample_count",
+    "nearest_sample_index",
+    "sample_count_within",
     "simulate_LFP",
     "simulate_time",
 ]

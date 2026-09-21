@@ -239,7 +239,7 @@ The test suite is organized into six modules:
    - Multiunit population firing rate
    - Error handling for edge cases
 
-3. **[tests/test_detectors.py](tests/test_detectors.py)** - Detector behaviour and conventions, one test class per detector plus shared error-handling, participation, and duration-convention classes; `tests/test_public_api.py` pins the exported names
+3. **[tests/test_detectors.py](tests/test_detectors.py)** - Detector behavior and conventions, one test class per detector plus shared error-handling, participation, and duration-convention classes; `tests/test_public_api.py` pins the exported names
 4. **[tests/test_simulate.py](tests/test_simulate.py)** - Simulation module (36 tests, 100% coverage)
    - Time array generation
    - Noise generation (white, pink, brown) with frequency analysis

@@ -29,16 +29,31 @@ def ripple_bandpass_filter(sampling_frequency: float) -> tuple[NDArray, float]:
 
     Returns
     -------
-    filter_numerator : ndarray
-        Numerator coefficients of the filter.
+    filter_numerator : ndarray, shape (n_taps,)
+        Numerator coefficients of the filter. The tap count scales with
+        ``sampling_frequency`` so the design holds its specification at every
+        rate: at least 101 taps, 155 at 1500 Hz, 3093 at 30 kHz.
     filter_denominator : float
         Denominator coefficient (always 1.0 for FIR filters).
 
+    Notes
+    -----
+    A 150-250 Hz equiripple FIR with 25 Hz transition bands, designed for
+    about 45 dB of stopband attenuation. Measured passband and stopband error
+    is about 0.004 at rates from 600 Hz to 30 kHz.
+
     """
-    ORDER = 101
     nyquist = 0.5 * sampling_frequency
-    TRANSITION_BAND = 25
-    RIPPLE_BAND = [150, 250]
+    TRANSITION_BAND = 25.0
+    RIPPLE_BAND = (150.0, 250.0)
+    STOPBAND_ATTENUATION_DB = 45.0
+    MINIMUM_NUMTAPS = 101
+    # Kaiser's estimate: the tap count needed for a given attenuation grows as
+    # the transition band narrows relative to the sampling rate. A fixed count
+    # would meet the specification at one rate only.
+    transition = 2.0 * np.pi * TRANSITION_BAND / sampling_frequency
+    numtaps = int(np.ceil((STOPBAND_ATTENUATION_DB - 8.0) / (2.285 * transition)))
+    numtaps = max(MINIMUM_NUMTAPS, numtaps + 1 - numtaps % 2)
     desired = [
         0,
         RIPPLE_BAND[0] - TRANSITION_BAND,
@@ -47,14 +62,16 @@ def ripple_bandpass_filter(sampling_frequency: float) -> tuple[NDArray, float]:
         RIPPLE_BAND[1] + TRANSITION_BAND,
         nyquist,
     ]
-    return remez(ORDER, desired, [0, 1, 0], fs=sampling_frequency), 1.0
+    return remez(numtaps, desired, [0, 1, 0], fs=sampling_frequency), 1.0
 
 
 def minimum_sample_count(time: ArrayLike, minimum_duration: float) -> int:
     """Number of consecutive samples that ``minimum_duration`` spans.
 
     ``round(minimum_duration * sampling_frequency)`` with round-half-up, the
-    convention of the Frank lab ``extractevents`` routine, where the sampling
+    convention of the Frank lab ``extractevents`` routine
+    (``DFFunctions/extractevents.cpp`` in
+    https://github.com/droumis/FFPhy/tree/fce2048/DFFunctions), where the sampling
     interval is the median timestamp step. A duration that is not a whole
     number of samples rounds to the nearest count (22.5 samples -> 23).
 
@@ -80,6 +97,44 @@ def minimum_sample_count(time: ArrayLike, minimum_duration: float) -> int:
         return 1
     # small tolerance so an exact half-sample product is not lost to round-off
     return max(1, int(np.floor(minimum_duration / sample_interval + 0.5 + 1e-6)))
+
+
+def sample_count_within(
+    n_samples: ArrayLike,
+    time: ArrayLike,
+    minimum_duration: float,
+    maximum_duration: float | None = None,
+) -> NDArray | bool:
+    """Whether an event of ``n_samples`` samples meets the package's duration limits.
+
+    Every detector applies this one rule. ``minimum_sample_count`` turns a
+    limit in seconds into a sample count, rounding half up from the median
+    timestamp step. An event qualifies when its sample count is at least the
+    minimum and, where one is given, at most the maximum. Both comparisons are
+    inclusive.
+
+    Parameters
+    ----------
+    n_samples : int or array_like of int
+        Number of samples the event spans, first to last inclusive.
+    time : array_like, shape (n_time,)
+        Sample timestamps in seconds.
+    minimum_duration : float
+        Shortest allowed duration in seconds.
+    maximum_duration : float, optional
+        Longest allowed duration in seconds. Default is None (no upper limit).
+
+    Returns
+    -------
+    qualifies : bool or ndarray of bool
+        Same shape as ``n_samples``; a Python bool for a scalar input.
+
+    """
+    counts = np.asarray(n_samples)
+    ok = counts >= minimum_sample_count(time, minimum_duration)
+    if maximum_duration is not None:
+        ok &= counts <= minimum_sample_count(time, maximum_duration)
+    return bool(ok) if counts.ndim == 0 else ok
 
 
 def _boolean_run_bounds(values: NDArray) -> NDArray:
@@ -120,6 +175,11 @@ def segment_boolean_series(
         last sample of each segment that meets the minimum sample count.
 
     """
+    if series.isna().any():
+        raise ValueError(
+            "series contains missing values, which cast to True. Fill or drop "
+            "them before segmenting."
+        )
     values = series.to_numpy(dtype=bool)
     index = np.asarray(series.index)
     n_min = minimum_sample_count(index, minimum_duration)
@@ -158,10 +218,10 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
     Raises
     ------
     ValueError
-        If the sampling rate cannot represent the band (Nyquist frequency at
-        or below the 250 Hz upper edge plus the 25 Hz transition band), or if
-        the signal has fewer non-NaN samples than ``filtfilt`` needs (three
-        times the kernel length).
+        If the sampling rate cannot represent the band. That is, the Nyquist
+        frequency is at or below 275 Hz, the 250 Hz upper edge plus the 25 Hz
+        transition band. Also if the signal holds fewer non-NaN samples than
+        ``filtfilt`` needs, which is one more than three times the tap count.
 
     See Also
     --------
@@ -198,7 +258,8 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
         is_nan = np.isnan(data_array)
 
     non_nan_length = np.sum(~is_nan)
-    min_required_length = 3 * len(filter_numerator)
+    # filtfilt needs strictly more samples than its padlen of 3 x the taps
+    min_required_length = 3 * len(filter_numerator) + 1
     if non_nan_length < min_required_length:
         raise ValueError(
             f"Signal too short for filtering: {non_nan_length} non-NaN samples, "
@@ -274,6 +335,43 @@ def extend_threshold_to_mean(
     return sorted(_extend_segment(above_threshold_segments, above_mean_segments))
 
 
+def nearest_sample_index(time: ArrayLike, query_times: ArrayLike) -> NDArray:
+    """Index of the sample in ``time`` closest to each query time.
+
+    Event bounds come from ``time``, so the match is normally exact. Looking
+    the index up per query, rather than testing which samples appear in the
+    query set, keeps the result in query order and one entry long per query.
+    Repeated, nested, or off-grid query times are therefore handled correctly.
+
+    Parameters
+    ----------
+    time : array_like, shape (n_time,)
+        Sample timestamps, increasing.
+    query_times : array_like, shape (n_queries,)
+        Times to look up.
+
+    Returns
+    -------
+    index : ndarray, shape (n_queries,)
+        Position in ``time`` of the closest sample to each query time.
+
+    Raises
+    ------
+    ValueError
+        If ``time`` is empty.
+
+    """
+    time = np.asarray(time, dtype=float)
+    query_times = np.asarray(query_times, dtype=float)
+    if time.size == 0:
+        raise ValueError("time is empty, so no sample can be looked up.")
+    right = np.searchsorted(time, query_times)
+    right = np.clip(right, 1, time.size - 1)
+    left = right - 1
+    closer_to_right = np.abs(time[right] - query_times) < np.abs(query_times - time[left])
+    return np.where(closer_to_right, right, left)
+
+
 def exclude_movement(
     candidate_ripple_times: ArrayLike,
     speed: ArrayLike,
@@ -301,21 +399,21 @@ def exclude_movement(
     Returns
     -------
     ripple_times : ndarray or list
-        Filtered event times where animal speed is below threshold. Returns
-        ndarray of shape (n_stationary_ripples, 2), or empty list if no
-        events remain.
+        Filtered event times where animal speed is at or below the threshold,
+        with shape (n_stationary_ripples, 2). An empty list is returned when
+        there are no candidate events to test.
 
     """
-    candidate_ripple_times = np.array(candidate_ripple_times)
-    try:
-        speed_at_ripple_start = speed[np.isin(time, candidate_ripple_times[:, 0])]
-        speed_at_ripple_end = speed[np.isin(time, candidate_ripple_times[:, 1])]
-        is_below_speed_threshold = (speed_at_ripple_start <= speed_threshold) & (
-            speed_at_ripple_end <= speed_threshold
-        )
-        return candidate_ripple_times[is_below_speed_threshold]
-    except IndexError:
+    candidate_ripple_times = np.asarray(candidate_ripple_times, dtype=float)
+    if candidate_ripple_times.size == 0:
         return []
+    speed = np.asarray(speed, dtype=float)
+    start_index = nearest_sample_index(time, candidate_ripple_times[:, 0])
+    end_index = nearest_sample_index(time, candidate_ripple_times[:, 1])
+    is_below_speed_threshold = (speed[start_index] <= speed_threshold) & (
+        speed[end_index] <= speed_threshold
+    )
+    return candidate_ripple_times[is_below_speed_threshold]
 
 
 def exclude_movement_by_majority(
@@ -404,8 +502,19 @@ def _find_containing_interval(
     """
     candidate_start_times = np.asarray(interval_candidates)[:, 0]
     zero = np.array(0).astype(candidate_start_times.dtype)
-    closest_start_ind = np.max((candidate_start_times - target_interval[0] <= zero).nonzero())
-    return interval_candidates[closest_start_ind]
+    starts_at_or_before = (candidate_start_times - target_interval[0] <= zero).nonzero()[0]
+    if starts_at_or_before.size == 0:
+        raise ValueError(
+            f"No candidate interval starts at or before {target_interval[0]}, so "
+            "none can contain the target interval."
+        )
+    containing = interval_candidates[int(np.max(starts_at_or_before))]
+    if containing[1] < target_interval[1]:
+        raise ValueError(
+            f"The nearest preceding interval {containing} does not contain the "
+            f"target interval {tuple(target_interval)}."
+        )
+    return containing
 
 
 def _extend_segment(
@@ -453,6 +562,7 @@ def get_envelope(data: ArrayLike, axis: int = 0) -> NDArray:
         Instantaneous amplitude (envelope) of the signal, same shape as input.
 
     """
+    data = np.asarray(data, dtype=float)
     n_samples = data.shape[axis]
     instantaneous_amplitude = np.abs(hilbert(data, N=next_fast_len(n_samples), axis=axis))
     return np.take(instantaneous_amplitude, np.arange(n_samples), axis=axis)
@@ -463,7 +573,7 @@ def gaussian_smooth(
     sigma: float,
     sampling_frequency: float,
     axis: int = 0,
-    truncate: int = 8,
+    truncate: float = 8,
 ) -> NDArray:
     """Apply 1D Gaussian smoothing to data.
 
@@ -790,9 +900,10 @@ def normalize_signal(
 
     References
     ----------
-    .. [1] Leys, C., et al. (2013). Detecting outliers: Do not use standard
-       deviation around the mean, use absolute deviation around the median.
-       Journal of Experimental Social Psychology, 49(4), 764-766.
+    .. [1] Leys, C., Ley, C., Klein, O., Bernard, P., & Licata, L. (2013).
+       Detecting outliers: Do not use standard deviation around the mean, use
+       absolute deviation around the median. Journal of Experimental Social
+       Psychology, 49(4), 764-766. doi:10.1016/j.jesp.2013.03.013
 
     """
     # Validate parameters
@@ -817,14 +928,12 @@ def normalize_signal_manually(
     elec_deviations: ArrayLike,
 ) -> NDArray:
     """
-    Allows normalization based on the baselines and deviations input into this
-    function rather than automatically calculating them based on the passed
-    in data.
-    This is particularly useful for doing ripple detection on sleep sessions
-    when you want to use an overall baseline/deviation from the entire recording
-    day rather than just for that sleep session, which tend to have greater
-    baselines and deviation values due to a higher concentration of ripples
-    during sleep.
+    Normalize with supplied baselines and deviations.
+
+    The statistics come from the arguments rather than from ``data``. This
+    matters for sleep sessions. A sleep session holds a higher concentration
+    of ripples, so its own baseline and deviation are larger. Statistics from
+    the whole recording day avoid that bias.
 
     Parameters
     ----------
@@ -842,12 +951,12 @@ def normalize_signal_manually(
 
     Notes
     -----
-    A channel with a zero or NaN deviation, or a NaN baseline, is degenerate.
-    Individual degenerate channels are zeroed so they cannot cross a detection
-    threshold, and a warning naming them is emitted. If *every* channel is
-    degenerate (including 1-D input whose single channel is degenerate) the
-    result would be uniformly zero and carry no signal, so a ``ValueError`` is
-    raised instead -- mirroring the empty-mask guard in ``normalize_signal``.
+    A channel is degenerate when its deviation is zero or NaN, or its
+    baseline is NaN. This function zeroes each degenerate channel so it cannot
+    cross a detection threshold, and warns with the channel numbers. When
+    every channel is degenerate the result would be uniformly zero and carry
+    no signal, so it raises ``ValueError`` instead. A 1-D input counts as one
+    channel. ``normalize_signal`` guards an empty mask the same way.
     """
     data = np.asarray(data)
     elec_baselines = np.asarray(elec_baselines, dtype=float)
@@ -879,8 +988,6 @@ def normalize_signal_manually(
 
     degenerate_channels = np.flatnonzero(degenerate[0])
     if degenerate_channels.size > 0:
-        import warnings
-
         warnings.warn(
             "Zeroing channel(s) with a zero/NaN deviation or NaN baseline during "
             f"manual normalization: {degenerate_channels.tolist()}. These channels "
@@ -925,6 +1032,12 @@ def threshold_by_zscore(
         to mean crossings.
 
     """
+    if zscore_threshold < 0:
+        raise ValueError(
+            f"zscore_threshold must be non-negative, got {zscore_threshold}. The "
+            "extension to the crossing point assumes every threshold crossing "
+            "lies inside a run above the normalization center."
+        )
     is_above_mean = zscored_data >= 0
     is_above_threshold = zscored_data >= zscore_threshold
 
@@ -1035,11 +1148,12 @@ def exclude_close_events(
     """Remove events that occur too close together in time.
 
     Filters out successive events that start within `close_event_threshold`
-    time units of a previous event's end, keeping only the first event in
-    each cluster of closely-spaced events.
+    time units of the last retained event's end, keeping only the first event
+    in each cluster of closely-spaced events.
 
-    Uses vectorized implementation: computes gaps between consecutive events
-    and keeps events with sufficient separation from the previous event.
+    The Frank lab ``extractevents`` routine instead *merges* events separated
+    by less than its minimum separation into one longer event. This function
+    drops the later event, so the retained events keep their original bounds.
 
     Parameters
     ----------
@@ -1084,16 +1198,19 @@ def exclude_close_events(
             return candidate_event_times, included_ripple_inds
         return candidate_event_times
 
-    # Extract start and end times
+    # Each event is compared with the last *retained* event, so a cluster is
+    # reduced to its first event. Comparing with the immediately preceding
+    # candidate instead would let a dropped event go on excluding its
+    # successors, removing more than the first-of-each-cluster rule.
     starts = candidate_event_times[:, 0]
     ends = candidate_event_times[:, 1]
-
-    # Compute gaps: time from end of event i to start of event i+1
-    gaps = starts[1:] - ends[:-1]
-
-    # Keep first event and any event with sufficient gap from previous
-    keep_mask = np.ones(len(candidate_event_times), dtype=bool)
-    keep_mask[1:] = gaps >= close_event_threshold
+    keep_mask = np.zeros(len(candidate_event_times), dtype=bool)
+    keep_mask[0] = True
+    last_retained_end = ends[0]
+    for event in range(1, len(candidate_event_times)):
+        if starts[event] - last_retained_end >= close_event_threshold:
+            keep_mask[event] = True
+            last_retained_end = ends[event]
 
     filtered_events = candidate_event_times[keep_mask]
     if included_ripple_inds is not None:
@@ -1110,7 +1227,8 @@ YU_HISTOGRAM_EDGES = np.round(np.arange(-10.0, 50.0 + 0.005, 0.01), 6)
 
 Bin edges from -10 to 50 in steps of 0.01, in the units of the consensus trace
 (the median of per-tetrode z-scored envelopes). Transliterated from
-``histbins = -10:0.01:50`` in ``jy_variableripthreshold_corecalculation.m``.
+``histbins = -10:0.01:50`` in ``jy_variableripthreshold_corecalculation.m``
+(Frank lab, unpublished; not in a public repository).
 """
 
 YU_MODE_SMOOTHING_WINDOW = 11
@@ -1123,7 +1241,7 @@ _OUT_OF_GRID_CEILING = 1e-3
 def _matlab_smooth(x: NDArray, window: int) -> NDArray:
     """Moving average with MATLAB ``smooth(x, window)`` end handling.
 
-    Interior points average ``window`` neighbours; near either end the window
+    Interior points average ``window`` neighbors; near either end the window
     shrinks symmetrically (1, 3, 5, ... points) so it never runs off the array.
     """
     x = np.asarray(x, dtype=float)
@@ -1156,11 +1274,11 @@ def estimate_noise_threshold(
 ) -> float | tuple[float, dict]:
     """Estimate a detection threshold from the mirrored noise distribution.
 
-    Implements the threshold rule of Yu et al. 2017: histogram the consensus
-    envelope during immobility on a fixed grid, take the mode, treat the
-    distribution below the mode as noise-only, mirror it about the mode to
-    build a symmetric empirical noise distribution, and return the value one
-    bin past the point where its cumulative distribution reaches ``percentile``.
+    The threshold rule of Yu et al. 2017. Histogram the consensus envelope
+    during immobility on a fixed grid and take the mode. Treat the part below
+    the mode as noise alone. Mirror it about the mode to build a symmetric
+    noise distribution. Return the value one bin past where that
+    distribution's cumulative sum reaches ``percentile``.
 
     This is a transliteration of the original MATLAB implementation
     (``jy_variableripthreshold_corecalculation.m``). The one deliberate
@@ -1201,10 +1319,10 @@ def estimate_noise_threshold(
     Raises
     ------
     ValueError
-        If more than 0.1 % of samples fall outside the grid, if the mode lies
-        on the first or last bin, if there are too few samples to resolve the
-        requested percentile, or if the CDF crossing lands on the last
-        mirrored bin so that "one bin past" is undefined.
+        In any of four cases: more than 0.1 % of samples fall outside the
+        grid; the mode lies on the first or last bin; there are too few
+        samples to resolve the requested percentile; or the crossing lands on
+        the last mirrored bin, which leaves "one bin past" undefined.
 
     Warns
     -----
@@ -1213,24 +1331,26 @@ def estimate_noise_threshold(
 
     Notes
     -----
-    Because the mirrored distribution is bounded above by ``2m - min(values)``,
-    the returned threshold cannot exceed roughly twice the mode's distance
-    from the smallest sample, whatever the true noise tail does. This is a
-    property of the published method, not of this implementation.
+    The mirrored distribution has an upper bound of ``2m - min(values)``. The
+    returned threshold therefore cannot exceed about twice the distance from
+    the mode to the smallest sample, whatever the true noise tail does. This
+    bound comes from the published method, not from this implementation.
 
-    It follows that the threshold lies above the sample mean only when the
-    left flank is wider than the mode-to-mean distance,
-    ``(m - min) > (mean - m)``, reported as ``flank_ratio`` in the
-    diagnostics. Ripples that are very large relative to the in-band
+    The threshold therefore lies above the sample mean only when the left
+    flank is wider than the distance from the mode to the mean, that is
+    ``(m - min) > (mean - m)``. The diagnostics report this as
+    ``flank_ratio``. Ripples that are large relative to the in-band
     background inflate the variance and pull the mean above the noise
-    ceiling, and the ratio drops below one; ``Yu_ripple_detector`` then
-    raises because its threshold-then-return-to-mean rule is undefined.
+    ceiling. The ratio then drops below one and ``Yu_ripple_detector`` raises,
+    because a threshold below the mean leaves its extension rule undefined.
 
     References
     ----------
-    .. [1] Yu, J. Y., et al. (2017). Distinct hippocampal-cortical memory
-       representations for experiences associated with movement versus
-       immobility. eLife, 6, e27621.
+    .. [1] Yu, J. Y., Kay, K., Liu, D. F., Grossrubatscher, I., Loback, A.,
+       Sosa, M., Chung, J. E., Karlsson, M. P., Larkin, M. C., & Frank, L. M.
+       (2017). Distinct hippocampal-cortical memory representations for
+       experiences associated with movement versus immobility. eLife, 6,
+       e27621. doi:10.7554/eLife.27621
 
     """
     values = np.asarray(values, dtype=float).ravel()
@@ -1264,7 +1384,9 @@ def estimate_noise_threshold(
             "mirrored distribution is degenerate."
         )
     mode = float(edges[mode_index])
-    if mode > 0:
+    # The two reflections agree whenever every left-flank bin is non-positive,
+    # so the warning is raised only when a bin above zero can contribute.
+    if mode > 0 and np.any(edges[:mode_index] > 0):
         warnings.warn(
             f"Histogram mode is positive ({mode:.3f}); the original MATLAB "
             "reflection (abs(b) + 2m) would differ from the intended 2m - b "
@@ -1347,6 +1469,7 @@ def get_multiunit_population_firing_rate(
     multiunit_population_firing_rate : ndarray, shape (n_time,)
 
     """
+    multiunit = np.asarray(multiunit, dtype=float)
     return gaussian_smooth(
         multiunit.sum(axis=1) * sampling_frequency, smoothing_sigma, sampling_frequency
     )

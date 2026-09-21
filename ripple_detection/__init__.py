@@ -12,9 +12,11 @@ from ripple_detection.core import (
     get_envelope,
     get_multiunit_population_firing_rate,
     minimum_sample_count,
+    nearest_sample_index,
     normalize_signal,
     normalize_signal_manually,
     ripple_bandpass_filter,
+    sample_count_within,
 )
 from ripple_detection.detectors import (
     Carey_candidate_detector,
@@ -55,9 +57,11 @@ __all__ = [
     "get_multiunit_population_firing_rate",
     "minimum_sample_count",
     "multiunit_HSE_detector",
+    "nearest_sample_index",
     "normalize_signal",
     "normalize_signal_manually",
     "ripple_bandpass_filter",
+    "sample_count_within",
     "simulate_LFP",
     "simulate_time",
 ]

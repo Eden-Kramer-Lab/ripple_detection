@@ -10,7 +10,9 @@ from scipy.ndimage import convolve1d, gaussian_filter1d
 from scipy.signal import butter, filtfilt
 
 from ripple_detection.core import (
+    _boolean_run_bounds,
     _get_normalization_mask,
+    _validate_normalization_params,
     estimate_noise_threshold,
     exclude_close_events,
     exclude_movement,
@@ -21,8 +23,10 @@ from ripple_detection.core import (
     merge_overlapping_ranges,
     merge_overlapping_ranges_track_participation,
     minimum_sample_count,
+    nearest_sample_index,
     normalize_signal,
     normalize_signal_manually,
+    sample_count_within,
     threshold_by_zscore,
 )
 
@@ -100,7 +104,9 @@ def _validate_array_lengths(time: NDArray, filtered_lfps: NDArray, speed: NDArra
         )
 
 
-def _validate_time_units(time: NDArray, sampling_frequency: float, n_samples: int) -> None:
+def _validate_time_units(
+    time: NDArray, sampling_frequency: float, n_samples: int, stacklevel: int = 4
+) -> None:
     """Validate that time array is in seconds (not samples).
 
     Parameters
@@ -147,11 +153,11 @@ def _validate_time_units(time: NDArray, sampling_frequency: float, n_samples: in
                 f"  1. time is in seconds (not milliseconds or samples)\n"
                 f"  2. sampling_frequency ({sampling_frequency} Hz) is correct",
                 UserWarning,
-                stacklevel=4,
+                stacklevel=stacklevel,
             )
 
 
-def _validate_speed_units(speed: NDArray, speed_threshold: float) -> None:
+def _validate_speed_units(speed: NDArray, speed_threshold: float, stacklevel: int = 4) -> None:
     """Validate that speed is in cm/s (not m/s).
 
     Parameters
@@ -183,7 +189,7 @@ def _validate_speed_units(speed: NDArray, speed_threshold: float) -> None:
                     f"If your speed is in m/s, multiply by 100:\n"
                     "  speed_cms = speed_ms * 100",
                     UserWarning,
-                    stacklevel=4,
+                    stacklevel=stacklevel,
                 )
 
 
@@ -271,13 +277,21 @@ def _preprocess_detector_inputs(
 
 
 def get_Kay_ripple_consensus_trace(
-    ripple_filtered_lfps: ArrayLike, sampling_frequency: float, smoothing_sigma: float = 0.004
+    ripple_filtered_lfps: ArrayLike,
+    sampling_frequency: float,
+    smoothing_sigma: float = 0.004,
+    *,
+    time: ArrayLike | None = None,
 ) -> NDArray:
     """Compute Kay consensus trace from multi-channel ripple-filtered LFPs.
 
-    Combines multiple LFP channels into a single consensus trace using the sum
-    of squared envelopes, following Kay et al. 2016. The trace is smoothed with
-    a Gaussian kernel.
+    Combines multiple LFP channels into a single consensus trace, following
+    Kay et al. 2016: ``sqrt(gaussian_smooth(sum(envelope ** 2)))``. The
+    smoothing sits between the sum and the square root.
+
+    Rows holding a missing value in any channel are excluded, and each
+    contiguous run of valid rows is processed on its own, so no envelope or
+    smoothing window spans a gap.
 
     Parameters
     ----------
@@ -288,6 +302,10 @@ def get_Kay_ripple_consensus_trace(
     smoothing_sigma : float, optional
         Standard deviation of Gaussian smoothing kernel in seconds.
         Default is 0.004 (4 ms).
+    time : array_like, shape (n_time,), optional
+        Sample timestamps in seconds, used to split at gaps in the timestamps
+        as well as at missing samples. Keyword only. Default is None, which
+        splits at missing samples only.
 
     Returns
     -------
@@ -296,8 +314,10 @@ def get_Kay_ripple_consensus_trace(
 
     References
     ----------
-    .. [1] Kay, K., et al. (2016). A hippocampal network for spatial coding
-       during immobility and sleep. Nature, 531(7593), 185-190.
+    .. [1] Kay, K., Sosa, M., Chung, J. E., Karlsson, M. P., Larkin, M. C., &
+       Frank, L. M. (2016). A hippocampal network for spatial coding during
+       immobility and sleep. Nature, 531(7593), 185-190.
+       doi:10.1038/nature17144
 
     """
     # Cast to float so integer input is not truncated and the squared envelope
@@ -306,12 +326,18 @@ def get_Kay_ripple_consensus_trace(
     ripple_consensus_trace = np.full_like(ripple_filtered_lfps, np.nan)
     not_null = np.all(pd.notna(ripple_filtered_lfps), axis=1)
 
-    ripple_consensus_trace[not_null] = get_envelope(np.asarray(ripple_filtered_lfps)[not_null])
-    ripple_consensus_trace = np.sum(ripple_consensus_trace**2, axis=1)
-    ripple_consensus_trace[not_null] = gaussian_smooth(
-        ripple_consensus_trace[not_null], smoothing_sigma, sampling_frequency
-    )
-    return np.sqrt(ripple_consensus_trace)
+    time_array = None if time is None else np.asarray(time, dtype=float)
+    for start, stop in _contiguous_valid_blocks(not_null, time_array, sampling_frequency):
+        block = ripple_filtered_lfps[start:stop]
+        ripple_consensus_trace[start:stop] = get_envelope(block)
+
+    summed_power = np.sum(ripple_consensus_trace**2, axis=1)
+    smoothed = np.full(len(summed_power), np.nan)
+    for start, stop in _contiguous_valid_blocks(not_null, time_array, sampling_frequency):
+        smoothed[start:stop] = gaussian_smooth(
+            summed_power[start:stop], smoothing_sigma, sampling_frequency
+        )
+    return np.sqrt(smoothed)
 
 
 def _contiguous_valid_blocks(
@@ -404,9 +430,11 @@ def get_Yu_ripple_consensus_trace(
 
     References
     ----------
-    .. [1] Yu, J. Y., et al. (2017). Distinct hippocampal-cortical memory
-       representations for experiences associated with movement versus
-       immobility. eLife, 6, e27621.
+    .. [1] Yu, J. Y., Kay, K., Liu, D. F., Grossrubatscher, I., Loback, A.,
+       Sosa, M., Chung, J. E., Karlsson, M. P., Larkin, M. C., & Frank, L. M.
+       (2017). Distinct hippocampal-cortical memory representations for
+       experiences associated with movement versus immobility. eLife, 6,
+       e27621. doi:10.7554/eLife.27621
 
     """
     ripple_filtered_lfps = np.asarray(ripple_filtered_lfps, dtype=float)
@@ -449,28 +477,22 @@ def get_Yu_ripple_consensus_trace(
     return consensus_trace
 
 
-def _boolean_runs(mask: NDArray) -> NDArray:
-    """Start (inclusive) and stop (exclusive) indices of each run of True."""
-    padded = np.concatenate([[False], np.asarray(mask, dtype=bool), [False]])
-    changes = np.flatnonzero(padded[1:] != padded[:-1])
-    return changes.reshape(-1, 2)
-
-
 def _extract_Yu_ripple_events(
     trace: NDArray,
     time: NDArray,
-    sampling_frequency: float,
     minimum_duration: float,
     threshold: float,
 ) -> tuple[NDArray, NDArray, NDArray]:
     """Extract events from one contiguous block of a mean-zero consensus trace.
 
     A run of consecutive samples at or above ``threshold`` qualifies when it
-    holds at least ``round(minimum_duration * sampling_frequency)`` samples;
-    each qualifying run is extended to the run of samples strictly above zero
-    (the immobility mean) that contains it, and one event is emitted per such
-    containing run. This is the sample-count convention of the Frank lab
-    ``extractevents`` routine, which the Yu et al. 2017 detector used.
+    holds at least ``minimum_sample_count(time, minimum_duration)`` samples.
+    Each qualifying run is extended to the run of samples strictly above zero,
+    the immobility mean, that contains it. One event is emitted per containing
+    run. This is the sample-count convention of the Frank lab
+    ``extractevents`` routine, which the Yu et al. 2017 detector used
+    (``DFFunctions/extractevents.cpp`` in
+    https://github.com/droumis/FFPhy/tree/fce2048/DFFunctions).
 
     Parameters
     ----------
@@ -514,12 +536,12 @@ def _extract_Yu_ripple_events(
     time = np.asarray(time, dtype=float)
     n_min = minimum_sample_count(time, minimum_duration)
 
-    supra_runs = _boolean_runs(trace >= threshold)
+    supra_runs = _boolean_run_bounds(trace >= threshold)
     supra_runs = supra_runs[(supra_runs[:, 1] - supra_runs[:, 0]) >= n_min]
     if len(supra_runs) == 0:
         return np.empty((0, 2)), np.empty((0, 2), dtype=bool), np.empty(0, dtype=int)
 
-    above_zero_runs = _boolean_runs(trace > 0)
+    above_zero_runs = _boolean_run_bounds(trace > 0)
     # the above-zero run containing each qualifying run's first sample
     containing = np.searchsorted(above_zero_runs[:, 0], supra_runs[:, 0], side="right") - 1
     run_lengths = supra_runs[:, 1] - supra_runs[:, 0]
@@ -557,17 +579,19 @@ def Shvartsman_ripple_detector(
     elec_deviations: ArrayLike | None = None,
     participation_threshold: float = 2,
 ) -> pd.DataFrame:
-    """Detect sharp-wave ripples using per-channel detection, only considering
-    times when the % of participating channels exceeds a set fraction. Acts
-    as a middle ground between Kay method (consensus method) and Karlsson
-    method (local ripples) that is less sensitive to random noise
-    fluctuations than the Karlsson method.
+    """Detect sharp-wave ripples on each channel, keeping events that enough
+    channels share.
 
-    Additionally, allows for manual normalization by passing in specific
-    inputs for the baselines and deviations for each electrode. For example,
-    if you want to normalize across all epochs throughout a day rather than
-    within one particular epoch (important for detecting ripples during sleep
-    sessions), this method allows that flexibility.
+    An event is kept when at least ``participation_threshold`` channels detect
+    it. This sits between the Kay detector, which builds one consensus trace,
+    and the Karlsson detector, which keeps a ripple from any single channel.
+    Requiring several channels makes it less sensitive than Karlsson to noise
+    on one channel.
+
+    It also accepts a baseline and a deviation per electrode through
+    ``manual_normalization``, in place of statistics computed from the data.
+    Statistics from a whole recording day rather than one epoch matter for
+    sleep sessions; see ``normalize_signal_manually``.
 
     Parameters
     ----------
@@ -593,7 +617,7 @@ def Shvartsman_ripple_detector(
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
         ``round(minimum_duration * sampling_frequency)`` consecutive samples
-        (per Karlsson et al. 2009); the event is then extended to the surrounding
+        (per Karlsson & Frank 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
@@ -612,10 +636,11 @@ def Shvartsman_ripple_detector(
     normalization_method : {'zscore', 'median_mad'}, optional
         Method for normalizing each channel. Default is 'zscore' (mean/std).
         Use 'median_mad' for more robust normalization when data contains outliers.
-        Only used when ``manual_normalization=False``; ignored otherwise.
+        Only used when ``manual_normalization=False``; supplying it with
+        ``manual_normalization=True`` raises ValueError.
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask selecting samples used to compute normalization statistics.
-        For example, use `speed < speed_threshold` to compute statistics only
+        For example, use `speed <= speed_threshold` to compute statistics only
         during immobility. Cannot be used with `normalization_time_range`. Only
         used when ``manual_normalization=False``. Default is None (use all data).
     normalization_time_range : tuple of (float, float), optional
@@ -624,10 +649,10 @@ def Shvartsman_ripple_detector(
         ``manual_normalization=False``. Default is None (use all data).
     manual_normalization : bool, optional
         If True, normalize each channel with the supplied `elec_baselines` and
-        `elec_deviations` instead of computing statistics from the data; the
-        `normalization_*` parameters above are then ignored. Requires both
-        `elec_baselines` and `elec_deviations` (raises ValueError if either is
-        missing). Default is False.
+        `elec_deviations` instead of computing statistics from the data. The
+        `normalization_*` parameters above must then be left at their defaults;
+        supplying one raises ValueError rather than being ignored. Requires both
+        `elec_baselines` and `elec_deviations`. Default is False.
     elec_baselines : array_like, shape (n_channels,), optional
         Baseline (center) value per channel. Required when
         ``manual_normalization=True``.
@@ -685,14 +710,23 @@ def Shvartsman_ripple_detector(
     ripple, so a single-channel input never produces an event.
 
     """
+    if manual_normalization and (
+        normalization_mask is not None
+        or normalization_time_range is not None
+        or normalization_method != "zscore"
+    ):
+        raise ValueError(
+            "manual_normalization=True uses elec_baselines and elec_deviations, so "
+            "normalization_method, normalization_mask, and normalization_time_range "
+            "must be left at their defaults. Drop them, or set "
+            "manual_normalization=False."
+        )
     time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
         time,
         filtered_lfps,
         speed,
         sampling_frequency,
         speed_threshold,
-        # normalization_mask is ignored under manual normalization, so don't
-        # validate/filter it in that mode (the docstring promises it is unused).
         normalization_mask=None if manual_normalization else normalization_mask,
     )
 
@@ -785,6 +819,62 @@ def Shvartsman_ripple_detector(
     return ripple_data
 
 
+def _detect_from_trace(
+    trace: NDArray,
+    time: NDArray,
+    speed: NDArray,
+    *,
+    minimum_duration: float,
+    zscore_threshold: float,
+    speed_threshold: float,
+    close_event_threshold: float,
+    normalization_method: str = "zscore",
+    normalization_mask: ArrayLike | None = None,
+    normalization_time_range: tuple[float, float] | None = None,
+) -> pd.DataFrame:
+    """Normalize one detection trace, threshold it, and summarize the events.
+
+    The shared tail of every detector that thresholds a single trace. It
+    normalizes the trace. It takes the runs above ``zscore_threshold`` that
+    last ``minimum_duration`` and extends each to the normalization center. It
+    drops events whose first or last sample exceeds ``speed_threshold``, then
+    events too close to the last retained event. It then computes the
+    per-event statistics.
+
+    Parameters
+    ----------
+    trace : ndarray, shape (n_time,)
+        The unnormalized detection trace.
+    time : ndarray, shape (n_time,)
+        Sample timestamps in seconds.
+    speed : ndarray, shape (n_time,)
+        Speed in cm/s.
+    minimum_duration, zscore_threshold, speed_threshold, close_event_threshold : float
+        As in the public detectors.
+    normalization_method, normalization_mask, normalization_time_range
+        Passed to ``normalize_signal``.
+
+    Returns
+    -------
+    events : pd.DataFrame
+        One row per event, indexed by ``event_number``.
+
+    """
+    normalized = normalize_signal(
+        trace,
+        time=time,
+        method=normalization_method,
+        normalization_mask=normalization_mask,
+        normalization_time_range=normalization_time_range,
+    )
+    candidate_times = threshold_by_zscore(normalized, time, minimum_duration, zscore_threshold)
+    event_times = exclude_movement(
+        candidate_times, speed, time, speed_threshold=speed_threshold
+    )
+    event_times = exclude_close_events(event_times, close_event_threshold)
+    return _get_event_stats(event_times, time, normalized, speed, minimum_duration)
+
+
 def Kay_ripple_detector(
     time: ArrayLike,
     filtered_lfps: ArrayLike,
@@ -830,7 +920,7 @@ def Kay_ripple_detector(
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
         ``round(minimum_duration * sampling_frequency)`` consecutive samples
-        (per Karlsson et al. 2009); the event is then extended to the surrounding
+        (per Karlsson & Frank 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
@@ -852,7 +942,7 @@ def Kay_ripple_detector(
         The median/MAD method is more resistant to extreme values.
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask to specify which samples to use for computing normalization
-        statistics. For example, use `speed < speed_threshold` to compute
+        statistics. For example, use `speed <= speed_threshold` to compute
         statistics only during immobility. Cannot be used with
         `normalization_time_range`. Default is None (use all data).
     normalization_time_range : tuple of (float, float), optional
@@ -905,9 +995,10 @@ def Kay_ripple_detector(
 
     References
     ----------
-    .. [1] Kay, K., Sosa, M., Chung, J.E., Karlsson, M.P., Larkin, M.C.,
-       and Frank, L.M. (2016). A hippocampal network for spatial coding during
-       immobility and sleep. Nature 531, 185-190.
+    .. [1] Kay, K., Sosa, M., Chung, J. E., Karlsson, M. P., Larkin, M. C., &
+       Frank, L. M. (2016). A hippocampal network for spatial coding during
+       immobility and sleep. Nature, 531(7593), 185-190.
+       doi:10.1038/nature17144
 
     """
     time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
@@ -922,23 +1013,17 @@ def Kay_ripple_detector(
     combined_filtered_lfps = get_Kay_ripple_consensus_trace(
         filtered_lfps, sampling_frequency, smoothing_sigma=smoothing_sigma
     )
-    combined_filtered_lfps = normalize_signal(
+    return _detect_from_trace(
         combined_filtered_lfps,
-        time=time,
-        method=normalization_method,
+        time,
+        speed,
+        minimum_duration=minimum_duration,
+        zscore_threshold=zscore_threshold,
+        speed_threshold=speed_threshold,
+        close_event_threshold=close_ripple_threshold,
+        normalization_method=normalization_method,
         normalization_mask=normalization_mask,
         normalization_time_range=normalization_time_range,
-    )
-    candidate_ripple_times = threshold_by_zscore(
-        combined_filtered_lfps, time, minimum_duration, zscore_threshold
-    )
-    ripple_times = exclude_movement(
-        candidate_ripple_times, speed, time, speed_threshold=speed_threshold
-    )
-    ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
-
-    return _get_event_stats(
-        ripple_times, time, combined_filtered_lfps, speed, minimum_duration
     )
 
 
@@ -960,18 +1045,18 @@ def Yu_ripple_detector(
 
     The consensus trace is the median across tetrodes of each tetrode's
     smoothed, z-scored ripple-band envelope (``get_Yu_ripple_consensus_trace``).
-    Its values during immobility are taken as noise plus a signal tail; the
-    distribution below the mode is mirrored about the mode to estimate the
-    noise distribution, and the detection threshold is the ``percentile`` of
-    that mirrored distribution (``estimate_noise_threshold``). Events are runs
-    of at least ``minimum_duration`` at or above the threshold, extended to
-    where the trace returns to the immobility mean.
+    Its values during immobility are taken as noise plus a signal tail. The
+    part below the mode is mirrored about the mode to estimate the noise
+    distribution, and the detection threshold is the ``percentile`` of that
+    mirrored distribution (``estimate_noise_threshold``). An event is a run of
+    at least ``minimum_duration`` at or above the threshold, extended to where
+    the trace returns to the immobility mean.
 
-    Unlike the other detectors in this module, samples with missing data are
-    not dropped before processing: the recording is split into contiguous
-    valid blocks, and smoothing, thresholding, and event extraction never
-    cross a gap. An event truncated by a gap or by the end of the recording is
-    kept and flagged in ``clipped_start`` / ``clipped_end``.
+    This detector does not drop samples with missing data before processing,
+    as the others do. It splits the recording into contiguous valid blocks, so
+    smoothing, thresholding, and event extraction never cross a gap. An event
+    truncated by a gap or by the end of the recording is kept, and flagged in
+    ``clipped_start`` and ``clipped_end``.
 
     Parameters
     ----------
@@ -985,9 +1070,10 @@ def Yu_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Immobility is speed strictly below this value (cm/s); it selects the
-        noise sample for the threshold and, at event boundaries, which events
-        are kept. Default is 4.0.
+        Immobility is speed at or below this value (cm/s), the package's rule
+        (the paper says "below 4 cm/s"; the two differ only at exact equality).
+        It selects the noise sample for the threshold and, at event
+        boundaries, which events are kept. Default is 4.0.
     minimum_duration : float, optional
         Minimum time the consensus must stay at or above the threshold, in
         seconds, applied as a sample count (round-half-up). Default is 0.020.
@@ -1039,9 +1125,11 @@ def Yu_ripple_detector(
 
     References
     ----------
-    .. [1] Yu, J. Y., et al. (2017). Distinct hippocampal-cortical memory
-       representations for experiences associated with movement versus
-       immobility. eLife, 6, e27621.
+    .. [1] Yu, J. Y., Kay, K., Liu, D. F., Grossrubatscher, I., Loback, A.,
+       Sosa, M., Chung, J. E., Karlsson, M. P., Larkin, M. C., & Frank, L. M.
+       (2017). Distinct hippocampal-cortical memory representations for
+       experiences associated with movement versus immobility. eLife, 6,
+       e27621. doi:10.7554/eLife.27621
 
     """
     filtered_lfps = np.asarray(filtered_lfps, dtype=float)
@@ -1049,8 +1137,8 @@ def Yu_ripple_detector(
     time = np.asarray(time, dtype=float)
     _validate_lfp_dimensions(filtered_lfps)
     _validate_array_lengths(time, filtered_lfps, speed)
-    _validate_time_units(time, sampling_frequency, len(time))
-    _validate_speed_units(speed, speed_threshold)
+    _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
+    _validate_speed_units(speed, speed_threshold, stacklevel=3)
 
     consensus = get_Yu_ripple_consensus_trace(
         filtered_lfps,
@@ -1061,16 +1149,19 @@ def Yu_ripple_detector(
     )
     is_valid = np.isfinite(consensus) & np.isfinite(speed)
 
+    _validate_normalization_params(
+        "zscore", normalization_mask, normalization_time_range, time
+    )
     noise_mask = _get_normalization_mask(
         consensus.shape, time, normalization_mask, normalization_time_range
     )
     if noise_mask is None:
-        noise_mask = speed < speed_threshold
+        noise_mask = speed <= speed_threshold
     noise_mask = noise_mask & is_valid
     if not np.any(noise_mask):
         raise ValueError(
             "No valid immobility samples to estimate the noise threshold from "
-            f"(speed < {speed_threshold} cm/s with finite LFP in every channel)."
+            f"(speed <= {speed_threshold} cm/s with finite LFP in every channel)."
         )
 
     noise_values = consensus[noise_mask]
@@ -1106,7 +1197,6 @@ def Yu_ripple_detector(
         block_events, block_clipped, block_n = _extract_Yu_ripple_events(
             normalized[start:stop],
             time[start:stop],
-            sampling_frequency,
             minimum_duration,
             threshold_zscore,
         )
@@ -1174,13 +1264,16 @@ def _two_threshold_events(
        ends at the run's last sample, as the original's ``diff``-based
        crossing search does. A run touching the first or last sample has no
        paired crossing and is discarded.
-    2. Consecutive candidates are merged, one neighbour per pass, while the
+    2. Consecutive candidates are merged, one neighbor per pass, while the
        gap between them is under ``minimum_inter_ripple_interval`` and the
        merged span is under ``maximum_duration``.
     3. A candidate is kept only if its maximum is strictly above
        ``high_threshold``.
-    4. Candidates shorter than ``minimum_duration`` or longer than
-       ``maximum_duration`` are dropped (strict comparisons).
+    4. Candidates whose sample count (first to last sample, inclusive) is
+       below ``minimum_duration`` or above ``maximum_duration`` are dropped.
+       The package's duration rule (``sample_count_within``: round-half-up
+       sample counts, inclusive limits) replaces the original's elapsed-time
+       comparison; the two differ by one sample at an exact limit.
 
     Parameters
     ----------
@@ -1207,7 +1300,7 @@ def _two_threshold_events(
     # a run needs both a rising and a falling crossing, so runs that touch
     # either end of the block are dropped; an event spans from the last sample
     # below the low threshold before the run to the last sample of the run
-    runs = _boolean_runs(zscored > low_threshold)
+    runs = _boolean_run_bounds(zscored > low_threshold)
     runs = runs[(runs[:, 0] > 0) & (runs[:, 1] < len(zscored))]
     if len(runs) == 0:
         return empty
@@ -1235,12 +1328,8 @@ def _two_threshold_events(
         return empty
     events = np.asarray(kept)
     peaks = np.asarray(peaks)
-    duration = time[events[:, 1]] - time[events[:, 0]]
-    # a tolerance so a span that is exactly the limit is not lost to round-off
-    tolerance = 1e-9
-    keep = ~(
-        (duration > maximum_duration + tolerance) | (duration < minimum_duration - tolerance)
-    )
+    n_samples = events[:, 1] - events[:, 0] + 1
+    keep = sample_count_within(n_samples, time, minimum_duration, maximum_duration)
     events, peaks = events[keep], peaks[keep]
     return np.column_stack([time[events[:, 0]], time[events[:, 1]]]), time[peaks]
 
@@ -1266,30 +1355,30 @@ def Zugaro_ripple_detector(
     FMAToolbox [1]_ (``FindRipples``), carried into buzcode as
     ``bz_FindRipples`` [2]_ and into neurocode [3]_. The ripple-band signal is
     squared, summed across channels, smoothed with a short moving average and
-    z-scored. An event is bounded where the trace crosses a **low** threshold
-    and kept only if its **peak** exceeds a **high** threshold; neighbouring
-    events closer than a minimum interval are merged, and events outside a
-    duration range are discarded. The summed rms-power thresholding it
-    descends from is described in Csicsvari et al. 1999 [4]_.
+    z-scored. A **low** threshold bounds each event, and an event is kept only
+    if its **peak** exceeds a **high** threshold. Neighboring events closer
+    than a minimum interval are merged, and events outside a duration range
+    are discarded. Csicsvari et al. 1999 [4]_ describe the summed rms-power
+    thresholding this rule descends from.
 
     The same two-threshold rule appears independently in the van der Meer lab's
     ``getSWR`` (vandermeerlab, ``code-matlab/tasks/Replay_Analysis/getSWR.m``):
     140-200 Hz, the Hilbert envelope rather than the squared signal, boundaries
     at 2 SD, merge within 20 ms applied before a 20 ms minimum, peak above
-    5 SD. That variant is not implemented separately; it is this detector with
-    ``low_threshold=2``, ``high_threshold=5``, ``minimum_inter_ripple_interval=0.02``,
-    ``minimum_duration=0.02`` and no maximum, up to the envelope-versus-power
-    difference.
+    5 SD. That variant is not implemented separately. It is this detector with
+    ``low_threshold=2``, ``high_threshold=5``,
+    ``minimum_inter_ripple_interval=0.02``, ``minimum_duration=0.02`` and no
+    maximum, apart from using the envelope rather than the squared signal.
 
-    This is a reimplementation from the algorithm, not a transcription (the
-    original is GPL-3). Two departures from the original, both documented
-    per parameter below: the endpoint speed rule shared by this package is
-    applied, and the peak is the maximum of the normalized power rather than
-    the trough of a single filtered channel. Missing samples are handled
-    block-wise: smoothing and segmentation never cross a gap. A run that
-    touches a gap or the record edge lacks one of its two crossings and is
-    dropped, as in the original; ``Yu_ripple_detector`` keeps and flags such
-    runs instead.
+    This is a reimplementation from the algorithm, not a transcription. The
+    original is GPL-3. Two departures, each documented per parameter below.
+    The package's endpoint speed rule is applied. The peak is the maximum of
+    the normalized power, not the trough of a single filtered channel.
+
+    Missing samples are handled block-wise, so smoothing and segmentation
+    never cross a gap. A run that touches a gap or the record edge lacks one
+    of its two crossings and is dropped, as in the original.
+    ``Yu_ripple_detector`` keeps such runs and flags them instead.
 
     Parameters
     ----------
@@ -1341,15 +1430,20 @@ def Zugaro_ripple_detector(
 
     References
     ----------
-    .. [1] Zugaro, M. FMAToolbox, ``Analyses/FindRipples.m``
-       (initial algorithm by H. Hirase), https://github.com/michael-zugaro/FMAToolbox
+    .. [1] Zugaro, M. FMAToolbox, ``Analyses/FindRipples.m`` (initial algorithm
+       by H. Hirase). The repository has no license file; the file headers
+       state GPL-3 or later.
+       https://github.com/michael-zugaro/FMAToolbox/blob/6bbb3662f7ed1ccf09c5ff4b4d233e27e17c71a6/Analyses/FindRipples.m
     .. [2] Buzsáki lab, buzcode, ``analysis/SharpWaveRipples/bz_FindRipples.m``
-       (edited by D. Tingley, 2017), https://github.com/buzsakilab/buzcode
-    .. [3] AYA lab, neurocode, ``SharpWaveRipples/FindRipples.m``,
-       https://github.com/ayalab1/neurocode, doi:10.5281/zenodo.7819979
+       (edited by D. Tingley, 2017), GPL-3.
+       https://github.com/buzsakilab/buzcode/blob/0969ddf7f55ccaca8c71969bee4b21f310840047/analysis/SharpWaveRipples/bz_FindRipples.m
+    .. [3] AYA lab, neurocode, ``SharpWaveRipples/FindRipples.m`` (no license
+       file), doi:10.5281/zenodo.7819979
+       https://github.com/ayalab1/neurocode/blob/d166a67ffb73096d8d11b14be6693d96ad63e4ed/SharpWaveRipples/FindRipples.m
     .. [4] Csicsvari, J., Hirase, H., Czurkó, A., Mamiya, A., & Buzsáki, G.
        (1999). Oscillatory coupling of hippocampal pyramidal cells and
-       interneurons in the behaving rat. J Neurosci, 19(1), 274-287.
+       interneurons in the behaving rat. Journal of Neuroscience, 19(1),
+       274-287. doi:10.1523/JNEUROSCI.19-01-00274.1999
 
     """
     filtered_lfps = np.asarray(filtered_lfps, dtype=float)
@@ -1357,8 +1451,8 @@ def Zugaro_ripple_detector(
     time = np.asarray(time, dtype=float)
     _validate_lfp_dimensions(filtered_lfps)
     _validate_array_lengths(time, filtered_lfps, speed)
-    _validate_time_units(time, sampling_frequency, len(time))
-    _validate_speed_units(speed, speed_threshold)
+    _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
+    _validate_speed_units(speed, speed_threshold, stacklevel=3)
 
     is_valid = np.all(np.isfinite(filtered_lfps), axis=1) & np.isfinite(speed)
     if not np.any(is_valid):
@@ -1377,6 +1471,9 @@ def Zugaro_ripple_detector(
     for start, stop in blocks:
         smoothed[start:stop] = np.convolve(power[start:stop], kernel, mode="same")
 
+    _validate_normalization_params(
+        "zscore", normalization_mask, normalization_time_range, time
+    )
     mask = _get_normalization_mask(
         smoothed.shape, time, normalization_mask, normalization_time_range
     )
@@ -1419,17 +1516,14 @@ def _gaussian_lowpass_fir(
     """Unit-area Gaussian low-pass kernel with standard deviation
     ``fs / (2 pi cutoff)`` samples, truncated at ``n_sd`` standard deviations
     (Eran Stark's ``makegausslpfir``)."""
-    sd = sampling_frequency / (2.0 * np.pi * cutoff)
-    half = int(np.ceil(max(n_sd, 3.0) * sd))
-    x = np.arange(-half, half + 1)
-    kernel = np.exp(-(x**2) / (2.0 * sd**2))
-    return kernel / kernel.sum()
+    sigma_samples = sampling_frequency / (2.0 * np.pi * cutoff)
+    return _unit_area_gaussian(sigma_samples, max(n_sd, 3.0))
 
 
 def _firfilt(x: NDArray, kernel: NDArray) -> NDArray:
     """Zero-phase FIR filtering along axis 0 with the ends reflected.
 
-    A centred convolution with the signal mirrored at both ends, which is what
+    A centered convolution with the signal mirrored at both ends, which is what
     Eran Stark's ``firfilt`` (mirror-pad, causal filter, crop the delay)
     computes for the odd symmetric kernels used here.
     """
@@ -1477,9 +1571,9 @@ def Long_sharp_wave_ripple_detector(
     John D. Long II's two-channel detector (buzcode ``bz_DetectSWR`` [1]_,
     converted to buzcode by Andrea Navas-Olive; filtering routines adapted
     from Eran Stark's ``detect_hfos``; carried into AYA-lab neurocode as
-    ``DetectSWR`` [2]_). It requires a channel that records the ripple, in or
-    just above the CA1 pyramidal layer, and a deeper channel that records the
-    sharp wave in stratum radiatum; it cannot run on a single layer.
+    ``DetectSWR`` [2]_). It needs two channels: one that records the ripple,
+    in or just above the CA1 pyramidal layer, and a deeper one that records
+    the sharp wave in stratum radiatum. It cannot run on a single layer.
 
     **Unlike the other detectors, this one takes raw, unfiltered LFP**, shape
     ``(n_time, 2)`` with the ripple channel first, because it filters both
@@ -1500,12 +1594,12 @@ def Long_sharp_wave_ripple_detector(
     than 50 ms to the previous candidate are dropped, and duration limits
     apply. Event bounds are the sharp-wave bounds.
 
-    Reimplemented from the algorithm as read; the source states no licence.
-    Departures, all documented: k-means is seeded through ``random_state``
-    (MATLAB's is not); candidates whose local window has no sample below the
-    boundary threshold are rejected (the original errors); the package's
-    endpoint speed rule is applied afterwards; NaN input raises because the
-    local statistics need contiguous data.
+    Reimplemented from the algorithm as read. The source states no license.
+    Four departures, each documented below. ``random_state`` seeds the
+    k-means, where MATLAB's is unseeded. A candidate whose local window holds
+    no sample below the boundary threshold is rejected, where the original
+    errors. The package's endpoint speed rule is applied afterwards. NaN input
+    raises, because the local statistics need contiguous data.
 
     Parameters
     ----------
@@ -1544,9 +1638,11 @@ def Long_sharp_wave_ripple_detector(
     minimum_separation : float, optional
         Minimum time from the previous candidate, in seconds. Default 0.050.
     minimum_sharp_wave_duration, maximum_sharp_wave_duration : float, optional
-        Sharp-wave duration limits in seconds. A candidate is rejected when it
-        fails the sharp-wave minimum **and** the ripple minimum, or exceeds
-        the sharp-wave maximum. Defaults 0.020 and 0.500.
+        Sharp-wave duration limits in seconds, applied as inclusive
+        round-half-up sample counts (``sample_count_within``). A candidate is
+        rejected when both its sharp wave and its ripple are below their
+        minimum, or when the sharp wave exceeds the maximum. Defaults 0.020
+        and 0.500.
     minimum_ripple_duration : float, optional
         Ripple duration minimum in seconds. Default 0.025.
     random_state : int or numpy Generator, optional
@@ -1565,10 +1661,12 @@ def Long_sharp_wave_ripple_detector(
 
     References
     ----------
-    .. [1] Long, J. D. II. ``bz_DetectSWR.m`` in buzcode
-       (``analysis/SharpWaveRipples/``), https://github.com/buzsakilab/buzcode
-    .. [2] AYA lab, neurocode, ``SharpWaveRipples/DetectSWR.m``,
-       https://github.com/ayalab1/neurocode, doi:10.5281/zenodo.7819979
+    .. [1] Long, J. D. II. ``bz_DetectSWR.m`` in buzcode, GPL-3. No
+       accompanying paper.
+       https://github.com/buzsakilab/buzcode/blob/0969ddf7f55ccaca8c71969bee4b21f310840047/analysis/SharpWaveRipples/bz_DetectSWR.m
+    .. [2] AYA lab, neurocode, ``SharpWaveRipples/DetectSWR.m`` (no license
+       file), doi:10.5281/zenodo.7819979
+       https://github.com/ayalab1/neurocode/blob/d166a67ffb73096d8d11b14be6693d96ad63e4ed/SharpWaveRipples/DetectSWR.m
 
     """
     lfp = np.asarray(lfp, dtype=float)
@@ -1580,8 +1678,8 @@ def Long_sharp_wave_ripple_detector(
             f"first and the sharp-wave channel second; got shape {lfp.shape}."
         )
     _validate_array_lengths(time, lfp, speed)
-    _validate_time_units(time, sampling_frequency, len(time))
-    _validate_speed_units(speed, speed_threshold)
+    _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
+    _validate_speed_units(speed, speed_threshold, stacklevel=3)
     if np.any(np.isnan(lfp)) or np.any(np.isnan(speed)):
         raise ValueError(
             "lfp and speed must not contain NaN: this detector's local statistics need "
@@ -1619,8 +1717,8 @@ def Long_sharp_wave_ripple_detector(
         if local_arg in (0, block - 1):
             if peak in (0, n_time - 1):
                 continue
-            neighbours = sharp_wave_diff[peak - 1 : peak + 2]
-            if int(np.argmax(neighbours)) != 1:
+            neighbors = sharp_wave_diff[peak - 1 : peak + 2]
+            if int(np.argmax(neighbors)) != 1:
                 continue
         feature_index.append(peak)
         sharp_wave_feature.append(segment[local_arg])
@@ -1657,9 +1755,6 @@ def Long_sharp_wave_ripple_detector(
     )
     separation = np.diff(np.concatenate([[0.0], candidate_peaks / sampling_frequency]))
 
-    min_sw = int(np.floor(minimum_sharp_wave_duration * sampling_frequency))
-    max_sw = int(np.floor(maximum_sharp_wave_duration * sampling_frequency))
-    min_rp = int(np.floor(minimum_ripple_duration * sampling_frequency))
     sw_boundary, sw_peak = sharp_wave_thresholds
     rp_boundary, rp_peak = ripple_thresholds
 
@@ -1693,9 +1788,21 @@ def Long_sharp_wave_ripple_detector(
         if len(rp_before) == 0 or len(rp_after) == 0:
             continue
         ripple_samples = (rp_peak_local + rp_after[0]) - rp_before[-1]
-        if ripple_samples < min_rp and sharp_wave_samples < min_sw:
+        ripple_long_enough = sample_count_within(ripple_samples, time, minimum_ripple_duration)
+        sharp_wave_long_enough = sample_count_within(
+            sharp_wave_samples, time, minimum_sharp_wave_duration
+        )
+        if not ripple_long_enough and not sharp_wave_long_enough:
             continue
-        if sharp_wave_samples > max_sw:
+        if (
+            not sample_count_within(
+                sharp_wave_samples,
+                time,
+                minimum_sharp_wave_duration,
+                maximum_sharp_wave_duration,
+            )
+            and sharp_wave_long_enough
+        ):
             continue
         records.append(
             {
@@ -1725,7 +1832,13 @@ def Long_sharp_wave_ripple_detector(
 
     ripple_power_z = normalize_signal(ripple_power)
     events = _get_event_stats(
-        event_times, time, ripple_power_z, speed, minimum_duration=minimum_ripple_duration
+        # the reported event spans the sharp wave, so the sustained-value window
+        # is measured against the sharp-wave minimum
+        event_times,
+        time,
+        ripple_power_z,
+        speed,
+        minimum_duration=minimum_sharp_wave_duration,
     )
     events["peak_time"] = (
         time[detected["peak"].to_numpy(dtype=int)] if len(detected) else np.empty(0)
@@ -1757,7 +1870,7 @@ def _state_intervals(
     """Contiguous runs of a state, merged across gaps shorter than ``merge_gap``
     and dropped when shorter than ``minimum_length`` (vandermeerlab ``TSDtoIV``).
     Returns ``[start_index, stop_index]`` rows, inclusive."""
-    bounds = _boolean_runs(is_in_state)
+    bounds = _boolean_run_bounds(is_in_state)
     if len(bounds) == 0:
         return np.empty((0, 2), dtype=int)
     starts, stops = bounds[:, 0], bounds[:, 1] - 1
@@ -1807,7 +1920,7 @@ def Carey_candidate_detector(
 ) -> pd.DataFrame:
     """Detect candidate replay events from ripple power and multiunit activity jointly.
 
-    The candidate-event detector of Carey, Tank & van der Meer 2019 [1]_
+    The candidate-event detector of Carey, Tanaka & van der Meer 2019 [1]_
     (vandermeerlab ``GenCandidateEvents`` with its Hilbert ripple score
     ``OldWizard`` and multiunit score ``amMUA`` by Elyot Grant and A. Carey)
     [2]_. A ripple score and a multiunit score are combined as their
@@ -1825,16 +1938,17 @@ def Carey_candidate_detector(
       worth, smoothed with a 125 ms SD Gaussian) and one unit's cap are
       subtracted; divided by the mean and floored at zero.
     - **Joint score**: ``sqrt(ripple * multiunit)``, rescaled to mean 0.5 and
-      z-scored. Note the asymmetry this creates: the multiunit score is
+      z-scored. This combination is asymmetric. The multiunit score is
       floored at zero, so a ripple without a population burst cannot be a
-      candidate, but the ripple score is an envelope rescaled to mean 1 and
+      candidate. The ripple score is an envelope rescaled to mean 1 and is
       never zero, so a burst without a ripple can be. The joint score is
       therefore closer to "burst, weighted by ripple power" than to a
-      symmetric conjunction. Candidates are runs strictly above ``edge_threshold`` whose
-      maximum is strictly above ``peak_threshold``, longer than
-      ``minimum_duration``.
+      symmetric conjunction. A candidate is a run strictly above
+      ``edge_threshold`` whose maximum is strictly above ``peak_threshold``.
+      Its sample count must meet ``minimum_duration`` under the package's
+      duration rule.
     - **State**: a candidate is kept only if it lies entirely inside a
-      low-speed interval (speed below ``speed_threshold``, runs merged across
+      low-speed interval (speed at or below ``speed_threshold``, runs merged across
       gaps under ``state_merge_gap`` and dropped under
       ``state_minimum_length``) and, when ``theta_lfp`` is given, inside a
       low-theta interval (z-scored theta-band envelope below
@@ -1866,8 +1980,9 @@ def Carey_candidate_detector(
         Boundary and peak thresholds on the z-scored joint score. Defaults 1
         and 3 (the original's ``DetectorThreshold`` and ``DetectorThreshold2``).
     minimum_duration : float, optional
-        Candidates must be longer than this, in seconds (strict, as the
-        original's ``RemoveIV``). Default 0.020.
+        Minimum candidate duration in seconds, applied as an inclusive
+        round-half-up sample count (``sample_count_within``); the original's
+        ``RemoveIV`` compared elapsed time strictly. Default 0.020.
     minimum_active_units : int, optional
         Minimum number of units with a spike inside the candidate. Default 5.
     ripple_smoothing_sigma, spike_kernel_sigma, baseline_sigma : float, optional
@@ -1895,12 +2010,13 @@ def Carey_candidate_detector(
 
     References
     ----------
-    .. [1] Carey, A. A., Tank, D. W., & van der Meer, M. A. A. (2019). Reward
+    .. [1] Carey, A. A., Tanaka, Y., & van der Meer, M. A. A. (2019). Reward
        revaluation biases hippocampal replay content away from the preferred
-       outcome. Nature Neuroscience, 22, 1450-1459.
-    .. [2] van der Meer lab, ``code-matlab/tasks/Alyssa_Tmaze/GenCandidateEvents.m``,
-       ``beta/OldWizard.m``, ``beta/amMUA.m``, ``beta/TSDtoIV2.m``,
-       https://github.com/vandermeerlab/vandermeerlab
+       outcome. Nature Neuroscience, 22(9), 1450-1459.
+       doi:10.1038/s41593-019-0464-6
+    .. [2] van der Meer lab, ``code-matlab/tasks/Alyssa_Tmaze/GenCandidateEvents.m``
+       with ``beta/OldWizard.m``, ``beta/amMUA.m``, and ``beta/TSDtoIV2.m``.
+       https://github.com/vandermeerlab/vandermeerlab/blob/82ba3fe29cc3912575b32a0fcdaaa1c4fe097231/code-matlab/tasks/Alyssa_Tmaze/GenCandidateEvents.m
 
     """
     filtered_lfps = np.asarray(filtered_lfps, dtype=float)
@@ -1917,8 +2033,8 @@ def Carey_candidate_detector(
         raise ValueError(
             f"Array length mismatch: multiunit has {multiunit.shape[0]} samples but time has {len(time)}."
         )
-    _validate_time_units(time, sampling_frequency, len(time))
-    _validate_speed_units(speed, speed_threshold)
+    _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
+    _validate_speed_units(speed, speed_threshold, stacklevel=3)
     if (
         np.any(np.isnan(filtered_lfps))
         or np.any(np.isnan(multiunit))
@@ -1954,20 +2070,20 @@ def Carey_candidate_detector(
     zscored = normalize_signal(joint)
 
     # two-threshold segmentation (TSDtoIV2): runs above the edge, kept if peak above
-    bounds = _boolean_runs(zscored > edge_threshold)
+    bounds = _boolean_run_bounds(zscored > edge_threshold)
     candidates = []
     for start, stop in bounds:
         if zscored[start:stop].max() > peak_threshold:
             candidates.append((start, stop - 1))
     candidates = np.asarray(candidates, dtype=int).reshape(-1, 2)
     if len(candidates):
-        duration = time[candidates[:, 1]] - time[candidates[:, 0]]
-        candidates = candidates[duration > minimum_duration]  # RemoveIV: strict
+        n_samples = candidates[:, 1] - candidates[:, 0] + 1
+        candidates = candidates[sample_count_within(n_samples, time, minimum_duration)]
 
     # state restriction: contained in a low-speed (and low-theta) interval
     if len(candidates):
         low_speed = _state_intervals(
-            speed < speed_threshold, time, state_merge_gap, state_minimum_length
+            speed <= speed_threshold, time, state_merge_gap, state_minimum_length
         )
         candidates = candidates[_contained_in_intervals(candidates, low_speed)]
     if len(candidates) and theta_lfp is not None:
@@ -2024,7 +2140,7 @@ def Karlsson_ripple_detector(
 ) -> pd.DataFrame:
     """Detect sharp-wave ripples using per-channel detection with merging.
 
-    Implements the Karlsson et al. 2009 algorithm, which detects ripples on
+    Implements the Karlsson & Frank 2009 algorithm, which detects ripples on
     each LFP channel independently, then merges overlapping events across
     channels. More sensitive to local ripples than consensus methods.
 
@@ -2052,7 +2168,7 @@ def Karlsson_ripple_detector(
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
         ``round(minimum_duration * sampling_frequency)`` consecutive samples
-        (per Karlsson et al. 2009); the event is then extended to the surrounding
+        (per Karlsson & Frank 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
@@ -2074,7 +2190,7 @@ def Karlsson_ripple_detector(
         The median/MAD method is more resistant to extreme values.
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask to specify which samples to use for computing normalization
-        statistics. For example, use `speed < speed_threshold` to compute
+        statistics. For example, use `speed <= speed_threshold` to compute
         statistics only during immobility. Cannot be used with
         `normalization_time_range`. Default is None (use all data).
     normalization_time_range : tuple of (float, float), optional
@@ -2109,8 +2225,9 @@ def Karlsson_ripple_detector(
 
     References
     ----------
-    .. [1] Karlsson, M.P., and Frank, L.M. (2009). Awake replay of remote
-       experiences in the hippocampus. Nature Neuroscience 12, 913-918.
+    .. [1] Karlsson, M. P., & Frank, L. M. (2009). Awake replay of remote
+       experiences in the hippocampus. Nature Neuroscience, 12(7), 913-918.
+       doi:10.1038/nn.2344
 
     """
     time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
@@ -2196,7 +2313,7 @@ def Roumis_ripple_detector(
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
         ``round(minimum_duration * sampling_frequency)`` consecutive samples
-        (per Karlsson et al. 2009); the event is then extended to the surrounding
+        (per Karlsson & Frank 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
@@ -2218,7 +2335,7 @@ def Roumis_ripple_detector(
         The median/MAD method is more resistant to extreme values.
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask to specify which samples to use for computing normalization
-        statistics. For example, use `speed < speed_threshold` to compute
+        statistics. For example, use `speed <= speed_threshold` to compute
         statistics only during immobility. Cannot be used with
         `normalization_time_range`. Default is None (use all data).
     normalization_time_range : tuple of (float, float), optional
@@ -2268,23 +2385,17 @@ def Roumis_ripple_detector(
         filtered_lfps, sigma=smoothing_sigma, sampling_frequency=sampling_frequency
     )
     combined_filtered_lfps = np.mean(np.sqrt(filtered_lfps), axis=1)
-    combined_filtered_lfps = normalize_signal(
+    return _detect_from_trace(
         combined_filtered_lfps,
-        time=time,
-        method=normalization_method,
+        time,
+        speed,
+        minimum_duration=minimum_duration,
+        zscore_threshold=zscore_threshold,
+        speed_threshold=speed_threshold,
+        close_event_threshold=close_ripple_threshold,
+        normalization_method=normalization_method,
         normalization_mask=normalization_mask,
         normalization_time_range=normalization_time_range,
-    )
-    candidate_ripple_times = threshold_by_zscore(
-        combined_filtered_lfps, time, minimum_duration, zscore_threshold
-    )
-    ripple_times = exclude_movement(
-        candidate_ripple_times, speed, time, speed_threshold=speed_threshold
-    )
-    ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
-
-    return _get_event_stats(
-        ripple_times, time, combined_filtered_lfps, speed, minimum_duration
     )
 
 
@@ -2305,20 +2416,20 @@ def multiunit_HSE_detector(
 ) -> pd.DataFrame:
     """Detect High Synchrony Events from multiunit spiking activity.
 
-    Identifies periods of elevated population spiking activity during immobility.
-    The population firing rate (summed over units) is smoothed with a Gaussian
-    kernel, z-scored, and thresholded with the same sustained-threshold and
-    mean-crossing rules as the LFP ripple detectors: at or above
-    ``zscore_threshold`` for ``minimum_duration``, then extended to where the
-    rate returns to the mean.
+    Identifies periods of elevated population spiking during immobility. The
+    population firing rate, summed over units, is smoothed with a Gaussian
+    kernel and z-scored. It is then thresholded with the same rules as the LFP
+    detectors: at or above ``zscore_threshold`` for ``minimum_duration``, then
+    extended to where the rate returns to the mean.
 
-    The 15 ms smoothing kernel follows Davidson et al. 2009 [1]_, but the
-    selection rule does not: Davidson et al. define candidate events as periods
-    above the mean whose *peak* exceeds 3 s.d., with statistics from stopped
-    periods only and no sustained-duration requirement. To approximate that
-    convention, pass ``zscore_threshold=3.0``, ``minimum_duration=0.0`` and
-    ``normalization_mask=speed < speed_threshold``; the default 2 s.d. for
-    15 ms with statistics over all samples is this package's own convention.
+    The 15 ms smoothing kernel follows Davidson et al. 2009 [1]_. The
+    selection rule does not. Davidson et al. define a candidate event as a
+    period above the mean whose *peak* exceeds 3 s.d. They take the statistics
+    from stopped periods only and impose no sustained-duration requirement.
+    To approximate that convention, pass ``zscore_threshold=3.0``,
+    ``minimum_duration=0.0`` and ``normalization_mask=speed < 5.0``, their
+    stopped-period criterion. The defaults here, 2 s.d. held for 15 ms with
+    statistics over all samples, are this package's own convention.
 
     Parameters
     ----------
@@ -2375,7 +2486,7 @@ def multiunit_HSE_detector(
         The median/MAD method is more resistant to extreme values.
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask to specify which samples to use for computing normalization
-        statistics. For example, use `speed < speed_threshold` to compute
+        statistics. For example, use `speed <= speed_threshold` to compute
         statistics only during immobility. Cannot be used with
         `normalization_time_range` or `use_speed_threshold_for_zscore`.
         Default is None (use all data).
@@ -2409,8 +2520,9 @@ def multiunit_HSE_detector(
 
     References
     ----------
-    .. [1] Davidson, T.J., Kloosterman, F., and Wilson, M.A. (2009).
-       Hippocampal Replay of Extended Experience. Neuron 63, 497-507.
+    .. [1] Davidson, T. J., Kloosterman, F., & Wilson, M. A. (2009).
+       Hippocampal replay of extended experience. Neuron, 63(4), 497-507.
+       doi:10.1016/j.neuron.2009.07.027
 
     """
     multiunit = np.asarray(multiunit, dtype=float)
@@ -2422,8 +2534,8 @@ def multiunit_HSE_detector(
             f"{multiunit.shape}. For a single unit, pass multiunit[:, np.newaxis]."
         )
     _validate_array_lengths(time, multiunit, speed)
-    _validate_time_units(time, sampling_frequency, len(time))
-    _validate_speed_units(speed, speed_threshold)
+    _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
+    _validate_speed_units(speed, speed_threshold, stacklevel=3)
     if np.any(np.isnan(multiunit)):
         raise ValueError(
             "multiunit contains NaN. Spike counts cannot be missing: fill absent "
@@ -2444,30 +2556,26 @@ def multiunit_HSE_detector(
 
         warnings.warn(
             "The 'use_speed_threshold_for_zscore' parameter is deprecated. "
-            "Use 'normalization_mask=speed < speed_threshold' instead.",
+            "Use 'normalization_mask=speed <= speed_threshold' instead.",
             DeprecationWarning,
             stacklevel=2,
         )
         # If old parameter is used, override normalization_mask unless explicitly set
         if normalization_mask is None and normalization_time_range is None:
-            normalization_mask = speed < speed_threshold
+            normalization_mask = speed <= speed_threshold
 
-    firing_rate = normalize_signal(
+    return _detect_from_trace(
         firing_rate,
-        time=time,
-        method=normalization_method,
+        time,
+        speed,
+        minimum_duration=minimum_duration,
+        zscore_threshold=zscore_threshold,
+        speed_threshold=speed_threshold,
+        close_event_threshold=close_event_threshold,
+        normalization_method=normalization_method,
         normalization_mask=normalization_mask,
         normalization_time_range=normalization_time_range,
     )
-    candidate_high_synchrony_events = threshold_by_zscore(
-        firing_rate, time, minimum_duration, zscore_threshold
-    )
-    high_synchrony_events = exclude_movement(
-        candidate_high_synchrony_events, speed, time, speed_threshold=speed_threshold
-    )
-    high_synchrony_events = exclude_close_events(high_synchrony_events, close_event_threshold)
-
-    return _get_event_stats(high_synchrony_events, time, firing_rate, speed, minimum_duration)
 
 
 def _find_max_thresh(
@@ -2576,12 +2684,12 @@ def _get_event_stats(
     speed_arr = np.asarray(speed)
 
     index = pd.Index(np.arange(len(event_times_arr)) + 1, name="event_number")
-    try:
-        speed_at_start = speed_arr[np.isin(time_arr, event_times_arr[:, 0])]
-        speed_at_end = speed_arr[np.isin(time_arr, event_times_arr[:, 1])]
-    except (IndexError, TypeError):
-        speed_at_start = np.full_like(event_times_arr, np.nan)
-        speed_at_end = np.full_like(event_times_arr, np.nan)
+    if len(event_times_arr):
+        speed_at_start = speed_arr[nearest_sample_index(time_arr, event_times_arr[:, 0])]
+        speed_at_end = speed_arr[nearest_sample_index(time_arr, event_times_arr[:, 1])]
+    else:
+        speed_at_start = np.empty(0)
+        speed_at_end = np.empty(0)
 
     mean_zscore = []
     median_zscore = []
@@ -2600,10 +2708,10 @@ def _get_event_stats(
         time_mask = np.logical_and(time_arr >= start_time, time_arr <= end_time)
 
         if participants is None:
-            if len(zscore_metric.shape) != 1:
+            if zscore_metric_arr.ndim != 1:
                 raise ValueError(
-                    "If no participants are listed, the shape of zscore_metric should be (n_time,). "
-                    f"Current shape of zscore_metric is {zscore_metric.shape}."
+                    "Without participants, zscore_metric must have shape "
+                    f"(n_time,). Got shape {zscore_metric_arr.shape}."
                 )
 
             event_zscore = zscore_metric_arr[time_mask]
@@ -2613,13 +2721,15 @@ def _get_event_stats(
             elec_ind = np.asarray(list(participants[r]))
 
             # check that zscore_metric is 2-D
-            if len(zscore_metric.shape) != 2:
+            if zscore_metric_arr.ndim != 2:
                 raise ValueError(
-                    "If participants are listed, the shape of zscore_metric should be (n_time, n_channels) "
-                    f"so that relevant metrics can be properly calculated. Current shape of zscore_metric is {zscore_metric.shape}."
+                    "With participants, zscore_metric must have shape "
+                    "(n_time, n_channels), so each event's metrics can come "
+                    f"from its participating channels. Got shape "
+                    f"{zscore_metric_arr.shape}."
                 )
 
-            event_zscore = zscore_metric[np.ix_(time_ind, elec_ind)].mean(
+            event_zscore = zscore_metric_arr[np.ix_(time_ind, elec_ind)].mean(
                 axis=1
             )  # only include the participating electrodes for all of these metrics
 
