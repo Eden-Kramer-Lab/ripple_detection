@@ -13,7 +13,7 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
 - **Multiple Detection Algorithms**
   - `Kay_ripple_detector` - Multi-channel consensus approach (Kay et al. 2016)
   - `Karlsson_ripple_detector` - Per-channel detection with merging (Karlsson et al. 2009)
-  - `Shvartsman_ripple_detector` - Per-channel detection requiring a minimum fraction of participating channels
+  - `Shvartsman_ripple_detector` - Per-channel detection requiring a minimum number of participating channels (unpublished)
   - `Roumis_ripple_detector` - Per-channel envelopes averaged across channels (Frank-lab variant, unpublished)
   - `Yu_ripple_detector` - Median consensus with a data-driven noise-percentile threshold (Yu et al. 2017)
   - `Carey_candidate_detector` - Joint ripple-power x multiunit candidate events (Carey, Tank & van der Meer 2019); takes LFP and spikes
@@ -169,7 +169,7 @@ The index is `event_number`. Some detectors add columns:
 | `Shvartsman_ripple_detector` | `participants` (channel indices), `n_participants`, `frac_participants` |
 | `Yu_ripple_detector` | `clipped_start`, `clipped_end` (event cut by a gap or the record edge), `n_suprathreshold_samples`, `detection_threshold_zscore` |
 | `Zugaro_ripple_detector` | `peak_time` |
-| `Long_sharp_wave_ripple_detector` | `peak_time`, `sharp_wave_zscore`, `sharp_wave_percentile`, `ripple_power_zscore`, `ripple_power_percentile`, `sharp_wave_duration`, `ripple_duration` |
+| `Long_sharp_wave_ripple_detector` | `peak_time`, `sharp_wave_zscore`, `sharp_wave_local_percentile`, `ripple_power_zscore`, `ripple_power_local_percentile`, `sharp_wave_duration`, `ripple_duration` |
 | `Carey_candidate_detector` | `n_active_units` |
 | `mean_speed` | Mean speed during event |
 
@@ -273,7 +273,7 @@ ripples = Kay_ripple_detector(
 | Parameter | Default | Description | When to Adjust |
 |-----------|---------|-------------|----------------|
 | `speed_threshold` | 4.0 cm/s | Maximum speed for ripple detection | Increase if too many events excluded during slow movement |
-| `minimum_duration` | 0.015 s (Kay, Karlsson, Roumis, Shvartsman, HSE)<br>0.020 s (Yu, Zugaro, Carey) | Minimum event duration, counted in samples at `sampling_frequency` | Decrease for shorter events; increase for stricter detection. Each detector's docstring states whether the comparison is inclusive |
+| `minimum_duration` | 0.015 s (Kay, Karlsson, Roumis, Shvartsman, HSE)<br>0.020 s (Yu, Zugaro, Carey) | Minimum event duration: counted in samples from the median timestamp step (Kay, Karlsson, Roumis, Shvartsman, HSE, Yu) or compared as elapsed time (Zugaro inclusive, Carey strict) | Decrease for shorter events; increase for stricter detection; see each detector's docstring for its rule |
 | `zscore_threshold` | 2.0 (Kay, Roumis, HSE)<br>3.0 (Karlsson, Shvartsman) | Detection sensitivity | Decrease for more detections; increase for fewer, higher-confidence events |
 | `smoothing_sigma` | 0.004 s | Gaussian smoothing window (4 ms) | Rarely needs adjustment; increase for noisier data |
 | `percentile` | 99.99 (Yu) | Percentile of the mirrored immobility-noise distribution used as the threshold | Lower for more detections; the threshold is estimated per call, so it adapts to each recording |
@@ -301,7 +301,7 @@ conventions below.
 |---|---|---|---|---|---|---|---|---|
 | `Kay_ripple_detector` | ripple-band LFP `(n_time, n_channels)` | z-scored consensus √(smoothed Σ envelope²), 4 ms | `zscore_threshold` 2.0 | ≥ 0.015 s | `close_ripple_threshold` 0.0, drops the later event | rows dropped, rest stitched | speed at first and last sample ≤ threshold | Kay et al. 2016 |
 | `Karlsson_ripple_detector` | same | each channel's z-scored envelope; overlapping per-channel events merged | 3.0 | ≥ 0.015 s | same | same | same | Karlsson & Frank 2009 |
-| `Roumis_ripple_detector` | same | z-scored mean over channels of the smoothed envelope | 2.0 | ≥ 0.015 s | same | same | same | Frank-lab variant (D. Roumis), unpublished |
+| `Roumis_ripple_detector` | same | z-scored mean over channels of √(smoothed envelope²), 4 ms | 2.0 | ≥ 0.015 s | same | same | same | Frank-lab variant (D. Roumis), unpublished |
 | `Shvartsman_ripple_detector` | same | per-channel z-scored envelopes; event kept when ≥ `participation_threshold` channels (2) detect it | 3.0 | ≥ 0.015 s | same | same | at least half the event's samples ≤ threshold | lab variant (G. Shvartsman), unpublished |
 | `Yu_ripple_detector` | same | median over channels of each channel's z-scored 4 ms-smoothed envelope | `percentile` 99.99 of the mirrored immobility-noise distribution, estimated per call | ≥ 0.020 s, counted in samples | `close_ripple_threshold` 0.0 | block-wise: nothing smoothed or joined across a gap; clipped events flagged | noise from `speed < threshold`; event endpoints ≤ threshold | Yu et al. 2017 |
 | `Zugaro_ripple_detector` | same, channels summed | z-scored smoothed squared signal, two thresholds | `low_threshold` 2.0 (bounds), `high_threshold` 5.0 (peak) | 0.020–0.100 s | `minimum_inter_ripple_interval` 0.030 s, merges | block-wise | endpoints ≤ threshold | FMAToolbox `FindRipples` (Hirase; Zugaro) |
