@@ -21,6 +21,7 @@ from ripple_detection.detectors import (
     Roumis_ripple_detector,
     _find_max_thresh,
     get_Kay_ripple_consensus_trace,
+    get_Yu_ripple_consensus_trace,
     multiunit_HSE_detector,
 )
 from ripple_detection.simulate import simulate_LFP
@@ -40,9 +41,9 @@ class TestShvartsmanRippleDetector:
         assert isinstance(ripples, pd.DataFrame)
 
         # Verify empty DataFrame (doesn't exceed 2-channel default participation minimum)
-        assert (
-            ripples.empty
-        ), "Should not detect any ripples because there's a 2-channel participation minimum default"
+        assert ripples.empty, (
+            "Should not detect any ripples because there's a 2-channel participation minimum default"
+        )
 
     def test_single_channel_with_ripples_participation_threshold_0(
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
@@ -104,9 +105,9 @@ class TestShvartsmanRippleDetector:
         assert all(ripples["mean_zscore"] >= 0), "Mean z-score should be non-negative"
 
         # Verify number of participants
-        assert all(
-            ripples["n_participants"] == 1
-        ), "Single-channel ripples should have one participant"
+        assert all(ripples["n_participants"] == 1), (
+            "Single-channel ripples should have one participant"
+        )
 
     def test_dual_channel_with_ripples(
         self, time_3s, dual_lfp_with_ripples, stationary_speed, sampling_frequency
@@ -121,9 +122,9 @@ class TestShvartsmanRippleDetector:
         assert isinstance(ripples, pd.DataFrame)
 
         # Verify empty DataFrame (doesn't exceed 2-channel default participation minimum)
-        assert (
-            ripples.empty
-        ), "Should not detect any ripples because they don't co-occur across the two channels"
+        assert ripples.empty, (
+            "Should not detect any ripples because they don't co-occur across the two channels"
+        )
 
     def test_dual_channel_with_cooccur_ripples(
         self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
@@ -213,9 +214,9 @@ class TestShvartsmanRippleDetector:
         assert isinstance(ripples, pd.DataFrame)
 
         # Verify empty DataFrame (doesn't exceed 2-channel default participation minimum for any single ripple)
-        assert (
-            ripples.empty
-        ), "Should not detect any ripples because they don't co-occur across the sparse channels"
+        assert ripples.empty, (
+            "Should not detect any ripples because they don't co-occur across the sparse channels"
+        )
 
     def test_multi_channel_sparse_cooccur_ripples(
         self, time_3s, multi_lfp_sparse_cooccur_ripples, stationary_speed, sampling_frequency
@@ -275,17 +276,17 @@ class TestShvartsmanRippleDetector:
         # Verify number of participants
         assert all(ripples["n_participants"] == 2), "Each ripple should have two participants"
         # ripple channels are indices 0 and 1; the 11 noise channels never participate
-        assert all(
-            p == {0, 1} for p in ripples["participants"]
-        ), "Participants should be channels 0 and 1"
-        assert np.allclose(
-            ripples["frac_participants"], 2 / 13
-        ), "frac_participants should be 2/13"
+        assert all(p == {0, 1} for p in ripples["participants"]), (
+            "Participants should be channels 0 and 1"
+        )
+        assert np.allclose(ripples["frac_participants"], 2 / 13), (
+            "frac_participants should be 2/13"
+        )
         # Stats are computed over the participating channels {0, 1} only; averaging
         # over all 13 channels would dilute mean_zscore to well below 1.
-        assert all(
-            ripples["mean_zscore"] > 1.0
-        ), "z-score stats must use participating channels only, not all channels"
+        assert all(ripples["mean_zscore"] > 1.0), (
+            "z-score stats must use participating channels only, not all channels"
+        )
 
     def test_no_ripples(self, time_3s, lfp_no_ripples, stationary_speed, sampling_frequency):
         """Test with noise-only signal (no ripples)."""
@@ -323,9 +324,9 @@ class TestShvartsmanRippleDetector:
         assert isinstance(ripples_movement, pd.DataFrame)
 
         # Verify empty DataFrame
-        assert (
-            ripples_movement.empty
-        ), "Should not detect any ripples because animal is always moving"
+        assert ripples_movement.empty, (
+            "Should not detect any ripples because animal is always moving"
+        )
 
     def test_all_but_one_movement_events(
         self, time_3s, dual_lfp_with_cooccur_ripples, speed_with_movement, sampling_frequency
@@ -346,9 +347,9 @@ class TestShvartsmanRippleDetector:
         assert isinstance(ripples_movement, pd.DataFrame)
 
         # Verify empty DataFrame
-        assert (
-            len(ripples_movement) == 1
-        ), "Should detect one ripple event that occurs before movement begins"
+        assert len(ripples_movement) == 1, (
+            "Should detect one ripple event that occurs before movement begins"
+        )
 
     def test_speed_threshold(
         self, time_3s, dual_lfp_with_cooccur_ripples, speed_with_movement, sampling_frequency
@@ -379,9 +380,9 @@ class TestShvartsmanRippleDetector:
 
         # Ripples after t=1.5s should be excluded
         if len(ripples_movement) > 0:
-            assert all(
-                ripples_movement["start_time"] < 1.5
-            ), "Ripples during movement should be excluded"
+            assert all(ripples_movement["start_time"] < 1.5), (
+                "Ripples during movement should be excluded"
+            )
 
     def test_minimum_duration(
         self,
@@ -430,9 +431,9 @@ class TestShvartsmanRippleDetector:
             zscore_threshold=5.0,
         )
 
-        assert len(ripples_low) >= len(
-            ripples_high
-        ), "Lower threshold should detect more events"
+        assert len(ripples_low) >= len(ripples_high), (
+            "Lower threshold should detect more events"
+        )
 
     def test_close_ripple_threshold(
         self,
@@ -674,9 +675,9 @@ class TestKayRippleDetector:
 
         # Ripples after t=1.5s should be excluded
         if len(ripples_movement) > 0:
-            assert all(
-                ripples_movement["start_time"] < 1.5
-            ), "Ripples during movement should be excluded"
+            assert all(ripples_movement["start_time"] < 1.5), (
+                "Ripples during movement should be excluded"
+            )
 
     def test_minimum_duration(
         self, time_3s, lfp_short_duration_ripples, stationary_speed, sampling_frequency
@@ -721,9 +722,9 @@ class TestKayRippleDetector:
             zscore_threshold=5.0,
         )
 
-        assert len(ripples_low) >= len(
-            ripples_high
-        ), "Lower threshold should detect more events"
+        assert len(ripples_low) >= len(ripples_high), (
+            "Lower threshold should detect more events"
+        )
 
     def test_close_ripple_threshold(
         self, time_3s, dual_lfp_close_ripples, stationary_speed, sampling_frequency
@@ -958,6 +959,145 @@ class TestKayConsensusTrace:
         # After square root, all values should be >= 0
         valid_values = consensus[~np.isnan(consensus)]
         assert np.all(valid_values >= 0), "Consensus trace should be non-negative"
+
+
+def _yu_reference_consensus(filtered_lfps, sampling_frequency, blocks, zscore_per_tetrode):
+    """Block-wise reference: envelope and 4 ms smoothing inside each block,
+    per-tetrode z-score (ddof=1) pooled over all valid rows, then the median."""
+    filtered_lfps = np.asarray(filtered_lfps, dtype=float)
+    smoothed = np.full_like(filtered_lfps, np.nan)
+    for start, stop in blocks:
+        env = get_envelope(filtered_lfps[start:stop])
+        smoothed[start:stop] = gaussian_smooth(env, 0.004, sampling_frequency)
+    valid = np.all(np.isfinite(smoothed), axis=1)
+    if zscore_per_tetrode:
+        mean = smoothed[valid].mean(axis=0, keepdims=True)
+        std = smoothed[valid].std(axis=0, ddof=1, keepdims=True)
+        smoothed = (smoothed - mean) / std
+    consensus = np.full(len(smoothed), np.nan)
+    consensus[valid] = np.median(smoothed[valid], axis=1)
+    return consensus
+
+
+class TestYuConsensusTrace:
+    """Median of per-tetrode smoothed (and z-scored) envelopes, Yu et al. 2017."""
+
+    @pytest.fixture
+    def triple_lfp(self, time_3s):
+        lfps = [
+            simulate_LFP(
+                time_3s,
+                ripple_times=[1.1],
+                noise_amplitude=1.2,
+                ripple_amplitude=1.5,
+                random_state=s,
+            )
+            for s in (11, 12, 13)
+        ]
+        return filter_ripple_band(np.column_stack(lfps))
+
+    def test_shape_and_finite_on_clean_input(self, time_3s, triple_lfp, sampling_frequency):
+        consensus = get_Yu_ripple_consensus_trace(triple_lfp, sampling_frequency)
+        assert consensus.shape == (len(time_3s),)
+        assert np.all(np.isfinite(consensus))
+
+    def test_flag_off_is_median_of_smoothed_envelopes(self, triple_lfp, sampling_frequency):
+        expected = _yu_reference_consensus(
+            triple_lfp, sampling_frequency, [(0, len(triple_lfp))], zscore_per_tetrode=False
+        )
+        consensus = get_Yu_ripple_consensus_trace(
+            triple_lfp, sampling_frequency, zscore_per_tetrode=False
+        )
+        np.testing.assert_allclose(consensus, expected, rtol=1e-12, atol=1e-12)
+
+    def test_flag_on_is_median_of_zscored_smoothed_envelopes(
+        self, triple_lfp, sampling_frequency
+    ):
+        expected = _yu_reference_consensus(
+            triple_lfp, sampling_frequency, [(0, len(triple_lfp))], zscore_per_tetrode=True
+        )
+        consensus = get_Yu_ripple_consensus_trace(triple_lfp, sampling_frequency)
+        np.testing.assert_allclose(consensus, expected, rtol=1e-12, atol=1e-12)
+
+    def test_per_tetrode_zscore_removes_channel_gain(self, triple_lfp, sampling_frequency):
+        scaled = triple_lfp.copy()
+        scaled[:, 0] *= 10.0
+        with_flag = get_Yu_ripple_consensus_trace(scaled, sampling_frequency)
+        reference = get_Yu_ripple_consensus_trace(triple_lfp, sampling_frequency)
+        np.testing.assert_allclose(with_flag, reference, rtol=1e-10, atol=1e-10)
+        without_flag = get_Yu_ripple_consensus_trace(
+            scaled, sampling_frequency, zscore_per_tetrode=False
+        )
+        assert not np.allclose(without_flag, reference)
+
+    def test_nan_rows_split_blocks_and_stay_nan(self, triple_lfp, sampling_frequency):
+        lfps = triple_lfp.copy()
+        gap = slice(2000, 2300)
+        lfps[gap, 1] = np.nan  # one channel missing makes the whole row invalid
+        consensus = get_Yu_ripple_consensus_trace(lfps, sampling_frequency)
+        assert np.all(np.isnan(consensus[gap]))
+        assert np.all(np.isfinite(consensus[:2000]))
+        assert np.all(np.isfinite(consensus[2300:]))
+        expected = _yu_reference_consensus(
+            lfps, sampling_frequency, [(0, 2000), (2300, len(lfps))], zscore_per_tetrode=True
+        )
+        np.testing.assert_allclose(consensus, expected, rtol=1e-12, atol=1e-12)
+
+    def test_timestamp_gap_splits_blocks(self, time_3s, triple_lfp, sampling_frequency):
+        # rows are contiguous in the array but time jumps by one second at row 2000
+        time = time_3s.copy()
+        time[2000:] += 1.0
+        consensus = get_Yu_ripple_consensus_trace(triple_lfp, sampling_frequency, time=time)
+        expected = _yu_reference_consensus(
+            triple_lfp,
+            sampling_frequency,
+            [(0, 2000), (2000, len(triple_lfp))],
+            zscore_per_tetrode=True,
+        )
+        np.testing.assert_allclose(consensus, expected, rtol=1e-12, atol=1e-12)
+        contiguous = get_Yu_ripple_consensus_trace(triple_lfp, sampling_frequency)
+        assert not np.allclose(consensus, contiguous)
+
+    def test_single_tetrode_ripple_moves_median_less_than_kay_trace(
+        self, time_3s, sampling_frequency
+    ):
+        quiet = [
+            simulate_LFP(
+                time_3s,
+                ripple_times=[],
+                noise_amplitude=1.2,
+                ripple_amplitude=1.5,
+                random_state=s,
+            )
+            for s in (21, 22, 23, 24)
+        ]
+        loud = simulate_LFP(
+            time_3s,
+            ripple_times=[1.5],
+            noise_amplitude=1.2,
+            ripple_amplitude=6.0,
+            random_state=25,
+        )
+        lfps = filter_ripple_band(np.column_stack([*quiet, loud]))
+        yu = get_Yu_ripple_consensus_trace(lfps, sampling_frequency)
+        kay = get_Kay_ripple_consensus_trace(lfps, sampling_frequency)
+        window = (time_3s > 1.45) & (time_3s < 1.55)
+        baseline = time_3s < 1.0
+
+        def peak_z(trace):
+            return (trace[window].max() - trace[baseline].mean()) / trace[baseline].std()
+
+        assert peak_z(yu) < 0.5 * peak_z(kay)
+
+    def test_rejects_non_2d_input(self, sampling_frequency):
+        with pytest.raises(ValueError, match="2D"):
+            get_Yu_ripple_consensus_trace(np.zeros(100), sampling_frequency)
+
+    def test_time_length_mismatch_raises(self, triple_lfp, sampling_frequency):
+        with pytest.raises(ValueError, match="time"):
+            get_Yu_ripple_consensus_trace(
+                triple_lfp, sampling_frequency, time=np.arange(10) / sampling_frequency
+            )
 
 
 class TestDetectorErrorHandling:

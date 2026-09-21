@@ -1,6 +1,6 @@
 """High-level detectors for sharp-wave ripple events and multiunit synchrony events."""
 
-from itertools import chain
+from itertools import chain, pairwise
 
 import numpy as np
 import pandas as pd
@@ -306,6 +306,141 @@ def get_Kay_ripple_consensus_trace(
         ripple_consensus_trace[not_null], smoothing_sigma, sampling_frequency
     )
     return np.sqrt(ripple_consensus_trace)
+
+
+def _contiguous_valid_blocks(
+    is_valid: NDArray, time: NDArray | None, sampling_frequency: float
+) -> list[tuple[int, int]]:
+    """Split rows into maximal contiguous valid blocks.
+
+    A block ends at an invalid row or, when ``time`` is given, wherever the
+    timestamp step exceeds 1.5 sample intervals (a recording gap or the join
+    between disjoint intervals).
+
+    Parameters
+    ----------
+    is_valid : ndarray of bool, shape (n_time,)
+        True for rows with finite data in every channel.
+    time : ndarray, shape (n_time,), optional
+        Sample timestamps in seconds. None declares a regular sample grid.
+    sampling_frequency : float
+        Nominal sampling rate in Hz.
+
+    Returns
+    -------
+    blocks : list of (start, stop)
+        Half-open row ranges, in order.
+
+    """
+    n_time = len(is_valid)
+    boundary = np.zeros(n_time + 1, dtype=bool)
+    boundary[0] = boundary[-1] = True
+    # a block boundary sits between rows i-1 and i where validity changes
+    boundary[1:-1] |= is_valid[1:] != is_valid[:-1]
+    if time is not None:
+        boundary[1:-1] |= np.diff(time) > 1.5 / sampling_frequency
+    edges = np.flatnonzero(boundary)
+    return [(int(start), int(stop)) for start, stop in pairwise(edges) if is_valid[start]]
+
+
+def get_Yu_ripple_consensus_trace(
+    ripple_filtered_lfps: ArrayLike,
+    sampling_frequency: float,
+    smoothing_sigma: float = 0.004,
+    zscore_per_tetrode: bool = True,
+    *,
+    time: ArrayLike | None = None,
+) -> NDArray:
+    """Compute the Yu et al. 2017 consensus trace: median of per-tetrode envelopes.
+
+    Each channel's ripple-band envelope is smoothed with a Gaussian kernel and,
+    by default, z-scored over the whole recording; the consensus is the median
+    across channels at each sample. A median rather than a sum keeps one
+    tetrode from dominating the trace.
+
+    Envelope and smoothing run separately inside each maximal contiguous block
+    of valid samples, so missing data never bleeds across a gap; the per-channel
+    z-score statistics are pooled over all valid samples. Rows with a non-finite
+    value in any channel are returned as NaN.
+
+    Parameters
+    ----------
+    ripple_filtered_lfps : array_like, shape (n_time, n_channels)
+        Bandpass filtered LFP signals in the ripple band (150-250 Hz).
+    sampling_frequency : float
+        Sampling rate in Hz.
+    smoothing_sigma : float, optional
+        Standard deviation of the Gaussian smoothing kernel in seconds, applied
+        per channel before aggregation. Default is 0.004 (4 ms).
+    zscore_per_tetrode : bool, optional
+        If True (default), z-score each channel's smoothed envelope (sample
+        standard deviation, ``ddof=1``) over all valid samples before taking
+        the median, as the original lab implementation does. If False, take
+        the median of the raw smoothed envelopes.
+    time : array_like, shape (n_time,), optional
+        Sample timestamps in seconds. When given, a step larger than 1.5
+        sample intervals also ends a block, so disjoint intervals that were
+        concatenated are not smoothed across. Default is None, which declares
+        a regular sample grid.
+
+    Returns
+    -------
+    consensus_trace : ndarray, shape (n_time,)
+        Median across channels of the smoothed (and z-scored) envelopes, with
+        NaN wherever any channel was non-finite.
+
+    Raises
+    ------
+    ValueError
+        If the input is not 2-D, if ``time`` does not match its length, if no
+        valid samples exist, or if a channel's standard deviation over the
+        valid samples is zero or non-finite when z-scoring is enabled.
+
+    References
+    ----------
+    .. [1] Yu, J. Y., et al. (2017). Distinct hippocampal-cortical memory
+       representations for experiences associated with movement versus
+       immobility. eLife, 6, e27621.
+
+    """
+    ripple_filtered_lfps = np.asarray(ripple_filtered_lfps, dtype=float)
+    _validate_lfp_dimensions(ripple_filtered_lfps)
+    n_time = ripple_filtered_lfps.shape[0]
+    if time is not None:
+        time = np.asarray(time, dtype=float)
+        if time.shape != (n_time,):
+            raise ValueError(
+                f"time has shape {time.shape} but filtered_lfps has {n_time} samples."
+            )
+
+    is_valid = np.all(np.isfinite(ripple_filtered_lfps), axis=1)
+    if not np.any(is_valid):
+        raise ValueError("No sample has finite values in every channel.")
+
+    smoothed = np.full_like(ripple_filtered_lfps, np.nan)
+    for start, stop in _contiguous_valid_blocks(is_valid, time, sampling_frequency):
+        envelope = get_envelope(ripple_filtered_lfps[start:stop])
+        smoothed[start:stop] = gaussian_smooth(envelope, smoothing_sigma, sampling_frequency)
+
+    if zscore_per_tetrode:
+        valid_rows = smoothed[is_valid]
+        mean = valid_rows.mean(axis=0, keepdims=True)
+        std = (
+            valid_rows.std(axis=0, ddof=1, keepdims=True)
+            if valid_rows.shape[0] > 1
+            else np.full((1, smoothed.shape[1]), np.nan)
+        )
+        bad = ~np.isfinite(std) | (std <= 0)
+        if np.any(bad):
+            raise ValueError(
+                "Cannot z-score channels with zero or undefined standard deviation "
+                f"over the valid samples: channel indices {np.flatnonzero(bad).tolist()}."
+            )
+        smoothed = (smoothed - mean) / std
+
+    consensus_trace = np.full(n_time, np.nan)
+    consensus_trace[is_valid] = np.median(smoothed[is_valid], axis=1)
+    return consensus_trace
 
 
 def Shvartsman_ripple_detector(
