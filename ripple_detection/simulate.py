@@ -196,7 +196,7 @@ def _draw_per_ripple(
     value: float | tuple[float, float], n_ripples: int, state: np.random.RandomState
 ) -> NDArray:
     """A scalar repeated per ripple, or one uniform draw per ripple from a range."""
-    if np.isscalar(value):
+    if not isinstance(value, tuple):
         return np.full(n_ripples, float(value))
     low, high = value
     if not low <= high:
