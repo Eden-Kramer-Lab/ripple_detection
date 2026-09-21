@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Yu_ripple_detector`: the Yu et al. 2017 (eLife) sharp-wave ripple detector. The consensus is the median across tetrodes of each tetrode's 4 ms-smoothed, z-scored ripple-band envelope (`get_Yu_ripple_consensus_trace`), and the detection threshold is estimated per call as the 99.99th percentile of the immobility noise distribution, obtained by mirroring the histogram below its mode (`estimate_noise_threshold`, a transliteration of the original MATLAB with the reflection written as intended and a warning where the original's formula would differ). Events are runs of at least `minimum_duration` (default 20 ms, counted in samples) at or above the threshold, extended to the immobility mean. Missing samples are handled block-wise instead of by row-dropping, so nothing is smoothed or joined across a gap; events truncated by a gap or the recording edge are kept and flagged (`clipped_start`, `clipped_end`). The keyword interface matches `Kay_ripple_detector` with `percentile` in place of `zscore_threshold`.
 - `random_state` parameter to `simulate_LFP()` for reproducible synthetic LFP generation (used to make the test suite deterministic).
 - Regression tests for Shvartsman participation preserve the original count of distinct electrodes across each merged event, including chains of overlapping ripples and repeated ripples on the same electrode.
 

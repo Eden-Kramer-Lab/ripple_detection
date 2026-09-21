@@ -15,6 +15,7 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
   - `Karlsson_ripple_detector` - Per-channel detection with merging (Karlsson et al. 2009)
   - `Shvartsman_ripple_detector` - Per-channel detection requiring a minimum fraction of participating channels
   - `Roumis_ripple_detector` - Alternative detection method
+  - `Yu_ripple_detector` - Median consensus with a data-driven noise-percentile threshold (Yu et al. 2017)
   - `multiunit_HSE_detector` - High Synchrony Event detection from multiunit activity
 
 - **Comprehensive Event Statistics**
@@ -93,6 +94,24 @@ ripple_times = Kay_ripple_detector(
 )
 
 print(ripple_times)
+```
+
+### Data-driven threshold (Yu et al. 2017)
+
+```python
+from ripple_detection import Yu_ripple_detector
+
+# No z-score threshold to choose: the threshold is the 99.99th percentile of
+# the noise distribution estimated from immobility, per call. Missing samples
+# (NaN) are handled block-wise and never smoothed across; an event cut off by
+# a gap is kept and flagged in `clipped_start` / `clipped_end`.
+ripples = Yu_ripple_detector(
+    time, filtered_lfps, speed, sampling_frequency,
+    speed_threshold=4.0,
+    minimum_duration=0.020,     # the published 20 ms
+    percentile=99.99,
+)
+print(ripples[["start_time", "end_time", "detection_threshold_zscore"]])
 ```
 
 ### Advanced Usage
@@ -214,6 +233,7 @@ ripples = Kay_ripple_detector(
 | `minimum_duration` | 0.015 s | Minimum ripple duration (15 ms) | Decrease to 0.010 for shorter ripples; increase to 0.020 for stricter detection |
 | `zscore_threshold` | 2.0 (Kay/Roumis)<br>3.0 (Karlsson) | Detection sensitivity | Decrease for more detections; increase for fewer, higher-confidence events |
 | `smoothing_sigma` | 0.004 s | Gaussian smoothing window (4 ms) | Rarely needs adjustment; increase for noisier data |
+| `percentile` | 99.99 (Yu) | Percentile of the mirrored immobility-noise distribution used as the threshold | Lower for more detections; the threshold is estimated per call, so it adapts to each recording |
 
 ### Getting Help
 
