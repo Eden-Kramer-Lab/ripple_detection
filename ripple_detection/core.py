@@ -119,22 +119,25 @@ def segment_boolean_series(
 
 
 def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None) -> NDArray:
-    """Apply bandpass filter to isolate ripple frequency band (150-250 Hz).
+    """Bandpass filter signal(s) to the ripple band (150-250 Hz).
 
-    Uses a pre-computed filter kernel from the Frank lab with 40 dB roll-off,
-    10 Hz sidebands, and 1500 Hz sampling frequency. Handles NaN values by
-    filtering only non-NaN segments.
+    At 1500 Hz (or when no rate is given) the pre-computed 318-tap FIR kernel
+    shipped with the package is used. At any other rate a 101-tap FIR is
+    designed for that rate with ``ripple_bandpass_filter``, so the passband is
+    150-250 Hz in hertz regardless of the sampling rate. The filter is applied
+    forward and backward (``filtfilt``) for zero phase distortion.
+
+    NaN samples are removed before filtering and restored at their original
+    positions afterwards; the samples on either side of a NaN run are
+    therefore filtered as if adjacent.
 
     Parameters
     ----------
     data : array_like, shape (n_time,) or (n_time, n_channels)
         Input signal(s) to be filtered. Can be 1D or 2D.
     sampling_frequency : float, optional
-        Sampling rate of the input data in Hz. If provided and not equal to
-        1500 Hz, a warning is issued since the pre-computed filter is optimized
-        for 1500 Hz. For other sampling rates, consider using
-        `ripple_bandpass_filter()` to generate a custom filter. Default is None
-        (no check performed).
+        Sampling rate of the input data in Hz. Default is None, which assumes
+        1500 Hz and uses the shipped kernel.
 
     Returns
     -------
@@ -145,81 +148,52 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
     Raises
     ------
     ValueError
-        If sampling_frequency is too low for the pre-computed filter to work properly.
-
-    Warnings
-    --------
-    UserWarning
-        If sampling_frequency is provided and differs from 1500 Hz.
+        If the sampling rate cannot represent the band (Nyquist frequency at
+        or below the 250 Hz upper edge plus the 25 Hz transition band), or if
+        the signal has fewer non-NaN samples than ``filtfilt`` needs (three
+        times the kernel length).
 
     See Also
     --------
-    ripple_bandpass_filter : Generate custom filter for arbitrary sampling rates.
+    ripple_bandpass_filter : The filter design used for rates other than 1500 Hz.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from ripple_detection import filter_ripple_band
+    >>> lfp = np.random.randn(3000)
+    >>> filtered = filter_ripple_band(lfp, sampling_frequency=1500)
 
     """
-    import warnings
+    SHIPPED_KERNEL_SAMPLING_FREQUENCY = 1500.0
+    MINIMUM_NYQUIST = 250.0 + 25.0  # upper band edge plus the transition band
 
-    EXPECTED_SAMPLING_FREQUENCY = 1500.0
-    MINIMUM_SAFE_FREQUENCY = 1200.0  # Pre-computed filter needs ~954 samples minimum
-
-    if sampling_frequency is not None and not np.isclose(
-        sampling_frequency, EXPECTED_SAMPLING_FREQUENCY
+    if sampling_frequency is None or np.isclose(
+        sampling_frequency, SHIPPED_KERNEL_SAMPLING_FREQUENCY
     ):
-        # Check if sampling frequency is too low for pre-computed filter
-        if sampling_frequency < MINIMUM_SAFE_FREQUENCY:
+        filter_numerator, filter_denominator = _get_ripplefilter_kernel()
+    else:
+        if 0.5 * sampling_frequency <= MINIMUM_NYQUIST:
             raise ValueError(
-                f"Sampling frequency ({sampling_frequency} Hz) is too low for the pre-computed filter.\n"
-                f"The pre-computed filter requires at least ~{MINIMUM_SAFE_FREQUENCY} Hz.\n"
-                f"\n"
-                f"Solution: Generate a custom filter for your sampling frequency:\n"
-                f"\n"
-                f"  from ripple_detection import ripple_bandpass_filter\n"
-                f"  from scipy.signal import filtfilt\n"
-                f"  \n"
-                f"  filter_num, filter_denom = ripple_bandpass_filter({sampling_frequency})\n"
-                f"  filtered_data = filtfilt(filter_num, filter_denom, data, axis=0)\n"
-                f"\n"
-                f"Or use a higher sampling rate when recording your data."
+                f"Sampling frequency {sampling_frequency} Hz has a Nyquist frequency of "
+                f"{0.5 * sampling_frequency} Hz, which cannot represent the 150-250 Hz "
+                f"ripple band with its 25 Hz transition band (need > {2 * MINIMUM_NYQUIST} Hz)."
             )
-        else:
-            warnings.warn(
-                f"The pre-computed ripple filter is optimized for {EXPECTED_SAMPLING_FREQUENCY} Hz sampling.\n"
-                f"Your data: {sampling_frequency} Hz. Results may be suboptimal.\n"
-                f"For best results, use ripple_bandpass_filter({sampling_frequency}) to generate a custom filter.",
-                UserWarning,
-                stacklevel=2,
-            )
+        filter_numerator, filter_denominator = ripple_bandpass_filter(sampling_frequency)
 
-    filter_numerator, filter_denominator = _get_ripplefilter_kernel()
-
-    # Validate data length
-    # Cast to float so integer (e.g. raw ADC) input is not truncated by the
-    # NaN-preserving output buffer or the filter arithmetic.
     data_array = np.asarray(data, dtype=float)
-
-    # Check if data is multi-dimensional - handle NaN checking appropriately
     if data_array.ndim > 1:
         is_nan = np.any(np.isnan(data_array), axis=-1)
     else:
         is_nan = np.isnan(data_array)
 
     non_nan_length = np.sum(~is_nan)
-
-    # filtfilt requires data length > 3 * filter_length (for padding)
     min_required_length = 3 * len(filter_numerator)
     if non_nan_length < min_required_length:
         raise ValueError(
-            f"Data is too short for the pre-computed filter.\n"
-            f"Non-NaN data length: {non_nan_length} samples\n"
-            f"Minimum required: {min_required_length} samples (~{min_required_length / sampling_frequency if sampling_frequency else 'N/A':.2f} seconds at {sampling_frequency} Hz)\n"
-            f"\n"
-            f"Solutions:\n"
-            f"  1. Use a longer recording segment\n"
-            f"  2. Generate a shorter custom filter:\n"
-            f"     from ripple_detection import ripple_bandpass_filter\n"
-            f"     from scipy.signal import filtfilt\n"
-            f"     filter_num, filter_denom = ripple_bandpass_filter({sampling_frequency})\n"
-            f"     filtered_data = filtfilt(filter_num, filter_denom, data, axis=0)"
+            f"Signal too short for filtering: {non_nan_length} non-NaN samples, "
+            f"but at least {min_required_length} are needed (3 x filter length "
+            f"{len(filter_numerator)})."
         )
 
     filtered_data = np.full_like(data_array, np.nan)
