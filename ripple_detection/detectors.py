@@ -2000,6 +2000,38 @@ def _contained_in_intervals(event_bounds: NDArray, intervals: NDArray) -> NDArra
     return inside.any(axis=1)
 
 
+def _count_active_units(multiunit: NDArray, event_bounds: ArrayLike) -> NDArray:
+    """Number of units with at least one spike inside each event.
+
+    Units are counted, not spikes, so a unit bursting hard counts once. The
+    interval is closed: a unit whose only spike falls on the event's last
+    sample is inside it.
+
+    A loop over events rather than a vectorized cumulative sum, because the
+    cumulative form needs a second array the size of ``multiunit`` while this
+    reduces one event's slice at a time, and a recording holds far more
+    samples than events.
+
+    Parameters
+    ----------
+    multiunit : ndarray, shape (n_time, n_units)
+        Spike counts or indicators per unit.
+    event_bounds : array_like, shape (n_events, 2)
+        ``[first_sample, last_sample]`` per event, as indices into
+        ``multiunit``. Both ends are included.
+
+    Returns
+    -------
+    n_active_units : ndarray, shape (n_events,)
+
+    """
+    bounds = np.asarray(event_bounds, dtype=int).reshape(-1, 2)
+    return np.array(
+        [int(np.sum(multiunit[start : stop + 1].sum(axis=0) > 0)) for start, stop in bounds],
+        dtype=int,
+    )
+
+
 def Carey_candidate_detector(
     time: ArrayLike,
     filtered_lfps: ArrayLike,
@@ -2213,13 +2245,7 @@ def Carey_candidate_detector(
         candidates = candidates[_contained_in_intervals(candidates, low_theta)]
 
     # minimum number of active units
-    n_active = np.array(
-        [
-            int(np.sum(multiunit[start : stop + 1].sum(axis=0) > 0))
-            for start, stop in candidates
-        ],
-        dtype=int,
-    )
+    n_active = _count_active_units(multiunit, candidates)
     if len(candidates):
         keep = n_active >= minimum_active_units
         candidates, n_active = candidates[keep], n_active[keep]
@@ -2734,13 +2760,7 @@ def multiunit_HSE_detector(
 
     start = nearest_sample_index(time, events.start_time.to_numpy())
     stop = nearest_sample_index(time, events.end_time.to_numpy())
-    n_active = np.array(
-        [
-            int(np.sum(multiunit[i : j + 1].sum(axis=0) > 0))
-            for i, j in zip(start, stop, strict=True)
-        ],
-        dtype=int,
-    )
+    n_active = _count_active_units(multiunit, np.column_stack([start, stop]))
     keep = n_active >= minimum_active_units
     events = events.iloc[np.flatnonzero(keep)].copy()
     events["n_active_units"] = n_active[keep]

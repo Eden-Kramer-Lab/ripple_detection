@@ -26,6 +26,7 @@ from ripple_detection.core import (
 from ripple_detection.detectors import (
     Roumis_ripple_detector,
     _contained_in_intervals,
+    _count_active_units,
     _exclude_long_events,
     _extract_Yu_ripple_events,
     _find_max_thresh,
@@ -3211,3 +3212,36 @@ class TestDurationLimitValidation:
                 minimum_sharp_wave_duration=0.500,
                 maximum_sharp_wave_duration=0.100,
             )
+
+
+class TestCountActiveUnits:
+    """The rule both spike-based detectors share."""
+
+    MULTIUNIT = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [3.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+    )
+
+    def test_counts_units_not_spikes(self):
+        """Unit 0 spikes twice in this window and counts once."""
+        assert _count_active_units(self.MULTIUNIT, [[0, 2]]).tolist() == [1]
+
+    def test_both_bounds_are_inside_the_event(self):
+        assert _count_active_units(self.MULTIUNIT, [[0, 3]]).tolist() == [2]
+        assert _count_active_units(self.MULTIUNIT, [[1, 2]]).tolist() == [1]
+        assert _count_active_units(self.MULTIUNIT, [[1, 1]]).tolist() == [0]
+
+    def test_one_count_per_event(self):
+        counts = _count_active_units(self.MULTIUNIT, [[0, 0], [3, 3], [0, 3]])
+
+        assert counts.tolist() == [1, 1, 2]
+
+    def test_no_events_gives_an_empty_integer_array(self):
+        counts = _count_active_units(self.MULTIUNIT, np.empty((0, 2)))
+
+        assert counts.shape == (0,)
+        assert counts.dtype == int
