@@ -187,25 +187,19 @@ class TestShvartsmanRippleDetector:
     def test_close_ripples(
         self, time_3s, dual_lfp_close_ripples, stationary_speed, sampling_frequency
     ):
-        """Closely-spaced but offset ripples (ch0 at 1.10s, ch1 at 1.15s) never
-        overlap above threshold, so peak participation is 1: the default 2-channel
-        cutoff rejects them, but a single-channel cutoff detects them."""
+        """Closely-spaced but offset ripples (ch0 at 1.10s, ch1 at 1.15s) have peaks
+        50 ms apart, but their full zero-crossing-extended ripples overlap, so they
+        co-occur: both channels participate and the default 2-channel cutoff detects
+        them."""
         filtered_lfps = filter_ripple_band(dual_lfp_close_ripples)
 
-        ripples_default = Shvartsman_ripple_detector(
+        ripples = Shvartsman_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
-        assert ripples_default.empty
-
-        ripples = Shvartsman_ripple_detector(
-            time_3s,
-            filtered_lfps,
-            stationary_speed,
-            sampling_frequency,
-            participation_threshold=0,
-        )
         assert isinstance(ripples, pd.DataFrame)
-        assert len(ripples) > 0
+        assert len(ripples) == 2
+        assert all(ripples["n_participants"] == 2)
+        assert all(participants == {0, 1} for participants in ripples["participants"])
 
     def test_multi_channel_sparse_ripples(
         self, time_3s, multi_lfp_sparse_ripples, stationary_speed, sampling_frequency
@@ -1258,19 +1252,19 @@ class TestShvartsmanParticipationSemantics:
     def test_participation_threshold_fraction_means_all_channels(
         self,
         time_3s,
-        dual_lfp_close_ripples,
+        dual_lfp_with_ripples,
         dual_lfp_with_cooccur_ripples,
         stationary_speed,
         sampling_frequency,
     ):
         """A fractional participation_threshold is a fraction of channels, and 1.0
         means *all* channels (not one)."""
-        # Offset ripples never overlap -> peak concurrency is 1 across 2 channels.
-        filtered_close = filter_ripple_band(dual_lfp_close_ripples)
-        # 1.0 requires both channels simultaneously -> excluded (peak is 1).
+        # The two channels ripple at separate times, so each event has only 1 of 2.
+        filtered_sep = filter_ripple_band(dual_lfp_with_ripples)
+        # 1.0 requires both channels in one event -> excluded (each has one).
         assert Shvartsman_ripple_detector(
             time_3s,
-            filtered_close,
+            filtered_sep,
             stationary_speed,
             sampling_frequency,
             participation_threshold=1.0,
@@ -1278,7 +1272,7 @@ class TestShvartsmanParticipationSemantics:
         # 0.5 requires 1 of 2 -> detected (a genuine fraction in (0, 1)).
         assert not Shvartsman_ripple_detector(
             time_3s,
-            filtered_close,
+            filtered_sep,
             stationary_speed,
             sampling_frequency,
             participation_threshold=0.5,

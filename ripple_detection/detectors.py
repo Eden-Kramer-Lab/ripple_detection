@@ -16,7 +16,6 @@ from ripple_detection.core import (
     merge_overlapping_ranges,
     normalize_signal,
     normalize_signal_manually,
-    segment_boolean_series,
     threshold_by_zscore,
 )
 
@@ -316,7 +315,7 @@ def _event_participation(
     Parameters
     ----------
     qualified : ndarray, shape (n_time, n_channels), dtype bool
-        Per-channel duration-qualified supra-threshold mask.
+        Per-channel mask marking each channel's detected ripple intervals.
     time : ndarray, shape (n_time,)
         Monotonically increasing time values for each sample.
     start, end : float
@@ -325,10 +324,10 @@ def _event_participation(
     Returns
     -------
     peak_count : int
-        Maximum number of channels simultaneously above threshold in the event.
+        Maximum number of channels whose ripples overlap simultaneously in the event.
     participants : set
-        Channels above threshold at any point in the event. Its size can exceed
-        ``peak_count`` when different channels peak at different times.
+        Channels with a ripple anywhere in the event. Its size can exceed
+        ``peak_count`` when different channels ripple at different times.
     """
     # Slice the [start, end] window by index (time is sorted) instead of building
     # a full-length boolean mask per event, so cost is O(event) not O(recording).
@@ -453,12 +452,14 @@ def Shvartsman_ripple_detector(
     ripple_times : pd.DataFrame
         DataFrame with detected ripples and comprehensive statistics (see
         Kay_ripple_detector for the shared columns). This detector additionally
-        returns ``participants`` (set of every channel above threshold anywhere
-        in the event), ``n_participants`` (the *peak* number of channels above
-        threshold simultaneously, which may be smaller than ``len(participants)``
-        when channels peak at different times), and ``frac_participants``
-        (``n_participants`` / total channels). The per-event z-score statistics
-        are averaged over the ``participants`` union.
+        returns ``participants`` (set of every channel whose ripple appears
+        anywhere in the event), ``n_participants`` (the *peak* number of channels
+        whose ripples overlap simultaneously, which may be smaller than
+        ``len(participants)`` when channels ripple at different times), and
+        ``frac_participants`` (``n_participants`` / total channels). Participation
+        is measured on each channel's full zero-crossing-extended ripple (the same
+        extent as the event boundaries). The per-event z-score statistics are
+        averaged over the ``participants`` union.
 
         Returns empty DataFrame if no ripples detected. If this occurs, try:
         - Lowering zscore_threshold (e.g., from 3.0 to 2.0)
@@ -524,25 +525,25 @@ def Shvartsman_ripple_detector(
         list(merge_overlapping_ranges(chain.from_iterable(candidate_ripple_times)))
     ).reshape(-1, 2)
 
-    # Participation is measured on where channels are actually above threshold for at
-    # least minimum_duration -- not the wider mean-crossing intervals used for the
-    # event boundaries, and not brief (sub-minimum_duration) noise crossings. Build a
-    # per-channel duration-qualified supra-threshold mask.
+    # Participation is measured on each channel's detected ripple intervals -- the
+    # full zero-crossing-extended events in candidate_ripple_times, the same extent
+    # used for the event boundaries. A channel therefore participates wherever its
+    # ripple overlaps, not only at its supra-threshold peak. Each interval already
+    # requires a supra-threshold core of at least minimum_duration (that is how
+    # threshold_by_zscore produced it), so brief noise crossings do not count.
     time_arr = np.asarray(time)
-    filtered_arr = np.asarray(filtered_lfps)
-    qualified = np.zeros(filtered_arr.shape, dtype=bool)
-    for channel in range(filtered_arr.shape[1]):
-        supra = pd.Series(filtered_arr[:, channel] >= zscore_threshold, index=time_arr)
-        for start, end in segment_boolean_series(supra, minimum_duration):
+    qualified = np.zeros((len(time_arr), filtered_lfps.shape[1]), dtype=bool)
+    for channel, channel_ripples in enumerate(candidate_ripple_times):
+        for start, end in channel_ripples:
             # Slice by index (time is sorted) rather than masking the whole
             # recording per interval.
             left = np.searchsorted(time_arr, start, side="left")
             right = np.searchsorted(time_arr, end, side="right")
             qualified[left:right, channel] = True
 
-    # For each event: peak number of channels simultaneously above threshold, and the
-    # set of channels above threshold anywhere in the event (count and identity differ
-    # -- the count is the peak concurrency, the set is the union over the event).
+    # For each event: peak number of channels whose ripples overlap simultaneously,
+    # and the set of channels whose ripple appears anywhere in the event (count and
+    # identity differ -- the count is the peak concurrency, the set is the union).
     peak_counts = np.zeros(len(merged_events), dtype=int)
     participant_sets = np.empty(len(merged_events), dtype=object)
     for i, (start, end) in enumerate(merged_events):
