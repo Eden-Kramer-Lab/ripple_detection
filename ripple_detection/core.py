@@ -32,10 +32,9 @@ def ripple_bandpass_filter(
     sampling_frequency : float
         Sampling rate of the signal in Hz.
     band : tuple of (float, float), optional
-        Passband edges in Hz. Default is (150.0, 250.0), the band 16 of the 29
-        papers stating one use in the project's detection-parameter survey.
-        The rest range from 80 to 180 Hz at the lower edge and 200 to 300 Hz
-        at the upper.
+        Passband edges in Hz. Default is (150.0, 250.0), the most common
+        choice. Published bands vary, with lower edges from about 80 to
+        180 Hz and upper edges from 200 to 300 Hz.
     transition_width : float, optional
         Width in Hz of the transition on each side of the passband. Default is
         25.0. A narrower transition needs more taps, and therefore a longer
@@ -1285,9 +1284,8 @@ def merge_close_events(
     The other convention for closely spaced events is
     :func:`exclude_close_events`, which keeps the first of a cluster and drops
     the rest. This one keeps every event's content: a merged event runs from
-    the first start to the last end. Fourteen of the 57 papers in the
-    project's detection-parameter survey merge, at a median gap of 50 ms;
-    the Frank lab ``extractevents`` routine merges as well.
+    the first start to the last end. Both conventions are used in the
+    literature; the Frank lab ``extractevents`` routine merges.
 
     Merging is repeated until nothing more can be joined, so a chain of events
     each close to the next becomes one event. Events that overlap or nest have
@@ -1372,10 +1370,9 @@ def require_overlap(
 ) -> NDArray | pd.DataFrame:
     """Keep the events that overlap an event in a second inventory.
 
-    Thirteen of the 57 papers in the project's detection-parameter survey
-    require a ripple and a population burst together, usually by keeping the
-    multiunit bursts that overlap a detected ripple. This composes any two
-    detectors into that conjunction::
+    Many studies require a ripple and a population burst together, usually by
+    keeping the multiunit bursts that overlap a detected ripple. This composes
+    any two detectors into that conjunction::
 
         bursts = multiunit_HSE_detector(time, multiunit, speed, fs)
         ripples = Kay_ripple_detector(time, lfps, speed, fs)

@@ -568,7 +568,6 @@ def Shvartsman_ripple_detector(
     sampling_frequency: float,
     speed_threshold: float = 4.0,
     minimum_duration: float = 0.015,
-    maximum_duration: float | None = None,
     zscore_threshold: float = 3.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
@@ -579,6 +578,7 @@ def Shvartsman_ripple_detector(
     elec_baselines: ArrayLike | None = None,
     elec_deviations: ArrayLike | None = None,
     participation_threshold: float = 2,
+    maximum_duration: float | None = None,
 ) -> pd.DataFrame:
     """Detect sharp-wave ripples on each channel, keeping events that enough
     channels share.
@@ -626,8 +626,8 @@ def Shvartsman_ripple_detector(
         Longest allowed event duration in **seconds**, applied to the event as
         it is reported rather than to the run above threshold, because that is
         what a published maximum describes. Default is None (no upper limit).
-        Twenty-five of the 57 papers in the project's detection-parameter
-        survey impose one, from 400 to 2000 ms.
+        Published ceilings run from a few hundred milliseconds to a couple of
+        seconds.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
         Default is 3.0 (higher than Kay's 2.0 because per-channel detection
@@ -945,13 +945,13 @@ def Kay_ripple_detector(
     sampling_frequency: float,
     speed_threshold: float = 4.0,
     minimum_duration: float = 0.015,
-    maximum_duration: float | None = None,
     zscore_threshold: float = 2.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
     normalization_time_range: tuple[float, float] | None = None,
+    maximum_duration: float | None = None,
 ) -> pd.DataFrame:
     """Detect sharp-wave ripple events using multi-channel consensus method.
 
@@ -992,8 +992,8 @@ def Kay_ripple_detector(
         Longest allowed event duration in **seconds**, applied to the event as
         it is reported rather than to the run above threshold, because that is
         what a published maximum describes. Default is None (no upper limit).
-        Twenty-five of the 57 papers in the project's detection-parameter
-        survey impose one, from 400 to 2000 ms.
+        Published ceilings run from a few hundred milliseconds to a couple of
+        seconds.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
         Default is 2.0. Lower values (e.g., 1.5) detect more events but may
@@ -1106,13 +1106,13 @@ def Yu_ripple_detector(
     sampling_frequency: float,
     speed_threshold: float = 4.0,
     minimum_duration: float = 0.020,
-    maximum_duration: float | None = None,
     percentile: float = 99.99,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
     normalization_mask: ArrayLike | None = None,
     normalization_time_range: tuple[float, float] | None = None,
     zscore_per_tetrode: bool = True,
+    maximum_duration: float | None = None,
 ) -> pd.DataFrame:
     """Detect sharp-wave ripples with a data-driven noise threshold (Yu et al. 2017).
 
@@ -1154,8 +1154,8 @@ def Yu_ripple_detector(
         Longest allowed event duration in **seconds**, applied to the event as
         it is reported rather than to the run above threshold, because that is
         what a published maximum describes. Default is None (no upper limit).
-        Twenty-five of the 57 papers in the project's detection-parameter
-        survey impose one, from 400 to 2000 ms.
+        Published ceilings run from a few hundred milliseconds to a couple of
+        seconds.
     percentile : float, optional
         Percentile of the mirrored noise distribution used as the threshold.
         Default is 99.99.
@@ -1496,10 +1496,9 @@ def Zugaro_ripple_detector(
     minimum_duration, maximum_duration : float, optional
         Events shorter or longer than these are discarded. Defaults are
         0.020 and 0.100 s (FMAToolbox; neurocode uses 0.025 and 0.500).
-        The 100 ms ceiling is FMAToolbox's and is shorter than every maximum
-        in the project's 57-paper detection-parameter survey, which run from
-        400 to 2000 ms. Raise it if you want a limit typical of the
-        literature rather than of this algorithm's original settings.
+        The 100 ms ceiling is FMAToolbox's, and is shorter than the ceilings
+        most of the replay literature uses. Raise it for a limit typical of
+        that literature rather than of this algorithm's original settings.
     smoothing_window : int, optional
         Moving-average length in samples. Default is the original's 11
         samples at 1250 Hz scaled to ``sampling_frequency`` and kept odd. A
@@ -1541,6 +1540,7 @@ def Zugaro_ripple_detector(
     _validate_array_lengths(time, filtered_lfps, speed)
     _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
     _validate_speed_units(speed, speed_threshold, stacklevel=3)
+    _validate_duration_limits(minimum_duration, maximum_duration)
 
     is_valid = np.all(np.isfinite(filtered_lfps), axis=1) & np.isfinite(speed)
     if not np.any(is_valid):
@@ -1768,6 +1768,7 @@ def Long_sharp_wave_ripple_detector(
     _validate_array_lengths(time, lfp, speed)
     _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
     _validate_speed_units(speed, speed_threshold, stacklevel=3)
+    _validate_duration_limits(minimum_sharp_wave_duration, maximum_sharp_wave_duration)
     if np.any(np.isnan(lfp)) or np.any(np.isnan(speed)):
         raise ValueError(
             "lfp and speed must not contain NaN: this detector's local statistics need "
@@ -1994,7 +1995,6 @@ def Carey_candidate_detector(
     edge_threshold: float = 1.0,
     peak_threshold: float = 3.0,
     minimum_duration: float = 0.020,
-    maximum_duration: float | None = None,
     minimum_active_units: int = 5,
     ripple_smoothing_sigma: float = 0.010,
     spike_kernel_sigma: float = 0.020,
@@ -2006,6 +2006,7 @@ def Carey_candidate_detector(
     theta_threshold: float = 2.0,
     state_merge_gap: float = 0.050,
     state_minimum_length: float = 0.050,
+    maximum_duration: float | None = None,
 ) -> pd.DataFrame:
     """Detect candidate replay events from ripple power and multiunit activity jointly.
 
@@ -2076,8 +2077,8 @@ def Carey_candidate_detector(
         Longest allowed event duration in **seconds**, applied to the event as
         it is reported rather than to the run above threshold, because that is
         what a published maximum describes. Default is None (no upper limit).
-        Twenty-five of the 57 papers in the project's detection-parameter
-        survey impose one, from 400 to 2000 ms.
+        Published ceilings run from a few hundred milliseconds to a couple of
+        seconds.
     minimum_active_units : int, optional
         Minimum number of units with a spike inside the candidate. Default 5.
     ripple_smoothing_sigma, spike_kernel_sigma, baseline_sigma : float, optional
@@ -2229,13 +2230,13 @@ def Karlsson_ripple_detector(
     sampling_frequency: float,
     speed_threshold: float = 4.0,
     minimum_duration: float = 0.015,
-    maximum_duration: float | None = None,
     zscore_threshold: float = 3.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
     normalization_time_range: tuple[float, float] | None = None,
+    maximum_duration: float | None = None,
 ) -> pd.DataFrame:
     """Detect sharp-wave ripples using per-channel detection with merging.
 
@@ -2275,8 +2276,8 @@ def Karlsson_ripple_detector(
         Longest allowed event duration in **seconds**, applied to the event as
         it is reported rather than to the run above threshold, because that is
         what a published maximum describes. Default is None (no upper limit).
-        Twenty-five of the 57 papers in the project's detection-parameter
-        survey impose one, from 400 to 2000 ms.
+        Published ceilings run from a few hundred milliseconds to a couple of
+        seconds.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
         Default is 3.0 (higher than Kay's 2.0 because per-channel detection
@@ -2383,13 +2384,13 @@ def Roumis_ripple_detector(
     sampling_frequency: float,
     speed_threshold: float = 4.0,
     minimum_duration: float = 0.015,
-    maximum_duration: float | None = None,
     zscore_threshold: float = 2.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
     normalization_time_range: tuple[float, float] | None = None,
+    maximum_duration: float | None = None,
 ) -> pd.DataFrame:
     """Detect sharp-wave ripples using averaged square-root envelope method.
 
@@ -2429,8 +2430,8 @@ def Roumis_ripple_detector(
         Longest allowed event duration in **seconds**, applied to the event as
         it is reported rather than to the run above threshold, because that is
         what a published maximum describes. Default is None (no upper limit).
-        Twenty-five of the 57 papers in the project's detection-parameter
-        survey impose one, from 400 to 2000 ms.
+        Published ceilings run from a few hundred milliseconds to a couple of
+        seconds.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
         Default is 2.0. Lower values (e.g., 1.5) detect more events but may
@@ -2522,15 +2523,15 @@ def multiunit_HSE_detector(
     sampling_frequency: float,
     speed_threshold: float = 4.0,
     minimum_duration: float = 0.015,
-    maximum_duration: float | None = None,
     zscore_threshold: float = 2.0,
     smoothing_sigma: float = 0.015,
     close_event_threshold: float = 0.0,
-    minimum_active_units: int = 0,
     use_speed_threshold_for_zscore: bool = False,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
     normalization_time_range: tuple[float, float] | None = None,
+    maximum_duration: float | None = None,
+    minimum_active_units: int = 0,
 ) -> pd.DataFrame:
     """Detect High Synchrony Events from multiunit spiking activity.
 
@@ -2584,8 +2585,8 @@ def multiunit_HSE_detector(
         Longest allowed event duration in **seconds**, applied to the event as
         it is reported rather than to the run above threshold, because that is
         what a published maximum describes. Default is None (no upper limit).
-        Twenty-five of the 57 papers in the project's detection-parameter
-        survey impose one, from 400 to 2000 ms.
+        Published ceilings run from a few hundred milliseconds to a couple of
+        seconds.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
         Default is 2.0. Lower values (e.g., 1.5) detect more events but may
@@ -2601,8 +2602,7 @@ def multiunit_HSE_detector(
     minimum_active_units : int, optional
         Minimum number of units with at least one spike inside an event.
         Events with fewer are dropped. Default is 0, which imposes no
-        criterion. Of the 36 multiunit papers in the project's
-        detection-parameter survey, 21 state such a minimum, most often five.
+        criterion. Published criteria are most often around five units.
         ``Carey_candidate_detector`` applies the same rule with its original's
         default of 5.
     use_speed_threshold_for_zscore : bool, optional

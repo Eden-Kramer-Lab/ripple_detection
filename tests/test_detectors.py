@@ -1913,7 +1913,13 @@ class TestLongSharpWaveRippleDetector:
     def test_no_event_survives_a_tiny_maximum_sharp_wave_duration(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
         events = Long_sharp_wave_ripple_detector(
-            time, lfp, stationary, self.FS, maximum_sharp_wave_duration=0.001, random_state=0
+            time,
+            lfp,
+            stationary,
+            self.FS,
+            minimum_sharp_wave_duration=0.001,
+            maximum_sharp_wave_duration=0.002,
+            random_state=0,
         )
         assert events.empty
         assert "start_time" in events.columns and "sharp_wave_duration" in events.columns
@@ -3011,4 +3017,46 @@ class TestMultiunitActiveUnits:
         with pytest.raises(ValueError, match="minimum_active_units"):
             multiunit_HSE_detector(
                 time, multiunit, stationary, self.FS, minimum_active_units=-1
+            )
+
+
+class TestDurationLimitValidation:
+    """The two detectors that always had a ceiling validate it like the rest."""
+
+    FS = 1000
+    N_TIME = 5_000
+
+    @pytest.fixture
+    def time(self):
+        return np.arange(self.N_TIME) / self.FS
+
+    @pytest.fixture
+    def stationary(self):
+        return np.full(self.N_TIME, 2.0)
+
+    @pytest.fixture
+    def lfps(self):
+        return _synthetic_ripple_band(self.N_TIME, self.FS, [(1_000, 1_060, 20.0)])
+
+    def test_zugaro_rejects_a_ceiling_below_the_minimum(self, time, lfps, stationary):
+        with pytest.raises(ValueError, match="maximum_duration"):
+            Zugaro_ripple_detector(
+                time,
+                lfps,
+                stationary,
+                self.FS,
+                minimum_duration=0.500,
+                maximum_duration=0.100,
+            )
+
+    def test_long_rejects_a_sharp_wave_ceiling_below_its_minimum(self, time, stationary):
+        raw = _synthetic_two_channel_lfp(self.N_TIME, self.FS, [1_000])
+        with pytest.raises(ValueError, match="maximum"):
+            Long_sharp_wave_ripple_detector(
+                time,
+                raw,
+                stationary,
+                self.FS,
+                minimum_sharp_wave_duration=0.500,
+                maximum_sharp_wave_duration=0.100,
             )
