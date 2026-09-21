@@ -259,7 +259,9 @@ def simulate_LFP(
         frequencies, then per-ripple durations; a scalar consumes no
         randomness. So a given seed produces the same noise whatever the
         ripple parameters, but giving a frequency range changes the duration
-        draws. Default is None (nondeterministic).
+        draws. Default is None, which draws from the operating system and is
+        not reproducible. `np.random.seed` does not control this function;
+        pass `random_state` to repeat a simulation.
     ripple_snr : float, optional
         Ripple size relative to the **ripple-band** background: the peak
         amplitude of each ripple after ``filter_ripple_band``, divided by the

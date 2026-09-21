@@ -50,7 +50,7 @@ with the events that you detect. Entries marked **Breaking** change the results.
 
 - **Breaking.** The minimum-duration test counts samples. It does not compare
   timestamps. At 1500 Hz a 15 ms minimum needs 23 samples, not 24. On pink noise
-  this gives 4 % to 6 % more events at a `zscore_threshold` of 2.0 to 2.5.
+  this gives 3 % to 6 % more events at a `zscore_threshold` of 2.0 to 2.5.
 - **Breaking.** All detectors use one duration rule: inclusive sample counts,
   rounded half up. Zugaro and Carey compared elapsed time, and Long rounded down.
 - **Breaking.** Immobility is `speed <= speed_threshold` in all detectors. The
