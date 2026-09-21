@@ -330,7 +330,7 @@ entries like ">4" or "33% of the ensemble" are excluded rather than coerced.
 | `maximum_duration` | 25 | 400-2000 ms | 600 ms | 500, 2000, 750 | none, except Zugaro 100 ms |
 | merge or drop gap | 14 | 20-100 ms | 50 ms | 50, 20, 40 | 0 (no exclusion) |
 | `minimum_active_units` | 27 | 3-10 units | 5 units | 5, 4, 3 | 0 on the burst detector, 5 on Carey |
-| channels required | 26 | 13 papers use one, 10 more than one | | one | one (Kay and Roumis pool all) |
+| channels required | 27 | 13 papers use one, 10 more than one, 4 a small number | one | one | one is enough; Kay, Roumis and Zugaro pool all, Long needs two |
 
 Three cautions before treating this as a recipe:
 
