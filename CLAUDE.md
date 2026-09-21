@@ -151,8 +151,14 @@ The package is organized into three main modules:
 2. **[ripple_detection/detectors.py](ripple_detection/detectors.py)** - High-level detection algorithms
    - `Kay_ripple_detector` - Multi-channel consensus approach (Kay et al. 2016)
    - `Karlsson_ripple_detector` - Per-channel detection with merging (Karlsson et al. 2009)
-   - `Roumis_ripple_detector` - Variant detection method
-   - `multiunit_HSE_detector` - Multiunit High Synchrony Event detector
+   - `Roumis_ripple_detector` - Per-channel envelopes averaged (Frank-lab variant, unpublished)
+   - `Shvartsman_ripple_detector` - Per-channel detection requiring a minimum number of participating channels (unpublished)
+   - `Yu_ripple_detector` - Median consensus with a data-driven noise-percentile threshold (Yu et al. 2017)
+   - `Zugaro_ripple_detector` - FMAToolbox `FindRipples` two-threshold rule
+   - `Long_sharp_wave_ripple_detector` - Sharp wave + ripple power on two raw channels, k-means split (Long, `DetectSWR`)
+   - `Carey_candidate_detector` - Joint ripple-power × multiunit score (Carey, Tank & van der Meer 2019)
+   - `multiunit_HSE_detector` - Multiunit High Synchrony Event detector (spikes only)
+   - The README's "Choosing a detector" table is the reference for how their conventions differ
    - All detectors return pandas DataFrames with event statistics
 
 3. **[ripple_detection/simulate.py](ripple_detection/simulate.py)** - Synthetic data generation
@@ -181,6 +187,12 @@ All ripple detectors follow a common pipeline:
 - **Kay detector**: Combines multiple LFP channels into single consensus trace using sum of squared envelopes
 - **Karlsson detector**: Detects ripples on each channel independently, then merges overlapping events
 - **Roumis detector**: Averages square-root of squared envelopes across channels
+- **Yu detector**: Median of per-channel z-scored envelopes; threshold from the mirrored immobility-noise histogram
+- **Zugaro detector**: Two thresholds (bounds and peak) on the z-scored squared sum; merges close events
+- **Long detector**: Raw two-channel input; sharp-wave difference and ripple power clustered by k-means with local statistics
+- **Carey detector**: Geometric mean of a ripple-power score and a capped multiunit score; whole event inside a low-speed interval
+- **HSE detector**: Z-scored smoothed population spike rate, no LFP
+- Missing-sample policy differs (row-drop and stitch; block-wise; raise) and is stated in each docstring's Notes
 
 ### Pre-computed Filter
 
@@ -227,14 +239,7 @@ The test suite is organized into six modules:
    - Multiunit population firing rate
    - Error handling for edge cases
 
-3. **[tests/test_detectors.py](tests/test_detectors.py)** - Detector integration tests (25 tests, 100% coverage)
-   - Kay_ripple_detector (9 tests): multi-channel consensus, parameter validation
-   - Karlsson_ripple_detector (4 tests): per-channel detection with merging
-   - Roumis_ripple_detector (2 tests): variant algorithm validation
-   - multiunit_HSE_detector (3 tests): synchrony event detection
-   - Error handling (5 tests): NaN values, empty arrays, mismatched lengths
-   - Helper functions (2 tests): consensus trace generation
-
+3. **[tests/test_detectors.py](tests/test_detectors.py)** - Detector behaviour and conventions, one test class per detector plus shared error-handling, participation, and duration-convention classes; `tests/test_public_api.py` pins the exported names
 4. **[tests/test_simulate.py](tests/test_simulate.py)** - Simulation module (36 tests, 100% coverage)
    - Time array generation
    - Noise generation (white, pink, brown) with frequency analysis
