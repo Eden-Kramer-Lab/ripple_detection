@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `multiunit_HSE_detector` now validates its inputs like the LFP detectors: a non-2D `multiunit`, mismatched lengths, time in samples, or speed in the wrong units raise, and NaN spike counts raise instead of silently blanking the smoothed rate over the full kernel width around each NaN. Its docstring now states which selection rule it implements and how it differs from Davidson et al. 2009.
 - `filter_ripple_band` now designs a 150-250 Hz filter for the given `sampling_frequency` (via `ripple_bandpass_filter`) instead of applying the 1500 Hz pre-computed kernel at every rate. Previously the passband scaled with the rate — 193-340 Hz at 2000 Hz, 97-170 Hz at 1000 Hz — with only a warning. Output at 1500 Hz (or with no rate given) is unchanged. Rates whose Nyquist frequency cannot hold the band plus its 25 Hz transition (at or below 550 Hz) now raise instead of warning.
 - `max_thresh` now uses the same inclusive duration comparison as event detection, preventing spurious `NaN` values or underestimated thresholds from floating-point rounding at exact `minimum_duration` boundaries.
 - `normalization_mask` is now filtered by the same NaN-row removal as the LFP/speed data in the LFP detectors (Kay, Karlsson, Roumis, Shvartsman), fixing a length-mismatch `ValueError` when the input contained NaN samples.

@@ -1394,9 +1394,20 @@ def multiunit_HSE_detector(
 ) -> pd.DataFrame:
     """Detect High Synchrony Events from multiunit spiking activity.
 
-    Identifies periods of elevated population spiking activity during immobility,
-    following Davidson et al. 2009. The population firing rate is smoothed and
-    z-scored, then thresholded to find synchronous events.
+    Identifies periods of elevated population spiking activity during immobility.
+    The population firing rate (summed over units) is smoothed with a Gaussian
+    kernel, z-scored, and thresholded with the same sustained-threshold and
+    mean-crossing rules as the LFP ripple detectors: at or above
+    ``zscore_threshold`` for ``minimum_duration``, then extended to where the
+    rate returns to the mean.
+
+    The 15 ms smoothing kernel follows Davidson et al. 2009 [1]_, but the
+    selection rule does not: Davidson et al. define candidate events as periods
+    above the mean whose *peak* exceeds 3 s.d., with statistics from stopped
+    periods only and no sustained-duration requirement. To approximate that
+    convention, pass ``zscore_threshold=3.0``, ``minimum_duration=0.0`` and
+    ``normalization_mask=speed < speed_threshold``; the default 2 s.d. for
+    15 ms with statistics over all samples is this package's own convention.
 
     Parameters
     ----------
@@ -1481,9 +1492,22 @@ def multiunit_HSE_detector(
        Hippocampal Replay of Extended Experience. Neuron 63, 497-507.
 
     """
-    multiunit = np.asarray(multiunit)
-    speed = np.asarray(speed)
-    time = np.asarray(time)
+    multiunit = np.asarray(multiunit, dtype=float)
+    speed = np.asarray(speed, dtype=float)
+    time = np.asarray(time, dtype=float)
+    if multiunit.ndim != 2:
+        raise ValueError(
+            f"multiunit must be a 2D array of shape (n_time, n_units), got shape "
+            f"{multiunit.shape}. For a single unit, pass multiunit[:, np.newaxis]."
+        )
+    _validate_array_lengths(time, multiunit, speed)
+    _validate_time_units(time, sampling_frequency, len(time))
+    _validate_speed_units(speed, speed_threshold)
+    if np.any(np.isnan(multiunit)):
+        raise ValueError(
+            "multiunit contains NaN. Spike counts cannot be missing: fill absent "
+            "samples with 0, or drop those rows from time, multiunit, and speed together."
+        )
 
     firing_rate = get_multiunit_population_firing_rate(
         multiunit, sampling_frequency, smoothing_sigma

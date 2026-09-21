@@ -964,6 +964,39 @@ class TestMultiunitHSEDetector:
         assert isinstance(events_stationary_zscore, pd.DataFrame)
 
 
+class TestMultiunitHSEValidation:
+    """multiunit_HSE_detector validates its inputs like the LFP detectors."""
+
+    @pytest.fixture
+    def inputs(self):
+        fs = 1500
+        n = fs * 3
+        rng = np.random.default_rng(0)
+        multiunit = (rng.random((n, 4)) < 0.02).astype(float)
+        return np.arange(n) / fs, multiunit, np.full(n, 2.0), fs
+
+    def test_nan_spike_counts_raise(self, inputs):
+        time, multiunit, speed, fs = inputs
+        multiunit[100, 1] = np.nan
+        with pytest.raises(ValueError, match="NaN"):
+            multiunit_HSE_detector(time, multiunit, speed, fs)
+
+    def test_length_mismatch_raises(self, inputs):
+        time, multiunit, speed, fs = inputs
+        with pytest.raises(ValueError, match="length"):
+            multiunit_HSE_detector(time, multiunit[:-10], speed, fs)
+
+    def test_one_dimensional_multiunit_raises(self, inputs):
+        time, multiunit, speed, fs = inputs
+        with pytest.raises(ValueError, match="2D"):
+            multiunit_HSE_detector(time, multiunit[:, 0], speed, fs)
+
+    def test_time_in_samples_raises(self, inputs):
+        time, multiunit, speed, fs = inputs
+        with pytest.raises(ValueError, match="samples"):
+            multiunit_HSE_detector(np.arange(len(time), dtype=float), multiunit, speed, fs)
+
+
 class TestKayConsensusTrace:
     """Test the Kay consensus trace generation."""
 
