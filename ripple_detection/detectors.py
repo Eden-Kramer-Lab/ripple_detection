@@ -1496,6 +1496,10 @@ def Zugaro_ripple_detector(
     minimum_duration, maximum_duration : float, optional
         Events shorter or longer than these are discarded. Defaults are
         0.020 and 0.100 s (FMAToolbox; neurocode uses 0.025 and 0.500).
+        The 100 ms ceiling is FMAToolbox's and is shorter than every maximum
+        in the project's 57-paper detection-parameter survey, which run from
+        400 to 2000 ms. Raise it if you want a limit typical of the
+        literature rather than of this algorithm's original settings.
     smoothing_window : int, optional
         Moving-average length in samples. Default is the original's 11
         samples at 1250 Hz scaled to ``sampling_frequency`` and kept odd. A
