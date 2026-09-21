@@ -18,6 +18,7 @@ from ripple_detection import (
 from ripple_detection.core import (
     gaussian_smooth,
     get_envelope,
+    minimum_sample_count,
 )
 from ripple_detection.detectors import (
     Roumis_ripple_detector,
@@ -965,6 +966,13 @@ class TestMultiunitHSEDetector:
 
 
 class TestMultiunitHSEValidation:
+    def test_nan_in_speed_raises(self, time_3s, sampling_frequency):
+        multiunit = np.zeros((len(time_3s), 3))
+        speed = np.full(len(time_3s), 2.0)
+        speed[10] = np.nan
+        with pytest.raises(ValueError, match="speed"):
+            multiunit_HSE_detector(time_3s, multiunit, speed, sampling_frequency)
+
     """multiunit_HSE_detector validates its inputs like the LFP detectors."""
 
     @pytest.fixture
@@ -1164,6 +1172,19 @@ class TestYuConsensusTrace:
 
 
 class TestExtractYuRippleEvents:
+    def test_sample_count_matches_the_package_convention(self):
+        # 0.145 s at 1500 Hz is 217.5 samples: the package rounds half up (218),
+        # and the Yu extractor must agree rather than lose the half to round-off
+        fs, duration = 1500, 0.145
+        time = np.arange(3000) / fs
+        n_min = minimum_sample_count(time, duration)
+        assert n_min == 218
+        for n_run, expected in [(n_min - 1, 0), (n_min, 1)]:
+            trace = np.zeros(3000)
+            trace[1000 : 1000 + n_run] = 5.0
+            events, _, _ = _extract_Yu_ripple_events(trace, time, fs, duration, 2.0)
+            assert len(events) == expected, (n_run, len(events))
+
     """Sample-count qualification and mean-crossing extension, Yu et al. 2017."""
 
     @staticmethod
@@ -1870,6 +1891,21 @@ class TestShvartsmanParticipationSemantics:
 
 
 class TestFindMaxThresh:
+    def test_peak_in_a_short_excursion_does_not_hide_a_sustained_run(self):
+        # the global peak (12.0) is a single sample; the value sustained for the
+        # minimum duration anywhere in the event is the 23-sample run at 3.2
+        time = np.arange(144) / 1500
+        data = np.r_[[0.1] * 40, 12.0, [0.1] * 40, [3.2] * 23, [0.1] * 40]
+        assert _find_max_thresh(time, data, 0.015) == 3.2
+
+    def test_is_the_largest_threshold_at_which_the_event_still_qualifies(self):
+        rng = np.random.default_rng(0)
+        time = np.arange(200) / 1000
+        data = rng.normal(size=200)
+        n_min = minimum_sample_count(time, 0.020)
+        brute = max(data[k : k + n_min].min() for k in range(len(data) - n_min + 1))
+        assert _find_max_thresh(time, data, 0.020) == brute
+
     """Samples are 10 ms apart unless stated, so a 15 ms minimum is
     round(1.5) = 2 samples and a 35 ms minimum is round(3.5) = 4 samples."""
 

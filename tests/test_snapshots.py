@@ -192,6 +192,11 @@ class TestKarlssonDetectorSnapshots:
         if len(ripples) > 0:
             durations = [round(float(d), 4) for d in ripples["duration"].tolist()]
             snapshot.assert_match(str(durations), "merged_durations")
+            # the z-score statistics come from the strongest channel at each sample
+            stats = ripples[["max_thresh", "mean_zscore", "max_zscore", "min_zscore"]]
+            snapshot.assert_match(
+                str(stats.round(6).to_dict("records")), "merged_zscore_stats"
+            )
 
 
 class TestRoumisDetectorSnapshots:

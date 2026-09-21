@@ -509,7 +509,7 @@ def _extract_Yu_ripple_events(
         )
     trace = np.asarray(trace, dtype=float)
     time = np.asarray(time, dtype=float)
-    n_min = max(1, int(np.floor(minimum_duration * sampling_frequency + 0.5)))
+    n_min = minimum_sample_count(time, minimum_duration)
 
     supra_runs = _boolean_runs(trace >= threshold)
     supra_runs = supra_runs[(supra_runs[:, 1] - supra_runs[:, 0]) >= n_min]
@@ -1508,6 +1508,10 @@ def multiunit_HSE_detector(
             "multiunit contains NaN. Spike counts cannot be missing: fill absent "
             "samples with 0, or drop those rows from time, multiunit, and speed together."
         )
+    if np.any(np.isnan(speed)):
+        raise ValueError(
+            "speed contains NaN. Drop those rows from time, multiunit, and speed together."
+        )
 
     firing_rate = get_multiunit_population_firing_rate(
         multiunit, sampling_frequency, smoothing_sigma
@@ -1548,12 +1552,13 @@ def multiunit_HSE_detector(
 def _find_max_thresh(
     time: np.ndarray, data: np.ndarray, minimum_duration: float = 0.015
 ) -> float:
-    """Find the largest value sustained around the peak for a minimum duration.
+    """Find the largest value sustained for a minimum duration anywhere in the event.
 
-    Starting at the peak, expand a window (toward the higher neighbouring sample)
-    until it holds ``minimum_sample_count(time, minimum_duration)`` samples, then
-    return the smaller of the two window edges -- the largest value held across
-    the whole window. The sample-count convention matches event detection.
+    The largest threshold at which the event would still be detected: the
+    maximum, over every window of ``minimum_sample_count(time, minimum_duration)``
+    consecutive samples, of that window's minimum. The sample-count convention
+    matches event detection, so an event detected at ``zscore_threshold`` has
+    ``max_thresh >= zscore_threshold``.
 
     Parameters
     ----------
@@ -1564,7 +1569,7 @@ def _find_max_thresh(
     Returns
     -------
     max_thresh : float
-        The largest value sustained for ``minimum_duration`` around the peak.
+        The largest value sustained for ``minimum_duration`` within the event.
         ``nan`` if the event holds fewer samples than the minimum (the sustained
         value is then undefined). Public detectors never produce such events --
         their segments meet the minimum by construction -- so this only affects
@@ -1577,19 +1582,8 @@ def _find_max_thresh(
     n_min = minimum_sample_count(time, minimum_duration)
     if len(data) < n_min:
         return float("nan")
-    peak_ind = int(np.argmax(data))
-    peak_left_ind = peak_ind
-    peak_right_ind = peak_ind
-    while peak_right_ind - peak_left_ind + 1 < n_min:
-        can_expand_right = peak_right_ind < len(data) - 1
-        can_expand_left = peak_left_ind > 0
-        if can_expand_right and (
-            not can_expand_left or data[peak_right_ind + 1] > data[peak_left_ind - 1]
-        ):
-            peak_right_ind += 1
-        else:
-            peak_left_ind -= 1
-    return min(data[peak_left_ind], data[peak_right_ind])
+    windows = np.lib.stride_tricks.sliding_window_view(np.asarray(data, dtype=float), n_min)
+    return float(windows.min(axis=1).max())
 
 
 def _get_event_stats(

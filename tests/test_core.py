@@ -11,7 +11,6 @@ from ripple_detection.core import (
     _extend_segment,
     _find_containing_interval,
     _get_ripplefilter_kernel,
-    _get_series_start_end_times,
     estimate_noise_threshold,
     exclude_close_events,
     exclude_movement,
@@ -27,27 +26,6 @@ from ripple_detection.core import (
     segment_boolean_series,
     threshold_by_zscore,
 )
-
-
-@pytest.mark.parametrize(
-    "series, expected_segments",
-    [
-        (pd.Series([False, False, True, True, False]), (np.array([2]), np.array([3]))),
-        (
-            pd.Series([False, False, True, True, False, True, False]),
-            (np.array([2, 5]), np.array([3, 5])),
-        ),
-        (pd.Series([True, True, False, False, False]), (np.array([0]), np.array([1]))),
-        (pd.Series([False, False, True, True, True]), (np.array([2]), np.array([4]))),
-        (pd.Series([True, False, True, True, False]), (np.array([0, 2]), np.array([0, 3]))),
-    ],
-)
-def test_get_series_start_end_times(series, expected_segments):
-    tup = _get_series_start_end_times(series)
-    try:
-        assert np.all(tup[0] == expected_segments[0]) & np.all(tup[1] == expected_segments[1])
-    except IndexError:
-        assert tup == expected_segments
 
 
 @pytest.mark.parametrize(

@@ -50,40 +50,6 @@ def ripple_bandpass_filter(sampling_frequency: float) -> tuple[NDArray, float]:
     return remez(ORDER, desired, [0, 1, 0], fs=sampling_frequency), 1.0
 
 
-def _get_series_start_end_times(series: pd.Series) -> tuple[NDArray, NDArray]:
-    """Extracts the start and end times of segments defined by a boolean
-    pandas Series.
-
-    Parameters
-    ----------
-    series : pandas boolean Series (n_time,)
-        Consecutive Trues define each segment.
-
-    Returns
-    -------
-    start_times : ndarray, shape (n_segments,)
-        Beginning time of each segment based on the index of the series.
-    end_times : ndarray, shape (n_segments,)
-        End time of each segment based on the index of the series.
-
-    """
-    # Identify starts and ends without using fillna to avoid pandas FutureWarning
-    # A start is where current is True AND previous is not True (False or NaN)
-    # An end is where current is True AND next is not True (False or NaN)
-    shifted_prev = series.shift(1)
-    shifted_next = series.shift(-1)
-
-    # Use != True instead of == False to handle NaN properly
-    # NaN != True is True, which is what we want for boundaries
-    is_start_time = series & (shifted_prev != True)  # noqa: E712
-    start_times = np.asarray(series.index[is_start_time])
-
-    is_end_time = series & (shifted_next != True)  # noqa: E712
-    end_times = np.asarray(series.index[is_end_time])
-
-    return start_times, end_times
-
-
 def minimum_sample_count(time: ArrayLike, minimum_duration: float) -> int:
     """Number of consecutive samples that ``minimum_duration`` spans.
 
