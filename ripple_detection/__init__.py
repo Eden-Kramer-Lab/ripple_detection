@@ -2,7 +2,9 @@
 
 Detectors take ``time``, the signal, ``speed``, and ``sampling_frequency`` and
 return one DataFrame row per event; see the README's "Choosing a detector"
-table for how they differ.
+table for how they differ, and its "Published parameter values" table for the
+range each threshold, duration and smoothing width takes in the literature and
+where this package's defaults sit in it.
 """
 
 from ripple_detection.core import (

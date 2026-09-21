@@ -311,6 +311,44 @@ ripples = Kay_ripple_detector(
 | `band`, `transition_width` on `filter_ripple_band` | (150.0, 250.0) Hz, 25.0 Hz | Passband of the designed filter. A custom band needs a `sampling_frequency`, since the shipped 1500 Hz kernel is fixed | Published bands run from about 80-180 Hz at the lower edge to 200-300 Hz at the upper |
 | `low_threshold`, `high_threshold` | 2.0, 5.0 (Zugaro) | Boundary and peak thresholds of the two-threshold rule | Lower `high_threshold` for more detections; `low_threshold` sets where events start and end |
 
+### Published parameter values
+
+Where the package's defaults sit relative to the literature. Compiled from 57
+papers that decode replay content (1999-2025), each value read from the paper's
+Methods; counts are of papers stating a bare number for that parameter, so
+entries like ">4" or "33% of the ensemble" are excluded rather than coerced.
+
+| Parameter | Papers | Published range | Median | Most common | Package default |
+|---|---|---|---|---|---|
+| `zscore_threshold` (ripple) | 27 | 1-8 SD | 3 SD | 3, 2, 4 | 2.0 Kay/Roumis, 3.0 Karlsson/Shvartsman |
+| `zscore_threshold` (multiunit) | 27 | 2-4 SD | 3 SD | 3, 2, 4 | 2.0 |
+| ripple band | 30 | 80-180 Hz low, 200-300 Hz high | 150-250 Hz | 150-250 Hz (16 papers) | 150-250 Hz |
+| `smoothing_sigma` (ripple) | 18 | 4-100 ms | 12.5 ms | 4, 12.5, 15 | 4 ms |
+| `smoothing_sigma` (multiunit) | 28 | 5-30 ms | 15 ms | 15, 10, 5 | 15 ms |
+| `speed_threshold` | 42 | 0.05-10 cm/s | 5 cm/s | 5, 4, 2 | 4 cm/s |
+| `minimum_duration` | 41 | 15-100 ms | 50 ms | 50, 100, 15 | 15 ms, 20 ms on Yu/Zugaro/Carey |
+| `maximum_duration` | 25 | 400-2000 ms | 600 ms | 500, 2000, 750 | none, except Zugaro 100 ms |
+| merge or drop gap | 14 | 20-100 ms | 50 ms | 50, 20, 40 | 0 (no exclusion) |
+| `minimum_active_units` | 27 | 3-10 units | 5 units | 5, 4, 3 | 0 on the burst detector, 5 on Carey |
+| channels required | 26 | 13 papers use one, 10 more than one | | one | one (Kay and Roumis pool all) |
+
+Three cautions before treating this as a recipe:
+
+- **The defaults are each source's, not a consensus.** They reproduce the published
+  or lab settings of the algorithm each detector is named for, so the same recording
+  gives different event counts under different detectors by design.
+- **Our thresholds and minimum duration sit at the permissive end.** A 2 SD threshold
+  held for 15 ms admits more than the field's median of 3 SD and 50 ms. Tightening to
+  the median is a defensible sensitivity check, not an extreme one.
+- **Some published speed values restrict analysis rather than detection**, so that row
+  overstates how many papers gate detection on speed. `minimum_duration` also means
+  different things across papers: here it is the run above threshold, while many papers
+  report the duration of the final event.
+
+The per-paper table these come from lives in the companion analysis project
+(`docs/design/replay_detection_comparison/literature_detection_parameters.csv`),
+with every correction and its evidence recorded alongside it.
+
 ### Getting Help
 
 - **Issues**: [GitHub Issues](https://github.com/Eden-Kramer-Lab/ripple_detection/issues)
