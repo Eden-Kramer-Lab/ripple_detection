@@ -163,8 +163,8 @@ All detectors return a pandas DataFrame with comprehensive event statistics:
 
 ### Simulating realistic ripples
 
-`simulate_LFP`'s default brown noise leaves about 1 % of the signal's standard deviation
-in the 150-250 Hz band, so a ripple of any visible amplitude dominates the band. For
+`simulate_LFP`'s default brown noise leaves very little power in the 150-250 Hz band (and
+less the longer the record), so a ripple of any visible amplitude dominates the band. For
 detector testing, set the ripple size relative to the ripple-band background with
 `ripple_snr` and use pink noise, which gives a band background closer to recordings:
 
@@ -182,9 +182,10 @@ lfp = simulate_LFP(
 )
 ```
 
-A ripple with `ripple_snr=5` peaks near 6 SD in the z-scored consensus the detectors
-threshold; `ripple_snr=3` near 2.7 SD.
-
+`ripple_snr` is the ripple's peak after ripple-band filtering divided by the filtered
+noise's SD, set per ripple so it holds at the band edges and for short bursts. The
+z-score a detector reports is larger, by a factor that depends on its smoothing and
+consensus rule; measure it for the detector you use rather than assuming a mapping.
 
 See the [examples](examples/) directory for Jupyter notebooks demonstrating:
 

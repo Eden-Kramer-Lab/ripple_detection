@@ -497,6 +497,47 @@ class TestSimulateLFPRealism:
             achieved = np.array(peaks) / background_sd
             np.testing.assert_allclose(achieved, snr, rtol=0.05)
 
+    @pytest.mark.parametrize("frequency", [150.0, 250.0])
+    @pytest.mark.parametrize("duration", [0.040, 0.100])
+    def test_ripple_snr_holds_at_the_band_edges_and_for_short_ripples(
+        self, frequency, duration
+    ):
+        # the filter attenuates the band edges and spreads short bursts, so the
+        # requested SNR must be measured on the filtered burst, not assumed
+        t = simulate_time(self.FS * 20, self.FS)
+        ripples = [2.0, 5.0, 8.0, 11.0, 14.0, 17.0]
+        noise_only = simulate_LFP(t, [], noise_type="pink", random_state=1)
+        background_sd = filter_ripple_band(noise_only, sampling_frequency=self.FS).std()
+        y = simulate_LFP(
+            t,
+            ripples,
+            noise_type="pink",
+            ripple_snr=5.0,
+            ripple_frequency=frequency,
+            ripple_duration=duration,
+            random_state=1,
+        )
+        bursts = filter_ripple_band(y - noise_only, sampling_frequency=self.FS)
+        peaks = [np.abs(bursts[np.abs(t - r) < 0.05]).max() for r in ripples]
+        np.testing.assert_allclose(np.array(peaks) / background_sd, 5.0, rtol=0.05)
+
+    def test_ripple_snr_without_noise_raises(self):
+        t = simulate_time(self.FS * 5, self.FS)
+        with pytest.raises(ValueError, match="noise_amplitude"):
+            simulate_LFP(t, [2.0], ripple_snr=5.0, noise_amplitude=0.0, random_state=0)
+
+    def test_ranges_accept_any_two_element_sequence(self):
+        t = simulate_time(self.FS * 4, self.FS)
+        base = simulate_LFP(t, [1.0, 3.0], ripple_frequency=(150.0, 250.0), random_state=3)
+        as_list = simulate_LFP(t, [1.0, 3.0], ripple_frequency=[150.0, 250.0], random_state=3)
+        as_array = simulate_LFP(
+            t, [1.0, 3.0], ripple_frequency=np.array([150.0, 250.0]), random_state=3
+        )
+        np.testing.assert_array_equal(base, as_list)
+        np.testing.assert_array_equal(base, as_array)
+        with pytest.raises(ValueError, match="two"):
+            simulate_LFP(t, [1.0], ripple_frequency=(150.0, 200.0, 250.0), random_state=3)
+
     def test_ripple_snr_and_amplitude_are_mutually_exclusive(self):
         t = simulate_time(4500, self.FS)
         with pytest.raises(ValueError, match="ripple_snr"):
@@ -524,7 +565,7 @@ class TestSimulateLFPRealism:
             t, ripples, noise_amplitude=0.0, ripple_frequency=(150.0, 250.0), random_state=3
         )
         freqs = [_dominant_frequency(y[np.abs(t - r) < 0.05], self.FS) for r in ripples]
-        assert all(140.0 <= f <= 260.0 for f in freqs)
+        assert all(150.0 - 5.0 <= f <= 250.0 + 5.0 for f in freqs)  # 5 Hz FFT resolution
         assert len(set(np.round(freqs, -1))) > 1  # not all the same
         again = simulate_LFP(
             t, ripples, noise_amplitude=0.0, ripple_frequency=(150.0, 250.0), random_state=3
@@ -546,7 +587,7 @@ class TestSimulateLFPRealism:
             fwhm = (seg > 0.5 * seg.max()).sum() / self.FS
             durations.append(fwhm / 2.3548 * 6)  # FWHM = 2.3548 sigma, duration = 6 sigma
         durations = np.array(durations)
-        assert np.all((durations >= 0.025) & (durations <= 0.16)), durations
+        assert np.all((durations >= 0.029) & (durations <= 0.152)), durations
         assert durations.max() > 2 * durations.min()
         again = simulate_LFP(
             t, ripples, noise_amplitude=0.0, ripple_duration=(0.03, 0.15), random_state=4
