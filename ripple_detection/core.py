@@ -69,7 +69,9 @@ def minimum_sample_count(time: ArrayLike, minimum_duration: float) -> int:
     """Number of consecutive samples that ``minimum_duration`` spans.
 
     ``round(minimum_duration * sampling_frequency)`` with round-half-up, the
-    convention of the Frank lab ``extractevents`` routine, where the sampling
+    convention of the Frank lab ``extractevents`` routine
+    (``DFFunctions/extractevents.cpp`` in
+    https://github.com/droumis/FFPhy/tree/fce2048/DFFunctions), where the sampling
     interval is the median timestamp step. A duration that is not a whole
     number of samples rounds to the nearest count (22.5 samples -> 23).
 
@@ -897,9 +899,10 @@ def normalize_signal(
 
     References
     ----------
-    .. [1] Leys, C., et al. (2013). Detecting outliers: Do not use standard
-       deviation around the mean, use absolute deviation around the median.
-       Journal of Experimental Social Psychology, 49(4), 764-766.
+    .. [1] Leys, C., Ley, C., Klein, O., Bernard, P., & Licata, L. (2013).
+       Detecting outliers: Do not use standard deviation around the mean, use
+       absolute deviation around the median. Journal of Experimental Social
+       Psychology, 49(4), 764-766. doi:10.1016/j.jesp.2013.03.013
 
     """
     # Validate parameters
@@ -1225,7 +1228,8 @@ YU_HISTOGRAM_EDGES = np.round(np.arange(-10.0, 50.0 + 0.005, 0.01), 6)
 
 Bin edges from -10 to 50 in steps of 0.01, in the units of the consensus trace
 (the median of per-tetrode z-scored envelopes). Transliterated from
-``histbins = -10:0.01:50`` in ``jy_variableripthreshold_corecalculation.m``.
+``histbins = -10:0.01:50`` in ``jy_variableripthreshold_corecalculation.m``
+(Frank lab, unpublished; not in a public repository).
 """
 
 YU_MODE_SMOOTHING_WINDOW = 11
@@ -1343,9 +1347,11 @@ def estimate_noise_threshold(
 
     References
     ----------
-    .. [1] Yu, J. Y., et al. (2017). Distinct hippocampal-cortical memory
-       representations for experiences associated with movement versus
-       immobility. eLife, 6, e27621.
+    .. [1] Yu, J. Y., Kay, K., Liu, D. F., Grossrubatscher, I., Loback, A.,
+       Sosa, M., Chung, J. E., Karlsson, M. P., Larkin, M. C., & Frank, L. M.
+       (2017). Distinct hippocampal-cortical memory representations for
+       experiences associated with movement versus immobility. eLife, 6,
+       e27621. doi:10.7554/eLife.27621
 
     """
     values = np.asarray(values, dtype=float).ravel()

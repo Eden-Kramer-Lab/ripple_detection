@@ -314,8 +314,10 @@ def get_Kay_ripple_consensus_trace(
 
     References
     ----------
-    .. [1] Kay, K., et al. (2016). A hippocampal network for spatial coding
-       during immobility and sleep. Nature, 531(7593), 185-190.
+    .. [1] Kay, K., Sosa, M., Chung, J. E., Karlsson, M. P., Larkin, M. C., &
+       Frank, L. M. (2016). A hippocampal network for spatial coding during
+       immobility and sleep. Nature, 531(7593), 185-190.
+       doi:10.1038/nature17144
 
     """
     # Cast to float so integer input is not truncated and the squared envelope
@@ -428,9 +430,11 @@ def get_Yu_ripple_consensus_trace(
 
     References
     ----------
-    .. [1] Yu, J. Y., et al. (2017). Distinct hippocampal-cortical memory
-       representations for experiences associated with movement versus
-       immobility. eLife, 6, e27621.
+    .. [1] Yu, J. Y., Kay, K., Liu, D. F., Grossrubatscher, I., Loback, A.,
+       Sosa, M., Chung, J. E., Karlsson, M. P., Larkin, M. C., & Frank, L. M.
+       (2017). Distinct hippocampal-cortical memory representations for
+       experiences associated with movement versus immobility. eLife, 6,
+       e27621. doi:10.7554/eLife.27621
 
     """
     ripple_filtered_lfps = np.asarray(ripple_filtered_lfps, dtype=float)
@@ -486,7 +490,9 @@ def _extract_Yu_ripple_events(
     each qualifying run is extended to the run of samples strictly above zero
     (the immobility mean) that contains it, and one event is emitted per such
     containing run. This is the sample-count convention of the Frank lab
-    ``extractevents`` routine, which the Yu et al. 2017 detector used.
+    ``extractevents`` routine, which the Yu et al. 2017 detector used
+    (``DFFunctions/extractevents.cpp`` in
+    https://github.com/droumis/FFPhy/tree/fce2048/DFFunctions).
 
     Parameters
     ----------
@@ -609,7 +615,7 @@ def Shvartsman_ripple_detector(
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
         ``round(minimum_duration * sampling_frequency)`` consecutive samples
-        (per Karlsson et al. 2009); the event is then extended to the surrounding
+        (per Karlsson & Frank 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
@@ -911,7 +917,7 @@ def Kay_ripple_detector(
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
         ``round(minimum_duration * sampling_frequency)`` consecutive samples
-        (per Karlsson et al. 2009); the event is then extended to the surrounding
+        (per Karlsson & Frank 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
@@ -986,9 +992,10 @@ def Kay_ripple_detector(
 
     References
     ----------
-    .. [1] Kay, K., Sosa, M., Chung, J.E., Karlsson, M.P., Larkin, M.C.,
-       and Frank, L.M. (2016). A hippocampal network for spatial coding during
-       immobility and sleep. Nature 531, 185-190.
+    .. [1] Kay, K., Sosa, M., Chung, J. E., Karlsson, M. P., Larkin, M. C., &
+       Frank, L. M. (2016). A hippocampal network for spatial coding during
+       immobility and sleep. Nature, 531(7593), 185-190.
+       doi:10.1038/nature17144
 
     """
     time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
@@ -1115,9 +1122,11 @@ def Yu_ripple_detector(
 
     References
     ----------
-    .. [1] Yu, J. Y., et al. (2017). Distinct hippocampal-cortical memory
-       representations for experiences associated with movement versus
-       immobility. eLife, 6, e27621.
+    .. [1] Yu, J. Y., Kay, K., Liu, D. F., Grossrubatscher, I., Loback, A.,
+       Sosa, M., Chung, J. E., Karlsson, M. P., Larkin, M. C., & Frank, L. M.
+       (2017). Distinct hippocampal-cortical memory representations for
+       experiences associated with movement versus immobility. eLife, 6,
+       e27621. doi:10.7554/eLife.27621
 
     """
     filtered_lfps = np.asarray(filtered_lfps, dtype=float)
@@ -1418,15 +1427,20 @@ def Zugaro_ripple_detector(
 
     References
     ----------
-    .. [1] Zugaro, M. FMAToolbox, ``Analyses/FindRipples.m``
-       (initial algorithm by H. Hirase), https://github.com/michael-zugaro/FMAToolbox
+    .. [1] Zugaro, M. FMAToolbox, ``Analyses/FindRipples.m`` (initial algorithm
+       by H. Hirase). The repository has no license file; the file headers
+       state GPL-3 or later.
+       https://github.com/michael-zugaro/FMAToolbox/blob/6bbb3662f7ed1ccf09c5ff4b4d233e27e17c71a6/Analyses/FindRipples.m
     .. [2] Buzsáki lab, buzcode, ``analysis/SharpWaveRipples/bz_FindRipples.m``
-       (edited by D. Tingley, 2017), https://github.com/buzsakilab/buzcode
-    .. [3] AYA lab, neurocode, ``SharpWaveRipples/FindRipples.m``,
-       https://github.com/ayalab1/neurocode, doi:10.5281/zenodo.7819979
+       (edited by D. Tingley, 2017), GPL-3.
+       https://github.com/buzsakilab/buzcode/blob/0969ddf7f55ccaca8c71969bee4b21f310840047/analysis/SharpWaveRipples/bz_FindRipples.m
+    .. [3] AYA lab, neurocode, ``SharpWaveRipples/FindRipples.m`` (no license
+       file), doi:10.5281/zenodo.7819979
+       https://github.com/ayalab1/neurocode/blob/d166a67ffb73096d8d11b14be6693d96ad63e4ed/SharpWaveRipples/FindRipples.m
     .. [4] Csicsvari, J., Hirase, H., Czurkó, A., Mamiya, A., & Buzsáki, G.
        (1999). Oscillatory coupling of hippocampal pyramidal cells and
-       interneurons in the behaving rat. J Neurosci, 19(1), 274-287.
+       interneurons in the behaving rat. Journal of Neuroscience, 19(1),
+       274-287. doi:10.1523/JNEUROSCI.19-01-00274.1999
 
     """
     filtered_lfps = np.asarray(filtered_lfps, dtype=float)
@@ -1644,10 +1658,12 @@ def Long_sharp_wave_ripple_detector(
 
     References
     ----------
-    .. [1] Long, J. D. II. ``bz_DetectSWR.m`` in buzcode
-       (``analysis/SharpWaveRipples/``), https://github.com/buzsakilab/buzcode
-    .. [2] AYA lab, neurocode, ``SharpWaveRipples/DetectSWR.m``,
-       https://github.com/ayalab1/neurocode, doi:10.5281/zenodo.7819979
+    .. [1] Long, J. D. II. ``bz_DetectSWR.m`` in buzcode, GPL-3. No
+       accompanying paper.
+       https://github.com/buzsakilab/buzcode/blob/0969ddf7f55ccaca8c71969bee4b21f310840047/analysis/SharpWaveRipples/bz_DetectSWR.m
+    .. [2] AYA lab, neurocode, ``SharpWaveRipples/DetectSWR.m`` (no license
+       file), doi:10.5281/zenodo.7819979
+       https://github.com/ayalab1/neurocode/blob/d166a67ffb73096d8d11b14be6693d96ad63e4ed/SharpWaveRipples/DetectSWR.m
 
     """
     lfp = np.asarray(lfp, dtype=float)
@@ -1901,7 +1917,7 @@ def Carey_candidate_detector(
 ) -> pd.DataFrame:
     """Detect candidate replay events from ripple power and multiunit activity jointly.
 
-    The candidate-event detector of Carey, Tank & van der Meer 2019 [1]_
+    The candidate-event detector of Carey, Tanaka & van der Meer 2019 [1]_
     (vandermeerlab ``GenCandidateEvents`` with its Hilbert ripple score
     ``OldWizard`` and multiunit score ``amMUA`` by Elyot Grant and A. Carey)
     [2]_. A ripple score and a multiunit score are combined as their
@@ -1990,12 +2006,13 @@ def Carey_candidate_detector(
 
     References
     ----------
-    .. [1] Carey, A. A., Tank, D. W., & van der Meer, M. A. A. (2019). Reward
+    .. [1] Carey, A. A., Tanaka, Y., & van der Meer, M. A. A. (2019). Reward
        revaluation biases hippocampal replay content away from the preferred
-       outcome. Nature Neuroscience, 22, 1450-1459.
-    .. [2] van der Meer lab, ``code-matlab/tasks/Alyssa_Tmaze/GenCandidateEvents.m``,
-       ``beta/OldWizard.m``, ``beta/amMUA.m``, ``beta/TSDtoIV2.m``,
-       https://github.com/vandermeerlab/vandermeerlab
+       outcome. Nature Neuroscience, 22(9), 1450-1459.
+       doi:10.1038/s41593-019-0464-6
+    .. [2] van der Meer lab, ``code-matlab/tasks/Alyssa_Tmaze/GenCandidateEvents.m``
+       with ``beta/OldWizard.m``, ``beta/amMUA.m``, and ``beta/TSDtoIV2.m``.
+       https://github.com/vandermeerlab/vandermeerlab/blob/82ba3fe29cc3912575b32a0fcdaaa1c4fe097231/code-matlab/tasks/Alyssa_Tmaze/GenCandidateEvents.m
 
     """
     filtered_lfps = np.asarray(filtered_lfps, dtype=float)
@@ -2119,7 +2136,7 @@ def Karlsson_ripple_detector(
 ) -> pd.DataFrame:
     """Detect sharp-wave ripples using per-channel detection with merging.
 
-    Implements the Karlsson et al. 2009 algorithm, which detects ripples on
+    Implements the Karlsson & Frank 2009 algorithm, which detects ripples on
     each LFP channel independently, then merges overlapping events across
     channels. More sensitive to local ripples than consensus methods.
 
@@ -2147,7 +2164,7 @@ def Karlsson_ripple_detector(
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
         ``round(minimum_duration * sampling_frequency)`` consecutive samples
-        (per Karlsson et al. 2009); the event is then extended to the surrounding
+        (per Karlsson & Frank 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
@@ -2204,8 +2221,9 @@ def Karlsson_ripple_detector(
 
     References
     ----------
-    .. [1] Karlsson, M.P., and Frank, L.M. (2009). Awake replay of remote
-       experiences in the hippocampus. Nature Neuroscience 12, 913-918.
+    .. [1] Karlsson, M. P., & Frank, L. M. (2009). Awake replay of remote
+       experiences in the hippocampus. Nature Neuroscience, 12(7), 913-918.
+       doi:10.1038/nn.2344
 
     """
     time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
@@ -2291,7 +2309,7 @@ def Roumis_ripple_detector(
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
         ``round(minimum_duration * sampling_frequency)`` consecutive samples
-        (per Karlsson et al. 2009); the event is then extended to the surrounding
+        (per Karlsson & Frank 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
@@ -2498,8 +2516,9 @@ def multiunit_HSE_detector(
 
     References
     ----------
-    .. [1] Davidson, T.J., Kloosterman, F., and Wilson, M.A. (2009).
-       Hippocampal Replay of Extended Experience. Neuron 63, 497-507.
+    .. [1] Davidson, T. J., Kloosterman, F., & Wilson, M. A. (2009).
+       Hippocampal replay of extended experience. Neuron, 63(4), 497-507.
+       doi:10.1016/j.neuron.2009.07.027
 
     """
     multiunit = np.asarray(multiunit, dtype=float)
