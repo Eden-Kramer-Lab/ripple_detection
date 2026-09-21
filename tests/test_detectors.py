@@ -1367,6 +1367,14 @@ class TestFindMaxThresh:
         data = np.array([10.0, 0.0])
         assert _find_max_thresh(time, data, minimum_duration=0.015) == 0.0
 
+    def test_exact_minimum_duration_does_not_expand_further(self):
+        """Rounding at the duration boundary must not include a lower next sample."""
+        time = np.arange(200, 222) / 1000
+        data = np.arange(22.0, 0.0, -1.0)
+        # The window [0.200, 0.220] meets the detector's 20 ms duration rule,
+        # although subtracting its endpoints gives 0.01999999999999999.
+        assert _find_max_thresh(time, data, minimum_duration=0.02) == 2.0
+
     def test_short_event_returns_nan(self):
         """An event shorter than minimum_duration cannot sustain the threshold, so
         the value is undefined -> nan (previously ran an index out of bounds)."""
@@ -1441,3 +1449,23 @@ class TestMaxThreshMinimumDuration:
         )
         assert len(hse) > 0
         assert np.all(np.isfinite(hse["max_thresh"].to_numpy()))
+
+    def test_hse_exact_minimum_duration_has_finite_max_thresh(self):
+        """A detected event exactly at the duration boundary has a defined threshold."""
+        time = np.arange(1000) / 1000
+        multiunit = np.zeros((len(time), 5))
+        multiunit[200:221] = 1
+        hse = multiunit_HSE_detector(
+            time,
+            multiunit,
+            np.zeros(len(time)),
+            sampling_frequency=1000,
+            minimum_duration=0.02,
+            smoothing_sigma=1e-5,  # Preserve the 21-sample plateau.
+        )
+
+        assert len(hse) == 1
+        np.testing.assert_allclose(hse[["start_time", "end_time"]], [[0.2, 0.22]])
+        # For a binary plateau occupying p=21/1000 samples, its z-score is
+        # (1-p) / sqrt(p*(1-p)) = sqrt(979/21).
+        assert hse["max_thresh"].iloc[0] == pytest.approx(np.sqrt(979 / 21))

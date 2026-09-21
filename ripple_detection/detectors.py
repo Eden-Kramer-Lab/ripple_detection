@@ -1157,8 +1157,9 @@ def _find_max_thresh(
     peak_left_ind = peak_ind
     peak_right_ind = peak_ind
 
-    # Expand the window until the time difference exceeds the minimum duration
-    while time[peak_right_ind] - time[peak_left_ind] < minimum_duration:
+    # Match segment_boolean_series's inclusive duration comparison. Subtracting
+    # timestamps can round an accepted boundary below minimum_duration.
+    while time[peak_right_ind] < time[peak_left_ind] + minimum_duration:
         can_expand_right = peak_right_ind < len(time) - 1
         can_expand_left = peak_left_ind > 0
         # The window already spans the whole event yet is still shorter than
