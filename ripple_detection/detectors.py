@@ -17,6 +17,7 @@ from ripple_detection.core import (
     get_multiunit_population_firing_rate,
     merge_overlapping_ranges,
     merge_overlapping_ranges_track_participation,
+    minimum_sample_count,
     normalize_signal,
     normalize_signal_manually,
     threshold_by_zscore,
@@ -508,7 +509,7 @@ def _extract_Yu_ripple_events(
         )
     trace = np.asarray(trace, dtype=float)
     time = np.asarray(time, dtype=float)
-    n_min = max(1, int(np.floor(minimum_duration * sampling_frequency + 0.5)))
+    n_min = minimum_sample_count(time, minimum_duration)
 
     supra_runs = _boolean_runs(trace >= threshold)
     supra_runs = supra_runs[(supra_runs[:, 1] - supra_runs[:, 0]) >= n_min]
@@ -577,15 +578,18 @@ def Shvartsman_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (in cm/s) for ripple detection. Events during movement
-        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
+        Maximum speed (in cm/s) for ripple detection. An event is kept only if
+        at least half of its samples have speed at or below this value
+        (``exclude_movement_by_majority``); movement over up to half of an
+        event does not exclude it. Default is 4.0 cm/s, which corresponds
         to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
-        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        The signal must stay at or above ``zscore_threshold`` for at least
+        ``round(minimum_duration * sampling_frequency)`` consecutive samples
         (per Karlsson et al. 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
@@ -795,15 +799,18 @@ def Kay_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (in cm/s) for ripple detection. Events during movement
-        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
+        Maximum speed (in cm/s) for ripple detection. An event is kept only if
+        the speed at its first and last sample is at or below this value
+        (``exclude_movement``); speed inside the event is not tested. Apply a
+        whole-event rule afterwards if one is needed. Default is 4.0 cm/s, which corresponds
         to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
-        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        The signal must stay at or above ``zscore_threshold`` for at least
+        ``round(minimum_duration * sampling_frequency)`` consecutive samples
         (per Karlsson et al. 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
@@ -1104,10 +1111,8 @@ def Yu_ripple_detector(
         event_times = np.asarray(event_times).reshape(-1, 2)
         is_clipped, n_suprathreshold = is_clipped[kept], n_suprathreshold[kept]
 
-    n_min = max(1, int(np.floor(minimum_duration * sampling_frequency + 0.5)))
-    stats_minimum_duration = (n_min - 1) / sampling_frequency
     events = _get_event_stats(
-        event_times, time, normalized, speed, minimum_duration=stats_minimum_duration
+        event_times, time, normalized, speed, minimum_duration=minimum_duration
     )
     events["clipped_start"] = is_clipped[:, 0]
     events["clipped_end"] = is_clipped[:, 1]
@@ -1148,15 +1153,18 @@ def Karlsson_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (in cm/s) for ripple detection. Events during movement
-        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
+        Maximum speed (in cm/s) for ripple detection. An event is kept only if
+        the speed at its first and last sample is at or below this value
+        (``exclude_movement``); speed inside the event is not tested. Apply a
+        whole-event rule afterwards if one is needed. Default is 4.0 cm/s, which corresponds
         to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
-        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        The signal must stay at or above ``zscore_threshold`` for at least
+        ``round(minimum_duration * sampling_frequency)`` consecutive samples
         (per Karlsson et al. 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
@@ -1191,7 +1199,11 @@ def Karlsson_ripple_detector(
     -------
     ripple_times : pd.DataFrame
         DataFrame with detected ripples and comprehensive statistics (see
-        Kay_ripple_detector for column descriptions).
+        Kay_ripple_detector for column descriptions). The z-score statistics
+        (``max_thresh``, ``mean_zscore``, ``max_zscore``, ...) are computed on
+        the elementwise maximum across channels of the per-channel z-scores,
+        i.e. the strongest tetrode at each sample, so ``max_thresh`` is at
+        least ``zscore_threshold`` for every event.
 
         Returns empty DataFrame if no ripples detected. If this occurs, try:
         - Lowering zscore_threshold (e.g., from 3.0 to 2.0)
@@ -1237,8 +1249,10 @@ def Karlsson_ripple_detector(
     )
     ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
 
+    # statistics on the strongest channel at each sample, so an event that one
+    # channel triggered cannot report a sub-threshold max_thresh
     return _get_event_stats(
-        ripple_times, time, filtered_lfps.mean(axis=1), speed, minimum_duration
+        ripple_times, time, filtered_lfps.max(axis=1), speed, minimum_duration
     )
 
 
@@ -1274,15 +1288,18 @@ def Roumis_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (in cm/s) for ripple detection. Events during movement
-        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
+        Maximum speed (in cm/s) for ripple detection. An event is kept only if
+        the speed at its first and last sample is at or below this value
+        (``exclude_movement``); speed inside the event is not tested. Apply a
+        whole-event rule afterwards if one is needed. Default is 4.0 cm/s, which corresponds
         to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
-        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        The signal must stay at or above ``zscore_threshold`` for at least
+        ``round(minimum_duration * sampling_frequency)`` consecutive samples
         (per Karlsson et al. 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
@@ -1377,9 +1394,20 @@ def multiunit_HSE_detector(
 ) -> pd.DataFrame:
     """Detect High Synchrony Events from multiunit spiking activity.
 
-    Identifies periods of elevated population spiking activity during immobility,
-    following Davidson et al. 2009. The population firing rate is smoothed and
-    z-scored, then thresholded to find synchronous events.
+    Identifies periods of elevated population spiking activity during immobility.
+    The population firing rate (summed over units) is smoothed with a Gaussian
+    kernel, z-scored, and thresholded with the same sustained-threshold and
+    mean-crossing rules as the LFP ripple detectors: at or above
+    ``zscore_threshold`` for ``minimum_duration``, then extended to where the
+    rate returns to the mean.
+
+    The 15 ms smoothing kernel follows Davidson et al. 2009 [1]_, but the
+    selection rule does not: Davidson et al. define candidate events as periods
+    above the mean whose *peak* exceeds 3 s.d., with statistics from stopped
+    periods only and no sustained-duration requirement. To approximate that
+    convention, pass ``zscore_threshold=3.0``, ``minimum_duration=0.0`` and
+    ``normalization_mask=speed < speed_threshold``; the default 2 s.d. for
+    15 ms with statistics over all samples is this package's own convention.
 
     Parameters
     ----------
@@ -1406,7 +1434,8 @@ def multiunit_HSE_detector(
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum event duration in **seconds**. Default is 0.015 (15 milliseconds).
-        This is the minimum time the firing rate must stay *above* ``zscore_threshold``;
+        The firing rate must stay at or above ``zscore_threshold`` for at least
+        ``round(minimum_duration * sampling_frequency)`` consecutive samples;
         the event is then extended to the surrounding mean-crossings, so the reported
         ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
@@ -1463,9 +1492,26 @@ def multiunit_HSE_detector(
        Hippocampal Replay of Extended Experience. Neuron 63, 497-507.
 
     """
-    multiunit = np.asarray(multiunit)
-    speed = np.asarray(speed)
-    time = np.asarray(time)
+    multiunit = np.asarray(multiunit, dtype=float)
+    speed = np.asarray(speed, dtype=float)
+    time = np.asarray(time, dtype=float)
+    if multiunit.ndim != 2:
+        raise ValueError(
+            f"multiunit must be a 2D array of shape (n_time, n_units), got shape "
+            f"{multiunit.shape}. For a single unit, pass multiunit[:, np.newaxis]."
+        )
+    _validate_array_lengths(time, multiunit, speed)
+    _validate_time_units(time, sampling_frequency, len(time))
+    _validate_speed_units(speed, speed_threshold)
+    if np.any(np.isnan(multiunit)):
+        raise ValueError(
+            "multiunit contains NaN. Spike counts cannot be missing: fill absent "
+            "samples with 0, or drop those rows from time, multiunit, and speed together."
+        )
+    if np.any(np.isnan(speed)):
+        raise ValueError(
+            "speed contains NaN. Drop those rows from time, multiunit, and speed together."
+        )
 
     firing_rate = get_multiunit_population_firing_rate(
         multiunit, sampling_frequency, smoothing_sigma
@@ -1506,11 +1552,13 @@ def multiunit_HSE_detector(
 def _find_max_thresh(
     time: np.ndarray, data: np.ndarray, minimum_duration: float = 0.015
 ) -> float:
-    """Find the largest value sustained around the peak for a minimum duration.
+    """Find the largest value sustained for a minimum duration anywhere in the event.
 
-    Starting at the peak, expand a window (toward the higher neighbouring sample)
-    until it spans ``minimum_duration``, then return the smaller of the two window
-    edges -- the largest value held across the whole window.
+    The largest threshold at which the event would still be detected: the
+    maximum, over every window of ``minimum_sample_count(time, minimum_duration)``
+    consecutive samples, of that window's minimum. The sample-count convention
+    matches event detection, so an event detected at ``zscore_threshold`` has
+    ``max_thresh >= zscore_threshold``.
 
     Parameters
     ----------
@@ -1521,40 +1569,21 @@ def _find_max_thresh(
     Returns
     -------
     max_thresh : float
-        The largest value sustained for ``minimum_duration`` around the peak.
-        ``nan`` if the event is shorter than ``minimum_duration`` (the sustained
+        The largest value sustained for ``minimum_duration`` within the event.
+        ``nan`` if the event holds fewer samples than the minimum (the sustained
         value is then undefined). Public detectors never produce such events --
-        their segments are ``>= minimum_duration`` by construction -- so this
-        only affects direct/edge callers.
+        their segments meet the minimum by construction -- so this only affects
+        direct/edge callers.
+
     """
-    # Find the peak of the data points
-    peak_ind = np.argmax(data)
-
-    # Initialize the search window
-    peak_left_ind = peak_ind
-    peak_right_ind = peak_ind
-
-    # Match segment_boolean_series's inclusive duration comparison. Subtracting
-    # timestamps can round an accepted boundary below minimum_duration.
-    while time[peak_right_ind] < time[peak_left_ind] + minimum_duration:
-        can_expand_right = peak_right_ind < len(time) - 1
-        can_expand_left = peak_left_ind > 0
-        # The window already spans the whole event yet is still shorter than
-        # minimum_duration, so a value "sustained for minimum_duration" is
-        # undefined. Return nan rather than a misleading endpoint value (and
-        # rather than running an index out of bounds).
-        if not (can_expand_right or can_expand_left):
-            return float("nan")
-        # Determine the direction to expand
-        if can_expand_right and (
-            not can_expand_left or data[peak_right_ind + 1] > data[peak_left_ind - 1]
-        ):
-            peak_right_ind += 1
-        else:
-            peak_left_ind -= 1
-
-    # Return the minimum value between the left and right edges of the window
-    return min(data[peak_left_ind], data[peak_right_ind])
+    if len(data) < 2 and minimum_duration > 0:
+        # a single sample has no measurable interval, so no duration is sustained
+        return float("nan")
+    n_min = minimum_sample_count(time, minimum_duration)
+    if len(data) < n_min:
+        return float("nan")
+    windows = np.lib.stride_tricks.sliding_window_view(np.asarray(data, dtype=float), n_min)
+    return float(windows.min(axis=1).max())
 
 
 def _get_event_stats(
@@ -1580,7 +1609,7 @@ def _get_event_stats(
     zscore_metric : array_like, if participants is None: shape (n_time,); else shape (n_time, n_channels)
         Signal the per-event statistics (mean/median/max/min z-score, area,
         total_energy, max_thresh) are computed from. Its exact meaning depends on
-        the caller -- e.g. the consensus trace for Kay, the per-channel mean for
+        the caller -- e.g. the consensus trace for Kay, the per-channel maximum for
         Karlsson, or the multiunit firing rate for multiunit_HSE. When participants
         is None, pass a single 1-D trace of shape (n_time,). When participants is
         provided, pass the per-channel signal of shape (n_time, n_channels) so that

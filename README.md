@@ -76,14 +76,14 @@ from ripple_detection import Kay_ripple_detector, filter_ripple_band
 import numpy as np
 
 # Your data (replace the random arrays with real recordings)
-sampling_frequency = 1500  # Hz (the built-in filter needs >= 1200 Hz)
+sampling_frequency = 1500  # Hz; pass your true rate to filter_ripple_band
 time = np.arange(0, 10, 1 / sampling_frequency)  # 10 seconds
 LFPs = np.random.randn(len(time), 4)  # 4 channels of raw LFP data
 speed = np.abs(np.random.randn(len(time)))  # Animal speed (cm/s)
 
 # Filter into the ripple band (150-250 Hz) first: the detectors expect
 # ripple-band-filtered LFPs, not raw signal.
-filtered_lfps = filter_ripple_band(LFPs)
+filtered_lfps = filter_ripple_band(LFPs, sampling_frequency=sampling_frequency)
 
 # Detect ripples
 ripple_times = Kay_ripple_detector(
@@ -193,15 +193,17 @@ print(f"time: {len(time)}, LFPs: {len(lfps)}, speed: {len(speed)}")
 
 Make sure all arrays cover the same time period and sampling rate.
 
-#### "Sampling frequency is too low for the pre-computed filter"
+#### "Sampling frequency ... cannot represent the 150-250 Hz ripple band"
 
-The built-in `filter_ripple_band()` function uses a pre-computed filter designed for 1500 Hz sampling. For other sampling rates, generate a custom filter:
+`filter_ripple_band(data, sampling_frequency=...)` uses the pre-computed 1500 Hz
+kernel at 1500 Hz and designs a 150-250 Hz filter for any other rate, so pass the
+true sampling rate. Rates at or below 550 Hz cannot hold the band and raise. To
+build the filter yourself:
 
 ```python
 from ripple_detection import ripple_bandpass_filter
 from scipy.signal import filtfilt
 
-# Generate custom filter for your sampling rate
 filter_num, filter_denom = ripple_bandpass_filter(sampling_frequency)
 filtered_lfps = filtfilt(filter_num, filter_denom, raw_lfps, axis=0)
 ```
