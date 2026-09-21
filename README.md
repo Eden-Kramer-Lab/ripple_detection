@@ -13,6 +13,7 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
 - **Multiple Detection Algorithms**
   - `Kay_ripple_detector` - Multi-channel consensus approach (Kay et al. 2016)
   - `Karlsson_ripple_detector` - Per-channel detection with merging (Karlsson et al. 2009)
+  - `Shvartsman_ripple_detector` - Per-channel detection requiring a minimum fraction of participating channels
   - `Roumis_ripple_detector` - Alternative detection method
   - `multiunit_HSE_detector` - High Synchrony Event detection from multiunit activity
 

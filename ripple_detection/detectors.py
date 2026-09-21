@@ -1142,9 +1142,12 @@ def _get_event_stats(
     time : array_like, shape (n_time,)
         Time values for each sample.
     zscore_metric : array_like, if participants is None: shape (n_time,); else shape (n_time, n_channels)
-        Z-scored signal used for detection. When participants is None, pass a
-        single 1-D trace of shape (n_time,). When participants is provided,
-        pass the per-channel z-scored signal of shape (n_time, n_channels) so that
+        Signal the per-event statistics (mean/median/max/min z-score, area,
+        total_energy, max_thresh) are computed from. Its exact meaning depends on
+        the caller -- e.g. the consensus trace for Kay, the per-channel mean for
+        Karlsson, or the multiunit firing rate for multiunit_HSE. When participants
+        is None, pass a single 1-D trace of shape (n_time,). When participants is
+        provided, pass the per-channel signal of shape (n_time, n_channels) so that
         each event's metrics are computed from its participating channels only.
     speed : array_like, shape (n_time,)
         Animal's speed at each time point.
