@@ -51,13 +51,13 @@ jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --exec
 ### Code Quality
 
 ```bash
-# Format code with black
-black ripple_detection/ tests/
+# Format code with ruff
+ruff format ripple_detection/ tests/
 
 # Check formatting without modifying files
-black --check ripple_detection/ tests/
+ruff format --check ripple_detection/ tests/
 
-# Lint code with ruff (fast, modern linter - replaces flake8)
+# Lint code with ruff
 ruff check ripple_detection/ tests/
 
 # Auto-fix ruff issues where possible
@@ -86,7 +86,7 @@ When preparing a new release:
 pytest --cov=ripple_detection tests/
 
 # 2. Run code quality checks
-black --check ripple_detection/ tests/
+ruff format --check ripple_detection/ tests/
 ruff check ripple_detection/ tests/
 mypy ripple_detection/
 
@@ -269,7 +269,7 @@ The package also validates that example notebooks run without errors in CI.
 
 **Optional dependencies**:
 
-- `dev` - Development tools (pytest, black, flake8, pytest-cov)
+- `dev` - Development tools (pytest, pytest-cov, ruff, mypy, hypothesis, pytest-snapshot)
 - `examples` - Jupyter and visualization tools (matplotlib, jupyter, jupyterlab)
 
 ## Dependencies
@@ -284,12 +284,10 @@ The package also validates that example notebooks run without errors in CI.
 
 - pytest >= 7.0.0
 - pytest-cov >= 4.0.0
-- black[jupyter] >= 23.0.0
 - ruff >= 0.3.0
 - mypy >= 1.8.0
 - hypothesis >= 6.0.0 (property-based testing)
 - pytest-snapshot >= 0.9.0 (snapshot testing)
-- flake8 >= 6.0.0 (legacy, use ruff instead)
 
 **Examples** (minimum versions):
 
@@ -305,7 +303,7 @@ The package also validates that example notebooks run without errors in CI.
 - Uses f-strings for formatting
 - Modular functions with single responsibility
 - Comprehensive test coverage: 93% overall, 100% on core and detector modules
-- **Code quality tools**: Black (formatting), Ruff (linting), Mypy (type checking)
+- **Code quality tools**: Ruff (formatting and linting), Mypy (type checking)
 - Continuous integration with GitHub Actions (tests on Python 3.10, 3.11, 3.12, 3.13)
 
 ### Type Hints
@@ -323,15 +321,11 @@ The mypy configuration in `pyproject.toml` includes pragmatic overrides to avoid
 
 All code quality tools are configured in [pyproject.toml](pyproject.toml):
 
-**Black** (`[tool.black]`):
+**Ruff** (`[tool.ruff]` and `[tool.ruff.lint]`) — the single formatter and linter:
 - Line length: 95
-- Target: Python 3.10, 3.11, 3.12, 3.13
-
-**Ruff** (`[tool.ruff]` and `[tool.ruff.lint]`):
-- Line length: 95 (matches black)
 - Target: Python 3.10
 - Enabled checks: pycodestyle (E/W), pyflakes (F), isort (I), flake8-bugbear (B), comprehensions (C4), pyupgrade (UP)
-- Ignores E501 (line too long) since black handles it
+- Ignores E501 (line too long) since `ruff format` handles wrapping
 
 **Mypy** (`[tool.mypy]`):
 - Target: Python 3.10
