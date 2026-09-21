@@ -199,6 +199,7 @@ def simulate_LFP(
     ripple_duration: float = 0.100,
     noise_type: Literal["white", "pink", "brown"] = "brown",
     noise_amplitude: float = 1.3,
+    random_state: int | np.random.RandomState | None = None,
 ) -> NDArray:
     """Simulate local field potential with embedded ripple oscillations.
 
@@ -225,6 +226,10 @@ def simulate_LFP(
         Amplitude of background noise in **arbitrary units**. Default is 1.3.
         A ratio of ripple_amplitude/noise_amplitude ≈ 1.5 provides realistic
         signal-to-noise ratio for ripple detection.
+    random_state : int or np.random.RandomState, optional
+        Seed or random state for the background noise, enabling reproducible
+        signals. An ``int`` is used to seed a new ``RandomState``. Default is
+        None (nondeterministic noise from a fresh ``RandomState``).
 
     Returns
     -------
@@ -243,7 +248,9 @@ def simulate_LFP(
     >>> lfp = simulate_LFP(time, [1.0, 2.0], noise_type='brown')
 
     """
-    noise = (noise_amplitude / 2) * NOISE_FUNCTION[noise_type](time.size)
+    if not isinstance(random_state, np.random.RandomState):
+        random_state = np.random.RandomState(random_state)
+    noise = (noise_amplitude / 2) * NOISE_FUNCTION[noise_type](time.size, state=random_state)
     ripple_signal = np.sin(2 * np.pi * time * RIPPLE_FREQUENCY)
     signal = []
 

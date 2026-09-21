@@ -1,24 +1,29 @@
 """Integration tests for ripple detection algorithms."""
 
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
 import pytest
 
+import ripple_detection.detectors as detectors_module
 from ripple_detection import (
     Karlsson_ripple_detector,
     Kay_ripple_detector,
     Shvartsman_ripple_detector,
     filter_ripple_band,
 )
+from ripple_detection.core import (
+    gaussian_smooth,
+    get_envelope,
+)
 from ripple_detection.detectors import (
     Roumis_ripple_detector,
+    _find_max_thresh,
     get_Kay_ripple_consensus_trace,
     multiunit_HSE_detector,
 )
-from ripple_detection.core import (
-    get_envelope,
-    gaussian_smooth,
-)
+from ripple_detection.simulate import simulate_LFP
 
 
 class TestShvartsmanRippleDetector:
@@ -181,14 +186,19 @@ class TestShvartsmanRippleDetector:
     def test_close_ripples(
         self, time_3s, dual_lfp_close_ripples, stationary_speed, sampling_frequency
     ):
-        """Test detection of closely spaced ripples."""
+        """Closely-spaced but offset ripples (ch0 at 1.10s, ch1 at 1.15s) have peaks
+        50 ms apart, but their full zero-crossing-extended ripples overlap, so they
+        co-occur: both channels participate and the default 2-channel cutoff detects
+        them."""
         filtered_lfps = filter_ripple_band(dual_lfp_close_ripples)
+
         ripples = Shvartsman_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
-
         assert isinstance(ripples, pd.DataFrame)
-        assert len(ripples) > 0
+        assert len(ripples) == 2
+        assert all(ripples["n_participants"] == 2)
+        assert all(participants == {0, 1} for participants in ripples["participants"])
 
     def test_multi_channel_sparse_ripples(
         self, time_3s, multi_lfp_sparse_ripples, stationary_speed, sampling_frequency
@@ -271,6 +281,11 @@ class TestShvartsmanRippleDetector:
         assert np.allclose(
             ripples["frac_participants"], 2 / 13
         ), "frac_participants should be 2/13"
+        # Stats are computed over the participating channels {0, 1} only; averaging
+        # over all 13 channels would dilute mean_zscore to well below 1.
+        assert all(
+            ripples["mean_zscore"] > 1.0
+        ), "z-score stats must use participating channels only, not all channels"
 
     def test_no_ripples(self, time_3s, lfp_no_ripples, stationary_speed, sampling_frequency):
         """Test with noise-only signal (no ripples)."""
@@ -994,6 +1009,136 @@ class TestDetectorErrorHandling:
         # Should handle NaN in speed data
         assert isinstance(ripples, pd.DataFrame)
 
+    def test_integer_lfp_not_truncated(
+        self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
+    ):
+        """Integer LFP input is cast to float, not truncated, through the pipeline."""
+        lfp_int = np.round(dual_lfp_with_cooccur_ripples * 100).astype(np.int32)
+
+        filtered = filter_ripple_band(lfp_int)
+        # Before the fix, filter output kept the integer dtype (truncated values).
+        assert np.issubdtype(filtered.dtype, np.floating)
+
+        # Kay consensus stays finite (no int-overflow -> sqrt(negative) -> NaN)
+        # and the ripples are still detected.
+        ripples = Kay_ripple_detector(time_3s, filtered, stationary_speed, sampling_frequency)
+        assert isinstance(ripples, pd.DataFrame)
+        assert len(ripples) >= 1
+
+    def test_normalization_mask_with_nan_rows(
+        self, time_3s, dual_lfp_with_ripples, stationary_speed, sampling_frequency
+    ):
+        """normalization_mask stays position-aligned after NaN rows are removed."""
+        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
+        filtered_lfps[100:150, :] = np.nan
+
+        # A mask with genuine False entries (not coinciding with the NaN rows),
+        # spanning the original pre-NaN-removal time samples. Before the fix this
+        # raised a length-mismatch ValueError once NaN rows were dropped.
+        normalization_mask = np.ones(len(time_3s), dtype=bool)
+        normalization_mask[1000:1500] = False
+
+        ripples = Kay_ripple_detector(
+            time_3s,
+            filtered_lfps,
+            stationary_speed,
+            sampling_frequency,
+            normalization_mask=normalization_mask,
+        )
+        assert isinstance(ripples, pd.DataFrame)
+
+        # Equivalence check: manually dropping the NaN rows and slicing the mask
+        # to match must give an identical result. This confirms the internal
+        # filtering keeps the mask aligned by position, not merely by length -- an
+        # off-by-rows misalignment would shift the normalization window and change
+        # the z-scores, so the two runs would diverge.
+        # (mirror the detector's own not_null: NaN in the LFP *or* the speed)
+        not_null = np.all(~np.isnan(filtered_lfps), axis=1) & ~np.isnan(stationary_speed)
+        ripples_manual = Kay_ripple_detector(
+            time_3s[not_null],
+            filtered_lfps[not_null],
+            stationary_speed[not_null],
+            sampling_frequency,
+            normalization_mask=normalization_mask[not_null],
+        )
+        pd.testing.assert_frame_equal(ripples, ripples_manual)
+
+    def test_normalization_mask_selects_no_samples(
+        self, time_3s, dual_lfp_with_ripples, stationary_speed, sampling_frequency
+    ):
+        """An all-False normalization_mask raises rather than silently returning
+        an empty result from a degenerate normalization."""
+        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
+        normalization_mask = np.zeros(len(time_3s), dtype=bool)
+
+        with pytest.raises(ValueError, match="selects no samples"):
+            Kay_ripple_detector(
+                time_3s,
+                filtered_lfps,
+                stationary_speed,
+                sampling_frequency,
+                normalization_mask=normalization_mask,
+            )
+
+    def test_normalization_mask_wrong_length(
+        self, time_3s, dual_lfp_with_ripples, stationary_speed, sampling_frequency
+    ):
+        """A normalization_mask whose length doesn't match the data raises."""
+        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
+        with pytest.raises(ValueError, match="normalization_mask length"):
+            Kay_ripple_detector(
+                time_3s,
+                filtered_lfps,
+                stationary_speed,
+                sampling_frequency,
+                normalization_mask=np.ones(len(time_3s) - 5, dtype=bool),
+            )
+
+    def test_manual_normalization_warns_on_degenerate_channel(
+        self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
+    ):
+        """normalize_signal_manually zeroes a NaN-baseline channel and warns."""
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        n_channels = filtered_lfps.shape[1]
+        baselines = np.zeros(n_channels)
+        baselines[1] = np.nan  # degenerate channel
+        deviations = np.ones(n_channels)
+
+        with pytest.warns(UserWarning, match="Zeroing channel"):
+            Shvartsman_ripple_detector(
+                time_3s,
+                filtered_lfps,
+                stationary_speed,
+                sampling_frequency,
+                manual_normalization=True,
+                elec_baselines=baselines,
+                elec_deviations=deviations,
+            )
+
+    def test_manual_norm_ignores_normalization_mask(
+        self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
+    ):
+        """normalization_mask is ignored (not validated) under manual normalization."""
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        env = gaussian_smooth(
+            get_envelope(filtered_lfps), sigma=0.004, sampling_frequency=sampling_frequency
+        )
+        # A wrong-length, all-False mask that would raise if it were validated --
+        # but the docstring promises it is ignored under manual normalization.
+        bad_mask = np.zeros(len(time_3s) - 5, dtype=bool)
+
+        ripples = Shvartsman_ripple_detector(
+            time_3s,
+            filtered_lfps,
+            stationary_speed,
+            sampling_frequency,
+            manual_normalization=True,
+            elec_baselines=env.mean(axis=0),
+            elec_deviations=env.std(axis=0),
+            normalization_mask=bad_mask,
+        )
+        assert isinstance(ripples, pd.DataFrame)
+
     def test_mismatched_lengths(self, time_3s, single_lfp_with_ripples, sampling_frequency):
         """Test with mismatched time and LFP lengths."""
         # Create speed array with different length
@@ -1026,3 +1171,315 @@ class TestDetectorErrorHandling:
         except (ValueError, IndexError):
             # May raise error for insufficient data
             pass
+
+
+class TestShvartsmanParticipationSemantics:
+    """Preserve participation across merged events and subsequent exclusions."""
+
+    @pytest.mark.parametrize("participation_threshold", [3, 1.0])
+    def test_chain_of_overlapping_ripples_counts_all_electrodes(
+        self, time_3s, stationary_speed, sampling_frequency, participation_threshold
+    ):
+        """A-B and B-C overlap counts all three electrodes in the merged event."""
+        lfps = np.column_stack(
+            [
+                simulate_LFP(
+                    time_3s,
+                    [center],
+                    noise_amplitude=1.2,
+                    ripple_amplitude=1.5,
+                    random_state=seed,
+                )
+                for center, seed in [(1.1, 5), (1.15, 6), (1.2, 7)]
+            ]
+        )
+        filtered = filter_ripple_band(lfps)
+        individual = [
+            Karlsson_ripple_detector(
+                time_3s, filtered[:, [channel]], stationary_speed, sampling_frequency
+            )
+            for channel in range(3)
+        ]
+        assert all(len(events) == 1 for events in individual)
+        first, middle, last = [events.iloc[0] for events in individual]
+        # There is never a three-electrode overlap, but the intervals form one event.
+        assert (
+            middle["start_time"]
+            <= first["end_time"]
+            < last["start_time"]
+            <= middle["end_time"]
+        )
+
+        ripples = Shvartsman_ripple_detector(
+            time_3s,
+            filtered,
+            stationary_speed,
+            sampling_frequency,
+            participation_threshold=participation_threshold,
+        )
+
+        assert len(ripples) == 1
+        event = ripples.iloc[0]
+        assert event["start_time"] == first["start_time"]
+        assert event["end_time"] == last["end_time"]
+        assert event["participants"] == {0, 1, 2}
+        assert all(type(channel) is int for channel in event["participants"])
+        assert event["n_participants"] == len(event["participants"]) == 3
+        assert event["frac_participants"] == 1.0
+
+    def test_participant_metadata_stays_aligned_after_exclusion(
+        self, time_3s, stationary_speed, sampling_frequency
+    ):
+        """When movement exclusion drops an event, the survivor keeps its OWN
+        participant count/set. Guards the ``participant_sets[included_ripple_inds]``
+        bookkeeping, which uniform-participation fixtures cannot exercise."""
+        # Channel 0 ripples at 1.1s and 2.1s; channels 1 and 2 only at 1.1s, so the
+        # event near 1.1s has 3 participants and the event near 2.1s has just 1.
+        ch0 = simulate_LFP(
+            time_3s, [1.1, 2.1], noise_amplitude=1.2, ripple_amplitude=1.5, random_state=0
+        )
+        ch1 = simulate_LFP(
+            time_3s, [1.1], noise_amplitude=1.2, ripple_amplitude=1.5, random_state=1
+        )
+        ch2 = simulate_LFP(
+            time_3s, [1.1], noise_amplitude=1.2, ripple_amplitude=1.5, random_state=2
+        )
+        filtered = filter_ripple_band(np.column_stack([ch0, ch1, ch2]))
+
+        # Sanity: with no movement both events survive with differing participation.
+        both = Shvartsman_ripple_detector(
+            time_3s, filtered, stationary_speed, sampling_frequency, participation_threshold=0
+        )
+        assert both["n_participants"].tolist() == [3, 1]
+
+        # A movement burst covering only the first (3-participant) event excludes it.
+        speed = np.asarray(stationary_speed, dtype=float).copy()
+        speed[(time_3s >= 0.95) & (time_3s <= 1.35)] = 100.0
+        ripples = Shvartsman_ripple_detector(
+            time_3s,
+            filtered,
+            speed,
+            sampling_frequency,
+            participation_threshold=0,
+            speed_threshold=4.0,
+        )
+        # Only the 1-participant event near 2.1s survives, and it must carry its own
+        # metadata (a misaligned index would report the excluded event's count of 3).
+        assert len(ripples) == 1
+        assert ripples["n_participants"].iloc[0] == 1
+        assert ripples["participants"].iloc[0] == {0}
+
+    def test_participation_threshold_fraction_means_all_channels(
+        self,
+        time_3s,
+        dual_lfp_with_ripples,
+        dual_lfp_with_cooccur_ripples,
+        stationary_speed,
+        sampling_frequency,
+    ):
+        """A fractional participation_threshold is a fraction of channels, and 1.0
+        means *all* channels (not one)."""
+        # The two channels ripple at separate times, so each event has only 1 of 2.
+        filtered_sep = filter_ripple_band(dual_lfp_with_ripples)
+        # 1.0 requires both channels in one event -> excluded (each has one).
+        assert Shvartsman_ripple_detector(
+            time_3s,
+            filtered_sep,
+            stationary_speed,
+            sampling_frequency,
+            participation_threshold=1.0,
+        ).empty
+        # 0.5 requires 1 of 2 -> detected (a genuine fraction in (0, 1)).
+        assert not Shvartsman_ripple_detector(
+            time_3s,
+            filtered_sep,
+            stationary_speed,
+            sampling_frequency,
+            participation_threshold=0.5,
+        ).empty
+
+        # Co-occurring ripples involve both channels, so 1.0 (all 2) detects them.
+        filtered_co = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        assert not Shvartsman_ripple_detector(
+            time_3s,
+            filtered_co,
+            stationary_speed,
+            sampling_frequency,
+            participation_threshold=1.0,
+        ).empty
+
+    def test_degenerate_channel_zeroed_and_counts_in_denominator(
+        self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
+    ):
+        """A degenerate (NaN-baseline) channel is zeroed so it never participates,
+        yet still counts in the frac_participants denominator."""
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        env = gaussian_smooth(
+            get_envelope(filtered_lfps), sigma=0.004, sampling_frequency=sampling_frequency
+        )
+        baselines = env.mean(axis=0).copy()
+        deviations = env.std(axis=0).copy()
+        baselines[1] = np.nan  # channel 1 degenerate
+
+        with pytest.warns(UserWarning, match="Zeroing channel"):
+            ripples = Shvartsman_ripple_detector(
+                time_3s,
+                filtered_lfps,
+                stationary_speed,
+                sampling_frequency,
+                manual_normalization=True,
+                elec_baselines=baselines,
+                elec_deviations=deviations,
+                participation_threshold=0,
+            )
+
+        assert len(ripples) > 0
+        # The dead channel never appears among participants...
+        assert all(1 not in participants for participants in ripples["participants"])
+        assert all(ripples["n_participants"] == 1)
+        # ...but the denominator still includes it (1 of 2 channels).
+        assert all(ripples["frac_participants"] == 0.5)
+
+
+class TestFindMaxThresh:
+    def test_respects_minimum_duration(self):
+        """max_thresh is the largest value sustained for minimum_duration, so a
+        longer required duration yields a smaller (or equal) result. Peak at
+        index 0 -> only rightward expansion."""
+        time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
+        data = np.array([10.0, 8.0, 6.0, 4.0, 2.0])
+        assert _find_max_thresh(time, data, minimum_duration=0.005) == 8.0
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 6.0
+        assert _find_max_thresh(time, data, minimum_duration=0.035) == 2.0
+
+    def test_mid_peak_expands_both_directions(self):
+        """A mid-array peak exercises the leftward-expansion branch and the
+        neighbour tie-break. From peak 10 at index 2: the window first steps left
+        (neighbour 5 > 3), then right (3 > 1), spanning indices 1..3 -> min(5, 3)."""
+        time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
+        data = np.array([1.0, 5.0, 10.0, 3.0, 2.0])
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 3.0
+        assert _find_max_thresh(time, data, minimum_duration=0.035) == 1.0
+
+    def test_peak_at_last_index_expands_left(self):
+        """Peak at the last index forces leftward-only expansion."""
+        time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
+        data = np.array([2.0, 4.0, 6.0, 8.0, 10.0])
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 6.0
+        assert _find_max_thresh(time, data, minimum_duration=0.035) == 2.0
+
+    def test_all_equal_data(self):
+        """A flat plateau returns the (shared) value."""
+        time = np.array([0.0, 0.01, 0.02, 0.03])
+        data = np.array([5.0, 5.0, 5.0, 5.0])
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 5.0
+
+    def test_two_sample_event_long_enough(self):
+        """A two-sample event already spanning minimum_duration needs no expansion
+        and returns the min of its endpoints."""
+        time = np.array([0.0, 0.02])
+        data = np.array([10.0, 0.0])
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 0.0
+
+    def test_exact_minimum_duration_does_not_expand_further(self):
+        """Rounding at the duration boundary must not include a lower next sample."""
+        time = np.arange(200, 222) / 1000
+        data = np.arange(22.0, 0.0, -1.0)
+        # The window [0.200, 0.220] meets the detector's 20 ms duration rule,
+        # although subtracting its endpoints gives 0.01999999999999999.
+        assert _find_max_thresh(time, data, minimum_duration=0.02) == 2.0
+
+    def test_short_event_returns_nan(self):
+        """An event shorter than minimum_duration cannot sustain the threshold, so
+        the value is undefined -> nan (previously ran an index out of bounds)."""
+        time = np.array([0.0, 0.001])
+        data = np.array([10.0, 0.0])
+        assert np.isnan(_find_max_thresh(time, data, minimum_duration=0.015))
+
+    def test_single_sample_event_returns_nan(self):
+        """A one-sample event cannot sustain any duration -> nan (no out-of-bounds)."""
+        time = np.array([1.0])
+        data = np.array([7.0])
+        assert np.isnan(_find_max_thresh(time, data, minimum_duration=0.015))
+
+
+class TestMaxThreshMinimumDuration:
+    """Karlsson and multiunit_HSE must honour the caller's minimum_duration for
+    max_thresh, not silently fall back to the 15 ms default."""
+
+    @staticmethod
+    def _spy_on_find_max_thresh():
+        """Patch _find_max_thresh to record the minimum_duration it receives while
+        still delegating to the real implementation."""
+        real = detectors_module._find_max_thresh
+        seen: list[float] = []
+
+        def spy(time, data, minimum_duration=0.015):
+            seen.append(minimum_duration)
+            return real(time, data, minimum_duration)
+
+        return patch.object(detectors_module, "_find_max_thresh", spy), seen
+
+    def test_karlsson_forwards_minimum_duration_to_max_thresh(
+        self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
+    ):
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        patcher, seen = self._spy_on_find_max_thresh()
+        with patcher:
+            ripples = Karlsson_ripple_detector(
+                time_3s,
+                filtered_lfps,
+                stationary_speed,
+                sampling_frequency,
+                minimum_duration=0.005,
+            )
+        assert len(ripples) > 0
+        # max_thresh must be computed with the caller's 0.005, not the 0.015 default
+        # (this fails if the minimum_duration argument is dropped from the call).
+        assert seen and all(md == 0.005 for md in seen)
+
+    def test_hse_forwards_minimum_duration_to_max_thresh(self, time_3s, sampling_frequency):
+        multiunit = np.zeros((len(time_3s), 5))
+        idx = int(1.0 * sampling_frequency)
+        multiunit[idx : idx + 30, :] = 1
+        speed = np.ones(len(time_3s)) * 2.0
+        patcher, seen = self._spy_on_find_max_thresh()
+        with patcher:
+            hse = multiunit_HSE_detector(
+                time_3s, multiunit, speed, sampling_frequency, minimum_duration=0.005
+            )
+        assert len(hse) > 0
+        assert seen and all(md == 0.005 for md in seen)
+
+    def test_hse_tiny_minimum_duration_is_bounds_safe(self, time_3s, sampling_frequency):
+        # A sharp, few-sample synchrony burst detected with a 1 ms minimum used to
+        # crash inside max_thresh because it fell back to the 15 ms window.
+        multiunit = np.zeros((len(time_3s), 5))
+        idx = int(1.0 * sampling_frequency)
+        multiunit[idx : idx + 3, :] = 1
+        speed = np.ones(len(time_3s)) * 2.0
+        hse = multiunit_HSE_detector(
+            time_3s, multiunit, speed, sampling_frequency, minimum_duration=0.001
+        )
+        assert len(hse) > 0
+        assert np.all(np.isfinite(hse["max_thresh"].to_numpy()))
+
+    def test_hse_exact_minimum_duration_has_finite_max_thresh(self):
+        """A detected event exactly at the duration boundary has a defined threshold."""
+        time = np.arange(1000) / 1000
+        multiunit = np.zeros((len(time), 5))
+        multiunit[200:221] = 1
+        hse = multiunit_HSE_detector(
+            time,
+            multiunit,
+            np.zeros(len(time)),
+            sampling_frequency=1000,
+            minimum_duration=0.02,
+            smoothing_sigma=1e-5,  # Preserve the 21-sample plateau.
+        )
+
+        assert len(hse) == 1
+        np.testing.assert_allclose(hse[["start_time", "end_time"]], [[0.2, 0.22]])
+        # For a binary plateau occupying p=21/1000 samples, its z-score is
+        # (1-p) / sqrt(p*(1-p)) = sqrt(979/21).
+        assert hse["max_thresh"].iloc[0] == pytest.approx(np.sqrt(979 / 21))

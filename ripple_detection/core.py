@@ -46,7 +46,7 @@ def ripple_bandpass_filter(sampling_frequency: float) -> tuple[NDArray, float]:
         RIPPLE_BAND[1] + TRANSITION_BAND,
         nyquist,
     ]
-    return remez(ORDER, desired, [0, 1, 0], Hz=sampling_frequency), 1.0
+    return remez(ORDER, desired, [0, 1, 0], fs=sampling_frequency), 1.0
 
 
 def _get_series_start_end_times(series: pd.Series) -> tuple[NDArray, NDArray]:
@@ -192,7 +192,9 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
     filter_numerator, filter_denominator = _get_ripplefilter_kernel()
 
     # Validate data length
-    data_array = np.asarray(data)
+    # Cast to float so integer (e.g. raw ADC) input is not truncated by the
+    # NaN-preserving output buffer or the filter arithmetic.
+    data_array = np.asarray(data, dtype=float)
 
     # Check if data is multi-dimensional - handle NaN checking appropriately
     if data_array.ndim > 1:
@@ -591,6 +593,11 @@ def _get_normalization_mask(
                 f"normalization_mask length ({mask.shape[0]}) must match "
                 f"data length ({data_shape[0]})."
             )
+        if not np.any(mask):
+            raise ValueError(
+                "normalization_mask selects no samples; cannot compute "
+                "normalization statistics."
+            )
         return mask
     elif normalization_time_range is not None:
         time_arr = np.asarray(time)
@@ -847,27 +854,59 @@ def normalize_signal_manually(
     -------
     normalized_data : ndarray, shape matches input
         Normalized signal with the same shape as input.
+
+    Notes
+    -----
+    A channel with a zero or NaN deviation, or a NaN baseline, is degenerate.
+    Individual degenerate channels are zeroed so they cannot cross a detection
+    threshold, and a warning naming them is emitted. If *every* channel is
+    degenerate (including 1-D input whose single channel is degenerate) the
+    result would be uniformly zero and carry no signal, so a ``ValueError`` is
+    raised instead -- mirroring the empty-mask guard in ``normalize_signal``.
     """
     data = np.asarray(data)
-    elec_baselines = np.asarray(elec_baselines)
+    elec_baselines = np.asarray(elec_baselines, dtype=float)
     elec_deviations = np.asarray(elec_deviations, dtype=float)
 
-    if data.ndim == 1:
-        if elec_deviations == 0 or np.isnan(elec_deviations):
-            return np.zeros_like(data)
-        return (data - elec_baselines) / elec_deviations
+    # Handle 1-D and multi-channel data uniformly by working in (n_time,
+    # n_channels) shape; reshape the result back to 1-D on return.
+    is_1d = data.ndim == 1
+    data_2d = data.reshape(-1, 1) if is_1d else data
+    baselines = elec_baselines.reshape(1, -1)
+    deviations = elec_deviations.reshape(1, -1)
 
-    # Multi-channel data (n_time, n_channels): zero/NaN-deviation channels are
-    # degenerate, so zero them out (matching the 1-D branch) rather than dividing
-    # by a placeholder 1.0, which would let a dead channel cross threshold and
-    # inflate participation counts.
-    elec_deviations = elec_deviations.reshape(1, -1)
-    degenerate = (elec_deviations == 0) | np.isnan(elec_deviations)
-    safe_deviations = np.where(degenerate, 1.0, elec_deviations)
-    normalized_data = (data - elec_baselines) / safe_deviations
+    # Channels with a zero/NaN deviation or a NaN baseline are degenerate.
+    degenerate = (deviations == 0) | np.isnan(deviations) | np.isnan(baselines)
+    if degenerate.all():
+        raise ValueError(
+            "All channels have a zero/NaN deviation or NaN baseline during manual "
+            "normalization; the normalized signal would be uniformly zero. Check "
+            "the baseline/deviation statistics (e.g. computed over an empty or "
+            "all-NaN window)."
+        )
+
+    # safe_deviations avoids a divide-by-zero RuntimeWarning; the explicit overwrite
+    # below zeros degenerate columns so a dead channel can neither cross threshold nor
+    # NaN-poison the output and silently distort participation counts.
+    safe_deviations = np.where(degenerate, 1.0, deviations)
+    normalized_data = (data_2d - baselines) / safe_deviations
     normalized_data[:, degenerate[0]] = 0.0
 
-    return normalized_data
+    degenerate_channels = np.flatnonzero(degenerate[0])
+    if degenerate_channels.size > 0:
+        import warnings
+
+        warnings.warn(
+            "Zeroing channel(s) with a zero/NaN deviation or NaN baseline during "
+            f"manual normalization: {degenerate_channels.tolist()}. These channels "
+            "will not participate in detection, but still count toward the total "
+            "channel count used for frac_participants and fractional "
+            "participation thresholds.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    return normalized_data.reshape(data.shape) if is_1d else normalized_data
 
 
 def threshold_by_zscore(
@@ -957,12 +996,13 @@ def merge_overlapping_ranges(
 
 
 def merge_overlapping_ranges_track_participation(
-    candidate_ripple_times: list[tuple[float, float]],
-):
+    candidate_ripple_times: list[list[tuple[float, float]]],
+) -> NDArray:
     """Merge overlapping/adjacent per-channel ranges, tracking participation.
 
     Like `merge_overlapping_ranges`, but also records which channels contribute
-    to each merged interval.
+    to each merged interval. Each channel is counted once across the entire
+    merged interval, including chains of overlapping ripples.
 
     Parameters
     ----------
@@ -982,25 +1022,18 @@ def merge_overlapping_ranges_track_participation(
 
     all_intervals.sort(key=lambda x: x[0])
 
-    merged = []
+    merged: list[list] = []
 
     for start, end, e_idx in all_intervals:
-        # initialize the merged list
         if not merged:
             merged.append([start, end, {e_idx}])
             continue
 
-        # fetch the lastmost interval in merged
         last_end = merged[-1][1]
-
-        # if the new interval overlaps with the most recent merged interval:
         if start <= last_end:
-            # extend the interval if needed
             merged[-1][1] = max(last_end, end)
-            # add current electrode to the existing set
             merged[-1][2].add(e_idx)
         else:
-            # otherwise create a new merged interval
             merged.append([start, end, {e_idx}])
 
     if not merged:
@@ -1013,7 +1046,7 @@ def exclude_close_events(
     candidate_event_times: ArrayLike,
     close_event_threshold: float = 1.0,
     included_ripple_inds: list | None = None,
-) -> NDArray | list:
+) -> NDArray | list | tuple[NDArray | list, NDArray | list]:
     """Remove events that occur too close together in time.
 
     Filters out successive events that start within `close_event_threshold`

@@ -16,42 +16,39 @@ from ripple_detection.simulate import simulate_LFP
 
 
 @pytest.fixture
-def reproducible_seed():
-    """Set random seed for reproducibility."""
-    return np.random.default_rng(42)
-
-
-@pytest.fixture
-def test_lfp_data(reproducible_seed):
+def test_lfp_data():
     """Generate reproducible LFP data with embedded ripples."""
     time = np.arange(0, 3.0, 1 / 1500)  # 3 seconds at 1500 Hz
 
-    # Create single channel with two ripples
+    # Create single channel with two ripples (fixed seed for reproducibility)
     lfp = simulate_LFP(
         time,
         ripple_times=[0.8, 1.8],
         noise_amplitude=1.0,
         ripple_amplitude=2.0,
         noise_type="white",
+        random_state=42,
     )
 
     return time, lfp[:, np.newaxis]
 
 
 @pytest.fixture
-def test_multichannel_lfp_data(reproducible_seed):
+def test_multichannel_lfp_data():
     """Generate reproducible multi-channel LFP data."""
     time = np.arange(0, 3.0, 1 / 1500)
 
-    # Create 3 channels with ripples at slightly different times
+    # Create 3 channels with ripples at slightly different times (distinct seed
+    # per channel so the noise is reproducible but not identical across channels)
     lfps = []
-    for ripple_times in [[0.8, 1.8], [0.82, 1.78], [0.81, 1.79]]:
+    for channel, ripple_times in enumerate([[0.8, 1.8], [0.82, 1.78], [0.81, 1.79]]):
         lfp = simulate_LFP(
             time,
             ripple_times=ripple_times,
             noise_amplitude=1.0,
             ripple_amplitude=2.0,
             noise_type="white",
+            random_state=channel,
         )
         lfps.append(lfp)
 
@@ -59,9 +56,9 @@ def test_multichannel_lfp_data(reproducible_seed):
 
 
 @pytest.fixture
-def test_multiunit_data(reproducible_seed):
+def test_multiunit_data():
     """Generate reproducible multiunit data."""
-    rng = reproducible_seed
+    rng = np.random.default_rng(42)
     time = np.arange(0, 3.0, 1 / 1500)
     n_neurons = 10
 
@@ -91,7 +88,6 @@ def stationary_speed():
 class TestKayDetectorSnapshots:
     """Snapshot tests for Kay ripple detector."""
 
-    @pytest.mark.skip(reason="Random data causes non-deterministic results across runs")
     def test_kay_single_channel_output(self, snapshot, test_lfp_data):
         """Test Kay detector output structure and values remain consistent."""
         time, lfp = test_lfp_data
@@ -122,7 +118,6 @@ class TestKayDetectorSnapshots:
             rounded_detection = {k: round(float(v), 6) for k, v in first_detection.items()}
             snapshot.assert_match(str(rounded_detection), "first_detection")
 
-    @pytest.mark.skip(reason="Random data causes non-deterministic results across runs")
     def test_kay_multichannel_output(self, snapshot, test_multichannel_lfp_data):
         """Test Kay detector with multiple channels."""
         time, lfps = test_multichannel_lfp_data
@@ -153,7 +148,6 @@ class TestKayDetectorSnapshots:
 class TestKarlssonDetectorSnapshots:
     """Snapshot tests for Karlsson ripple detector."""
 
-    @pytest.mark.skip(reason="Random data causes non-deterministic results across runs")
     def test_karlsson_single_channel_output(self, snapshot, test_lfp_data):
         """Test Karlsson detector output consistency."""
         time, lfp = test_lfp_data
@@ -177,7 +171,6 @@ class TestKarlssonDetectorSnapshots:
             rounded_detection = {k: round(float(v), 6) for k, v in first_detection.items()}
             snapshot.assert_match(str(rounded_detection), "first_detection")
 
-    @pytest.mark.skip(reason="Random data causes non-deterministic results across runs")
     def test_karlsson_multichannel_merging(self, snapshot, test_multichannel_lfp_data):
         """Test Karlsson detector merges overlapping events from different channels."""
         time, lfps = test_multichannel_lfp_data
@@ -204,7 +197,6 @@ class TestKarlssonDetectorSnapshots:
 class TestRoumisDetectorSnapshots:
     """Snapshot tests for Roumis ripple detector."""
 
-    @pytest.mark.skip(reason="Random data causes non-deterministic results across runs")
     def test_roumis_output(self, snapshot, test_multichannel_lfp_data):
         """Test Roumis detector output consistency."""
         time, lfps = test_multichannel_lfp_data
@@ -326,6 +318,7 @@ class TestRegressionPrevention:
             ripple_times=[1.0],
             noise_amplitude=0.5,
             ripple_amplitude=5.0,  # Very strong
+            random_state=42,
         )[:, np.newaxis]
 
         filtered_lfp = filter_ripple_band(lfp)

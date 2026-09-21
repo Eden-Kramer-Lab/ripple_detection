@@ -17,7 +17,9 @@ from ripple_detection.core import (
     get_envelope,
     get_multiunit_population_firing_rate,
     merge_overlapping_ranges,
+    merge_overlapping_ranges_track_participation,
     normalize_signal,
+    normalize_signal_manually,
     ripple_bandpass_filter,
     segment_boolean_series,
     threshold_by_zscore,
@@ -128,6 +130,32 @@ def test_merge_overlapping_ranges(ranges, expected_ranges):
     assert list(merge_overlapping_ranges(ranges)) == expected_ranges
 
 
+@pytest.mark.parametrize(
+    "channel_ranges, expected",
+    [
+        # A-B and B-C overlap preserves all three participants.
+        (
+            [[(0.1, 0.15)], [(0.14, 0.19)], [(0.18, 0.23)]],
+            [[0.1, 0.23, {0, 1, 2}]],
+        ),
+        # Two ripples on one electrode still count that electrode only once.
+        (
+            [[(0.1, 0.15), (0.18, 0.23)], [(0.14, 0.19)]],
+            [[0.1, 0.23, {0, 1}]],
+        ),
+        # Separate events retain their own participants and chronological order.
+        ([[(0.3, 0.4)], [(0.1, 0.2)]], [[0.1, 0.2, {1}], [0.3, 0.4, {0}]]),
+        ([[(0.1, 0.2)], [(0.2, 0.3)]], [[0.1, 0.3, {0, 1}]]),
+        ([], []),
+        ([[], []], []),
+    ],
+)
+def test_merge_overlapping_ranges_track_participation(channel_ranges, expected):
+    merged = merge_overlapping_ranges_track_participation(channel_ranges)
+    assert merged.shape == (len(expected), 3)
+    assert merged.tolist() == expected
+
+
 def test_threshold_by_zscore():
     data = np.array([0, 0, 10, 10, 0, 0, 0, 1, 5, 10, 10, 10, 10, 10, 5, 1, 0])
     time = np.arange(len(data)) / 1000
@@ -156,16 +184,11 @@ class TestRippleBandpassFilter:
     """Test ripple bandpass filter generation."""
 
     def test_filter_shape(self):
-        """Test that filter has correct shape."""
+        """Test that filter has correct shape and generates on supported SciPy."""
         sampling_frequency = 1500
-        try:
-            filter_numerator, filter_denominator = ripple_bandpass_filter(sampling_frequency)
-            assert len(filter_numerator) == 101  # ORDER = 101
-            assert filter_denominator == 1.0
-        except TypeError:
-            # Older scipy versions use Hz, newer use fs
-            # This function may not work with all scipy versions
-            pytest.skip("ripple_bandpass_filter API incompatibility with scipy version")
+        filter_numerator, filter_denominator = ripple_bandpass_filter(sampling_frequency)
+        assert len(filter_numerator) == 101  # ORDER = 101
+        assert filter_denominator == 1.0
 
 
 class TestGetRipplefilterKernel:
@@ -736,3 +759,40 @@ class TestNormalizeSignal:
         # Should work and return full-length normalized data
         assert len(normalized) == 1000
         assert not np.all(normalized == 0)
+
+
+class TestNormalizeSignalManually:
+    def test_1d_scalar_baseline_deviation(self):
+        """1-D manual normalization uses the scalar baseline/deviation."""
+        data = np.arange(5.0)
+        np.testing.assert_allclose(
+            normalize_signal_manually(data, 1.0, 2.0), (data - 1.0) / 2.0
+        )
+
+    def test_1d_degenerate_raises(self):
+        """1-D input whose single channel is degenerate is all-degenerate, so it
+        raises instead of silently returning a zero (signal-free) trace."""
+        data = np.arange(5.0)
+        for baseline, deviation in [(0.0, 0.0), (0.0, np.nan), (np.nan, 2.0)]:
+            with pytest.raises(ValueError, match="All channels"):
+                normalize_signal_manually(data, baseline, deviation)
+
+    def test_multichannel_partial_degenerate_zeros_and_warns(self):
+        """A degenerate channel alongside a healthy one is zeroed with a warning;
+        the healthy channel is normalized normally."""
+        data = np.tile(np.arange(5.0)[:, None], (1, 2))
+        baselines = np.array([1.0, np.nan])  # channel 1 degenerate
+        deviations = np.array([2.0, 1.0])
+        with pytest.warns(UserWarning, match="Zeroing channel"):
+            out = normalize_signal_manually(data, baselines, deviations)
+        np.testing.assert_allclose(out[:, 0], (data[:, 0] - 1.0) / 2.0)
+        assert np.all(out[:, 1] == 0)
+
+    def test_multichannel_all_degenerate_raises(self):
+        """If every channel is degenerate the result would be uniformly zero, so
+        a ValueError is raised rather than returning a signal-free array."""
+        data = np.tile(np.arange(5.0)[:, None], (1, 3))
+        baselines = np.array([0.0, np.nan, 1.0])
+        deviations = np.array([0.0, 1.0, np.nan])  # all three degenerate
+        with pytest.raises(ValueError, match="All channels"):
+            normalize_signal_manually(data, baselines, deviations)

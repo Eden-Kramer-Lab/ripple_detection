@@ -187,7 +187,8 @@ def _preprocess_detector_inputs(
     speed: ArrayLike,
     sampling_frequency: float,
     speed_threshold: float = 4.0,
-) -> tuple[NDArray, NDArray, NDArray]:
+    normalization_mask: ArrayLike | None = None,
+) -> tuple[NDArray, NDArray, NDArray, NDArray | None]:
     """Remove NaN values from detector inputs and validate units.
 
     Ensures all inputs are aligned by removing any time points where
@@ -207,6 +208,9 @@ def _preprocess_detector_inputs(
         Sampling rate in Hz, used to validate time units.
     speed_threshold : float, optional
         Speed threshold in cm/s, used to validate speed units. Default is 4.0.
+    normalization_mask : array_like, shape (n_time,), optional
+        Boolean mask over the original time samples. Filtered by the same NaN
+        removal so it stays aligned with the cleaned data. Default is None.
 
     Returns
     -------
@@ -216,6 +220,9 @@ def _preprocess_detector_inputs(
         LFP array with NaN rows removed.
     speed_clean : ndarray, shape (n_clean_time,)
         Speed array with NaN values removed.
+    normalization_mask_clean : ndarray or None, shape (n_clean_time,)
+        The normalization mask with the same NaN rows removed, or None if no
+        mask was provided.
 
     Raises
     ------
@@ -230,7 +237,7 @@ def _preprocess_detector_inputs(
 
     """
     # Convert to arrays
-    filtered_lfps = np.asarray(filtered_lfps)
+    filtered_lfps = np.asarray(filtered_lfps, dtype=float)
     speed = np.asarray(speed)
     time = np.asarray(time)
 
@@ -243,7 +250,18 @@ def _preprocess_detector_inputs(
     # Remove NaN values
     not_null = np.all(pd.notna(filtered_lfps), axis=1) & pd.notna(speed)
 
-    return time[not_null], filtered_lfps[not_null], speed[not_null]
+    # Filter the normalization mask by the same rows so it stays aligned with
+    # the cleaned data (otherwise its length no longer matches after NaN removal).
+    if normalization_mask is not None:
+        normalization_mask = np.asarray(normalization_mask)
+        if len(normalization_mask) != len(not_null):
+            raise ValueError(
+                f"normalization_mask length ({len(normalization_mask)}) must match "
+                f"the number of time samples ({len(not_null)})."
+            )
+        normalization_mask = normalization_mask[not_null]
+
+    return time[not_null], filtered_lfps[not_null], speed[not_null], normalization_mask
 
 
 def get_Kay_ripple_consensus_trace(
@@ -276,6 +294,9 @@ def get_Kay_ripple_consensus_trace(
        during immobility and sleep. Nature, 531(7593), 185-190.
 
     """
+    # Cast to float so integer input is not truncated and the squared envelope
+    # cannot overflow before the square root.
+    ripple_filtered_lfps = np.asarray(ripple_filtered_lfps, dtype=float)
     ripple_consensus_trace = np.full_like(ripple_filtered_lfps, np.nan)
     not_null = np.all(pd.notna(ripple_filtered_lfps), axis=1)
 
@@ -337,6 +358,9 @@ def Shvartsman_ripple_detector(
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
+        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        (per Karlsson et al. 2009); the event is then extended to the surrounding
+        mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
     zscore_threshold : float, optional
@@ -349,8 +373,8 @@ def Shvartsman_ripple_detector(
         noisier data.
     close_ripple_threshold : float, optional
         Minimum time in **seconds** between ripples. Events closer than this
-        are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
-        closely-spaced events.
+        are excluded -- the later event is dropped, not merged. Default is 0.0
+        (no exclusion). Set to 0.05-0.1 s to drop closely-spaced events.
     normalization_method : {'zscore', 'median_mad'}, optional
         Method for normalizing each channel. Default is 'zscore' (mean/std).
         Use 'median_mad' for more robust normalization when data contains outliers.
@@ -380,16 +404,29 @@ def Shvartsman_ripple_detector(
         Participation cutoff for a merged event. If in [0, 1], interpreted as
         the *fraction* of channels that must participate (note 1.0 means all
         channels, not one). If > 1, interpreted as an absolute *number* of
-        channels. Default is 2.
+        channels. Default is 2. Each distinct channel with a detected ripple
+        anywhere in the merged event counts once, including channels connected
+        through a chain of overlapping ripples.
+
+        The denominator for the fraction (and for `frac_participants`) is the
+        total number of channels in `filtered_lfps`, including any channel that
+        was dropped as degenerate during manual normalization (zero/NaN
+        deviation or NaN baseline). A dead channel therefore lowers
+        `frac_participants` and makes a fractional threshold of 1.0
+        unsatisfiable; drop known-bad channels before calling, or use an
+        absolute (> 1) threshold, if that is a concern.
 
     Returns
     -------
     ripple_times : pd.DataFrame
         DataFrame with detected ripples and comprehensive statistics (see
         Kay_ripple_detector for the shared columns). This detector additionally
-        returns ``participants`` (set of channel indices active in the event),
-        ``n_participants`` (count), and ``frac_participants`` (count / total
-        channels).
+        returns ``participants`` (set of every channel whose ripple appears
+        anywhere in the event), ``n_participants`` (``len(participants)``), and
+        ``frac_participants`` (``n_participants`` / total channels). Participation
+        is measured on each channel's full zero-crossing-extended ripple (the same
+        extent as the event boundaries). The per-event z-score statistics are
+        averaged over the ``participants`` union.
 
         Returns empty DataFrame if no ripples detected. If this occurs, try:
         - Lowering zscore_threshold (e.g., from 3.0 to 2.0)
@@ -398,8 +435,15 @@ def Shvartsman_ripple_detector(
         - Verifying your data contains ripple oscillations (150-250 Hz)
 
     """
-    time, filtered_lfps, speed = _preprocess_detector_inputs(
-        time, filtered_lfps, speed, sampling_frequency, speed_threshold
+    time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
+        time,
+        filtered_lfps,
+        speed,
+        sampling_frequency,
+        speed_threshold,
+        # normalization_mask is ignored under manual normalization, so don't
+        # validate/filter it in that mode (the docstring promises it is unused).
+        normalization_mask=None if manual_normalization else normalization_mask,
     )
 
     filtered_lfps = get_envelope(filtered_lfps)
@@ -408,7 +452,6 @@ def Shvartsman_ripple_detector(
     )
 
     if manual_normalization:
-        # make sure to multiple mad by 1.4826 if using median_mad to get std equivalent
         if elec_baselines is None or elec_deviations is None:
             raise ValueError(
                 "Must provide elec_baselines and elec_deviations for manual normalization."
@@ -419,9 +462,11 @@ def Shvartsman_ripple_detector(
             )
         if len(elec_baselines) != filtered_lfps.shape[1]:
             raise ValueError(
-                "Provided elec_baselines/elec_deviations must have one entry per"
+                "Provided elec_baselines/elec_deviations must have one entry per "
                 f"channel (n_channels={filtered_lfps.shape[1]}), got {len(elec_baselines)}."
             )
+        # elec_deviations must be std-equivalent: if it was computed as a MAD,
+        # multiply by 1.4826 before passing it in.
         filtered_lfps = normalize_signal_manually(
             filtered_lfps,
             elec_baselines,
@@ -442,7 +487,8 @@ def Shvartsman_ripple_detector(
         for filtered_lfp in filtered_lfps.T
     ]
 
-    # merging overlapping candidate ripple times
+    # Merge each channel's mean-crossing-extended intervals and retain the union
+    # of contributing channels, preserving the original participation rule.
     merged_candidates = merge_overlapping_ranges_track_participation(candidate_ripple_times)
 
     # account for different ways to specify participation threshold (fraction or number of electrodes)
@@ -468,11 +514,9 @@ def Shvartsman_ripple_detector(
         candidate_ripple_times, close_ripple_threshold, included_ripple_inds
     )
 
-    # find participant information
-    participants = merged_candidates[participation_mask, 2]  # filter by participation mask
-    participants = participants[
-        included_ripple_inds
-    ]  # filter by included ripple inds from other exclusion functions above
+    # Keep participant metadata aligned through movement and proximity exclusion.
+    participant_sets = merged_candidates[participation_mask, 2]
+    participants = participant_sets[included_ripple_inds]
     n_participants = np.array([len(p) for p in participants])
     frac_participants = n_participants / n_elecs
 
@@ -532,6 +576,9 @@ def Kay_ripple_detector(
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
+        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        (per Karlsson et al. 2009); the event is then extended to the surrounding
+        mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
     zscore_threshold : float, optional
@@ -544,8 +591,8 @@ def Kay_ripple_detector(
         noisier data.
     close_ripple_threshold : float, optional
         Minimum time in **seconds** between ripples. Events closer than this
-        are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
-        closely-spaced events.
+        are excluded -- the later event is dropped, not merged. Default is 0.0
+        (no exclusion). Set to 0.05-0.1 s to drop closely-spaced events.
     normalization_method : {'zscore', 'median_mad'}, optional
         Method for normalizing the consensus trace. Default is 'zscore' (mean/std).
         Use 'median_mad' for more robust normalization when data contains outliers.
@@ -601,8 +648,13 @@ def Kay_ripple_detector(
        immobility and sleep. Nature 531, 185-190.
 
     """
-    time, filtered_lfps, speed = _preprocess_detector_inputs(
-        time, filtered_lfps, speed, sampling_frequency, speed_threshold
+    time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
+        time,
+        filtered_lfps,
+        speed,
+        sampling_frequency,
+        speed_threshold,
+        normalization_mask=normalization_mask,
     )
 
     combined_filtered_lfps = get_Kay_ripple_consensus_trace(
@@ -668,6 +720,9 @@ def Karlsson_ripple_detector(
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
+        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        (per Karlsson et al. 2009); the event is then extended to the surrounding
+        mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
     zscore_threshold : float, optional
@@ -680,8 +735,8 @@ def Karlsson_ripple_detector(
         noisier data.
     close_ripple_threshold : float, optional
         Minimum time in **seconds** between ripples. Events closer than this
-        are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
-        closely-spaced events.
+        are excluded -- the later event is dropped, not merged. Default is 0.0
+        (no exclusion). Set to 0.05-0.1 s to drop closely-spaced events.
     normalization_method : {'zscore', 'median_mad'}, optional
         Method for normalizing each channel. Default is 'zscore' (mean/std).
         Use 'median_mad' for more robust normalization when data contains outliers.
@@ -714,8 +769,13 @@ def Karlsson_ripple_detector(
        experiences in the hippocampus. Nature Neuroscience 12, 913-918.
 
     """
-    time, filtered_lfps, speed = _preprocess_detector_inputs(
-        time, filtered_lfps, speed, sampling_frequency, speed_threshold
+    time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
+        time,
+        filtered_lfps,
+        speed,
+        sampling_frequency,
+        speed_threshold,
+        normalization_mask=normalization_mask,
     )
 
     filtered_lfps = get_envelope(filtered_lfps)
@@ -741,7 +801,9 @@ def Karlsson_ripple_detector(
     )
     ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
 
-    return _get_event_stats(ripple_times, time, filtered_lfps.mean(axis=1), speed)
+    return _get_event_stats(
+        ripple_times, time, filtered_lfps.mean(axis=1), speed, minimum_duration
+    )
 
 
 def Roumis_ripple_detector(
@@ -784,6 +846,9 @@ def Roumis_ripple_detector(
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
+        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        (per Karlsson et al. 2009); the event is then extended to the surrounding
+        mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
     zscore_threshold : float, optional
@@ -796,8 +861,8 @@ def Roumis_ripple_detector(
         noisier data.
     close_ripple_threshold : float, optional
         Minimum time in **seconds** between ripples. Events closer than this
-        are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
-        closely-spaced events.
+        are excluded -- the later event is dropped, not merged. Default is 0.0
+        (no exclusion). Set to 0.05-0.1 s to drop closely-spaced events.
     normalization_method : {'zscore', 'median_mad'}, optional
         Method for normalizing the combined trace. Default is 'zscore' (mean/std).
         Use 'median_mad' for more robust normalization when data contains outliers.
@@ -825,8 +890,13 @@ def Roumis_ripple_detector(
         - Verifying your data contains ripple oscillations (150-250 Hz)
 
     """
-    time, filtered_lfps, speed = _preprocess_detector_inputs(
-        time, filtered_lfps, speed, sampling_frequency, speed_threshold
+    time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
+        time,
+        filtered_lfps,
+        speed,
+        sampling_frequency,
+        speed_threshold,
+        normalization_mask=normalization_mask,
     )
 
     filtered_lfps = get_envelope(filtered_lfps) ** 2
@@ -900,6 +970,9 @@ def multiunit_HSE_detector(
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum event duration in **seconds**. Default is 0.015 (15 milliseconds).
+        This is the minimum time the firing rate must stay *above* ``zscore_threshold``;
+        the event is then extended to the surrounding mean-crossings, so the reported
+        ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
     zscore_threshold : float, optional
@@ -912,8 +985,8 @@ def multiunit_HSE_detector(
         population firing rate estimates).
     close_event_threshold : float, optional
         Minimum time in **seconds** between events. Events closer than this
-        are merged. Default is 0.0 (no merging). Set to 0.05-0.1 s to merge
-        closely-spaced events.
+        are excluded -- the later event is dropped, not merged. Default is 0.0
+        (no exclusion). Set to 0.05-0.1 s to drop closely-spaced events.
     use_speed_threshold_for_zscore : bool, optional
         **DEPRECATED**: Use `normalization_mask` instead. If True, compute
         z-score statistics (mean/std) using only immobility periods (speed <
@@ -991,14 +1064,17 @@ def multiunit_HSE_detector(
     )
     high_synchrony_events = exclude_close_events(high_synchrony_events, close_event_threshold)
 
-    return _get_event_stats(high_synchrony_events, time, firing_rate, speed)
+    return _get_event_stats(high_synchrony_events, time, firing_rate, speed, minimum_duration)
 
 
 def _find_max_thresh(
     time: np.ndarray, data: np.ndarray, minimum_duration: float = 0.015
 ) -> float:
-    """Find the maximum value of a peak that exceeds a
-    threshold for a minimum duration.
+    """Find the largest value sustained around the peak for a minimum duration.
+
+    Starting at the peak, expand a window (toward the higher neighbouring sample)
+    until it spans ``minimum_duration``, then return the smaller of the two window
+    edges -- the largest value held across the whole window.
 
     Parameters
     ----------
@@ -1009,6 +1085,11 @@ def _find_max_thresh(
     Returns
     -------
     max_thresh : float
+        The largest value sustained for ``minimum_duration`` around the peak.
+        ``nan`` if the event is shorter than ``minimum_duration`` (the sustained
+        value is then undefined). Public detectors never produce such events --
+        their segments are ``>= minimum_duration`` by construction -- so this
+        only affects direct/edge callers.
     """
     # Find the peak of the data points
     peak_ind = np.argmax(data)
@@ -1017,11 +1098,20 @@ def _find_max_thresh(
     peak_left_ind = peak_ind
     peak_right_ind = peak_ind
 
-    # Expand the window until the time difference exceeds the minimum duration
-    while time[peak_right_ind] - time[peak_left_ind] < minimum_duration:
+    # Match segment_boolean_series's inclusive duration comparison. Subtracting
+    # timestamps can round an accepted boundary below minimum_duration.
+    while time[peak_right_ind] < time[peak_left_ind] + minimum_duration:
+        can_expand_right = peak_right_ind < len(time) - 1
+        can_expand_left = peak_left_ind > 0
+        # The window already spans the whole event yet is still shorter than
+        # minimum_duration, so a value "sustained for minimum_duration" is
+        # undefined. Return nan rather than a misleading endpoint value (and
+        # rather than running an index out of bounds).
+        if not (can_expand_right or can_expand_left):
+            return float("nan")
         # Determine the direction to expand
-        if peak_right_ind < len(time) - 1 and (
-            peak_left_ind == 0 or data[peak_right_ind + 1] > data[peak_left_ind - 1]
+        if can_expand_right and (
+            not can_expand_left or data[peak_right_ind + 1] > data[peak_left_ind - 1]
         ):
             peak_right_ind += 1
         else:
@@ -1052,19 +1142,29 @@ def _get_event_stats(
     time : array_like, shape (n_time,)
         Time values for each sample.
     zscore_metric : array_like, if participants is None: shape (n_time,); else shape (n_time, n_channels)
-        Z-scored signal used for detection. If participants is None, this should include the z-scored signal for all channels
-        so metrics can be calculated based only on data from participants.
+        Signal the per-event statistics (mean/median/max/min z-score, area,
+        total_energy, max_thresh) are computed from. Its exact meaning depends on
+        the caller -- e.g. the consensus trace for Kay, the per-channel mean for
+        Karlsson, or the multiunit firing rate for multiunit_HSE. When participants
+        is None, pass a single 1-D trace of shape (n_time,). When participants is
+        provided, pass the per-channel signal of shape (n_time, n_channels) so that
+        each event's metrics are computed from its participating channels only.
     speed : array_like, shape (n_time,)
         Animal's speed at each time point.
     minimum_duration : float, optional
         Minimum duration for max_thresh calculation. Default is 0.015 (15 ms).
-    participants: array_like, shape (n_events,)
-        Which channels participate in each ripple event. Used by Shvartsman_ripple_detector. Optional, default is None.
+    participants: array_like of set, shape (n_events,)
+        Set of channels that participate in each event; z-score metrics are
+        averaged over these channels. Used by Shvartsman_ripple_detector.
+        Optional, default is None.
     n_participants: array_like, shape (n_events,)
-        Number of participating channels for each ripple event. Used by Shvartsman_ripple_detector. Optional, default is None.
+        Number of distinct participating channels per event. For
+        Shvartsman_ripple_detector this equals ``len(participants[i])``.
+        Optional, default is None.
     frac_participants: array_like, shape (n_events,)
-        Fraction of (# of participating channels) / (total channels) per
-        each ripple event. Used by Shvartsman_ripple_detector. Optional, default is None.
+        ``n_participants`` divided by the total channel count, per event, as
+        supplied by the caller. Used by Shvartsman_ripple_detector. Optional,
+        default is None.
 
     Returns
     -------
@@ -1072,7 +1172,8 @@ def _get_event_stats(
         DataFrame with one row per event and columns:
         - start_time, end_time: Event boundaries
         - duration: Event duration (end - start)
-        - max_thresh: Maximum z-score sustained for minimum_duration
+        - max_thresh: Maximum z-score sustained for minimum_duration (nan for an
+            event shorter than minimum_duration; not produced by the detectors)
         - mean_zscore, median_zscore, max_zscore, min_zscore: Z-score statistics
         - area: Integral of z-score over event duration
         - total_energy: Integral of squared z-score
@@ -1151,6 +1252,8 @@ def _get_event_stats(
         median_speed.append(np.median(speed_arr[time_mask]))
         mean_speed.append(np.mean(speed_arr[time_mask]))
 
+    event_start_times: NDArray | list
+    event_end_times: NDArray | list
     try:
         event_start_times = event_times_arr[:, 0]
         event_end_times = event_times_arr[:, 1]
@@ -1158,50 +1261,28 @@ def _get_event_stats(
         event_start_times = []
         event_end_times = []
 
-    if participants is None:
-        return pd.DataFrame(
-            {
-                "start_time": event_start_times,
-                "end_time": event_end_times,
-                "duration": duration,
-                "max_thresh": max_thresh,
-                "mean_zscore": mean_zscore,
-                "median_zscore": median_zscore,
-                "max_zscore": max_zscore,
-                "min_zscore": min_zscore,
-                "area": area,
-                "total_energy": total_energy,
-                "speed_at_start": speed_at_start,
-                "speed_at_end": speed_at_end,
-                "max_speed": max_speed,
-                "min_speed": min_speed,
-                "median_speed": median_speed,
-                "mean_speed": mean_speed,
-            },
-            index=index,
-        )
-    else:
-        return pd.DataFrame(
-            {
-                "start_time": event_start_times,
-                "end_time": event_end_times,
-                "duration": duration,
-                "max_thresh": max_thresh,
-                "mean_zscore": mean_zscore,
-                "median_zscore": median_zscore,
-                "max_zscore": max_zscore,
-                "min_zscore": min_zscore,
-                "area": area,
-                "total_energy": total_energy,
-                "speed_at_start": speed_at_start,
-                "speed_at_end": speed_at_end,
-                "max_speed": max_speed,
-                "min_speed": min_speed,
-                "median_speed": median_speed,
-                "mean_speed": mean_speed,
-                "participants": participants,
-                "n_participants": n_participants,
-                "frac_participants": frac_participants,
-            },
-            index=index,
-        )
+    event_stats = {
+        "start_time": event_start_times,
+        "end_time": event_end_times,
+        "duration": duration,
+        "max_thresh": max_thresh,
+        "mean_zscore": mean_zscore,
+        "median_zscore": median_zscore,
+        "max_zscore": max_zscore,
+        "min_zscore": min_zscore,
+        "area": area,
+        "total_energy": total_energy,
+        "speed_at_start": speed_at_start,
+        "speed_at_end": speed_at_end,
+        "max_speed": max_speed,
+        "min_speed": min_speed,
+        "median_speed": median_speed,
+        "mean_speed": mean_speed,
+    }
+    # Shvartsman_ripple_detector passes participation info; the other detectors do not.
+    if participants is not None:
+        event_stats["participants"] = participants
+        event_stats["n_participants"] = n_participants
+        event_stats["frac_participants"] = frac_participants
+
+    return pd.DataFrame(event_stats, index=index)
