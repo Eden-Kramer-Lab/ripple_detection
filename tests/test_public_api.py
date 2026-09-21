@@ -14,6 +14,9 @@ DETECTORS = [
     "multiunit_HSE_detector",
 ]
 HELPERS = [
+    "DETECTORS",
+    "DetectorSpec",
+    "get_detector",
     "filter_ripple_band",
     "ripple_bandpass_filter",
     "get_envelope",

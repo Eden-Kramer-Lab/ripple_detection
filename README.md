@@ -145,6 +145,37 @@ print(f"Mean duration: {ripples['duration'].mean():.3f} seconds")
 print(f"Mean z-score: {ripples['mean_zscore'].mean():.2f}")
 ```
 
+### Selecting a detector by name
+
+A pipeline that stores a detector's name rather than importing it, such as a
+database-backed workflow, can resolve the name here instead of keeping its own
+list that goes stale whenever this package gains a detector.
+
+```python
+from ripple_detection import DETECTORS, get_detector
+
+spec = get_detector("Kay_ripple_detector")
+spec.inputs                       # ('ripple_band_lfp',)
+events = spec.detector(time, filtered_lfps, speed, sampling_frequency)
+
+sorted(DETECTORS)                 # every detector this package has
+```
+
+Check `inputs` before calling. The detectors do not all take the same signal,
+and two of the mismatches are silent rather than loud:
+
+| `inputs` | Detectors | What to pass |
+|---|---|---|
+| `("ripple_band_lfp",)` | Kay, Karlsson, Roumis, Shvartsman, Yu, Zugaro | `(n_time, n_channels)` ripple-band filtered LFP |
+| `("raw_lfp_pair",)` | Long | `(n_time, 2)` **unfiltered** LFP: pyramidal-layer channel, then stratum radiatum |
+| `("ripple_band_lfp", "multiunit")` | Carey | both, in that order |
+| `("multiunit",)` | `multiunit_HSE_detector` | `(n_time, n_units)` spike counts or indicators |
+
+`Long_sharp_wave_ripple_detector` takes raw LFP through a signature identical to
+the ripple-band detectors', so handing it filtered data raises nothing and
+returns plausible nonsense. `multiunit_HSE_detector` has the same shape of
+hazard. Carey's extra argument at least fails loudly.
+
 ## Output Format
 
 All detectors return a pandas DataFrame with comprehensive event statistics:

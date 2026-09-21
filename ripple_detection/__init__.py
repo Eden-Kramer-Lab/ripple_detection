@@ -36,6 +36,7 @@ from ripple_detection.detectors import (
     multiunit_HSE_detector,
 )
 from ripple_detection.literature import load_literature_parameters
+from ripple_detection.registry import DETECTORS, DetectorSpec, get_detector
 from ripple_detection.simulate import simulate_LFP, simulate_time
 
 try:
@@ -44,7 +45,9 @@ except ImportError:
     __version__ = "unknown"
 
 __all__ = [
+    "DETECTORS",
     "Carey_candidate_detector",
+    "DetectorSpec",
     "Karlsson_ripple_detector",
     "Kay_ripple_detector",
     "Long_sharp_wave_ripple_detector",
@@ -58,6 +61,7 @@ __all__ = [
     "gaussian_smooth",
     "get_Kay_ripple_consensus_trace",
     "get_Yu_ripple_consensus_trace",
+    "get_detector",
     "get_envelope",
     "get_multiunit_population_firing_rate",
     "load_literature_parameters",
