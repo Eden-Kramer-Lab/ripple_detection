@@ -345,10 +345,6 @@ Three cautions before treating this as a recipe:
   different things across papers: here it is the run above threshold, while many papers
   report the duration of the final event.
 
-The per-paper table these come from lives in the companion analysis project
-(`docs/design/replay_detection_comparison/literature_detection_parameters.csv`),
-with every correction and its evidence recorded alongside it.
-
 ### Getting Help
 
 - **Issues**: [GitHub Issues](https://github.com/Eden-Kramer-Lab/ripple_detection/issues)
