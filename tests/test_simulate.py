@@ -1,8 +1,11 @@
 """Tests for simulation module."""
 
+import hashlib
+
 import numpy as np
 import pytest
 
+from ripple_detection import filter_ripple_band
 from ripple_detection.simulate import (
     NOISE_FUNCTION,
     brown,
@@ -450,3 +453,110 @@ class TestSimulateErrorHandling:
             normalized = normalize(signal)
             # Result should be all zeros or NaN
             assert np.all(np.isnan(normalized)) or np.all(normalized == 0)
+
+
+# ---------------------------------------------------------------------------
+# simulate_LFP
+# ---------------------------------------------------------------------------
+
+
+def _digest(y):
+    return hashlib.sha256(np.round(y, 10).tobytes()).hexdigest()[:16]
+
+
+def _dominant_frequency(y, sampling_frequency):
+    spectrum = np.abs(np.fft.rfft(y))
+    freqs = np.fft.rfftfreq(len(y), 1 / sampling_frequency)
+    return freqs[np.argmax(spectrum)]
+
+
+class TestSimulateLFPRealism:
+    FS = 1500
+
+    def test_default_output_is_unchanged(self):
+        # pinned before ripple_snr / frequency / duration ranges were added
+        t = simulate_time(4500, self.FS)
+        y = simulate_LFP(t, [1.0, 2.0], random_state=0)
+        assert _digest(y) == "73b0be75fa46fcf7"
+        y = simulate_LFP(
+            t, [1.0, 2.0], random_state=0, noise_type="pink", ripple_amplitude=1.0
+        )
+        assert _digest(y) == "77859773f50401ce"
+
+    def test_ripple_snr_sets_peak_relative_to_in_band_background(self):
+        t = simulate_time(self.FS * 20, self.FS)
+        ripples = [2.0, 5.0, 8.0, 11.0, 14.0, 17.0]
+        # the noise is drawn first, so the same seed with no ripples is exactly
+        # the background of the ripple record; the difference is the ripples alone
+        noise_only = simulate_LFP(t, [], noise_type="pink", random_state=1)
+        background_sd = filter_ripple_band(noise_only, sampling_frequency=self.FS).std()
+        for snr in (3.0, 6.0):
+            y = simulate_LFP(t, ripples, noise_type="pink", ripple_snr=snr, random_state=1)
+            bursts = filter_ripple_band(y - noise_only, sampling_frequency=self.FS)
+            peaks = [np.abs(bursts[np.abs(t - r) < 0.02]).max() for r in ripples]
+            achieved = np.array(peaks) / background_sd
+            np.testing.assert_allclose(achieved, snr, rtol=0.05)
+
+    def test_ripple_snr_and_amplitude_are_mutually_exclusive(self):
+        t = simulate_time(4500, self.FS)
+        with pytest.raises(ValueError, match="ripple_snr"):
+            simulate_LFP(t, [1.0], ripple_amplitude=1.0, ripple_snr=5.0)
+
+    def test_ripple_snr_infers_sampling_rate_from_time(self):
+        t = simulate_time(self.FS * 10, self.FS)
+        inferred = simulate_LFP(t, [3.0], ripple_snr=5.0, random_state=2)
+        explicit = simulate_LFP(
+            t, [3.0], ripple_snr=5.0, random_state=2, sampling_frequency=self.FS
+        )
+        np.testing.assert_array_equal(inferred, explicit)
+
+    def test_scalar_frequency_is_reproduced_in_every_ripple(self):
+        t = simulate_time(self.FS * 4, self.FS)
+        y = simulate_LFP(t, [1.0, 3.0], noise_amplitude=0.0, ripple_frequency=180.0)
+        for r in (1.0, 3.0):
+            seg = y[np.abs(t - r) < 0.05]
+            assert abs(_dominant_frequency(seg, self.FS) - 180.0) <= 10.0
+
+    def test_frequency_range_draws_per_ripple(self):
+        t = simulate_time(self.FS * 8, self.FS)
+        ripples = [1.0, 3.0, 5.0, 7.0]
+        y = simulate_LFP(
+            t, ripples, noise_amplitude=0.0, ripple_frequency=(150.0, 250.0), random_state=3
+        )
+        freqs = [_dominant_frequency(y[np.abs(t - r) < 0.05], self.FS) for r in ripples]
+        assert all(140.0 <= f <= 260.0 for f in freqs)
+        assert len(set(np.round(freqs, -1))) > 1  # not all the same
+        again = simulate_LFP(
+            t, ripples, noise_amplitude=0.0, ripple_frequency=(150.0, 250.0), random_state=3
+        )
+        np.testing.assert_array_equal(y, again)
+
+    def test_duration_range_draws_per_ripple(self):
+        from scipy.signal import hilbert
+
+        t = simulate_time(self.FS * 26, self.FS)
+        ripples = [2.0 + 2.0 * k for k in range(12)]
+        y = simulate_LFP(
+            t, ripples, noise_amplitude=0.0, ripple_duration=(0.03, 0.15), random_state=4
+        )
+        envelope = np.abs(hilbert(y))
+        durations = []
+        for r in ripples:
+            seg = envelope[np.abs(t - r) < 0.3]
+            fwhm = (seg > 0.5 * seg.max()).sum() / self.FS
+            durations.append(fwhm / 2.3548 * 6)  # FWHM = 2.3548 sigma, duration = 6 sigma
+        durations = np.array(durations)
+        assert np.all((durations >= 0.025) & (durations <= 0.16)), durations
+        assert durations.max() > 2 * durations.min()
+        again = simulate_LFP(
+            t, ripples, noise_amplitude=0.0, ripple_duration=(0.03, 0.15), random_state=4
+        )
+        np.testing.assert_array_equal(y, again)
+
+    def test_noise_draw_is_unchanged_by_the_new_parameters(self):
+        # with a scalar frequency and duration and no ripples, output equals the
+        # pre-existing noise for the same seed
+        t = simulate_time(4500, self.FS)
+        base = simulate_LFP(t, [], random_state=5)
+        same = simulate_LFP(t, [], random_state=5, ripple_frequency=200.0, ripple_duration=0.1)
+        np.testing.assert_array_equal(base, same)

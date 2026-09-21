@@ -32,7 +32,8 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
 
 - **Simulation Tools**
   - Generate synthetic LFPs with embedded ripples
-  - Multiple noise types (white, pink, brown)
+  - Ripple size set relative to the ripple-band background (`ripple_snr`), which is what the detectors see
+  - Per-ripple frequency and duration drawn from ranges; multiple noise types (white, pink, brown)
   - Useful for testing and validation
 
 ## Installation
@@ -159,6 +160,31 @@ All detectors return a pandas DataFrame with comprehensive event statistics:
 | `mean_speed` | Mean speed during event |
 
 ## Examples
+
+### Simulating realistic ripples
+
+`simulate_LFP`'s default brown noise leaves about 1 % of the signal's standard deviation
+in the 150-250 Hz band, so a ripple of any visible amplitude dominates the band. For
+detector testing, set the ripple size relative to the ripple-band background with
+`ripple_snr` and use pink noise, which gives a band background closer to recordings:
+
+```python
+from ripple_detection.simulate import simulate_LFP, simulate_time
+
+time = simulate_time(15000, 1500)
+lfp = simulate_LFP(
+    time, [2.0, 5.0, 8.0],
+    noise_type="pink",
+    ripple_snr=5,                  # ripple peak = 5 x ripple-band noise SD
+    ripple_frequency=(150, 250),   # drawn per ripple
+    ripple_duration=(0.04, 0.12),  # drawn per ripple, seconds
+    random_state=0,
+)
+```
+
+A ripple with `ripple_snr=5` peaks near 6 SD in the z-scored consensus the detectors
+threshold; `ripple_snr=3` near 2.7 SD.
+
 
 See the [examples](examples/) directory for Jupyter notebooks demonstrating:
 
