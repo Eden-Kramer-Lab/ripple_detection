@@ -19,6 +19,7 @@ from ripple_detection.core import (
     gaussian_smooth,
     get_envelope,
     get_multiunit_population_firing_rate,
+    merge_close_events,
     merge_overlapping_ranges,
     merge_overlapping_ranges_track_participation,
     nearest_sample_index,
@@ -1221,3 +1222,95 @@ class TestNearestSampleIndex:
     def test_empty_time_raises(self):
         with pytest.raises(ValueError, match="time is empty"):
             nearest_sample_index(np.empty(0), [1.0])
+
+
+class TestMergeCloseEvents:
+    """Test merging of events separated by a short gap."""
+
+    def test_merges_events_closer_than_the_gap(self):
+        """Two events separated by less than the gap become one."""
+        events = np.array([(0.0, 0.1), (0.13, 0.2)])
+
+        merged = merge_close_events(events, 0.05)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.2]])
+
+    def test_keeps_events_separated_by_more_than_the_gap(self):
+        """A gap at or above the threshold is not bridged."""
+        events = np.array([(0.0, 0.1), (0.15, 0.2)])
+
+        merged = merge_close_events(events, 0.05)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.1], [0.15, 0.2]])
+
+    def test_merges_a_chain_of_events(self):
+        """Three events each close to the next collapse into one."""
+        events = np.array([(0.0, 0.1), (0.12, 0.2), (0.22, 0.3)])
+
+        merged = merge_close_events(events, 0.05)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.3]])
+
+    def test_maximum_duration_stops_a_merge(self):
+        """A merge that would exceed the span cap does not happen."""
+        events = np.array([(0.0, 0.1), (0.12, 0.5)])
+
+        merged = merge_close_events(events, 0.05, maximum_duration=0.3)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.1], [0.12, 0.5]])
+
+    def test_maximum_duration_allows_a_merge_that_fits(self):
+        """The cap is inclusive of spans below it."""
+        events = np.array([(0.0, 0.1), (0.12, 0.2)])
+
+        merged = merge_close_events(events, 0.05, maximum_duration=0.3)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.2]])
+
+    def test_overlapping_events_are_merged(self):
+        """A negative gap counts as close."""
+        events = np.array([(0.0, 0.2), (0.1, 0.3)])
+
+        merged = merge_close_events(events, 0.05)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.3]])
+
+    def test_nested_event_does_not_shorten_the_outer_one(self):
+        """Merging keeps the later of the two end times."""
+        events = np.array([(0.0, 0.5), (0.1, 0.2)])
+
+        merged = merge_close_events(events, 0.05)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.5]])
+
+    def test_zero_gap_is_a_no_op(self):
+        """The default threshold leaves separated events alone."""
+        events = np.array([(0.0, 0.1), (0.2, 0.3)])
+
+        merged = merge_close_events(events, 0.0)
+
+        np.testing.assert_allclose(merged, events)
+
+    def test_empty_input(self):
+        """An empty event list stays empty and keeps its shape."""
+        merged = merge_close_events(np.empty((0, 2)), 0.05)
+
+        assert merged.shape == (0, 2)
+
+    def test_single_event(self):
+        """One event is returned unchanged."""
+        merged = merge_close_events(np.array([(0.0, 0.1)]), 0.05)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.1]])
+
+    def test_unsorted_input_raises(self):
+        """Events must arrive sorted by start time."""
+        events = np.array([(1.0, 1.1), (0.0, 0.1)])
+
+        with pytest.raises(ValueError, match="sorted by start time"):
+            merge_close_events(events, 0.05)
+
+    def test_negative_gap_raises(self):
+        """A negative gap threshold is meaningless."""
+        with pytest.raises(ValueError, match="close_event_threshold"):
+            merge_close_events(np.array([(0.0, 0.1)]), -1.0)

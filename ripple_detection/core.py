@@ -1222,6 +1222,96 @@ def exclude_close_events(
         return filtered_events if filtered_events.size > 0 else []
 
 
+def merge_close_events(
+    event_times: ArrayLike,
+    close_event_threshold: float = 0.0,
+    maximum_duration: float | None = None,
+) -> NDArray:
+    """Join events separated by less than a gap into one longer event.
+
+    The other convention for closely spaced events is
+    :func:`exclude_close_events`, which keeps the first of a cluster and drops
+    the rest. This one keeps every event's content: a merged event runs from
+    the first start to the last end. Fourteen of the 57 papers in the
+    project's detection-parameter survey merge, at a median gap of 50 ms;
+    the Frank lab ``extractevents`` routine merges as well.
+
+    Merging is repeated until nothing more can be joined, so a chain of events
+    each close to the next becomes one event. Events that overlap or nest have
+    a gap at or below zero and are therefore always merged.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2)
+        ``[start_time, end_time]`` per event, sorted by start time.
+    close_event_threshold : float, optional
+        Events separated by strictly less than this gap are merged. A gap equal
+        to the threshold does not merge, within floating-point tolerance.
+        Default is 0.0, which merges only events that touch or overlap.
+    maximum_duration : float, optional
+        Ceiling on the merged span. A merge that would produce an event longer
+        than this does not happen and both events are kept as they are.
+        Default is None (no ceiling).
+
+    Returns
+    -------
+    merged_event_times : ndarray, shape (n_merged_events, 2)
+        Merged events, sorted by start time. Shape ``(0, 2)`` when there is
+        no input.
+
+    Raises
+    ------
+    ValueError
+        If `close_event_threshold` is negative, or the events are not sorted
+        by start time.
+
+    Examples
+    --------
+    >>> events = np.array([(0.0, 0.1), (0.13, 0.2)])
+    >>> merge_close_events(events, 0.05)
+    array([[0. , 0.2]])
+
+    """
+    if close_event_threshold < 0:
+        raise ValueError(
+            f"close_event_threshold must be non-negative, got {close_event_threshold}. "
+            "It is a gap between events, in the units of event_times."
+        )
+    events = np.asarray(event_times, dtype=float)
+    if events.size == 0:
+        return np.empty((0, 2))
+    events = np.atleast_2d(events).copy()
+    if np.any(np.diff(events[:, 0]) < 0):
+        raise ValueError(
+            "event_times must be sorted by start time. Sort the events before merging: "
+            "event_times[np.argsort(event_times[:, 0])]."
+        )
+
+    while len(events) > 1:
+        gap = events[1:, 0] - events[:-1, 1]
+        merged_span = np.maximum(events[1:, 1], events[:-1, 1]) - events[:-1, 0]
+        if close_event_threshold > 0:
+            # a gap equal to the threshold does not merge; ``isclose`` keeps that
+            # boundary from turning on round-off, since 0.15 - 0.1 < 0.05 in binary
+            to_merge = (gap < close_event_threshold) & ~np.isclose(gap, close_event_threshold)
+        else:
+            to_merge = gap <= 0
+        if maximum_duration is not None:
+            to_merge &= (merged_span <= maximum_duration) | np.isclose(
+                merged_span, maximum_duration
+            )
+        if not np.any(to_merge):
+            break
+        # merge one neighbor per pass, taking the first of each run so a chain
+        # collapses left to right rather than skipping a link
+        padded = np.concatenate([[False], to_merge])
+        run_starts = np.flatnonzero(~padded[:-1] & padded[1:])
+        events[run_starts, 1] = np.maximum(events[run_starts, 1], events[run_starts + 1, 1])
+        events = np.delete(events, run_starts + 1, axis=0)
+
+    return events
+
+
 YU_HISTOGRAM_EDGES = np.round(np.arange(-10.0, 50.0 + 0.005, 0.01), 6)
 """Histogram grid of the Yu et al. 2017 noise-threshold estimator.
 
