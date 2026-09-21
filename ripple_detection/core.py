@@ -2,6 +2,7 @@
 potentials.
 """
 
+import warnings
 from collections.abc import Generator
 from os.path import abspath, dirname, join
 
@@ -210,7 +211,7 @@ def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None)
         raise ValueError(
             f"Data is too short for the pre-computed filter.\n"
             f"Non-NaN data length: {non_nan_length} samples\n"
-            f"Minimum required: {min_required_length} samples (~{min_required_length/sampling_frequency if sampling_frequency else 'N/A':.2f} seconds at {sampling_frequency} Hz)\n"
+            f"Minimum required: {min_required_length} samples (~{min_required_length / sampling_frequency if sampling_frequency else 'N/A':.2f} seconds at {sampling_frequency} Hz)\n"
             f"\n"
             f"Solutions:\n"
             f"  1. Use a longer recording segment\n"
@@ -1118,6 +1119,211 @@ def exclude_close_events(
         )
     else:
         return filtered_events if filtered_events.size > 0 else []
+
+
+YU_HISTOGRAM_EDGES = np.round(np.arange(-10.0, 50.0 + 0.005, 0.01), 6)
+"""Histogram grid of the Yu et al. 2017 noise-threshold estimator.
+
+Bin edges from -10 to 50 in steps of 0.01, in the units of the consensus trace
+(the median of per-tetrode z-scored envelopes). Transliterated from
+``histbins = -10:0.01:50`` in ``jy_variableripthreshold_corecalculation.m``.
+"""
+
+YU_MODE_SMOOTHING_WINDOW = 11
+"""Moving-average window (in bins) used to locate the histogram mode."""
+
+_OUT_OF_GRID_CEILING = 1e-3
+"""Largest tolerated fraction of samples outside ``YU_HISTOGRAM_EDGES``."""
+
+
+def _matlab_smooth(x: NDArray, window: int) -> NDArray:
+    """Moving average with MATLAB ``smooth(x, window)`` end handling.
+
+    Interior points average ``window`` neighbours; near either end the window
+    shrinks symmetrically (1, 3, 5, ... points) so it never runs off the array.
+    """
+    x = np.asarray(x, dtype=float)
+    n = len(x)
+    half = window // 2
+    index = np.arange(n)
+    half_width = np.minimum(half, np.minimum(index, n - 1 - index))
+    low = index - half_width
+    high = index + half_width + 1
+    cumulative = np.concatenate([[0.0], np.cumsum(x)])
+    return (cumulative[high] - cumulative[low]) / (high - low)
+
+
+def _histc(values: NDArray, edges: NDArray) -> NDArray:
+    """MATLAB ``histc``: left-closed bins, with a final bin for ``values == edges[-1]``."""
+    counts = np.zeros(len(edges), dtype=np.int64)
+    counts[:-1], _ = np.histogram(values, bins=edges)
+    n_last = int(np.sum(values == edges[-1]))
+    counts[-2] -= n_last  # np.histogram closes its last bin on the right
+    counts[-1] = n_last
+    return counts
+
+
+def estimate_noise_threshold(
+    values: ArrayLike,
+    percentile: float = 99.99,
+    histogram_edges: ArrayLike | None = None,
+    mode_smoothing_window: int = YU_MODE_SMOOTHING_WINDOW,
+    return_diagnostics: bool = False,
+) -> float | tuple[float, dict]:
+    """Estimate a detection threshold from the mirrored noise distribution.
+
+    Implements the threshold rule of Yu et al. 2017: histogram the consensus
+    envelope during immobility on a fixed grid, take the mode, treat the
+    distribution below the mode as noise-only, mirror it about the mode to
+    build a symmetric empirical noise distribution, and return the value one
+    bin past the point where its cumulative distribution reaches ``percentile``.
+
+    This is a transliteration of the original MATLAB implementation
+    (``jy_variableripthreshold_corecalculation.m``). The one deliberate
+    departure is the reflection itself: the original computes ``abs(b) + 2m``
+    for a left bin ``b`` and mode ``m``, which equals the intended ``2m - b``
+    only when ``b <= 0``. This function always reflects as ``2m - b`` and warns
+    when the mode is positive, the only case in which the two differ.
+
+    Parameters
+    ----------
+    values : array_like, shape (n_samples,)
+        Consensus envelope samples during immobility, in the units the grid
+        assumes (the median of per-tetrode z-scored envelopes). Non-finite
+        values and values outside the grid are dropped, as in the original.
+    percentile : float, optional
+        Percentile of the mirrored noise distribution to use as the threshold.
+        Default is 99.99, i.e. a CDF limit of ``1 - 1e-4``.
+    histogram_edges : array_like, optional
+        Histogram bin edges. Default is ``YU_HISTOGRAM_EDGES``
+        (``-10:0.01:50``). Bins are left-closed; the last edge forms its own
+        bin, matching MATLAB ``histc``.
+    mode_smoothing_window : int, optional
+        Moving-average window, in bins, applied to the counts before locating
+        the mode (MATLAB ``smooth(counts, 11)``). The mode is the first
+        maximum of the smoothed counts. Default is 11.
+    return_diagnostics : bool, optional
+        If True, also return a dict with the grid, raw and smoothed counts,
+        mode, mirrored positions and counts, and the fraction of samples
+        outside the grid. Default is False.
+
+    Returns
+    -------
+    threshold : float
+        Detection threshold in the units of ``values``.
+    diagnostics : dict
+        Only when ``return_diagnostics`` is True.
+
+    Raises
+    ------
+    ValueError
+        If more than 0.1 % of samples fall outside the grid, if the mode lies
+        on the first or last bin, if there are too few samples to resolve the
+        requested percentile, or if the CDF crossing lands on the last
+        mirrored bin so that "one bin past" is undefined.
+
+    Warns
+    -----
+    UserWarning
+        If the mode is positive (see Notes).
+
+    Notes
+    -----
+    Because the mirrored distribution is bounded above by ``2m - min(values)``,
+    the returned threshold cannot exceed roughly twice the mode's distance
+    from the smallest sample, whatever the true noise tail does. This is a
+    property of the published method, not of this implementation.
+
+    References
+    ----------
+    .. [1] Yu, J. Y., et al. (2017). Distinct hippocampal-cortical memory
+       representations for experiences associated with movement versus
+       immobility. eLife, 6, e27621.
+
+    """
+    values = np.asarray(values, dtype=float).ravel()
+    edges = (
+        YU_HISTOGRAM_EDGES
+        if histogram_edges is None
+        else np.asarray(histogram_edges, dtype=float).ravel()
+    )
+    if edges.ndim != 1 or len(edges) < 3 or np.any(np.diff(edges) <= 0):
+        raise ValueError("histogram_edges must be a strictly increasing 1-D array.")
+    if not 0.0 < percentile < 100.0:
+        raise ValueError(f"percentile must be in (0, 100), got {percentile}.")
+    if len(values) == 0:
+        raise ValueError("values is empty; cannot estimate a noise threshold.")
+
+    in_grid = np.isfinite(values) & (values >= edges[0]) & (values <= edges[-1])
+    out_of_grid_fraction = 1.0 - in_grid.sum() / len(values)
+    if out_of_grid_fraction > _OUT_OF_GRID_CEILING:
+        raise ValueError(
+            f"{out_of_grid_fraction:.3%} of samples are non-finite or outside the "
+            f"histogram grid [{edges[0]}, {edges[-1]}]; the trace is not in the "
+            "units the grid assumes."
+        )
+
+    counts = _histc(values[in_grid], edges)
+    smoothed = _matlab_smooth(counts, mode_smoothing_window)
+    mode_index = int(np.argmax(smoothed))  # first maximum, as MATLAB find(..., 1)
+    if mode_index in (0, len(edges) - 1):
+        raise ValueError(
+            "Histogram mode lies on the first or last bin of the grid; the "
+            "mirrored distribution is degenerate."
+        )
+    mode = float(edges[mode_index])
+    if mode > 0:
+        warnings.warn(
+            f"Histogram mode is positive ({mode:.3f}); the original MATLAB "
+            "reflection (abs(b) + 2m) would differ from the intended 2m - b "
+            "used here.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    left_positions = edges[: mode_index + 1]
+    left_counts = counts[: mode_index + 1]
+    reflected_positions = np.round(2.0 * mode - edges[:mode_index], 6)
+    reflected_counts = counts[:mode_index]
+    positions = np.concatenate([left_positions, reflected_positions])
+    mirrored_counts = np.concatenate([left_counts, reflected_counts])
+    order = np.argsort(positions, kind="stable")
+    positions = positions[order]
+    mirrored_counts = mirrored_counts[order]
+
+    total = mirrored_counts.sum()
+    limit = 1.0 - percentile / 100.0
+    if total * limit < 1.0:
+        raise ValueError(
+            f"Too few samples ({int(in_grid.sum())} in grid, {int(total)} in the "
+            f"mirrored histogram) to resolve the {percentile} percentile; need at "
+            f"least {int(np.ceil(1.0 / limit))} mirrored counts."
+        )
+    cdf = np.cumsum(mirrored_counts) / total
+    crossing = int(np.argmax(cdf >= percentile / 100.0))
+    if crossing + 1 >= len(positions):
+        raise ValueError(
+            "The CDF crossing lands on the last mirrored bin, so the threshold "
+            "(one bin past the crossing) is undefined."
+        )
+    threshold = float(positions[crossing + 1])
+
+    if not return_diagnostics:
+        return threshold
+    diagnostics = {
+        "threshold": threshold,
+        "mode": mode,
+        "mode_index": mode_index,
+        "histogram_edges": edges,
+        "counts": counts,
+        "smoothed_counts": smoothed,
+        "mirrored_positions": positions,
+        "mirrored_counts": mirrored_counts,
+        "out_of_grid_fraction": float(out_of_grid_fraction),
+        "n_values": len(values),
+        "n_in_grid": int(in_grid.sum()),
+    }
+    return threshold, diagnostics
 
 
 def get_multiunit_population_firing_rate(

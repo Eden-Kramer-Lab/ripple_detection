@@ -10,6 +10,7 @@ from ripple_detection.core import (
     _find_containing_interval,
     _get_ripplefilter_kernel,
     _get_series_start_end_times,
+    estimate_noise_threshold,
     exclude_close_events,
     exclude_movement,
     filter_ripple_band,
@@ -796,3 +797,176 @@ class TestNormalizeSignalManually:
         deviations = np.array([0.0, 1.0, np.nan])  # all three degenerate
         with pytest.raises(ValueError, match="All channels"):
             normalize_signal_manually(data, baselines, deviations)
+
+
+# ---------------------------------------------------------------------------
+# estimate_noise_threshold (Yu et al. 2017 noise-percentile threshold)
+# ---------------------------------------------------------------------------
+
+
+def _matlab_reference_threshold(
+    values,
+    edges=None,
+    window=11,
+    limitval=1e-4,
+    original_reflection=False,
+):
+    """Loop-for-loop transliteration of jy_variableripthreshold_corecalculation.m.
+
+    Deliberately naive (explicit loops, MATLAB semantics spelled out) so it is
+    an independent oracle for the vectorized implementation, not a copy of it.
+    ``original_reflection=True`` reproduces the MATLAB file's ``abs(b) + 2m``
+    reflection instead of the intended ``2m - b``.
+    """
+    if edges is None:
+        edges = [round(-10 + 0.01 * k, 2) for k in range(6001)]
+    n_bins = len(edges)
+    # histc: bin k counts edges[k] <= x < edges[k+1]; the last bin counts x == edges[-1]
+    counts = [0] * n_bins
+    for x in values:
+        if not np.isfinite(x) or x < edges[0] or x > edges[-1]:
+            continue
+        if x == edges[-1]:
+            counts[-1] += 1
+            continue
+        k = int(np.floor((x - edges[0]) / 0.01 + 1e-9))
+        # guard floating error at bin boundaries
+        while k + 1 < n_bins and x >= edges[k + 1]:
+            k += 1
+        while k > 0 and x < edges[k]:
+            k -= 1
+        counts[k] += 1
+    # MATLAB smooth(x, 11): moving average, shrinking symmetric window at the ends
+    half = window // 2
+    smoothed = []
+    for i in range(n_bins):
+        w = min(half, i, n_bins - 1 - i)
+        seg = counts[i - w : i + w + 1]
+        smoothed.append(sum(seg) / len(seg))
+    peak = max(smoothed)
+    j = next(i for i, v in enumerate(smoothed) if v == peak)
+    m = edges[j]
+    # left half (edges <= m) keeps raw counts; edges < m are reflected
+    pdf = {}
+    for k in range(j + 1):
+        pdf[round(edges[k], 6)] = pdf.get(round(edges[k], 6), 0) + counts[k]
+    for k in range(j):
+        b = edges[k]
+        pos = abs(b) + 2 * m if original_reflection else 2 * m - b
+        pos = round(pos, 6)
+        pdf[pos] = pdf.get(pos, 0) + counts[k]
+    positions = sorted(pdf)
+    total = sum(pdf[q] for q in positions)
+    cum = 0.0
+    k_cross = None
+    for i, q in enumerate(positions):
+        cum += pdf[q]
+        if cum / total >= 1 - limitval:
+            k_cross = i
+            break
+    return positions[k_cross + 1], m
+
+
+class TestEstimateNoiseThreshold:
+    """Transliteration of the Yu et al. 2017 mirrored-histogram threshold."""
+
+    def test_recovers_symmetric_percentile_within_two_bins(self):
+        # Gaussian centred below zero so every left-of-mode bin is negative.
+        rng = np.random.default_rng(0)
+        mean, sd = -1.0, 0.5
+        values = rng.normal(mean, sd, 4_000_000)
+        expected = mean + sd * 3.719016  # 99.99th percentile of N(0, 1)
+        threshold = estimate_noise_threshold(values)
+        assert abs(threshold - expected) <= 0.03
+
+    def test_matches_loop_transliteration_on_skewed_sample(self):
+        rng = np.random.default_rng(1)
+        # right-skewed, shifted so the mode is negative (as a z-scored envelope is)
+        values = rng.gamma(2.0, 0.4, 200_000) - 1.2
+        expected, _ = _matlab_reference_threshold(values)
+        assert estimate_noise_threshold(values) == pytest.approx(expected, abs=1e-9)
+
+    def test_diagnostics_expose_grid_mode_and_counts(self):
+        rng = np.random.default_rng(2)
+        values = rng.normal(-1.0, 0.5, 100_000)
+        threshold, diag = estimate_noise_threshold(values, return_diagnostics=True)
+        _, expected_mode = _matlab_reference_threshold(values)
+        assert diag["mode"] == pytest.approx(expected_mode, abs=1e-9)
+        assert diag["histogram_edges"][0] == pytest.approx(-10.0)
+        assert diag["histogram_edges"][-1] == pytest.approx(50.0)
+        assert len(diag["histogram_edges"]) == 6001
+        assert diag["counts"].sum() == 100_000
+        assert diag["out_of_grid_fraction"] == 0.0
+        assert diag["threshold"] == threshold
+
+    def test_reflection_equals_original_formula_when_mode_nonpositive(self):
+        rng = np.random.default_rng(3)
+        values = rng.gamma(2.0, 0.4, 200_000) - 1.2
+        ours = estimate_noise_threshold(values)
+        original, mode = _matlab_reference_threshold(values, original_reflection=True)
+        assert mode <= 0
+        assert ours == pytest.approx(original, abs=1e-9)
+
+    def test_positive_mode_warns_and_uses_intended_reflection(self):
+        rng = np.random.default_rng(4)
+        mean, sd = 0.5, 0.2
+        values = rng.normal(mean, sd, 2_000_000)
+        with pytest.warns(UserWarning, match="mode"):
+            threshold = estimate_noise_threshold(values)
+        expected = mean + sd * 3.719016
+        assert abs(threshold - expected) <= 0.03
+        original, mode = _matlab_reference_threshold(values, original_reflection=True)
+        assert mode > 0
+        # the original formula throws the (0, m) bins past 2m and inflates the tail
+        assert original > threshold + 0.1
+
+    def test_percentile_parameter_lowers_threshold(self):
+        rng = np.random.default_rng(5)
+        values = rng.normal(-1.0, 0.5, 500_000)
+        assert estimate_noise_threshold(values, percentile=99.0) < estimate_noise_threshold(
+            values, percentile=99.99
+        )
+
+    def test_custom_grid_is_honoured(self):
+        rng = np.random.default_rng(6)
+        values = rng.normal(-1.0, 0.5, 500_000)
+        edges = np.round(np.arange(-5, 5 + 0.005, 0.01), 6)
+        threshold, diag = estimate_noise_threshold(
+            values, histogram_edges=edges, return_diagnostics=True
+        )
+        assert len(diag["histogram_edges"]) == len(edges)
+        assert abs(threshold - (-1.0 + 0.5 * 3.719016)) <= 0.03
+
+    def test_out_of_grid_fraction_above_ceiling_raises(self):
+        rng = np.random.default_rng(7)
+        values = rng.normal(-1.0, 0.5, 100_000)
+        values[:1_000] = 100.0  # 1 % beyond the grid
+        with pytest.raises(ValueError, match="outside"):
+            estimate_noise_threshold(values)
+
+    def test_non_finite_values_count_as_out_of_grid(self):
+        rng = np.random.default_rng(8)
+        values = rng.normal(-1.0, 0.5, 100_000)
+        values[:10] = np.nan
+        _, diag = estimate_noise_threshold(values, return_diagnostics=True)
+        assert diag["out_of_grid_fraction"] == pytest.approx(10 / 100_000)
+
+    def test_mode_at_grid_edge_raises(self):
+        rng = np.random.default_rng(9)
+        values = rng.uniform(-10.0, -9.995, 100_000)  # every sample in bin 0
+        with pytest.raises(ValueError, match="first or last bin"):
+            estimate_noise_threshold(values)
+
+    def test_crossing_on_last_mirrored_bin_raises(self):
+        # 100 samples in bin 0 and 10 000 in bin 1: the mode is bin 1 and the
+        # mirrored histogram is [100, 10000, 100], whose CDF first reaches
+        # 0.9999 on its last bin, so "one bin past" does not exist
+        values = np.concatenate([np.full(100, -9.995), np.full(10_000, -9.985)])
+        with pytest.raises(ValueError, match="last mirrored bin"):
+            estimate_noise_threshold(values)
+
+    def test_too_few_samples_to_resolve_percentile_raises(self):
+        rng = np.random.default_rng(10)
+        values = rng.normal(-1.0, 0.5, 500)
+        with pytest.raises(ValueError, match="samples"):
+            estimate_noise_threshold(values)
