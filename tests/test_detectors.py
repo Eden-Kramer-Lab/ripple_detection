@@ -19,7 +19,6 @@ from ripple_detection.core import (
 )
 from ripple_detection.detectors import (
     Roumis_ripple_detector,
-    _event_participation,
     _find_max_thresh,
     get_Kay_ripple_consensus_trace,
     multiunit_HSE_detector,
@@ -1174,38 +1173,59 @@ class TestDetectorErrorHandling:
             pass
 
 
-class TestEventParticipation:
-    def test_peak_is_max_simultaneous_not_union(self):
-        """P2: n_participants is the peak simultaneous count; participants is the
-        (possibly larger) union of channels active anywhere in the event."""
-        time = np.arange(6, dtype=float)
-        qualified = np.zeros((6, 5), dtype=bool)
-        qualified[0:2, [0, 1, 2]] = True  # early peak: channels {0, 1, 2}
-        qualified[4:6, [2, 3, 4]] = True  # later peak: channels {2, 3, 4}
-        peak, participants = _event_participation(qualified, time, 0.0, 5.0)
-        assert peak == 3
-        assert participants == {0, 1, 2, 3, 4}
-
-    def test_non_simultaneous_channels_not_counted(self):
-        """P1: channels above threshold at disjoint times give a peak count of 1."""
-        time = np.arange(6, dtype=float)
-        qualified = np.zeros((6, 2), dtype=bool)
-        qualified[0:2, 0] = True  # channel 0 early
-        qualified[4:6, 1] = True  # channel 1 late
-        peak, participants = _event_participation(qualified, time, 0.0, 5.0)
-        assert peak == 1
-        assert participants == {0, 1}
-
-    def test_empty_window_returns_zero(self):
-        time = np.arange(6, dtype=float)
-        qualified = np.zeros((6, 2), dtype=bool)
-        peak, participants = _event_participation(qualified, time, 10.0, 20.0)
-        assert peak == 0
-        assert participants == set()
-
-
 class TestShvartsmanParticipationSemantics:
-    """Detector-level participation behaviour beyond the _event_participation unit."""
+    """Preserve participation across merged events and subsequent exclusions."""
+
+    @pytest.mark.parametrize("participation_threshold", [3, 1.0])
+    def test_chain_of_overlapping_ripples_counts_all_electrodes(
+        self, time_3s, stationary_speed, sampling_frequency, participation_threshold
+    ):
+        """A-B and B-C overlap counts all three electrodes in the merged event."""
+        lfps = np.column_stack(
+            [
+                simulate_LFP(
+                    time_3s,
+                    [center],
+                    noise_amplitude=1.2,
+                    ripple_amplitude=1.5,
+                    random_state=seed,
+                )
+                for center, seed in [(1.1, 5), (1.15, 6), (1.2, 7)]
+            ]
+        )
+        filtered = filter_ripple_band(lfps)
+        individual = [
+            Karlsson_ripple_detector(
+                time_3s, filtered[:, [channel]], stationary_speed, sampling_frequency
+            )
+            for channel in range(3)
+        ]
+        assert all(len(events) == 1 for events in individual)
+        first, middle, last = [events.iloc[0] for events in individual]
+        # There is never a three-electrode overlap, but the intervals form one event.
+        assert (
+            middle["start_time"]
+            <= first["end_time"]
+            < last["start_time"]
+            <= middle["end_time"]
+        )
+
+        ripples = Shvartsman_ripple_detector(
+            time_3s,
+            filtered,
+            stationary_speed,
+            sampling_frequency,
+            participation_threshold=participation_threshold,
+        )
+
+        assert len(ripples) == 1
+        event = ripples.iloc[0]
+        assert event["start_time"] == first["start_time"]
+        assert event["end_time"] == last["end_time"]
+        assert event["participants"] == {0, 1, 2}
+        assert all(type(channel) is int for channel in event["participants"])
+        assert event["n_participants"] == len(event["participants"]) == 3
+        assert event["frac_participants"] == 1.0
 
     def test_participant_metadata_stays_aligned_after_exclusion(
         self, time_3s, stationary_speed, sampling_frequency
@@ -1278,7 +1298,7 @@ class TestShvartsmanParticipationSemantics:
             participation_threshold=0.5,
         ).empty
 
-        # Co-occurring ripples reach peak concurrency 2, so 1.0 (all 2) detects them.
+        # Co-occurring ripples involve both channels, so 1.0 (all 2) detects them.
         filtered_co = filter_ripple_band(dual_lfp_with_cooccur_ripples)
         assert not Shvartsman_ripple_detector(
             time_3s,

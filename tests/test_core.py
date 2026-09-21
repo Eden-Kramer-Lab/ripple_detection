@@ -17,6 +17,7 @@ from ripple_detection.core import (
     get_envelope,
     get_multiunit_population_firing_rate,
     merge_overlapping_ranges,
+    merge_overlapping_ranges_track_participation,
     normalize_signal,
     normalize_signal_manually,
     ripple_bandpass_filter,
@@ -127,6 +128,32 @@ def test__extend_segment(interval_candidates, target_intervals, expected_interva
 )
 def test_merge_overlapping_ranges(ranges, expected_ranges):
     assert list(merge_overlapping_ranges(ranges)) == expected_ranges
+
+
+@pytest.mark.parametrize(
+    "channel_ranges, expected",
+    [
+        # A-B and B-C overlap preserves all three participants.
+        (
+            [[(0.1, 0.15)], [(0.14, 0.19)], [(0.18, 0.23)]],
+            [[0.1, 0.23, {0, 1, 2}]],
+        ),
+        # Two ripples on one electrode still count that electrode only once.
+        (
+            [[(0.1, 0.15), (0.18, 0.23)], [(0.14, 0.19)]],
+            [[0.1, 0.23, {0, 1}]],
+        ),
+        # Separate events retain their own participants and chronological order.
+        ([[(0.3, 0.4)], [(0.1, 0.2)]], [[0.1, 0.2, {1}], [0.3, 0.4, {0}]]),
+        ([[(0.1, 0.2)], [(0.2, 0.3)]], [[0.1, 0.3, {0, 1}]]),
+        ([], []),
+        ([[], []], []),
+    ],
+)
+def test_merge_overlapping_ranges_track_participation(channel_ranges, expected):
+    merged = merge_overlapping_ranges_track_participation(channel_ranges)
+    assert merged.shape == (len(expected), 3)
+    assert merged.tolist() == expected
 
 
 def test_threshold_by_zscore():

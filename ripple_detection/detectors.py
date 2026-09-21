@@ -14,6 +14,7 @@ from ripple_detection.core import (
     get_envelope,
     get_multiunit_population_firing_rate,
     merge_overlapping_ranges,
+    merge_overlapping_ranges_track_participation,
     normalize_signal,
     normalize_signal_manually,
     threshold_by_zscore,
@@ -307,40 +308,6 @@ def get_Kay_ripple_consensus_trace(
     return np.sqrt(ripple_consensus_trace)
 
 
-def _event_participation(
-    qualified: NDArray, time: NDArray, start: float, end: float
-) -> tuple[int, set[int]]:
-    """Peak simultaneous participation and the participant union for one event.
-
-    Parameters
-    ----------
-    qualified : ndarray, shape (n_time, n_channels), dtype bool
-        Per-channel mask marking each channel's detected ripple intervals.
-    time : ndarray, shape (n_time,)
-        Monotonically increasing time values for each sample.
-    start, end : float
-        Event boundaries (inclusive).
-
-    Returns
-    -------
-    peak_count : int
-        Maximum number of channels whose ripples overlap simultaneously in the event.
-    participants : set
-        Channels with a ripple anywhere in the event. Its size can exceed
-        ``peak_count`` when different channels ripple at different times.
-    """
-    # Slice the [start, end] window by index (time is sorted) instead of building
-    # a full-length boolean mask per event, so cost is O(event) not O(recording).
-    left = np.searchsorted(time, start, side="left")
-    right = np.searchsorted(time, end, side="right")
-    event_qualified = qualified[left:right]
-    if event_qualified.size == 0:
-        return 0, set()
-    peak_count = int(event_qualified.sum(axis=1).max())
-    participants = {int(channel) for channel in np.flatnonzero(event_qualified.any(axis=0))}
-    return peak_count, participants
-
-
 def Shvartsman_ripple_detector(
     time: ArrayLike,
     filtered_lfps: ArrayLike,
@@ -437,7 +404,9 @@ def Shvartsman_ripple_detector(
         Participation cutoff for a merged event. If in [0, 1], interpreted as
         the *fraction* of channels that must participate (note 1.0 means all
         channels, not one). If > 1, interpreted as an absolute *number* of
-        channels. Default is 2.
+        channels. Default is 2. Each distinct channel with a detected ripple
+        anywhere in the merged event counts once, including channels connected
+        through a chain of overlapping ripples.
 
         The denominator for the fraction (and for `frac_participants`) is the
         total number of channels in `filtered_lfps`, including any channel that
@@ -453,9 +422,7 @@ def Shvartsman_ripple_detector(
         DataFrame with detected ripples and comprehensive statistics (see
         Kay_ripple_detector for the shared columns). This detector additionally
         returns ``participants`` (set of every channel whose ripple appears
-        anywhere in the event), ``n_participants`` (the *peak* number of channels
-        whose ripples overlap simultaneously, which may be smaller than
-        ``len(participants)`` when channels ripple at different times), and
+        anywhere in the event), ``n_participants`` (``len(participants)``), and
         ``frac_participants`` (``n_participants`` / total channels). Participation
         is measured on each channel's full zero-crossing-extended ripple (the same
         extent as the event boundaries). The per-event z-score statistics are
@@ -520,36 +487,9 @@ def Shvartsman_ripple_detector(
         for filtered_lfp in filtered_lfps.T
     ]
 
-    # Event boundaries: merge every channel's mean-crossing-extended interval.
-    merged_events = np.array(
-        list(merge_overlapping_ranges(chain.from_iterable(candidate_ripple_times)))
-    ).reshape(-1, 2)
-
-    # Participation is measured on each channel's detected ripple intervals -- the
-    # full zero-crossing-extended events in candidate_ripple_times, the same extent
-    # used for the event boundaries. A channel therefore participates wherever its
-    # ripple overlaps, not only at its supra-threshold peak. Each interval already
-    # requires a supra-threshold core of at least minimum_duration (that is how
-    # threshold_by_zscore produced it), so brief noise crossings do not count.
-    time_arr = np.asarray(time)
-    qualified = np.zeros((len(time_arr), filtered_lfps.shape[1]), dtype=bool)
-    for channel, channel_ripples in enumerate(candidate_ripple_times):
-        for start, end in channel_ripples:
-            # Slice by index (time is sorted) rather than masking the whole
-            # recording per interval.
-            left = np.searchsorted(time_arr, start, side="left")
-            right = np.searchsorted(time_arr, end, side="right")
-            qualified[left:right, channel] = True
-
-    # For each event: peak number of channels whose ripples overlap simultaneously,
-    # and the set of channels whose ripple appears anywhere in the event (count and
-    # identity differ -- the count is the peak concurrency, the set is the union).
-    peak_counts = np.zeros(len(merged_events), dtype=int)
-    participant_sets = np.empty(len(merged_events), dtype=object)
-    for i, (start, end) in enumerate(merged_events):
-        peak_counts[i], participant_sets[i] = _event_participation(
-            qualified, time_arr, start, end
-        )
+    # Merge each channel's mean-crossing-extended intervals and retain the union
+    # of contributing channels, preserving the original participation rule.
+    merged_candidates = merge_overlapping_ranges_track_participation(candidate_ripple_times)
 
     # account for different ways to specify participation threshold (fraction or number of electrodes)
     n_elecs = filtered_lfps.shape[1]
@@ -562,10 +502,10 @@ def Shvartsman_ripple_detector(
         # interpret as an absolute number of channels
         n_elecs_thresh = participation_threshold
 
-    participation_mask = peak_counts >= n_elecs_thresh
-    candidate_ripple_times = merged_events[participation_mask]
-    peak_counts = peak_counts[participation_mask]
-    participant_sets = participant_sets[participation_mask]
+    participation_mask = (
+        np.asarray([len(interval[2]) for interval in merged_candidates]) >= n_elecs_thresh
+    )
+    candidate_ripple_times = merged_candidates[participation_mask, :2]
 
     candidate_ripple_times, included_ripple_inds = exclude_movement_by_majority(
         candidate_ripple_times, speed, time, speed_threshold=speed_threshold
@@ -574,10 +514,10 @@ def Shvartsman_ripple_detector(
         candidate_ripple_times, close_ripple_threshold, included_ripple_inds
     )
 
-    # find participant information: n_participants is the peak simultaneous count,
-    # participants is the (possibly larger) set of channels active during the event
+    # Keep participant metadata aligned through movement and proximity exclusion.
+    participant_sets = merged_candidates[participation_mask, 2]
     participants = participant_sets[included_ripple_inds]
-    n_participants = peak_counts[included_ripple_inds]
+    n_participants = np.array([len(p) for p in participants])
     frac_participants = n_participants / n_elecs
 
     # get final event stats
@@ -1215,11 +1155,9 @@ def _get_event_stats(
         averaged over these channels. Used by Shvartsman_ripple_detector.
         Optional, default is None.
     n_participants: array_like, shape (n_events,)
-        Participation count per event, as supplied by the caller. For
-        Shvartsman_ripple_detector this is the *peak* number of channels active
-        simultaneously, which may be smaller than ``len(participants[i])`` when
-        channels peak at different times; it is stored as-is, not recomputed
-        from ``participants``. Optional, default is None.
+        Number of distinct participating channels per event. For
+        Shvartsman_ripple_detector this equals ``len(participants[i])``.
+        Optional, default is None.
     frac_participants: array_like, shape (n_events,)
         ``n_participants`` divided by the total channel count, per event, as
         supplied by the caller. Used by Shvartsman_ripple_detector. Optional,

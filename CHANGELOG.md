@@ -10,11 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `random_state` parameter to `simulate_LFP()` for reproducible synthetic LFP generation (used to make the test suite deterministic).
-
-### Changed
-
-- `Shvartsman_ripple_detector` participation now decouples *how many* channels overlap from *which* channels are involved. `n_participants` (and the `participation_threshold` filter and `frac_participants`) is the *peak* number of channels whose ripples overlap at the same instant within an event, rather than the size of the union of all channels active anywhere in a transitively-merged event, so channels rippling at disjoint times are no longer counted together. `participants` remains the union of every channel whose ripple appears anywhere in the event, and the per-event z-score statistics are averaged over that union. Participation is measured on each channel's full zero-crossing-extended ripple — the same extent used for the event boundaries — so a channel participates wherever its ripple overlaps, not only at its supra-threshold peak; each ripple still requires a supra-threshold core of at least `minimum_duration`. Event boundaries are unchanged.
-- `Shvartsman_ripple_detector` participation is computed by slicing each interval by index via `np.searchsorted` instead of building a full-length boolean mask per channel-interval and per event. Output is unchanged, but the participation step no longer scales with recording length × event count, making hour-long multi-channel recordings practical (roughly 3x faster end-to-end on a 20-minute 8-channel example).
+- Regression tests for Shvartsman participation preserve the original count of distinct electrodes across each merged event, including chains of overlapping ripples and repeated ripples on the same electrode.
 
 ### Fixed
 

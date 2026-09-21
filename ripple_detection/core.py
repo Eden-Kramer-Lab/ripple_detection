@@ -995,6 +995,53 @@ def merge_overlapping_ranges(
     yield current_start, current_stop
 
 
+def merge_overlapping_ranges_track_participation(
+    candidate_ripple_times: list[list[tuple[float, float]]],
+) -> NDArray:
+    """Merge overlapping/adjacent per-channel ranges, tracking participation.
+
+    Like `merge_overlapping_ranges`, but also records which channels contribute
+    to each merged interval. Each channel is counted once across the entire
+    merged interval, including chains of overlapping ripples.
+
+    Parameters
+    ----------
+    candidate_ripple_times : list of length n_channels
+        Per-channel lists of (start_time, end_time) tuples.
+
+    Returns
+    -------
+    merged : ndarray, shape (n_merged, 3), dtype=object
+        Each row is ``[start_time, end_time, participating_channels]``, where
+        ``participating_channels`` is a set of channel indices.
+    """
+    all_intervals = []
+    for e_idx, intervals in enumerate(candidate_ripple_times):
+        for start, end in intervals:
+            all_intervals.append((start, end, e_idx))
+
+    all_intervals.sort(key=lambda x: x[0])
+
+    merged: list[list] = []
+
+    for start, end, e_idx in all_intervals:
+        if not merged:
+            merged.append([start, end, {e_idx}])
+            continue
+
+        last_end = merged[-1][1]
+        if start <= last_end:
+            merged[-1][1] = max(last_end, end)
+            merged[-1][2].add(e_idx)
+        else:
+            merged.append([start, end, {e_idx}])
+
+    if not merged:
+        return np.empty((0, 3), dtype=object)
+
+    return np.asarray(merged, dtype=object)
+
+
 def exclude_close_events(
     candidate_event_times: ArrayLike,
     close_event_threshold: float = 1.0,
