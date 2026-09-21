@@ -1,9 +1,19 @@
-# ruff: noqa: F401
+"""Sharp-wave ripple and multiunit-burst detection from LFP and spikes.
+
+Detectors take ``time``, the signal, ``speed``, and ``sampling_frequency`` and
+return one DataFrame row per event; see the README's "Choosing a detector"
+table for how they differ.
+"""
+
 from ripple_detection.core import (
+    estimate_noise_threshold,
     filter_ripple_band,
+    gaussian_smooth,
+    get_envelope,
     get_multiunit_population_firing_rate,
     minimum_sample_count,
     normalize_signal,
+    normalize_signal_manually,
     ripple_bandpass_filter,
 )
 from ripple_detection.detectors import (
@@ -15,10 +25,39 @@ from ripple_detection.detectors import (
     Shvartsman_ripple_detector,
     Yu_ripple_detector,
     Zugaro_ripple_detector,
+    get_Kay_ripple_consensus_trace,
+    get_Yu_ripple_consensus_trace,
     multiunit_HSE_detector,
 )
+from ripple_detection.simulate import simulate_LFP, simulate_time
 
 try:
     from ripple_detection._version import __version__
 except ImportError:
     __version__ = "unknown"
+
+__all__ = [
+    "Carey_candidate_detector",
+    "Karlsson_ripple_detector",
+    "Kay_ripple_detector",
+    "Long_sharp_wave_ripple_detector",
+    "Roumis_ripple_detector",
+    "Shvartsman_ripple_detector",
+    "Yu_ripple_detector",
+    "Zugaro_ripple_detector",
+    "__version__",
+    "estimate_noise_threshold",
+    "filter_ripple_band",
+    "gaussian_smooth",
+    "get_Kay_ripple_consensus_trace",
+    "get_Yu_ripple_consensus_trace",
+    "get_envelope",
+    "get_multiunit_population_firing_rate",
+    "minimum_sample_count",
+    "multiunit_HSE_detector",
+    "normalize_signal",
+    "normalize_signal_manually",
+    "ripple_bandpass_filter",
+    "simulate_LFP",
+    "simulate_time",
+]
