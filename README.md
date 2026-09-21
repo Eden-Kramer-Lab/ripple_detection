@@ -507,6 +507,45 @@ van der Meer lab code are MATLAB; this package reimplements the published
 algorithms rather than translating those files, which carry GPL-3 headers
 (FMAToolbox, buzcode) or no license at all (neurocode).
 
+## Other tools
+
+Every detector here thresholds a hand-designed feature. Two other approaches are
+worth knowing about, neither reimplemented here.
+
+**Machine-learning detectors**, from Liset M. de la Prida's lab at the Cajal
+Institute ([hippo-circuitlab.es](https://hippo-circuitlab.es/)):
+
+- [rippl-AI](https://github.com/PridaLab/rippl-AI) is a toolbox of five trained
+  architectures (1D-CNN, 2D-CNN, LSTM, SVM, XGBoost) with pre-trained models, so
+  no threshold is chosen by hand. Navas-Olive, Rubio, Abbaspoor, Hoffman & de la
+  Prida (2024), *Communications Biology* 7:211,
+  [10.1038/s42003-024-05871-w](https://doi.org/10.1038/s42003-024-05871-w).
+- [cnn-ripple](https://github.com/PridaLab/cnn-ripple) is the 1D convolutional
+  network those build on, with a
+  [MATLAB port](https://github.com/PridaLab/cnn-matlab) and an
+  [Open Ephys plugin](https://github.com/PridaLab/CNNRippleDetectorOEPlugin) for
+  detecting online. Navas-Olive, Amaducci, Jurado-Parras, Sebastián & de la
+  Prida (2022), *eLife* 11:e77772,
+  [10.7554/eLife.77772](https://doi.org/10.7554/eLife.77772).
+
+These want a linear probe rather than tetrodes: most rippl-AI models take exactly
+eight channels, "ideally centered in the SP [stratum pyramidale], with a positive
+deflection on the first channels ... and a negative deflection on the last". If
+your recordings span the layers that way, they detect events no amplitude
+threshold will separate, and they need no threshold chosen per recording. If you
+record with tetrodes, they do not apply.
+
+**Replay scoring**, which is the step after detection and outside this package's
+scope: [RnR_methods](https://github.com/DavidTingley/RnR_methods) implements
+Bayesian replay scores (Radon and weighted correlation), rank-order correlation,
+and reactivation strength, together with scripts comparing those methods against
+each other, across bin sizes, under added noise, and for rank-order false
+positives. It accompanies Tingley & Peyrache (2020), *Phil Trans R Soc B*
+375:20190231, [10.1098/rstb.2019.0231](https://doi.org/10.1098/rstb.2019.0231).
+
+Both de la Prida's `cnn-ripple` and `RnR_methods` are GPL-3, and `rippl-AI` ships
+no license file, so none of them is translated into this MIT package.
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
