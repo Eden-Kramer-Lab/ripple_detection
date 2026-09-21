@@ -172,6 +172,11 @@ def segment_boolean_series(
         last sample of each segment that meets the minimum sample count.
 
     """
+    if series.isna().any():
+        raise ValueError(
+            "series contains missing values, which cast to True. Fill or drop "
+            "them before segmenting."
+        )
     values = series.to_numpy(dtype=bool)
     index = np.asarray(series.index)
     n_min = minimum_sample_count(index, minimum_duration)
@@ -494,8 +499,19 @@ def _find_containing_interval(
     """
     candidate_start_times = np.asarray(interval_candidates)[:, 0]
     zero = np.array(0).astype(candidate_start_times.dtype)
-    closest_start_ind = np.max((candidate_start_times - target_interval[0] <= zero).nonzero())
-    return interval_candidates[closest_start_ind]
+    starts_at_or_before = (candidate_start_times - target_interval[0] <= zero).nonzero()[0]
+    if starts_at_or_before.size == 0:
+        raise ValueError(
+            f"No candidate interval starts at or before {target_interval[0]}, so "
+            "none can contain the target interval."
+        )
+    containing = interval_candidates[int(np.max(starts_at_or_before))]
+    if containing[1] < target_interval[1]:
+        raise ValueError(
+            f"The nearest preceding interval {containing} does not contain the "
+            f"target interval {tuple(target_interval)}."
+        )
+    return containing
 
 
 def _extend_segment(
@@ -1014,6 +1030,12 @@ def threshold_by_zscore(
         to mean crossings.
 
     """
+    if zscore_threshold < 0:
+        raise ValueError(
+            f"zscore_threshold must be non-negative, got {zscore_threshold}. The "
+            "extension to the crossing point assumes every threshold crossing "
+            "lies inside a run above the normalization center."
+        )
     is_above_mean = zscored_data >= 0
     is_above_threshold = zscored_data >= zscore_threshold
 
@@ -1357,7 +1379,9 @@ def estimate_noise_threshold(
             "mirrored distribution is degenerate."
         )
     mode = float(edges[mode_index])
-    if mode > 0:
+    # The two reflections agree whenever every left-flank bin is non-positive,
+    # so the warning is raised only when a bin above zero can contribute.
+    if mode > 0 and np.any(edges[:mode_index] > 0):
         warnings.warn(
             f"Histogram mode is positive ({mode:.3f}); the original MATLAB "
             "reflection (abs(b) + 2m) would differ from the intended 2m - b "

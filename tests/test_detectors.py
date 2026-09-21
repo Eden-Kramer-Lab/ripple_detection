@@ -1190,7 +1190,7 @@ class TestExtractYuRippleEvents:
         for n_run, expected in [(n_min - 1, 0), (n_min, 1)]:
             trace = np.zeros(3000)
             trace[1000 : 1000 + n_run] = 5.0
-            events, _, _ = _extract_Yu_ripple_events(trace, time, fs, duration, 2.0)
+            events, _, _ = _extract_Yu_ripple_events(trace, time, duration, 2.0)
             assert len(events) == expected, (n_run, len(events))
 
     """Sample-count qualification and mean-crossing extension, Yu et al. 2017."""
@@ -1222,7 +1222,7 @@ class TestExtractYuRippleEvents:
         trace = self._trace(
             n_time, above_zero=[(100, 300)], above_threshold=[(150, 150 + n_samples)]
         )
-        events, _, _ = _extract_Yu_ripple_events(trace, time, sampling_frequency, 0.020, 3.0)
+        events, _, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         assert (len(events) == 1) == qualifies
 
     def test_extends_to_containing_above_zero_run(self):
@@ -1230,7 +1230,7 @@ class TestExtractYuRippleEvents:
         n_time = 500
         time = np.arange(n_time) / fs
         trace = self._trace(n_time, above_zero=[(100, 300)], above_threshold=[(150, 200)])
-        events, _, _ = _extract_Yu_ripple_events(trace, time, fs, 0.020, 3.0)
+        events, _, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         np.testing.assert_allclose(events, [[time[100], time[299]]])
 
     def test_zero_sample_ends_a_run(self):
@@ -1239,7 +1239,7 @@ class TestExtractYuRippleEvents:
         time = np.arange(n_time) / fs
         trace = self._trace(n_time, above_zero=[(100, 300)], above_threshold=[(150, 200)])
         trace[250] = 0.0  # equality to the mean ends the run
-        events, _, _ = _extract_Yu_ripple_events(trace, time, fs, 0.020, 3.0)
+        events, _, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         np.testing.assert_allclose(events, [[time[100], time[249]]])
 
     def test_two_exceedances_in_one_run_yield_one_event(self):
@@ -1249,7 +1249,7 @@ class TestExtractYuRippleEvents:
         trace = self._trace(
             n_time, above_zero=[(100, 300)], above_threshold=[(120, 160), (220, 260)]
         )
-        events, _, n_supra = _extract_Yu_ripple_events(trace, time, fs, 0.020, 3.0)
+        events, _, n_supra = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         assert len(events) == 1
         assert n_supra[0] == 40  # the longest qualifying run
 
@@ -1258,7 +1258,7 @@ class TestExtractYuRippleEvents:
         n_time = 500
         time = np.arange(n_time) / fs
         trace = self._trace(n_time, above_zero=[(100, 300)], above_threshold=[(150, 160)])
-        events, _, _ = _extract_Yu_ripple_events(trace, time, fs, 0.020, 3.0)
+        events, _, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         assert len(events) == 0
 
     def test_clipped_at_block_edges_is_flagged(self):
@@ -1267,11 +1267,11 @@ class TestExtractYuRippleEvents:
         time = np.arange(n_time) / fs
         # above zero from the very first sample to the last: clipped both sides
         trace = self._trace(n_time, above_zero=[(0, 200)], above_threshold=[(50, 100)])
-        events, clipped, _ = _extract_Yu_ripple_events(trace, time, fs, 0.020, 3.0)
+        events, clipped, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         np.testing.assert_allclose(events, [[time[0], time[-1]]])
         assert clipped.tolist() == [[True, True]]
         trace = self._trace(n_time, above_zero=[(20, 200)], above_threshold=[(50, 100)])
-        _, clipped, _ = _extract_Yu_ripple_events(trace, time, fs, 0.020, 3.0)
+        _, clipped, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         assert clipped.tolist() == [[False, True]]
 
     def test_uses_native_timestamps(self):
@@ -1279,7 +1279,7 @@ class TestExtractYuRippleEvents:
         n_time = 500
         time = 100.0 + np.arange(n_time) / fs + 1e-4 * np.sin(np.arange(n_time))
         trace = self._trace(n_time, above_zero=[(100, 300)], above_threshold=[(150, 200)])
-        events, _, _ = _extract_Yu_ripple_events(trace, time, fs, 0.020, 3.0)
+        events, _, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         assert events[0, 0] == time[100]
         assert events[0, 1] == time[299]
 
@@ -1288,13 +1288,13 @@ class TestExtractYuRippleEvents:
         fs = 1000
         time = np.arange(100) / fs
         with pytest.raises(ValueError, match="threshold"):
-            _extract_Yu_ripple_events(np.zeros(100), time, fs, 0.020, threshold)
+            _extract_Yu_ripple_events(np.zeros(100), time, 0.020, threshold)
 
     def test_empty_result_shapes(self):
         fs = 1000
         time = np.arange(100) / fs
         events, clipped, n_supra = _extract_Yu_ripple_events(
-            np.full(100, -0.5), time, fs, 0.020, 3.0
+            np.full(100, -0.5), time, 0.020, 3.0
         )
         assert events.shape == (0, 2)
         assert clipped.shape == (0, 2)
@@ -2278,29 +2278,25 @@ class TestDetectorErrorHandling:
                 elec_deviations=deviations,
             )
 
-    def test_manual_norm_ignores_normalization_mask(
+    def test_manual_norm_rejects_normalization_mask(
         self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
     ):
-        """normalization_mask is ignored (not validated) under manual normalization."""
+        """normalization_mask cannot be combined with manual normalization."""
         filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
         env = gaussian_smooth(
             get_envelope(filtered_lfps), sigma=0.004, sampling_frequency=sampling_frequency
         )
-        # A wrong-length, all-False mask that would raise if it were validated --
-        # but the docstring promises it is ignored under manual normalization.
-        bad_mask = np.zeros(len(time_3s) - 5, dtype=bool)
-
-        ripples = Shvartsman_ripple_detector(
-            time_3s,
-            filtered_lfps,
-            stationary_speed,
-            sampling_frequency,
-            manual_normalization=True,
-            elec_baselines=env.mean(axis=0),
-            elec_deviations=env.std(axis=0),
-            normalization_mask=bad_mask,
-        )
-        assert isinstance(ripples, pd.DataFrame)
+        with pytest.raises(ValueError, match="manual_normalization"):
+            Shvartsman_ripple_detector(
+                time_3s,
+                filtered_lfps,
+                stationary_speed,
+                sampling_frequency,
+                manual_normalization=True,
+                elec_baselines=env.mean(axis=0),
+                elec_deviations=env.std(axis=0),
+                normalization_mask=np.zeros(len(time_3s), dtype=bool),
+            )
 
     def test_mismatched_lengths(self, time_3s, single_lfp_with_ripples, sampling_frequency):
         """Test with mismatched time and LFP lengths."""
@@ -2696,3 +2692,130 @@ class TestMaxThreshMinimumDuration:
         # For a binary plateau occupying p=21/1000 samples, its z-score is
         # (1-p) / sqrt(p*(1-p)) = sqrt(979/21).
         assert hse["max_thresh"].iloc[0] == pytest.approx(np.sqrt(979 / 21))
+
+
+class TestNegativeThresholdRejected:
+    """The mean-crossing extension assumes threshold runs sit inside above-mean runs."""
+
+    def test_kay_rejects_a_negative_threshold(
+        self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
+    ):
+        filtered_lfps = filter_ripple_band(single_lfp_with_ripples)
+        with pytest.raises(ValueError, match="non-negative"):
+            Kay_ripple_detector(
+                time_3s,
+                filtered_lfps,
+                stationary_speed,
+                sampling_frequency,
+                zscore_threshold=-1.0,
+            )
+
+
+class TestWarningsPointAtTheCaller:
+    """Unit warnings must name the caller's line, not a frame inside the package."""
+
+    @pytest.mark.parametrize("detector", ["Kay", "Zugaro", "Yu"])
+    def test_time_step_warning_reports_this_file(self, detector):
+        sampling_frequency = 1000.0
+        n_time = 20_000
+        time_ms = np.arange(n_time) * 0.005  # five times the expected step
+        lfps = _synthetic_ripple_band(n_time, sampling_frequency, [(5000, 5060, 20.0)])
+        speed = np.full(n_time, 2.0)
+        call = {
+            "Kay": lambda: Kay_ripple_detector(time_ms, lfps, speed, sampling_frequency),
+            "Zugaro": lambda: Zugaro_ripple_detector(time_ms, lfps, speed, sampling_frequency),
+            "Yu": lambda: Yu_ripple_detector(time_ms, lfps, speed, sampling_frequency),
+        }[detector]
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
+                call()
+            except ValueError:
+                pass
+        unit_warnings = [w for w in caught if "Time array step" in str(w.message)]
+        assert unit_warnings, [str(w.message) for w in caught]
+        assert unit_warnings[0].filename == __file__
+
+
+class TestNormalizationArgumentValidation:
+    """Giving both a mask and a time range is an error in every detector."""
+
+    @pytest.mark.parametrize("detector", ["Yu", "Zugaro"])
+    def test_mask_and_time_range_together_raise(self, detector):
+        sampling_frequency = 1000.0
+        n_time = 20_000
+        time = np.arange(n_time) / sampling_frequency
+        lfps = _synthetic_ripple_band(n_time, sampling_frequency, [(5000, 5060, 20.0)])
+        speed = np.full(n_time, 2.0)
+        mask = np.ones(n_time, dtype=bool)
+        detect = Yu_ripple_detector if detector == "Yu" else Zugaro_ripple_detector
+        with pytest.raises(ValueError):
+            detect(
+                time,
+                lfps,
+                speed,
+                sampling_frequency,
+                normalization_mask=mask,
+                normalization_time_range=(time[0], time[100]),
+            )
+
+
+class TestShvartsmanManualNormalizationValidation:
+    def test_normalization_arguments_are_rejected_under_manual_normalization(
+        self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
+    ):
+        filtered_lfps = filter_ripple_band(single_lfp_with_ripples)
+        with pytest.raises(ValueError, match="manual_normalization"):
+            Shvartsman_ripple_detector(
+                time_3s,
+                filtered_lfps,
+                stationary_speed,
+                sampling_frequency,
+                manual_normalization=True,
+                elec_baselines=np.array([0.0]),
+                elec_deviations=np.array([1.0]),
+                normalization_time_range=(time_3s[0], time_3s[100]),
+            )
+
+
+class TestKayConsensusTraceMissingSamples:
+    def test_smoothing_does_not_cross_a_gap(self):
+        sampling_frequency = 1500.0
+        n_time = 6000
+        time = np.arange(n_time) / sampling_frequency
+        rng = np.random.default_rng(0)
+        lfps = rng.normal(0.0, 0.1, (n_time, 2))
+        lfps[2000:2400] += 10.0  # a strong block right before the gap
+        lfps[2400:2600, :] = np.nan
+        trace = get_Kay_ripple_consensus_trace(
+            lfps, sampling_frequency, smoothing_sigma=0.004, time=time
+        )
+        assert np.isnan(trace[2400:2600]).all()
+        # the samples just after the gap must not carry the pre-gap block
+        after_gap = trace[2600:2800]
+        quiet = trace[3500:4500]
+        assert np.nanmax(after_gap) < 5 * np.nanmedian(quiet)
+
+
+class TestLongMaxThreshIsFinite:
+    """max_thresh is measured over the reported event, which the sharp wave bounds."""
+
+    FS = 1000
+    N_TIME = 40_000
+    EVENTS = (7000, 11000, 15500, 19000, 23800, 28000, 31500)
+
+    def test_a_long_ripple_minimum_does_not_make_max_thresh_nan(self):
+        # the event spans the sharp wave, so the sustained-value window must use
+        # the sharp-wave minimum; using the ripple minimum can exceed the event
+        time = np.arange(self.N_TIME) / self.FS
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        events = Long_sharp_wave_ripple_detector(
+            time,
+            lfp,
+            np.full(self.N_TIME, 2.0),
+            self.FS,
+            minimum_ripple_duration=0.400,
+            random_state=0,
+        )
+        assert len(events) >= 1
+        assert np.isfinite(events.max_thresh).all(), events.max_thresh.to_numpy()

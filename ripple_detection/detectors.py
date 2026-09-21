@@ -11,6 +11,7 @@ from scipy.signal import butter, filtfilt
 
 from ripple_detection.core import (
     _get_normalization_mask,
+    _validate_normalization_params,
     estimate_noise_threshold,
     exclude_close_events,
     exclude_movement,
@@ -102,7 +103,9 @@ def _validate_array_lengths(time: NDArray, filtered_lfps: NDArray, speed: NDArra
         )
 
 
-def _validate_time_units(time: NDArray, sampling_frequency: float, n_samples: int) -> None:
+def _validate_time_units(
+    time: NDArray, sampling_frequency: float, n_samples: int, stacklevel: int = 4
+) -> None:
     """Validate that time array is in seconds (not samples).
 
     Parameters
@@ -149,11 +152,11 @@ def _validate_time_units(time: NDArray, sampling_frequency: float, n_samples: in
                 f"  1. time is in seconds (not milliseconds or samples)\n"
                 f"  2. sampling_frequency ({sampling_frequency} Hz) is correct",
                 UserWarning,
-                stacklevel=4,
+                stacklevel=stacklevel,
             )
 
 
-def _validate_speed_units(speed: NDArray, speed_threshold: float) -> None:
+def _validate_speed_units(speed: NDArray, speed_threshold: float, stacklevel: int = 4) -> None:
     """Validate that speed is in cm/s (not m/s).
 
     Parameters
@@ -185,7 +188,7 @@ def _validate_speed_units(speed: NDArray, speed_threshold: float) -> None:
                     f"If your speed is in m/s, multiply by 100:\n"
                     "  speed_cms = speed_ms * 100",
                     UserWarning,
-                    stacklevel=4,
+                    stacklevel=stacklevel,
                 )
 
 
@@ -273,13 +276,21 @@ def _preprocess_detector_inputs(
 
 
 def get_Kay_ripple_consensus_trace(
-    ripple_filtered_lfps: ArrayLike, sampling_frequency: float, smoothing_sigma: float = 0.004
+    ripple_filtered_lfps: ArrayLike,
+    sampling_frequency: float,
+    smoothing_sigma: float = 0.004,
+    *,
+    time: ArrayLike | None = None,
 ) -> NDArray:
     """Compute Kay consensus trace from multi-channel ripple-filtered LFPs.
 
-    Combines multiple LFP channels into a single consensus trace using the sum
-    of squared envelopes, following Kay et al. 2016. The trace is smoothed with
-    a Gaussian kernel.
+    Combines multiple LFP channels into a single consensus trace, following
+    Kay et al. 2016: ``sqrt(gaussian_smooth(sum(envelope ** 2)))``. The
+    smoothing sits between the sum and the square root.
+
+    Rows holding a missing value in any channel are excluded, and each
+    contiguous run of valid rows is processed on its own, so no envelope or
+    smoothing window spans a gap.
 
     Parameters
     ----------
@@ -290,6 +301,10 @@ def get_Kay_ripple_consensus_trace(
     smoothing_sigma : float, optional
         Standard deviation of Gaussian smoothing kernel in seconds.
         Default is 0.004 (4 ms).
+    time : array_like, shape (n_time,), optional
+        Sample timestamps in seconds, used to split at gaps in the timestamps
+        as well as at missing samples. Keyword only. Default is None, which
+        splits at missing samples only.
 
     Returns
     -------
@@ -308,12 +323,18 @@ def get_Kay_ripple_consensus_trace(
     ripple_consensus_trace = np.full_like(ripple_filtered_lfps, np.nan)
     not_null = np.all(pd.notna(ripple_filtered_lfps), axis=1)
 
-    ripple_consensus_trace[not_null] = get_envelope(np.asarray(ripple_filtered_lfps)[not_null])
-    ripple_consensus_trace = np.sum(ripple_consensus_trace**2, axis=1)
-    ripple_consensus_trace[not_null] = gaussian_smooth(
-        ripple_consensus_trace[not_null], smoothing_sigma, sampling_frequency
-    )
-    return np.sqrt(ripple_consensus_trace)
+    time_array = None if time is None else np.asarray(time, dtype=float)
+    for start, stop in _contiguous_valid_blocks(not_null, time_array, sampling_frequency):
+        block = ripple_filtered_lfps[start:stop]
+        ripple_consensus_trace[start:stop] = get_envelope(block)
+
+    summed_power = np.sum(ripple_consensus_trace**2, axis=1)
+    smoothed = np.full(len(summed_power), np.nan)
+    for start, stop in _contiguous_valid_blocks(not_null, time_array, sampling_frequency):
+        smoothed[start:stop] = gaussian_smooth(
+            summed_power[start:stop], smoothing_sigma, sampling_frequency
+        )
+    return np.sqrt(smoothed)
 
 
 def _contiguous_valid_blocks(
@@ -461,14 +482,13 @@ def _boolean_runs(mask: NDArray) -> NDArray:
 def _extract_Yu_ripple_events(
     trace: NDArray,
     time: NDArray,
-    sampling_frequency: float,
     minimum_duration: float,
     threshold: float,
 ) -> tuple[NDArray, NDArray, NDArray]:
     """Extract events from one contiguous block of a mean-zero consensus trace.
 
     A run of consecutive samples at or above ``threshold`` qualifies when it
-    holds at least ``round(minimum_duration * sampling_frequency)`` samples;
+    holds at least ``minimum_sample_count(time, minimum_duration)`` samples;
     each qualifying run is extended to the run of samples strictly above zero
     (the immobility mean) that contains it, and one event is emitted per such
     containing run. This is the sample-count convention of the Frank lab
@@ -614,7 +634,8 @@ def Shvartsman_ripple_detector(
     normalization_method : {'zscore', 'median_mad'}, optional
         Method for normalizing each channel. Default is 'zscore' (mean/std).
         Use 'median_mad' for more robust normalization when data contains outliers.
-        Only used when ``manual_normalization=False``; ignored otherwise.
+        Only used when ``manual_normalization=False``; supplying it with
+        ``manual_normalization=True`` raises ValueError.
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask selecting samples used to compute normalization statistics.
         For example, use `speed <= speed_threshold` to compute statistics only
@@ -626,10 +647,10 @@ def Shvartsman_ripple_detector(
         ``manual_normalization=False``. Default is None (use all data).
     manual_normalization : bool, optional
         If True, normalize each channel with the supplied `elec_baselines` and
-        `elec_deviations` instead of computing statistics from the data; the
-        `normalization_*` parameters above are then ignored. Requires both
-        `elec_baselines` and `elec_deviations` (raises ValueError if either is
-        missing). Default is False.
+        `elec_deviations` instead of computing statistics from the data. The
+        `normalization_*` parameters above must then be left at their defaults;
+        supplying one raises ValueError rather than being ignored. Requires both
+        `elec_baselines` and `elec_deviations`. Default is False.
     elec_baselines : array_like, shape (n_channels,), optional
         Baseline (center) value per channel. Required when
         ``manual_normalization=True``.
@@ -687,14 +708,23 @@ def Shvartsman_ripple_detector(
     ripple, so a single-channel input never produces an event.
 
     """
+    if manual_normalization and (
+        normalization_mask is not None
+        or normalization_time_range is not None
+        or normalization_method != "zscore"
+    ):
+        raise ValueError(
+            "manual_normalization=True uses elec_baselines and elec_deviations, so "
+            "normalization_method, normalization_mask, and normalization_time_range "
+            "must be left at their defaults. Drop them, or set "
+            "manual_normalization=False."
+        )
     time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
         time,
         filtered_lfps,
         speed,
         sampling_frequency,
         speed_threshold,
-        # normalization_mask is ignored under manual normalization, so don't
-        # validate/filter it in that mode (the docstring promises it is unused).
         normalization_mask=None if manual_normalization else normalization_mask,
     )
 
@@ -1052,8 +1082,8 @@ def Yu_ripple_detector(
     time = np.asarray(time, dtype=float)
     _validate_lfp_dimensions(filtered_lfps)
     _validate_array_lengths(time, filtered_lfps, speed)
-    _validate_time_units(time, sampling_frequency, len(time))
-    _validate_speed_units(speed, speed_threshold)
+    _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
+    _validate_speed_units(speed, speed_threshold, stacklevel=3)
 
     consensus = get_Yu_ripple_consensus_trace(
         filtered_lfps,
@@ -1064,6 +1094,9 @@ def Yu_ripple_detector(
     )
     is_valid = np.isfinite(consensus) & np.isfinite(speed)
 
+    _validate_normalization_params(
+        "zscore", normalization_mask, normalization_time_range, time
+    )
     noise_mask = _get_normalization_mask(
         consensus.shape, time, normalization_mask, normalization_time_range
     )
@@ -1109,7 +1142,6 @@ def Yu_ripple_detector(
         block_events, block_clipped, block_n = _extract_Yu_ripple_events(
             normalized[start:stop],
             time[start:stop],
-            sampling_frequency,
             minimum_duration,
             threshold_zscore,
         )
@@ -1359,8 +1391,8 @@ def Zugaro_ripple_detector(
     time = np.asarray(time, dtype=float)
     _validate_lfp_dimensions(filtered_lfps)
     _validate_array_lengths(time, filtered_lfps, speed)
-    _validate_time_units(time, sampling_frequency, len(time))
-    _validate_speed_units(speed, speed_threshold)
+    _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
+    _validate_speed_units(speed, speed_threshold, stacklevel=3)
 
     is_valid = np.all(np.isfinite(filtered_lfps), axis=1) & np.isfinite(speed)
     if not np.any(is_valid):
@@ -1379,6 +1411,9 @@ def Zugaro_ripple_detector(
     for start, stop in blocks:
         smoothed[start:stop] = np.convolve(power[start:stop], kernel, mode="same")
 
+    _validate_normalization_params(
+        "zscore", normalization_mask, normalization_time_range, time
+    )
     mask = _get_normalization_mask(
         smoothed.shape, time, normalization_mask, normalization_time_range
     )
@@ -1584,8 +1619,8 @@ def Long_sharp_wave_ripple_detector(
             f"first and the sharp-wave channel second; got shape {lfp.shape}."
         )
     _validate_array_lengths(time, lfp, speed)
-    _validate_time_units(time, sampling_frequency, len(time))
-    _validate_speed_units(speed, speed_threshold)
+    _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
+    _validate_speed_units(speed, speed_threshold, stacklevel=3)
     if np.any(np.isnan(lfp)) or np.any(np.isnan(speed)):
         raise ValueError(
             "lfp and speed must not contain NaN: this detector's local statistics need "
@@ -1738,7 +1773,13 @@ def Long_sharp_wave_ripple_detector(
 
     ripple_power_z = normalize_signal(ripple_power)
     events = _get_event_stats(
-        event_times, time, ripple_power_z, speed, minimum_duration=minimum_ripple_duration
+        # the reported event spans the sharp wave, so the sustained-value window
+        # is measured against the sharp-wave minimum
+        event_times,
+        time,
+        ripple_power_z,
+        speed,
+        minimum_duration=minimum_sharp_wave_duration,
     )
     events["peak_time"] = (
         time[detected["peak"].to_numpy(dtype=int)] if len(detected) else np.empty(0)
@@ -1931,8 +1972,8 @@ def Carey_candidate_detector(
         raise ValueError(
             f"Array length mismatch: multiunit has {multiunit.shape[0]} samples but time has {len(time)}."
         )
-    _validate_time_units(time, sampling_frequency, len(time))
-    _validate_speed_units(speed, speed_threshold)
+    _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
+    _validate_speed_units(speed, speed_threshold, stacklevel=3)
     if (
         np.any(np.isnan(filtered_lfps))
         or np.any(np.isnan(multiunit))
@@ -2436,8 +2477,8 @@ def multiunit_HSE_detector(
             f"{multiunit.shape}. For a single unit, pass multiunit[:, np.newaxis]."
         )
     _validate_array_lengths(time, multiunit, speed)
-    _validate_time_units(time, sampling_frequency, len(time))
-    _validate_speed_units(speed, speed_threshold)
+    _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
+    _validate_speed_units(speed, speed_threshold, stacklevel=3)
     if np.any(np.isnan(multiunit)):
         raise ValueError(
             "multiunit contains NaN. Spike counts cannot be missing: fill absent "

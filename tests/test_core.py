@@ -14,6 +14,7 @@ from ripple_detection.core import (
     estimate_noise_threshold,
     exclude_close_events,
     exclude_movement,
+    extend_threshold_to_mean,
     filter_ripple_band,
     gaussian_smooth,
     get_envelope,
@@ -1180,3 +1181,32 @@ class TestCoreInputConversion:
     def test_population_firing_rate_accepts_a_sequence(self):
         rate = get_multiunit_population_firing_rate([[0, 1], [1, 0], [0, 0]], 1000.0)
         assert rate.shape == (3,)
+
+
+class TestExtendThresholdToMeanEdgeCases:
+    def test_threshold_run_inside_a_short_above_mean_run_still_extends(self):
+        # the above-mean run is shorter than the minimum duration; it must not
+        # be filtered away, or the containing run cannot be found
+        time = np.arange(40) / 1000.0
+        is_above_mean = np.zeros(40, dtype=bool)
+        is_above_mean[10:25] = True
+        is_above_threshold = np.zeros(40, dtype=bool)
+        is_above_threshold[14:22] = True
+        segments = extend_threshold_to_mean(
+            is_above_mean, is_above_threshold, time, minimum_duration=0.005
+        )
+        assert segments == [(time[10], time[24])]
+
+    def test_no_threshold_crossing_gives_no_segments(self):
+        time = np.arange(40) / 1000.0
+        segments = extend_threshold_to_mean(
+            np.ones(40, dtype=bool), np.zeros(40, dtype=bool), time, 0.005
+        )
+        assert segments == []
+
+
+class TestSegmentBooleanSeriesMissingValues:
+    def test_missing_values_raise_rather_than_counting_as_true(self):
+        series = pd.Series([np.nan] * 50, index=np.arange(50) / 1000.0)
+        with pytest.raises(ValueError, match="missing"):
+            segment_boolean_series(series, minimum_duration=0.005)
