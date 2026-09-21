@@ -171,6 +171,7 @@ The index is `event_number`. Some detectors add columns:
 | `Zugaro_ripple_detector` | `peak_time` |
 | `Long_sharp_wave_ripple_detector` | `peak_time`, `sharp_wave_zscore`, `sharp_wave_local_percentile`, `ripple_power_zscore`, `ripple_power_local_percentile`, `sharp_wave_duration`, `ripple_duration` |
 | `Carey_candidate_detector` | `n_active_units` |
+| `multiunit_HSE_detector` | `n_active_units` |
 | `mean_speed` | Mean speed during event |
 
 ## Examples

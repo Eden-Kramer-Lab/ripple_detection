@@ -2935,3 +2935,80 @@ class TestMaximumDuration:
                 minimum_duration=0.050,
                 maximum_duration=0.010,
             )
+
+
+class TestMultiunitActiveUnits:
+    """Most multiunit papers require a minimum number of units in a burst."""
+
+    FS = 1000
+    N_TIME = 5_000
+    N_UNITS = 20
+
+    @pytest.fixture
+    def time(self):
+        return np.arange(self.N_TIME) / self.FS
+
+    @pytest.fixture
+    def stationary(self):
+        return np.full(self.N_TIME, 2.0)
+
+    @pytest.fixture
+    def multiunit(self):
+        """A three-unit burst at 1.0 s and a ten-unit burst at 3.0 s."""
+        multiunit = np.zeros((self.N_TIME, self.N_UNITS))
+        multiunit[1_000:1_060, :3] = 4.0
+        multiunit[3_000:3_060, :10] = 1.2
+        return multiunit
+
+    def test_reports_the_active_unit_count(self, time, multiunit, stationary):
+        """Every event carries the number of units that spiked inside it."""
+        events = multiunit_HSE_detector(time, multiunit, stationary, self.FS)
+
+        assert "n_active_units" in events
+        assert sorted(events.n_active_units) == [3, 10]
+
+    def test_minimum_drops_the_sparse_burst(self, time, multiunit, stationary):
+        """A five-unit minimum keeps only the ten-unit burst."""
+        events = multiunit_HSE_detector(
+            time, multiunit, stationary, self.FS, minimum_active_units=5
+        )
+
+        assert len(events) == 1
+        assert events.iloc[0].n_active_units == 10
+        assert events.iloc[0].start_time > 2.0
+
+    def test_default_drops_nothing(self, time, multiunit, stationary):
+        """The default keeps what the detector found before the criterion existed."""
+        default = multiunit_HSE_detector(time, multiunit, stationary, self.FS)
+        explicit = multiunit_HSE_detector(
+            time, multiunit, stationary, self.FS, minimum_active_units=0
+        )
+
+        pd.testing.assert_frame_equal(default, explicit)
+
+    def test_counts_units_not_spikes(self, time, stationary):
+        """One unit firing many times is one active unit."""
+        multiunit = np.zeros((self.N_TIME, self.N_UNITS))
+        multiunit[1_000:1_060, 0] = 20.0
+
+        events = multiunit_HSE_detector(time, multiunit, stationary, self.FS)
+
+        assert (events.n_active_units == 1).all()
+
+    def test_empty_result_still_has_the_column(self, time, stationary):
+        """A detector that finds nothing returns the column anyway."""
+        multiunit = np.zeros((self.N_TIME, self.N_UNITS))
+
+        events = multiunit_HSE_detector(
+            time, multiunit, stationary, self.FS, minimum_active_units=5
+        )
+
+        assert len(events) == 0
+        assert "n_active_units" in events
+
+    def test_negative_minimum_raises(self, time, multiunit, stationary):
+        """A negative unit count is not a criterion."""
+        with pytest.raises(ValueError, match="minimum_active_units"):
+            multiunit_HSE_detector(
+                time, multiunit, stationary, self.FS, minimum_active_units=-1
+            )

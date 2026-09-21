@@ -2522,6 +2522,7 @@ def multiunit_HSE_detector(
     zscore_threshold: float = 2.0,
     smoothing_sigma: float = 0.015,
     close_event_threshold: float = 0.0,
+    minimum_active_units: int = 0,
     use_speed_threshold_for_zscore: bool = False,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
@@ -2593,6 +2594,13 @@ def multiunit_HSE_detector(
         Minimum time in **seconds** between events. Events closer than this
         are excluded -- the later event is dropped, not merged. Default is 0.0
         (no exclusion). Set to 0.05-0.1 s to drop closely-spaced events.
+    minimum_active_units : int, optional
+        Minimum number of units with at least one spike inside an event.
+        Events with fewer are dropped. Default is 0, which imposes no
+        criterion. Of the 36 multiunit papers in the project's
+        detection-parameter survey, 21 state such a minimum, most often five.
+        ``Carey_candidate_detector`` applies the same rule with its original's
+        default of 5.
     use_speed_threshold_for_zscore : bool, optional
         **DEPRECATED**: Use `normalization_mask` instead. If True, compute
         z-score statistics (mean/std) using only immobility periods (speed <
@@ -2619,7 +2627,9 @@ def multiunit_HSE_detector(
     -------
     high_synchrony_events : pd.DataFrame
         DataFrame with detected events and comprehensive statistics (see
-        Kay_ripple_detector for column descriptions).
+        Kay_ripple_detector for column descriptions), plus
+        ``n_active_units``, the number of units with at least one spike
+        inside the event.
 
         Returns empty DataFrame if no events detected. If this occurs, try:
         - Lowering zscore_threshold (e.g., from 2.0 to 1.5)
@@ -2656,6 +2666,11 @@ def multiunit_HSE_detector(
     _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
     _validate_speed_units(speed, speed_threshold, stacklevel=3)
     _validate_duration_limits(minimum_duration, maximum_duration)
+    if minimum_active_units < 0:
+        raise ValueError(
+            f"minimum_active_units must be non-negative, got {minimum_active_units}. "
+            "It counts units with at least one spike inside an event; 0 imposes no criterion."
+        )
     if np.any(np.isnan(multiunit)):
         raise ValueError(
             "multiunit contains NaN. Spike counts cannot be missing: fill absent "
@@ -2684,7 +2699,7 @@ def multiunit_HSE_detector(
         if normalization_mask is None and normalization_time_range is None:
             normalization_mask = speed <= speed_threshold
 
-    return _detect_from_trace(
+    events = _detect_from_trace(
         firing_rate,
         time,
         speed,
@@ -2697,6 +2712,20 @@ def multiunit_HSE_detector(
         normalization_mask=normalization_mask,
         normalization_time_range=normalization_time_range,
     )
+
+    start = nearest_sample_index(time, events.start_time.to_numpy())
+    stop = nearest_sample_index(time, events.end_time.to_numpy())
+    n_active = np.array(
+        [
+            int(np.sum(multiunit[i : j + 1].sum(axis=0) > 0))
+            for i, j in zip(start, stop, strict=True)
+        ],
+        dtype=int,
+    )
+    keep = n_active >= minimum_active_units
+    events = events.iloc[np.flatnonzero(keep)].copy()
+    events["n_active_units"] = n_active[keep]
+    return events
 
 
 def _find_max_thresh(
