@@ -1234,6 +1234,14 @@ def estimate_noise_threshold(
     from the smallest sample, whatever the true noise tail does. This is a
     property of the published method, not of this implementation.
 
+    It follows that the threshold lies above the sample mean only when the
+    left flank is wider than the mode-to-mean distance,
+    ``(m - min) > (mean - m)``, reported as ``flank_ratio`` in the
+    diagnostics. Ripples that are very large relative to the in-band
+    background inflate the variance and pull the mean above the noise
+    ceiling, and the ratio drops below one; ``Yu_ripple_detector`` then
+    raises because its threshold-then-return-to-mean rule is undefined.
+
     References
     ----------
     .. [1] Yu, J. Y., et al. (2017). Distinct hippocampal-cortical memory
@@ -1310,10 +1318,18 @@ def estimate_noise_threshold(
 
     if not return_diagnostics:
         return threshold
+    in_grid_values = values[in_grid]
+    mean = float(in_grid_values.mean())
+    minimum = float(in_grid_values.min())
     diagnostics = {
         "threshold": threshold,
         "mode": mode,
         "mode_index": mode_index,
+        "mean": mean,
+        "min": minimum,
+        # left-flank width over mode-to-mean distance; the mirrored distribution
+        # can only reach past the mean when this exceeds 1
+        "flank_ratio": (mode - minimum) / (mean - mode) if mean != mode else np.inf,
         "histogram_edges": edges,
         "counts": counts,
         "smoothed_counts": smoothed,

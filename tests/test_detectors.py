@@ -1357,6 +1357,71 @@ class TestYuRippleDetector:
         assert len(events) == 1
         assert abs(events.start_time.iloc[0] - time[5000]) < 0.020
 
+    def test_recovers_planted_ripples_in_simulated_lfp(self):
+        fs = 1500
+        time = np.arange(fs * 20) / fs
+        planted = [2.0, 5.0, 8.0, 11.0, 14.0, 17.0]
+        # ripple_amplitude 0.3 gives ripples ~25x the in-band background,
+        # already generous; the fixture default of 1.5 is ~135x (see next test)
+        lfps = filter_ripple_band(
+            np.column_stack(
+                [
+                    simulate_LFP(
+                        time,
+                        ripple_times=planted,
+                        noise_amplitude=1.2,
+                        ripple_amplitude=0.3,
+                        random_state=seed,
+                    )
+                    for seed in (1, 2, 3, 4)
+                ]
+            )
+        )
+        events = Yu_ripple_detector(time, lfps, np.full(len(time), 2.0), fs)
+        hits = [any((events.start_time <= t) & (events.end_time >= t)) for t in planted]
+        assert all(hits)
+        assert len(events) <= len(planted) + 2
+
+    def test_pure_noise_yields_few_events(self):
+        fs = 1500
+        time = np.arange(fs * 20) / fs
+        lfps = filter_ripple_band(
+            np.column_stack(
+                [
+                    simulate_LFP(time, ripple_times=[], noise_amplitude=1.2, random_state=seed)
+                    for seed in (1, 2, 3, 4)
+                ]
+            )
+        )
+        events = Yu_ripple_detector(time, lfps, np.full(len(time), 2.0), fs)
+        assert len(events) <= 3
+        assert events.detection_threshold_zscore.iloc[0] > 2.0 if len(events) else True
+
+    def test_ripples_dominating_the_variance_raise_explicitly(self):
+        # When ripples inflate the immobility SD so far that the mean sits
+        # above the noise ceiling, the mirrored distribution cannot exceed the
+        # mean and the threshold-then-return-to-mean rule is undefined. The
+        # original MATLAB would run anyway; this implementation refuses.
+        fs = 1500
+        time = np.arange(fs * 20) / fs
+        planted = [2.0, 5.0, 8.0, 11.0, 14.0, 17.0]
+        lfps = filter_ripple_band(
+            np.column_stack(
+                [
+                    simulate_LFP(
+                        time,
+                        ripple_times=planted,
+                        noise_amplitude=1.2,
+                        ripple_amplitude=1.5,
+                        random_state=seed,
+                    )
+                    for seed in (1, 2, 3, 4)
+                ]
+            )
+        )
+        with pytest.raises(ValueError, match="above the immobility mean"):
+            Yu_ripple_detector(time, lfps, np.full(len(time), 2.0), fs)
+
     def test_exported_from_package_root(self):
         import ripple_detection
 

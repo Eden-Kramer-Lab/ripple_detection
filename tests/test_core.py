@@ -898,6 +898,13 @@ class TestEstimateNoiseThreshold:
         assert diag["counts"].sum() == 100_000
         assert diag["out_of_grid_fraction"] == 0.0
         assert diag["threshold"] == threshold
+        assert diag["mean"] == pytest.approx(values.mean())
+        assert diag["min"] == pytest.approx(values.min())
+        # flank ratio: left-flank width over mode-to-mean distance; > 1 is the
+        # regime in which the mirrored distribution can reach past the mean
+        assert diag["flank_ratio"] == pytest.approx(
+            (diag["mode"] - values.min()) / (values.mean() - diag["mode"])
+        )
 
     def test_reflection_equals_original_formula_when_mode_nonpositive(self):
         rng = np.random.default_rng(3)
