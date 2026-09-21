@@ -311,6 +311,43 @@ def extend_threshold_to_mean(
     return sorted(_extend_segment(above_threshold_segments, above_mean_segments))
 
 
+def nearest_sample_index(time: ArrayLike, query_times: ArrayLike) -> NDArray:
+    """Index of the sample in ``time`` closest to each query time.
+
+    Event bounds come from ``time``, so the match is normally exact. Looking
+    the index up per query, rather than testing which samples appear in the
+    query set, keeps the result in query order and one entry long per query.
+    Repeated, nested, or off-grid query times are therefore handled correctly.
+
+    Parameters
+    ----------
+    time : array_like, shape (n_time,)
+        Sample timestamps, increasing.
+    query_times : array_like, shape (n_queries,)
+        Times to look up.
+
+    Returns
+    -------
+    index : ndarray, shape (n_queries,)
+        Position in ``time`` of the closest sample to each query time.
+
+    Raises
+    ------
+    ValueError
+        If ``time`` is empty.
+
+    """
+    time = np.asarray(time, dtype=float)
+    query_times = np.asarray(query_times, dtype=float)
+    if time.size == 0:
+        raise ValueError("time is empty, so no sample can be looked up.")
+    right = np.searchsorted(time, query_times)
+    right = np.clip(right, 1, time.size - 1)
+    left = right - 1
+    closer_to_right = np.abs(time[right] - query_times) < np.abs(query_times - time[left])
+    return np.where(closer_to_right, right, left)
+
+
 def exclude_movement(
     candidate_ripple_times: ArrayLike,
     speed: ArrayLike,
@@ -338,21 +375,21 @@ def exclude_movement(
     Returns
     -------
     ripple_times : ndarray or list
-        Filtered event times where animal speed is below threshold. Returns
-        ndarray of shape (n_stationary_ripples, 2), or empty list if no
-        events remain.
+        Filtered event times where animal speed is at or below the threshold,
+        with shape (n_stationary_ripples, 2). An empty list is returned when
+        there are no candidate events to test.
 
     """
-    candidate_ripple_times = np.array(candidate_ripple_times)
-    try:
-        speed_at_ripple_start = speed[np.isin(time, candidate_ripple_times[:, 0])]
-        speed_at_ripple_end = speed[np.isin(time, candidate_ripple_times[:, 1])]
-        is_below_speed_threshold = (speed_at_ripple_start <= speed_threshold) & (
-            speed_at_ripple_end <= speed_threshold
-        )
-        return candidate_ripple_times[is_below_speed_threshold]
-    except IndexError:
+    candidate_ripple_times = np.asarray(candidate_ripple_times, dtype=float)
+    if candidate_ripple_times.size == 0:
         return []
+    speed = np.asarray(speed, dtype=float)
+    start_index = nearest_sample_index(time, candidate_ripple_times[:, 0])
+    end_index = nearest_sample_index(time, candidate_ripple_times[:, 1])
+    is_below_speed_threshold = (speed[start_index] <= speed_threshold) & (
+        speed[end_index] <= speed_threshold
+    )
+    return candidate_ripple_times[is_below_speed_threshold]
 
 
 def exclude_movement_by_majority(

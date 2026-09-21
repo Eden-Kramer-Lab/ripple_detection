@@ -1081,3 +1081,37 @@ class TestSampleCountWithin:
         time = np.arange(100) / 1000.0
         assert sample_count_within(21, time, 0.0205) is True
         assert sample_count_within(20, time, 0.0205) is False
+
+
+class TestExcludeMovementEventLookup:
+    """Speed must be read per event, not by matching timestamp values."""
+
+    @staticmethod
+    def _speed_with_movement_at(time, movement_times):
+        speed = np.full(len(time), 2.0)
+        for t in movement_times:
+            speed[np.argmin(np.abs(time - t))] = 20.0
+        return speed
+
+    def test_nested_events_keep_the_right_one(self):
+        time = np.arange(0, 6, 0.01)
+        speed = self._speed_with_movement_at(time, [5.0])
+        kept = exclude_movement(np.array([[1.0, 5.0], [2.0, 3.0]]), speed, time)
+        np.testing.assert_allclose(kept, [[2.0, 3.0]])
+
+    def test_events_sharing_a_start_time_are_each_evaluated(self):
+        time = np.arange(0, 6, 0.01)
+        speed = self._speed_with_movement_at(time, [1.06])
+        kept = exclude_movement(np.array([[1.0, 1.05], [1.0, 1.06], [3.0, 3.05]]), speed, time)
+        np.testing.assert_allclose(kept, [[1.0, 1.05], [3.0, 3.05]])
+
+    def test_event_bounds_off_the_sample_grid_use_the_nearest_sample(self):
+        time = np.arange(0, 6, 0.01)
+        speed = np.full(len(time), 2.0)
+        kept = exclude_movement(np.array([[1.00005, 2.00005]]), speed, time)
+        np.testing.assert_allclose(kept, [[1.00005, 2.00005]])
+
+    def test_empty_candidate_list(self):
+        time = np.arange(0, 6, 0.01)
+        speed = np.full(len(time), 2.0)
+        assert len(exclude_movement(np.empty((0, 2)), speed, time)) == 0

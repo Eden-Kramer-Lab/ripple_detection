@@ -21,6 +21,7 @@ from ripple_detection.core import (
     merge_overlapping_ranges,
     merge_overlapping_ranges_track_participation,
     minimum_sample_count,
+    nearest_sample_index,
     normalize_signal,
     normalize_signal_manually,
     sample_count_within,
@@ -2589,12 +2590,12 @@ def _get_event_stats(
     speed_arr = np.asarray(speed)
 
     index = pd.Index(np.arange(len(event_times_arr)) + 1, name="event_number")
-    try:
-        speed_at_start = speed_arr[np.isin(time_arr, event_times_arr[:, 0])]
-        speed_at_end = speed_arr[np.isin(time_arr, event_times_arr[:, 1])]
-    except (IndexError, TypeError):
-        speed_at_start = np.full_like(event_times_arr, np.nan)
-        speed_at_end = np.full_like(event_times_arr, np.nan)
+    if len(event_times_arr):
+        speed_at_start = speed_arr[nearest_sample_index(time_arr, event_times_arr[:, 0])]
+        speed_at_end = speed_arr[nearest_sample_index(time_arr, event_times_arr[:, 1])]
+    else:
+        speed_at_start = np.empty(0)
+        speed_at_end = np.empty(0)
 
     mean_zscore = []
     median_zscore = []
@@ -2613,10 +2614,10 @@ def _get_event_stats(
         time_mask = np.logical_and(time_arr >= start_time, time_arr <= end_time)
 
         if participants is None:
-            if len(zscore_metric.shape) != 1:
+            if zscore_metric_arr.ndim != 1:
                 raise ValueError(
                     "If no participants are listed, the shape of zscore_metric should be (n_time,). "
-                    f"Current shape of zscore_metric is {zscore_metric.shape}."
+                    f"Current shape of zscore_metric is {zscore_metric_arr.shape}."
                 )
 
             event_zscore = zscore_metric_arr[time_mask]
@@ -2626,13 +2627,13 @@ def _get_event_stats(
             elec_ind = np.asarray(list(participants[r]))
 
             # check that zscore_metric is 2-D
-            if len(zscore_metric.shape) != 2:
+            if zscore_metric_arr.ndim != 2:
                 raise ValueError(
                     "If participants are listed, the shape of zscore_metric should be (n_time, n_channels) "
-                    f"so that relevant metrics can be properly calculated. Current shape of zscore_metric is {zscore_metric.shape}."
+                    f"so that relevant metrics can be properly calculated. Current shape of zscore_metric is {zscore_metric_arr.shape}."
                 )
 
-            event_zscore = zscore_metric[np.ix_(time_ind, elec_ind)].mean(
+            event_zscore = zscore_metric_arr[np.ix_(time_ind, elec_ind)].mean(
                 axis=1
             )  # only include the participating electrodes for all of these metrics
 
