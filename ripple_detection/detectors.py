@@ -668,6 +668,22 @@ def Shvartsman_ripple_detector(
         - Increasing speed_threshold if movement exclusion is too strict
         - Verifying your data contains ripple oscillations (150-250 Hz)
 
+    Notes
+    -----
+    Missing samples: rows with NaN in any channel of ``filtered_lfps`` or in
+    ``speed`` are dropped and the remaining samples are treated as contiguous,
+    so an event can span the gap. Pass one contiguous block per call if that
+    matters; ``Yu_ripple_detector`` and ``Zugaro_ripple_detector`` instead
+    handle gaps block-wise. See the README's "Choosing a detector" table for
+    how the detectors' conventions differ.
+
+    References
+    ----------
+    Unpublished variant contributed by Gabrielle Shvartsman (2026, pull
+    request #11); it has no paper of its own. The participation rule requires
+    ``participation_threshold`` channels (a count, default 2) to detect the
+    ripple, so a single-channel input never produces an event.
+
     """
     time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
         time,
@@ -860,6 +876,15 @@ def Kay_ripple_detector(
         - Lowering minimum_duration (e.g., from 0.015 to 0.010)
         - Increasing speed_threshold if movement exclusion is too strict
         - Verifying your data contains ripple oscillations (150-250 Hz)
+
+    Notes
+    -----
+    Missing samples: rows with NaN in any channel of ``filtered_lfps`` or in
+    ``speed`` are dropped and the remaining samples are treated as contiguous,
+    so an event can span the gap. Pass one contiguous block per call if that
+    matters; ``Yu_ripple_detector`` and ``Zugaro_ripple_detector`` instead
+    handle gaps block-wise. See the README's "Choosing a detector" table for
+    how the detectors' conventions differ.
 
     Examples
     --------
@@ -2073,6 +2098,15 @@ def Karlsson_ripple_detector(
         - Increasing speed_threshold if movement exclusion is too strict
         - Verifying your data contains ripple oscillations (150-250 Hz)
 
+    Notes
+    -----
+    Missing samples: rows with NaN in any channel of ``filtered_lfps`` or in
+    ``speed`` are dropped and the remaining samples are treated as contiguous,
+    so an event can span the gap. Pass one contiguous block per call if that
+    matters; ``Yu_ripple_detector`` and ``Zugaro_ripple_detector`` instead
+    handle gaps block-wise. See the README's "Choosing a detector" table for
+    how the detectors' conventions differ.
+
     References
     ----------
     .. [1] Karlsson, M.P., and Frank, L.M. (2009). Awake replay of remote
@@ -2203,6 +2237,21 @@ def Roumis_ripple_detector(
         - Lowering minimum_duration (e.g., from 0.015 to 0.010)
         - Increasing speed_threshold if movement exclusion is too strict
         - Verifying your data contains ripple oscillations (150-250 Hz)
+
+    Notes
+    -----
+    Missing samples: rows with NaN in any channel of ``filtered_lfps`` or in
+    ``speed`` are dropped and the remaining samples are treated as contiguous,
+    so an event can span the gap. Pass one contiguous block per call if that
+    matters; ``Yu_ripple_detector`` and ``Zugaro_ripple_detector`` instead
+    handle gaps block-wise. See the README's "Choosing a detector" table for
+    how the detectors' conventions differ.
+
+    References
+    ----------
+    Unpublished Frank-lab variant contributed by Demetris Roumis (2017); it has
+    no paper of its own. It averages each channel's smoothed envelope before
+    z-scoring, between Kay's consensus trace and Karlsson's per-channel rule.
 
     """
     time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
@@ -2347,6 +2396,16 @@ def multiunit_HSE_detector(
         - Lowering minimum_duration (e.g., from 0.015 to 0.010)
         - Increasing speed_threshold if movement exclusion is too strict
         - Verifying your multiunit data shows synchronous spiking activity
+
+    Notes
+    -----
+    Missing samples: a NaN anywhere in ``multiunit`` or ``speed`` raises; pass
+    one contiguous, finite block per call.
+
+    The defaults (2 SD, 15 ms smoothing, 15 ms minimum, 4 cm/s) are this
+    package's convention. Published multiunit-burst detectors in the same
+    lineage use their own values (Davidson et al. 2009 among them), so set them
+    explicitly when reproducing a paper.
 
     References
     ----------
