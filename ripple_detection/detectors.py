@@ -5,6 +5,8 @@ from itertools import chain, pairwise
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike, NDArray
+from scipy.ndimage import gaussian_filter1d
+from scipy.signal import butter, filtfilt
 
 from ripple_detection.core import (
     _get_normalization_mask,
@@ -1113,6 +1115,272 @@ def Yu_ripple_detector(
     events["clipped_end"] = is_clipped[:, 1]
     events["n_suprathreshold_samples"] = n_suprathreshold
     events["detection_threshold_zscore"] = threshold_zscore
+    return events
+
+
+def _unit_area_gaussian(sigma_samples: float, n_sd: float) -> NDArray:
+    """Unit-area Gaussian kernel truncated at ``n_sd`` standard deviations
+    (vandermeerlab ``gausskernel(R, S)`` with ``R = n_sd * S``)."""
+    radius = int(np.ceil(n_sd * sigma_samples))
+    x = np.arange(-radius, radius + 1)
+    kernel = np.exp(-(x**2) / (2.0 * sigma_samples**2))
+    return kernel / kernel.sum()
+
+
+def _state_intervals(
+    is_in_state: NDArray, time: NDArray, merge_gap: float, minimum_length: float
+) -> NDArray:
+    """Contiguous runs of a state, merged across gaps shorter than ``merge_gap``
+    and dropped when shorter than ``minimum_length`` (vandermeerlab ``TSDtoIV``).
+    Returns ``[start_index, stop_index]`` rows, inclusive."""
+    bounds = _boolean_runs(is_in_state)
+    if len(bounds) == 0:
+        return np.empty((0, 2), dtype=int)
+    starts, stops = bounds[:, 0], bounds[:, 1] - 1
+    if len(starts) > 1:
+        gaps = time[starts[1:]] - time[stops[:-1]]
+        merge = gaps < merge_gap
+        keep_start = np.concatenate([[True], ~merge])
+        keep_stop = np.concatenate([~merge, [True]])
+        starts, stops = starts[keep_start], stops[keep_stop]
+    long_enough = (time[stops] - time[starts]) > minimum_length  # TSDtoIV: strict
+    return np.column_stack([starts[long_enough], stops[long_enough]])
+
+
+def _contained_in_intervals(event_bounds: NDArray, intervals: NDArray) -> NDArray:
+    """True for each ``[start, stop]`` event lying inside some interval (vandermeerlab ``restrict``)."""
+    if len(event_bounds) == 0:
+        return np.empty(0, dtype=bool)
+    if len(intervals) == 0:
+        return np.zeros(len(event_bounds), dtype=bool)
+    inside = (event_bounds[:, [0]] >= intervals[:, 0]) & (
+        event_bounds[:, [1]] <= intervals[:, 1]
+    )
+    return inside.any(axis=1)
+
+
+def Carey_candidate_detector(
+    time: ArrayLike,
+    filtered_lfps: ArrayLike,
+    multiunit: ArrayLike,
+    speed: ArrayLike,
+    sampling_frequency: float,
+    speed_threshold: float = 4.0,
+    edge_threshold: float = 1.0,
+    peak_threshold: float = 3.0,
+    minimum_duration: float = 0.020,
+    minimum_active_units: int = 5,
+    ripple_smoothing_sigma: float = 0.010,
+    spike_kernel_sigma: float = 0.020,
+    spike_cap: float = 2.0,
+    baseline_sigma: float = 0.125,
+    baseline_cap: float = 4.0,
+    theta_lfp: ArrayLike | None = None,
+    theta_band: tuple[float, float] = (6.0, 10.0),
+    theta_threshold: float = 2.0,
+    state_merge_gap: float = 0.050,
+    state_minimum_length: float = 0.050,
+) -> pd.DataFrame:
+    """Detect candidate replay events from ripple power and multiunit activity jointly.
+
+    The candidate-event detector of Carey, Tank & van der Meer 2019 [1]_
+    (vandermeerlab ``GenCandidateEvents`` with its Hilbert ripple score
+    ``OldWizard`` and multiunit score ``amMUA`` by Elyot Grant and A. Carey)
+    [2]_. A ripple score and a multiunit score are combined as their
+    **geometric mean**, so an event needs both a ripple and a population
+    burst, then z-scored and segmented with two thresholds. Reimplemented
+    from the code as read.
+
+    - **Ripple score**: Hilbert envelope of the ripple-band signal, averaged
+      across channels, smoothed with a Gaussian (10 ms SD, +/-3 SD), rescaled
+      to mean 1.
+    - **Multiunit score**: each unit's spike train smoothed with a unit-area
+      Gaussian (20 ms SD, +/-5 SD) and capped at the peak that ``spike_cap``
+      coincident spikes would give, so no single unit dominates; summed over
+      units; a slow baseline (the sum capped at ``baseline_cap`` units'
+      worth, smoothed with a 125 ms SD Gaussian) and one unit's cap are
+      subtracted; divided by the mean and floored at zero.
+    - **Joint score**: ``sqrt(ripple * multiunit)``, rescaled to mean 0.5 and
+      z-scored. Note the asymmetry this creates: the multiunit score is
+      floored at zero, so a ripple without a population burst cannot be a
+      candidate, but the ripple score is an envelope rescaled to mean 1 and
+      never zero, so a burst without a ripple can be. The joint score is
+      therefore closer to "burst, weighted by ripple power" than to a
+      symmetric conjunction. Candidates are runs strictly above ``edge_threshold`` whose
+      maximum is strictly above ``peak_threshold``, at least
+      ``minimum_duration`` long.
+    - **State**: a candidate is kept only if it lies entirely inside a
+      low-speed interval (speed below ``speed_threshold``, runs merged across
+      gaps under ``state_merge_gap`` and dropped under
+      ``state_minimum_length``) and, when ``theta_lfp`` is given, inside a
+      low-theta interval (z-scored theta-band envelope below
+      ``theta_threshold``, same interval rules), and has at least
+      ``minimum_active_units`` units with a spike inside it.
+
+    The original works in samples at 2 kHz (kernel SDs of 40 and 250 samples,
+    +/-60-sample ripple smoothing); the defaults here are those values in
+    seconds. Its speed limit is 10 pixels/s in tracking units; the default
+    here is the package's 4 cm/s. NaN input raises: the scores need
+    contiguous data.
+
+    Parameters
+    ----------
+    time : array_like, shape (n_time,)
+        Time values for each sample in seconds.
+    filtered_lfps : array_like, shape (n_time, n_channels)
+        Ripple-band-filtered LFP; the original uses 140-250 Hz on one channel.
+    multiunit : array_like, shape (n_time, n_units)
+        Spike counts (or indicators) per sample per unit; clusterless marks
+        per tetrode work, with the per-unit cap then applying per tetrode.
+    speed : array_like, shape (n_time,)
+        Animal's running speed in cm/s.
+    sampling_frequency : float
+        Sampling rate in Hz.
+    speed_threshold : float, optional
+        Speed below which the animal is considered stopped. Default is 4.0.
+    edge_threshold, peak_threshold : float, optional
+        Boundary and peak thresholds on the z-scored joint score. Defaults 1
+        and 3 (the original's ``DetectorThreshold`` and ``DetectorThreshold2``).
+    minimum_duration : float, optional
+        Minimum candidate duration in seconds. Default 0.020.
+    minimum_active_units : int, optional
+        Minimum number of units with a spike inside the candidate. Default 5.
+    ripple_smoothing_sigma, spike_kernel_sigma, baseline_sigma : float, optional
+        Gaussian standard deviations in seconds. Defaults 0.010, 0.020, 0.125.
+    spike_cap, baseline_cap : float, optional
+        Per-unit cap in coincident spikes (default 2) and the baseline cap in
+        units' worth (default 4).
+    theta_lfp : array_like, shape (n_time,), optional
+        Raw LFP of a theta channel; when given, candidates during elevated
+        theta are excluded. Default None (no theta exclusion).
+    theta_band : tuple of (float, float), optional
+        Theta pass-band in Hz, Butterworth order 4. Default (6, 10).
+    theta_threshold : float, optional
+        Theta-envelope z-score at or above which a period is excluded. Default 2.
+    state_merge_gap, state_minimum_length : float, optional
+        Interval rules for the low-speed and low-theta periods, in seconds.
+        Defaults 0.050 and 0.050 (vandermeerlab ``TSDtoIV`` defaults).
+
+    Returns
+    -------
+    candidate_times : pd.DataFrame
+        One row per candidate, indexed by ``event_number``, with the package's
+        statistics computed on the z-scored joint score, the speed statistics,
+        and ``n_active_units``.
+
+    References
+    ----------
+    .. [1] Carey, A. A., Tank, D. W., & van der Meer, M. A. A. (2019). Reward
+       revaluation biases hippocampal replay content away from the preferred
+       outcome. Nature Neuroscience, 22, 1450-1459.
+    .. [2] van der Meer lab, ``code-matlab/tasks/Alyssa_Tmaze/GenCandidateEvents.m``,
+       ``beta/OldWizard.m``, ``beta/amMUA.m``, ``beta/TSDtoIV2.m``,
+       https://github.com/vandermeerlab/vandermeerlab
+
+    """
+    filtered_lfps = np.asarray(filtered_lfps, dtype=float)
+    multiunit = np.asarray(multiunit, dtype=float)
+    speed = np.asarray(speed, dtype=float)
+    time = np.asarray(time, dtype=float)
+    _validate_lfp_dimensions(filtered_lfps)
+    if multiunit.ndim != 2:
+        raise ValueError(
+            f"multiunit must be a 2D array of shape (n_time, n_units), got shape {multiunit.shape}."
+        )
+    _validate_array_lengths(time, filtered_lfps, speed)
+    if multiunit.shape[0] != len(time):
+        raise ValueError(
+            f"Array length mismatch: multiunit has {multiunit.shape[0]} samples but time has {len(time)}."
+        )
+    _validate_time_units(time, sampling_frequency, len(time))
+    _validate_speed_units(speed, speed_threshold)
+    if (
+        np.any(np.isnan(filtered_lfps))
+        or np.any(np.isnan(multiunit))
+        or np.any(np.isnan(speed))
+    ):
+        raise ValueError("filtered_lfps, multiunit, and speed must not contain NaN.")
+    n_time = len(time)
+
+    # ripple score (OldWizard, 'amplitude', 'wizard' kernel), rescaled to mean 1
+    envelope = get_envelope(filtered_lfps).mean(axis=1)
+    ripple_score = gaussian_filter1d(
+        envelope, ripple_smoothing_sigma * sampling_frequency, truncate=3.0, mode="constant"
+    )
+    ripple_score = ripple_score / ripple_score.mean()
+
+    # multiunit score (amMUA)
+    sigma_samples = spike_kernel_sigma * sampling_frequency
+    spike_kernel = _unit_area_gaussian(sigma_samples, 5.0)
+    cap = spike_cap / (sigma_samples * np.sqrt(2.0 * np.pi))
+    summed = np.zeros(n_time)
+    for unit in multiunit.T:
+        summed += np.minimum(np.convolve(unit, spike_kernel, mode="same"), cap)
+    baseline_kernel = _unit_area_gaussian(baseline_sigma * sampling_frequency, 12.0)
+    baseline = np.convolve(
+        np.minimum(baseline_cap * cap, summed), baseline_kernel, mode="same"
+    )
+    mean_summed = summed.mean()
+    if mean_summed <= 0:
+        raise ValueError("multiunit contains no spikes; cannot form a multiunit score.")
+    multiunit_score = np.maximum(0.0, (summed - baseline - cap) / mean_summed)
+
+    joint = np.sqrt(ripple_score * multiunit_score)
+    joint = joint * (0.5 / joint.mean()) if joint.mean() > 0 else joint
+    zscored = normalize_signal(joint)
+
+    # two-threshold segmentation (TSDtoIV2): runs above the edge, kept if peak above
+    bounds = _boolean_runs(zscored > edge_threshold)
+    candidates = []
+    for start, stop in bounds:
+        if zscored[start:stop].max() > peak_threshold:
+            candidates.append((start, stop - 1))
+    candidates = np.asarray(candidates, dtype=int).reshape(-1, 2)
+    if len(candidates):
+        duration = time[candidates[:, 1]] - time[candidates[:, 0]]
+        candidates = candidates[duration > minimum_duration]  # RemoveIV: strict
+
+    # state restriction: contained in a low-speed (and low-theta) interval
+    if len(candidates):
+        low_speed = _state_intervals(
+            speed < speed_threshold, time, state_merge_gap, state_minimum_length
+        )
+        candidates = candidates[_contained_in_intervals(candidates, low_speed)]
+    if len(candidates) and theta_lfp is not None:
+        theta_lfp = np.asarray(theta_lfp, dtype=float)
+        if theta_lfp.shape != (n_time,):
+            raise ValueError(f"theta_lfp must have shape ({n_time},), got {theta_lfp.shape}.")
+        b, a = butter(4, np.asarray(theta_band) / (0.5 * sampling_frequency), btype="bandpass")
+        theta_envelope = get_envelope(filtfilt(b, a, theta_lfp))
+        low_theta = _state_intervals(
+            normalize_signal(theta_envelope) < theta_threshold,
+            time,
+            state_merge_gap,
+            state_minimum_length,
+        )
+        candidates = candidates[_contained_in_intervals(candidates, low_theta)]
+
+    # minimum number of active units
+    n_active = np.array(
+        [
+            int(np.sum(multiunit[start : stop + 1].sum(axis=0) > 0))
+            for start, stop in candidates
+        ],
+        dtype=int,
+    )
+    if len(candidates):
+        keep = n_active >= minimum_active_units
+        candidates, n_active = candidates[keep], n_active[keep]
+
+    event_times = (
+        np.column_stack([time[candidates[:, 0]], time[candidates[:, 1]]])
+        if len(candidates)
+        else np.empty((0, 2))
+    )
+    events = _get_event_stats(
+        event_times, time, zscored, speed, minimum_duration=minimum_duration
+    )
+    events["n_active_units"] = n_active
     return events
 
 

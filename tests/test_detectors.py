@@ -9,6 +9,7 @@ import pytest
 
 import ripple_detection.detectors as detectors_module
 from ripple_detection import (
+    Carey_candidate_detector,
     Karlsson_ripple_detector,
     Kay_ripple_detector,
     Shvartsman_ripple_detector,
@@ -1426,6 +1427,143 @@ class TestYuRippleDetector:
         import ripple_detection
 
         assert ripple_detection.Yu_ripple_detector is Yu_ripple_detector
+
+
+def _synthetic_joint_inputs(
+    n_time,
+    sampling_frequency,
+    events,
+    n_units=8,
+    seed=0,
+    ripple=True,
+    spikes=True,
+    ripple_gain=20.0,
+    rate_gain=8.0,
+):
+    """Ripple-band LFP (3 channels) plus a multiunit spike matrix. Each event
+    adds a 200 Hz burst to the LFP and raises every unit's spike probability
+    over a 60 ms window."""
+    rng = np.random.default_rng(seed)
+    lfps = rng.normal(0.0, 1.0, (n_time, 3))
+    base_rate = 0.004  # spikes per sample per unit
+    prob = np.full((n_time, n_units), base_rate)
+    t = np.arange(n_time) / sampling_frequency
+    for centre in events:
+        window = slice(centre - 30, centre + 30)
+        if ripple:
+            lfps[window] += ripple_gain * np.sin(2 * np.pi * 200.0 * t[window])[:, np.newaxis]
+        if spikes:
+            prob[window] = base_rate * rate_gain
+    multiunit = (rng.random((n_time, n_units)) < prob).astype(float)
+    return lfps, multiunit
+
+
+class TestCareyCandidateDetector:
+    FS = 1000
+    N_TIME = 20_000
+    EVENTS = (3000, 7000, 11000, 15000)
+
+    @pytest.fixture
+    def time(self):
+        return np.arange(self.N_TIME) / self.FS
+
+    @pytest.fixture
+    def stationary(self):
+        return np.full(self.N_TIME, 2.0)
+
+    @staticmethod
+    def _hits(events, time, centres):
+        return [
+            any((events.start_time <= time[c]) & (events.end_time >= time[c])) for c in centres
+        ]
+
+    def test_recovers_events_with_both_ripple_and_burst(self, time, stationary):
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        events = Carey_candidate_detector(time, lfps, multiunit, stationary, self.FS)
+        assert all(self._hits(events, time, self.EVENTS))
+        assert len(events) <= len(self.EVENTS) + 2
+
+    def test_ripple_without_burst_is_not_a_candidate(self, time, stationary):
+        lfps, multiunit = _synthetic_joint_inputs(
+            self.N_TIME, self.FS, self.EVENTS, spikes=False
+        )
+        events = Carey_candidate_detector(time, lfps, multiunit, stationary, self.FS)
+        assert sum(self._hits(events, time, self.EVENTS)) == 0
+
+    def test_burst_without_ripple_can_still_be_a_candidate(self, time, stationary):
+        # The ripple score is the noise envelope rescaled to mean 1, never zero,
+        # so the geometric mean does not suppress a burst that lacks a ripple.
+        # The multiunit score is floored at zero, so the reverse does not hold
+        # (previous test). This asymmetry is the original algorithm's.
+        lfps, multiunit = _synthetic_joint_inputs(
+            self.N_TIME, self.FS, self.EVENTS, ripple=False
+        )
+        events = Carey_candidate_detector(time, lfps, multiunit, stationary, self.FS)
+        assert sum(self._hits(events, time, self.EVENTS)) >= len(self.EVENTS) - 1
+
+    def test_minimum_active_units_is_enforced(self, time, stationary):
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        many = Carey_candidate_detector(
+            time, lfps, multiunit, stationary, self.FS, minimum_active_units=5
+        )
+        too_many = Carey_candidate_detector(
+            time, lfps, multiunit, stationary, self.FS, minimum_active_units=9
+        )
+        assert len(many) >= 1
+        assert len(too_many) == 0  # only 8 units exist
+        assert np.all(many.n_active_units >= 5)
+
+    def test_event_during_movement_is_excluded(self, time, stationary):
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        speed = stationary.copy()
+        speed[2800:3200] = 10.0
+        events = Carey_candidate_detector(time, lfps, multiunit, speed, self.FS)
+        hits = self._hits(events, time, self.EVENTS)
+        assert not hits[0] and all(hits[1:])
+
+    def test_theta_exclusion_removes_event_with_strong_theta(self, time, stationary):
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        rng = np.random.default_rng(5)
+        theta_lfp = rng.normal(0.0, 1.0, self.N_TIME)
+        theta_lfp[6000:8000] += 15.0 * np.sin(2 * np.pi * 8.0 * time[6000:8000])
+        without = Carey_candidate_detector(time, lfps, multiunit, stationary, self.FS)
+        with_theta = Carey_candidate_detector(
+            time, lfps, multiunit, stationary, self.FS, theta_lfp=theta_lfp
+        )
+        assert self._hits(without, time, self.EVENTS)[1]
+        assert not self._hits(with_theta, time, self.EVENTS)[1]
+        assert all(self._hits(with_theta, time, [self.EVENTS[0], *self.EVENTS[2:]]))
+
+    def test_output_columns(self, time, stationary):
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        events = Carey_candidate_detector(time, lfps, multiunit, stationary, self.FS)
+        for column in (
+            "start_time",
+            "end_time",
+            "duration",
+            "max_zscore",
+            "n_active_units",
+            "max_speed",
+        ):
+            assert column in events.columns
+        assert events.index.name == "event_number"
+        assert np.all(events.max_zscore > 3.0)
+
+    def test_validation(self, time, stationary):
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        with pytest.raises(ValueError, match="length"):
+            Carey_candidate_detector(time, lfps, multiunit[:-1], stationary, self.FS)
+        with pytest.raises(ValueError, match="2D"):
+            Carey_candidate_detector(time, lfps, multiunit[:, 0], stationary, self.FS)
+        bad = multiunit.copy()
+        bad[10, 0] = np.nan
+        with pytest.raises(ValueError, match="NaN"):
+            Carey_candidate_detector(time, lfps, bad, stationary, self.FS)
+
+    def test_exported_from_package_root(self):
+        import ripple_detection
+
+        assert ripple_detection.Carey_candidate_detector is Carey_candidate_detector
 
 
 class TestDetectorErrorHandling:
