@@ -8,8 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.0.0] - 2026-09-21
 
 Detection results change. The same recording gives different events, so upgrade
-deliberately and detect again. No public name or signature changed, so the calls
-in your code still work. Pin `ripple-detection>=2,<3` and record the version
+deliberately and detect again. No name was removed and no parameter changed
+position, so the calls in your code still work. Nine signatures gained
+parameters at the end. Pin `ripple-detection>=2,<3` and record the version
 with the events that you detect. Entries marked **Breaking** change the results.
 
 ### Added
@@ -23,6 +24,9 @@ with the events that you detect. Entries marked **Breaking** change the results.
   channel.
 - `Carey_candidate_detector`, the candidate detector of Carey, Tanaka & van der
   Meer 2019. It combines a ripple score and a multiunit score.
+- `Shvartsman_ripple_detector`, an unpublished laboratory variant. It keeps an
+  event when at least `participation_threshold` channels detect it, and reports
+  which channels took part.
 - `maximum_duration` on the seven detectors that had no ceiling. It limits the
   event as the detector reports it, not the run above the threshold.
 - `minimum_active_units` on `multiunit_HSE_detector`. Each event now reports
@@ -42,19 +46,22 @@ with the events that you detect. Entries marked **Breaking** change the results.
   `ripple_duration` on `simulate_LFP`. The default call gives the same output as
   before.
 - The package root now exports `minimum_sample_count`, `sample_count_within`,
-  `nearest_sample_index` and `ripple_bandpass_filter`.
+  `nearest_sample_index`, `ripple_bandpass_filter` and `exclude_close_events`.
 - README: tables for the choice of detector, for published parameter values, and
   for tools that this package does not implement.
 
 ### Changed
 
 - **Breaking.** The minimum-duration test counts samples. It does not compare
-  timestamps. At 1500 Hz a 15 ms minimum needs 23 samples, not 24. On pink noise
-  this gives 3 % to 6 % more events at a `zscore_threshold` of 2.0 to 2.5.
+  timestamps. At 1500 Hz a 15 ms minimum needs 23 samples, not 24. On 300 s of
+  pink noise, filtered to the ripple band, this gives approximately 20 % more
+  events at a `zscore_threshold` of 2.0 to 2.5. Kay gives 25 % more and
+  Karlsson 20 % more.
 - **Breaking.** All detectors use one duration rule: inclusive sample counts,
   rounded half up. Zugaro and Carey compared elapsed time, and Long rounded down.
-- **Breaking.** Immobility is `speed <= speed_threshold` in all detectors. The
-  noise mask of Yu and the low-speed intervals of Carey used `<`.
+- **Breaking.** Immobility is `speed <= speed_threshold` in all detectors. In
+  `multiunit_HSE_detector` the deprecated `use_speed_threshold_for_zscore` path
+  used `<`, so its normalization baseline, and therefore its events, change.
 - **Breaking.** A duration ceiling below the minimum raises an error. Zugaro and
   Long gave an empty result.
 - `Karlsson_ripple_detector` calculates its per-event z-score statistics on the
@@ -83,25 +90,28 @@ with the events that you detect. Entries marked **Breaking** change the results.
   before it, not with the last event that it kept. It removed more than the
   first event of a cluster.
 - **Breaking.** `max_thresh` is now the largest threshold at which the detector
-  would still find the event. Before, it could give a value below
-  `zscore_threshold`, as low as 0.1.
-- These inputs gave a result before, and now raise an error:
-  - a series of all NaN;
-  - a negative z-score threshold;
-  - a normalization mask that selects no samples;
-  - a manual normalization in which all channels are degenerate;
-  - `multiunit` data of the wrong shape.
-- `get_Kay_ripple_consensus_trace` no longer smooths across a gap in the data.
-  It operates on each continuous block.
-- `Shvartsman_ripple_detector` no longer ignores `normalization_mask`,
-  `normalization_time_range` and `normalization_method` under manual
-  normalization.
+  would still find the event. Before, it could fall below `zscore_threshold`,
+  and on noise every Karlsson event did, down to -0.16.
+- **Breaking.** `Kay_ripple_detector` returns an empty result for an all-NaN
+  input. Before, it raised an error. The other detectors still raise.
+- These inputs now raise a clear error. Before, they gave an empty result, or
+  failed with a message about something else:
+  - a normalization mask that selects no samples, in any detector;
+  - an all-NaN series or a negative threshold, in `segment_boolean_series` and
+    `threshold_by_zscore`;
+  - `multiunit` data of the wrong shape, which raised an `AxisError` before.
+- `get_Kay_ripple_consensus_trace` no longer smooths across a gap when you give
+  it `time`. It then operates on each continuous block. `Yu_ripple_detector`
+  passes `time`. `Kay_ripple_detector` does not: it removes the rows that hold
+  NaN first, and treats what remains as continuous, as its docstring states.
 - `Karlsson_ripple_detector` and `multiunit_HSE_detector` give the
   `minimum_duration` of the caller to the `max_thresh` statistic. Before, they
   used the default of 15 ms.
 - `Long_sharp_wave_ripple_detector` measured `max_thresh` against the ripple
   duration, but reports an event that spans the sharp wave. It gave NaN for each
-  event when the two values differ.
+  event when the two values differ. `max_thresh` is still NaN for an event that
+  the ripple criterion admitted and whose sharp wave is shorter than
+  `minimum_sharp_wave_duration`. The statistic has no definition there.
 - The length guard of `filter_ripple_band` was one sample too permissive, so a
   signal of exactly that length failed inside scipy.
 - The LFP detectors filter `normalization_mask` with the same removal of NaN

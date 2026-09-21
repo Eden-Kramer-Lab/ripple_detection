@@ -2792,9 +2792,11 @@ def _find_max_thresh(
     max_thresh : float
         The largest value sustained for ``minimum_duration`` within the event.
         ``nan`` if the event holds fewer samples than the minimum (the sustained
-        value is then undefined). Public detectors never produce such events --
-        their segments meet the minimum by construction -- so this only affects
-        direct/edge callers.
+        value is then undefined). Most detectors never produce such an event,
+        because their segments meet the minimum by construction.
+        ``Long_sharp_wave_ripple_detector`` can: it admits an event on the
+        ripple criterion alone, but reports the span of the sharp wave and
+        measures this statistic against ``minimum_sharp_wave_duration``.
 
     """
     if len(data) < 2 and minimum_duration > 0:

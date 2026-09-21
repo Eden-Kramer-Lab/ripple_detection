@@ -9,6 +9,7 @@ where this package's defaults sit in it.
 
 from ripple_detection.core import (
     estimate_noise_threshold,
+    exclude_close_events,
     filter_ripple_band,
     gaussian_smooth,
     get_envelope,
@@ -57,6 +58,7 @@ __all__ = [
     "Zugaro_ripple_detector",
     "__version__",
     "estimate_noise_threshold",
+    "exclude_close_events",
     "filter_ripple_band",
     "gaussian_smooth",
     "get_Kay_ripple_consensus_trace",

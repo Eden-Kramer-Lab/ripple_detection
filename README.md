@@ -73,9 +73,9 @@ pip install -e .[dev,examples]
 ## Requirements
 
 - Python >= 3.10
-- numpy >= 1.23.0
-- scipy >= 1.9.0
-- pandas >= 1.5.0
+- numpy >= 1.24
+- scipy >= 1.10
+- pandas >= 2.0
 
 ## Quick Start
 
@@ -334,12 +334,12 @@ ripples = Kay_ripple_detector(
 | `speed_threshold` | 4.0 cm/s | Maximum speed for ripple detection | Increase if too many events excluded during slow movement |
 | `minimum_duration` (and every other duration limit) | 0.015 s (Kay, Karlsson, Roumis, Shvartsman, HSE)<br>0.020 s (Yu, Zugaro, Carey) | Converted to a sample count with `minimum_sample_count` (round half up from the median timestamp step); an event qualifies when its sample count is at least the minimum and at most any maximum, both inclusive (`sample_count_within`) | Decrease for shorter events; increase for stricter detection |
 | `zscore_threshold` | 2.0 (Kay, Roumis, HSE)<br>3.0 (Karlsson, Shvartsman) | Detection sensitivity | Decrease for more detections; increase for fewer, higher-confidence events |
-| `smoothing_sigma` | 0.004 s | Gaussian smoothing window (4 ms) | Rarely needs adjustment; increase for noisier data |
+| `smoothing_sigma` | 0.004 s on the LFP detectors, 0.015 s on `multiunit_HSE_detector` | Width of the Gaussian smoothing kernel | Rarely needs adjustment; increase for noisier data |
 | `percentile` | 99.99 (Yu) | Percentile of the mirrored immobility-noise distribution used as the threshold | Lower for more detections; the threshold is estimated per call, so it adapts to each recording |
 | `close_ripple_threshold` (`close_event_threshold` on the HSE detector) | 0.0 s | Events closer than this are treated as one: the later event is dropped | Raise (e.g. 0.05) to suppress fragments; Zugaro merges instead via `minimum_inter_ripple_interval` |
 | `maximum_duration` | `None` (no limit; `Zugaro` 0.100 s, `Long` 0.500 s for the sharp wave) | Longest allowed event, applied to the event as reported rather than to the run above threshold. A sample count like the minimum, so the ceiling is one sample shorter in elapsed time than the value given | Published limits run from a few hundred milliseconds to a couple of seconds |
 | `minimum_active_units` | 0 on `multiunit_HSE_detector` (no criterion), 5 on `Carey_candidate_detector` | Units with at least one spike inside the event; every event reports `n_active_units` | Published criteria are most often around five units |
-| `band`, `transition_width` on `filter_ripple_band` | (150.0, 250.0) Hz, 25.0 Hz | Passband of the designed filter. A custom band needs a `sampling_frequency`, since the shipped 1500 Hz kernel is fixed | Published bands run from about 80-180 Hz at the lower edge to 200-300 Hz at the upper |
+| `band`, `transition_width` on `filter_ripple_band` | `None`, meaning 150-250 Hz, and 25.0 Hz | Passband of the designed filter. A custom band needs a `sampling_frequency`, since the shipped 1500 Hz kernel is fixed | Published bands run from about 80-180 Hz at the lower edge to 200-300 Hz at the upper |
 | `low_threshold`, `high_threshold` | 2.0, 5.0 (Zugaro) | Boundary and peak thresholds of the two-threshold rule | Lower `high_threshold` for more detections; `low_threshold` sets where events start and end |
 
 ### Published parameter values
@@ -364,7 +364,7 @@ parameters.loc[parameters["Spike sorting"] == "Clusterless", ["First Author", "Y
 |---|---|---|---|---|---|
 | `zscore_threshold` (ripple) | 27 | 1-8 SD | 3 SD | 3, 2, 4 | 2.0 Kay/Roumis, 3.0 Karlsson/Shvartsman |
 | `zscore_threshold` (multiunit) | 27 | 2-4 SD | 3 SD | 3, 2, 4 | 2.0 |
-| ripple band | 30 | 80-180 Hz low, 200-300 Hz high | 150-250 Hz | 150-250 Hz (16 papers) | 150-250 Hz |
+| ripple band | 30 | 80-180 Hz low, 200-300 Hz high | 150-250 Hz | 150-250 Hz (17 papers) | 150-250 Hz |
 | `smoothing_sigma` (ripple) | 18 | 4-100 ms | 12.5 ms | 4, 12.5, 15 | 4 ms |
 | `smoothing_sigma` (multiunit) | 28 | 5-30 ms | 15 ms | 15, 10, 5 | 15 ms |
 | `speed_threshold` | 42 | 0.05-10 cm/s | 5 cm/s | 5, 4, 2 | 4 cm/s |
@@ -456,6 +456,9 @@ pytest
 pytest tests/test_core.py          # signal processing
 pytest tests/test_detectors.py     # detector behavior and conventions
 pytest tests/test_simulate.py      # synthetic LFP
+pytest tests/test_registry.py      # the detector registry
+pytest tests/test_literature.py    # the published-parameter survey
+pytest tests/test_public_api.py    # what the package exports
 pytest tests/test_properties.py    # property-based (hypothesis)
 pytest tests/test_snapshots.py     # regression snapshots
 
@@ -463,8 +466,9 @@ pytest tests/test_snapshots.py     # regression snapshots
 pytest --cov=ripple_detection --cov-report=html
 ```
 
-Test modules mirror the package modules (`test_core`, `test_detectors`, `test_simulate`);
-`test_properties` and `test_snapshots` cut across all three.
+Test modules mirror the package modules (`test_core`, `test_detectors`,
+`test_simulate`, `test_registry`, `test_literature`); `test_public_api`,
+`test_properties` and `test_snapshots` cut across all of them.
 
 ### Code Quality
 

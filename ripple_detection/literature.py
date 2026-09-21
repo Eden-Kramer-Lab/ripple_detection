@@ -62,7 +62,7 @@ def load_literature_parameters() -> pd.DataFrame:
     --------
     >>> from ripple_detection import load_literature_parameters
     >>> parameters = load_literature_parameters()
-    >>> parameters["SWR Z-score Thresh. (STD)"].median()
+    >>> float(parameters["SWR Z-score Thresh. (STD)"].median())
     3.0
 
     """

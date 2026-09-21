@@ -1340,7 +1340,9 @@ def merge_close_events(
 
     Merging is repeated until nothing more can be joined, so a chain of events
     each close to the next becomes one event. Events that overlap or nest have
-    a gap at or below zero and are therefore always merged.
+    a gap at or below zero, so they merge whenever the threshold alone decides
+    it. With `maximum_duration` set, a merge that would exceed the ceiling does
+    not happen, and the result can still hold overlapping events.
 
     Parameters
     ----------
