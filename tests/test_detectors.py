@@ -1810,31 +1810,35 @@ class TestShvartsmanParticipationSemantics:
 
 
 class TestFindMaxThresh:
+    """Samples are 10 ms apart unless stated, so a 15 ms minimum is
+    round(1.5) = 2 samples and a 35 ms minimum is round(3.5) = 4 samples."""
+
     def test_respects_minimum_duration(self):
         """max_thresh is the largest value sustained for minimum_duration, so a
         longer required duration yields a smaller (or equal) result. Peak at
         index 0 -> only rightward expansion."""
         time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
         data = np.array([10.0, 8.0, 6.0, 4.0, 2.0])
-        assert _find_max_thresh(time, data, minimum_duration=0.005) == 8.0
-        assert _find_max_thresh(time, data, minimum_duration=0.015) == 6.0
-        assert _find_max_thresh(time, data, minimum_duration=0.035) == 2.0
+        assert _find_max_thresh(time, data, minimum_duration=0.005) == 10.0  # 1 sample
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 8.0  # 2 samples
+        assert _find_max_thresh(time, data, minimum_duration=0.035) == 4.0  # 4 samples
 
     def test_mid_peak_expands_both_directions(self):
         """A mid-array peak exercises the leftward-expansion branch and the
-        neighbour tie-break. From peak 10 at index 2: the window first steps left
-        (neighbour 5 > 3), then right (3 > 1), spanning indices 1..3 -> min(5, 3)."""
+        neighbour tie-break. From peak 10 at index 2 the window first steps left
+        (neighbour 5 > 3) -> indices 1..2 -> min(5, 10); for four samples it
+        then steps right twice (3 > 1, 2 > 1) -> indices 1..4 -> min(5, 2)."""
         time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
         data = np.array([1.0, 5.0, 10.0, 3.0, 2.0])
-        assert _find_max_thresh(time, data, minimum_duration=0.015) == 3.0
-        assert _find_max_thresh(time, data, minimum_duration=0.035) == 1.0
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 5.0
+        assert _find_max_thresh(time, data, minimum_duration=0.035) == 2.0
 
     def test_peak_at_last_index_expands_left(self):
         """Peak at the last index forces leftward-only expansion."""
         time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
         data = np.array([2.0, 4.0, 6.0, 8.0, 10.0])
-        assert _find_max_thresh(time, data, minimum_duration=0.015) == 6.0
-        assert _find_max_thresh(time, data, minimum_duration=0.035) == 2.0
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 8.0
+        assert _find_max_thresh(time, data, minimum_duration=0.035) == 4.0
 
     def test_all_equal_data(self):
         """A flat plateau returns the (shared) value."""
@@ -1843,19 +1847,18 @@ class TestFindMaxThresh:
         assert _find_max_thresh(time, data, minimum_duration=0.015) == 5.0
 
     def test_two_sample_event_long_enough(self):
-        """A two-sample event already spanning minimum_duration needs no expansion
-        and returns the min of its endpoints."""
+        """With 20 ms samples, one sample already sustains 15 ms
+        (round(0.75) = 1), so the peak itself is returned."""
         time = np.array([0.0, 0.02])
         data = np.array([10.0, 0.0])
-        assert _find_max_thresh(time, data, minimum_duration=0.015) == 0.0
+        assert _find_max_thresh(time, data, minimum_duration=0.015) == 10.0
 
     def test_exact_minimum_duration_does_not_expand_further(self):
-        """Rounding at the duration boundary must not include a lower next sample."""
+        """20 ms at 1000 Hz is exactly 20 samples; the window must not take a
+        21st, lower sample because of timestamp round-off."""
         time = np.arange(200, 222) / 1000
         data = np.arange(22.0, 0.0, -1.0)
-        # The window [0.200, 0.220] meets the detector's 20 ms duration rule,
-        # although subtracting its endpoints gives 0.01999999999999999.
-        assert _find_max_thresh(time, data, minimum_duration=0.02) == 2.0
+        assert _find_max_thresh(time, data, minimum_duration=0.02) == 3.0
 
     def test_short_event_returns_nan(self):
         """An event shorter than minimum_duration cannot sustain the threshold, so
@@ -1865,9 +1868,41 @@ class TestFindMaxThresh:
         assert np.isnan(_find_max_thresh(time, data, minimum_duration=0.015))
 
     def test_single_sample_event_returns_nan(self):
-        """A one-sample event cannot sustain any duration -> nan (no out-of-bounds)."""
+        """A one-sample event has no measurable interval, so no positive
+        duration is sustained -> nan (no out-of-bounds)."""
         time = np.array([1.0])
         data = np.array([7.0])
+        assert np.isnan(_find_max_thresh(time, data, minimum_duration=0.015))
+
+
+class TestSampleCountDurationConvention:
+    """Detectors and max_thresh count samples for the minimum duration."""
+
+    def test_kay_accepts_a_run_of_round_minimum_samples(self):
+        fs = 1500
+        n = fs * 10
+        time = np.arange(n) / fs
+        rng = np.random.default_rng(0)
+        lfps = rng.normal(0.0, 1.0, (n, 2))
+        t = np.arange(n) / fs
+        burst = np.sin(2 * np.pi * 200.0 * t)
+        # make exactly 23 consecutive samples (round(0.015 * 1500)) loud
+        lfps[5000:5023] += 30.0 * burst[5000:5023, np.newaxis]
+        events = Kay_ripple_detector(time, lfps, np.full(n, 2.0), fs, minimum_duration=0.015)
+        assert len(events) >= 1
+        assert any((events.start_time <= time[5000]) & (events.end_time >= time[5022]))
+
+    @pytest.mark.parametrize("offset", [0.0, 1000.0])
+    def test_max_thresh_is_finite_for_an_event_of_exactly_minimum_samples(self, offset):
+        fs = 1000
+        time = offset + np.arange(15) / fs  # 15 samples = 15 ms at 1000 Hz
+        data = np.linspace(2.0, 3.0, 15)
+        assert np.isfinite(_find_max_thresh(time, data, minimum_duration=0.015))
+
+    def test_max_thresh_is_nan_below_minimum_samples(self):
+        fs = 1000
+        time = np.arange(14) / fs
+        data = np.linspace(2.0, 3.0, 14)
         assert np.isnan(_find_max_thresh(time, data, minimum_duration=0.015))
 
 

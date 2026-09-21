@@ -17,6 +17,7 @@ from ripple_detection.core import (
     get_multiunit_population_firing_rate,
     merge_overlapping_ranges,
     merge_overlapping_ranges_track_participation,
+    minimum_sample_count,
     normalize_signal,
     normalize_signal_manually,
     threshold_by_zscore,
@@ -1104,10 +1105,8 @@ def Yu_ripple_detector(
         event_times = np.asarray(event_times).reshape(-1, 2)
         is_clipped, n_suprathreshold = is_clipped[kept], n_suprathreshold[kept]
 
-    n_min = max(1, int(np.floor(minimum_duration * sampling_frequency + 0.5)))
-    stats_minimum_duration = (n_min - 1) / sampling_frequency
     events = _get_event_stats(
-        event_times, time, normalized, speed, minimum_duration=stats_minimum_duration
+        event_times, time, normalized, speed, minimum_duration=minimum_duration
     )
     events["clipped_start"] = is_clipped[:, 0]
     events["clipped_end"] = is_clipped[:, 1]
@@ -1509,8 +1508,9 @@ def _find_max_thresh(
     """Find the largest value sustained around the peak for a minimum duration.
 
     Starting at the peak, expand a window (toward the higher neighbouring sample)
-    until it spans ``minimum_duration``, then return the smaller of the two window
-    edges -- the largest value held across the whole window.
+    until it holds ``minimum_sample_count(time, minimum_duration)`` samples, then
+    return the smaller of the two window edges -- the largest value held across
+    the whole window. The sample-count convention matches event detection.
 
     Parameters
     ----------
@@ -1522,38 +1522,30 @@ def _find_max_thresh(
     -------
     max_thresh : float
         The largest value sustained for ``minimum_duration`` around the peak.
-        ``nan`` if the event is shorter than ``minimum_duration`` (the sustained
+        ``nan`` if the event holds fewer samples than the minimum (the sustained
         value is then undefined). Public detectors never produce such events --
-        their segments are ``>= minimum_duration`` by construction -- so this
-        only affects direct/edge callers.
-    """
-    # Find the peak of the data points
-    peak_ind = np.argmax(data)
+        their segments meet the minimum by construction -- so this only affects
+        direct/edge callers.
 
-    # Initialize the search window
+    """
+    if len(data) < 2 and minimum_duration > 0:
+        # a single sample has no measurable interval, so no duration is sustained
+        return float("nan")
+    n_min = minimum_sample_count(time, minimum_duration)
+    if len(data) < n_min:
+        return float("nan")
+    peak_ind = int(np.argmax(data))
     peak_left_ind = peak_ind
     peak_right_ind = peak_ind
-
-    # Match segment_boolean_series's inclusive duration comparison. Subtracting
-    # timestamps can round an accepted boundary below minimum_duration.
-    while time[peak_right_ind] < time[peak_left_ind] + minimum_duration:
-        can_expand_right = peak_right_ind < len(time) - 1
+    while peak_right_ind - peak_left_ind + 1 < n_min:
+        can_expand_right = peak_right_ind < len(data) - 1
         can_expand_left = peak_left_ind > 0
-        # The window already spans the whole event yet is still shorter than
-        # minimum_duration, so a value "sustained for minimum_duration" is
-        # undefined. Return nan rather than a misleading endpoint value (and
-        # rather than running an index out of bounds).
-        if not (can_expand_right or can_expand_left):
-            return float("nan")
-        # Determine the direction to expand
         if can_expand_right and (
             not can_expand_left or data[peak_right_ind + 1] > data[peak_left_ind - 1]
         ):
             peak_right_ind += 1
         else:
             peak_left_ind -= 1
-
-    # Return the minimum value between the left and right edges of the window
     return min(data[peak_left_ind], data[peak_right_ind])
 
 

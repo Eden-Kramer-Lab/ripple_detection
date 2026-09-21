@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `random_state` parameter to `simulate_LFP()` for reproducible synthetic LFP generation (used to make the test suite deterministic).
 - Regression tests for Shvartsman participation preserve the original count of distinct electrodes across each merged event, including chains of overlapping ripples and repeated ripples on the same electrode.
 
+### Changed
+
+- The minimum-duration test now counts samples: a run qualifies when it holds at least `round(minimum_duration * sampling_frequency)` consecutive samples (`minimum_sample_count`, round-half-up, sampling interval taken as the median timestamp step), the convention of the Frank lab `extractevents` routine. Previously the test subtracted the first and last timestamps and required the span to reach `minimum_duration`, which needed one more sample than the lab convention (24 rather than 23 at 1500 Hz for 15 ms) and could reject runs of exactly the minimum through floating-point round-off (8-38 % of exact-15 ms runs at 1000 Hz depending on the time offset). A run that straddles a gap in the timestamps is now measured by the samples it holds, not the time it spans. `max_thresh` uses the same sample count, so its window is one sample shorter than before at 1500 Hz; snapshot values changed by under 0.03 SD with no change in detected events.
+
 ### Fixed
 
 - `filter_ripple_band` now designs a 150-250 Hz filter for the given `sampling_frequency` (via `ripple_bandpass_filter`) instead of applying the 1500 Hz pre-computed kernel at every rate. Previously the passband scaled with the rate — 193-340 Hz at 2000 Hz, 97-170 Hz at 1000 Hz — with only a warning. Output at 1500 Hz (or with no rate given) is unchanged. Rates whose Nyquist frequency cannot hold the band plus its 25 Hz transition (at or below 550 Hz) now raise instead of warning.

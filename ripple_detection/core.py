@@ -84,6 +84,44 @@ def _get_series_start_end_times(series: pd.Series) -> tuple[NDArray, NDArray]:
     return start_times, end_times
 
 
+def minimum_sample_count(time: ArrayLike, minimum_duration: float) -> int:
+    """Number of consecutive samples that ``minimum_duration`` spans.
+
+    ``round(minimum_duration * sampling_frequency)`` with round-half-up, the
+    convention of the Frank lab ``extractevents`` routine, where the sampling
+    interval is the median timestamp step. A duration that is not a whole
+    number of samples rounds to the nearest count (22.5 samples -> 23).
+
+    Parameters
+    ----------
+    time : array_like, shape (n_time,)
+        Sample timestamps in seconds. Fewer than two samples, or a
+        non-positive median step, give a count of 1.
+    minimum_duration : float
+        Duration in seconds.
+
+    Returns
+    -------
+    n_samples : int
+        At least 1.
+
+    """
+    time = np.asarray(time, dtype=float)
+    if time.size < 2:
+        return 1
+    sample_interval = np.median(np.diff(time))
+    if not np.isfinite(sample_interval) or sample_interval <= 0:
+        return 1
+    # small tolerance so an exact half-sample product is not lost to round-off
+    return max(1, int(np.floor(minimum_duration / sample_interval + 0.5 + 1e-6)))
+
+
+def _boolean_run_bounds(values: NDArray) -> NDArray:
+    """Start (inclusive) and stop (exclusive) positions of each run of True."""
+    padded = np.concatenate([[False], np.asarray(values, dtype=bool), [False]])
+    return np.flatnonzero(padded[1:] != padded[:-1]).reshape(-1, 2)
+
+
 def segment_boolean_series(
     series: pd.Series, minimum_duration: float = 0.015
 ) -> list[tuple[float, float]]:
@@ -92,6 +130,13 @@ def segment_boolean_series(
     Returns a list of tuples where each tuple contains the start and end time
     of a segment. Segments are defined by consecutive True values in the input
     series, where the series index represents time.
+
+    A segment qualifies when it holds at least
+    ``minimum_sample_count(series.index, minimum_duration)`` consecutive
+    samples, i.e. ``round(minimum_duration * sampling_frequency)``. Counting
+    samples rather than subtracting timestamps makes the test exact at every
+    sampling rate and time offset, and measures a run that straddles a gap in
+    the index by the samples it contains, not by the time it spans.
 
     Parameters
     ----------
@@ -105,17 +150,16 @@ def segment_boolean_series(
     Returns
     -------
     segments : list of tuple
-        List of (start_time, end_time) tuples for each segment that meets
-        the minimum duration requirement.
+        List of (start_time, end_time) tuples, the timestamps of the first and
+        last sample of each segment that meets the minimum sample count.
 
     """
-    start_times, end_times = _get_series_start_end_times(series)
-
-    return [
-        (start_time, end_time)
-        for start_time, end_time in zip(start_times, end_times, strict=False)
-        if end_time >= (start_time + minimum_duration)
-    ]
+    values = series.to_numpy(dtype=bool)
+    index = np.asarray(series.index)
+    n_min = minimum_sample_count(index, minimum_duration)
+    bounds = _boolean_run_bounds(values)
+    bounds = bounds[(bounds[:, 1] - bounds[:, 0]) >= n_min]
+    return [(index[start], index[stop - 1]) for start, stop in bounds]
 
 
 def filter_ripple_band(data: ArrayLike, sampling_frequency: float | None = None) -> NDArray:

@@ -82,14 +82,48 @@ def test_get_series_start_end_times(series, expected_segments):
     ],
 )
 def test_segment_boolean_series(series, expected_segments):
-    assert np.all(
-        [
-            (np.allclose(expected_start, test_start)) & (np.allclose(expected_end, test_end))
-            for (test_start, test_end), (expected_start, expected_end) in zip(
-                segment_boolean_series(series), expected_segments, strict=False
-            )
-        ]
-    )
+    segments = segment_boolean_series(series)
+    assert len(segments) == len(expected_segments)
+    for (test_start, test_end), (expected_start, expected_end) in zip(
+        segments, expected_segments, strict=True
+    ):
+        assert np.allclose(expected_start, test_start)
+        assert np.allclose(expected_end, test_end)
+
+
+class TestSegmentDurationCountsSamples:
+    """A run qualifies when it holds round(minimum_duration * fs) samples,
+    the lab extractevents convention, independent of timestamp round-off."""
+
+    @staticmethod
+    def _run(sampling_frequency, n_true, start, offset, n_time=100_000):
+        time = offset + np.arange(n_time) / sampling_frequency
+        series = pd.Series(False, index=time)
+        series.iloc[start : start + n_true] = True
+        return series
+
+    @pytest.mark.parametrize("offset", [0.0, 1000.0, 123_456.789])
+    @pytest.mark.parametrize("start", [0, 1, 7, 99_000, 99_984])
+    def test_exact_minimum_at_1000_hz_always_qualifies(self, offset, start):
+        series = self._run(1000, 15, start, offset)  # 15 samples = 15 ms
+        assert len(segment_boolean_series(series, 0.015)) == 1
+
+    def test_one_sample_short_does_not_qualify(self):
+        assert len(segment_boolean_series(self._run(1000, 14, 500, 1000.0), 0.015)) == 0
+
+    @pytest.mark.parametrize(("n_true", "qualifies"), [(22, False), (23, True), (24, True)])
+    def test_half_sample_products_round_half_up(self, n_true, qualifies):
+        # 0.015 s at 1500 Hz is 22.5 samples; extractevents uses round() -> 23
+        series = self._run(1500, n_true, 500, 0.0)
+        assert (len(segment_boolean_series(series, 0.015)) == 1) == qualifies
+
+    def test_gap_spanning_run_is_measured_in_samples_not_span(self):
+        # five samples whose timestamps straddle a one-second hole (as after
+        # NaN rows are dropped) cover 5 samples, not one second
+        time = np.concatenate([np.arange(0, 1.0, 0.001), np.arange(2.0, 3.0, 0.001)])
+        series = pd.Series(False, index=time)
+        series.iloc[998:1003] = True
+        assert len(segment_boolean_series(series, 0.015)) == 0
 
 
 @pytest.mark.parametrize(
