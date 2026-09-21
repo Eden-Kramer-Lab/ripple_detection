@@ -28,10 +28,12 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
   - Movement metrics (speed during event)
 
 - **Flexible Signal Processing**
-  - Bandpass filtering (150-250 Hz)
+  - Bandpass filtering, 150-250 Hz by default and any band on request
   - Envelope extraction via Hilbert transform
   - Gaussian smoothing with configurable parameters
   - Movement exclusion based on speed thresholds
+  - Combining inventories: `require_overlap` for a ripple and a burst together,
+    `merge_close_events` or `exclude_close_events` for events that nearly touch
 
 - **Simulation Tools**
   - Generate synthetic LFPs with embedded ripples
@@ -139,41 +141,6 @@ print(f"Mean duration: {ripples['duration'].mean():.3f} seconds")
 print(f"Mean z-score: {ripples['mean_zscore'].mean():.2f}")
 ```
 
-### Matching the literature's criteria
-
-A survey of 57 decoding-replay papers (in the companion analysis project) shows four
-criteria the detectors above do not apply by default. Each is available:
-
-```python
-from ripple_detection import (
-    Kay_ripple_detector,
-    filter_ripple_band,
-    merge_close_events,
-    multiunit_HSE_detector,
-    require_overlap,
-)
-
-# a band other than 150-250 Hz (13 of the 29 papers stating one)
-filtered = filter_ripple_band(lfps, sampling_frequency, band=(80.0, 250.0))
-
-# a ceiling on event duration (25 of 57 papers; published limits are 400-2000 ms)
-ripples = Kay_ripple_detector(
-    time, filtered, speed, sampling_frequency, maximum_duration=0.5
-)
-
-# a minimum number of units in a burst (21 of the 36 multiunit papers, usually five)
-bursts = multiunit_HSE_detector(
-    time, multiunit, speed, sampling_frequency, minimum_active_units=5
-)
-
-# require a ripple and a burst together (13 of 57 papers)
-bursts_with_ripples = require_overlap(bursts, ripples)
-
-# merge events separated by a short gap (14 of 57 papers, median 50 ms).
-# exclude_close_events is the other convention: it drops the later event instead.
-merged = merge_close_events(ripples[["start_time", "end_time"]].to_numpy(), 0.05)
-```
-
 ## Output Format
 
 All detectors return a pandas DataFrame with comprehensive event statistics:
@@ -207,9 +174,30 @@ The index is `event_number`. Some detectors add columns:
 | `Long_sharp_wave_ripple_detector` | `peak_time`, `sharp_wave_zscore`, `sharp_wave_local_percentile`, `ripple_power_zscore`, `ripple_power_local_percentile`, `sharp_wave_duration`, `ripple_duration` |
 | `Carey_candidate_detector` | `n_active_units` |
 | `multiunit_HSE_detector` | `n_active_units` |
-| `mean_speed` | Mean speed during event |
 
 ## Examples
+
+### Combining two detectors
+
+Many studies require a ripple and a population burst together. `require_overlap`
+keeps the events of one inventory that overlap an event of another, so any two
+detectors compose into that criterion. The events keep their own bounds.
+
+```python
+from ripple_detection import Kay_ripple_detector, multiunit_HSE_detector, require_overlap
+
+# time, speed, filtered_lfps and sampling_frequency from the Basic Usage example
+multiunit = np.random.poisson(0.01, (len(time), 20))  # (n_time, n_units) spike counts
+
+ripples = Kay_ripple_detector(time, filtered_lfps, speed, sampling_frequency)
+bursts = multiunit_HSE_detector(time, multiunit, speed, sampling_frequency)
+
+bursts_with_a_ripple = require_overlap(bursts, ripples)
+ripples_with_a_burst = require_overlap(ripples, bursts)  # the other direction
+```
+
+`require_overlap` takes a detector's DataFrame or an `(n_events, 2)` array of
+start and end times, and `minimum_overlap` raises the bar above "any overlap".
 
 ### Simulating realistic ripples
 
@@ -314,6 +302,9 @@ ripples = Kay_ripple_detector(
 | `smoothing_sigma` | 0.004 s | Gaussian smoothing window (4 ms) | Rarely needs adjustment; increase for noisier data |
 | `percentile` | 99.99 (Yu) | Percentile of the mirrored immobility-noise distribution used as the threshold | Lower for more detections; the threshold is estimated per call, so it adapts to each recording |
 | `close_ripple_threshold` (`close_event_threshold` on the HSE detector) | 0.0 s | Events closer than this are treated as one: the later event is dropped | Raise (e.g. 0.05) to suppress fragments; Zugaro merges instead via `minimum_inter_ripple_interval` |
+| `maximum_duration` | `None` (no limit; `Zugaro` 0.100 s, `Long` 0.500 s for the sharp wave) | Longest allowed event, applied to the event as reported rather than to the run above threshold. A sample count like the minimum, so the ceiling is one sample shorter in elapsed time than the value given | Published limits run from a few hundred milliseconds to a couple of seconds |
+| `minimum_active_units` | 0 on `multiunit_HSE_detector` (no criterion), 5 on `Carey_candidate_detector` | Units with at least one spike inside the event; every event reports `n_active_units` | Published criteria are most often around five units |
+| `band`, `transition_width` on `filter_ripple_band` | (150.0, 250.0) Hz, 25.0 Hz | Passband of the designed filter. A custom band needs a `sampling_frequency`, since the shipped 1500 Hz kernel is fixed | Published bands run from about 80-180 Hz at the lower edge to 200-300 Hz at the upper |
 | `low_threshold`, `high_threshold` | 2.0, 5.0 (Zugaro) | Boundary and peak thresholds of the two-threshold rule | Lower `high_threshold` for more detections; `low_threshold` sets where events start and end |
 
 ### Getting Help
@@ -355,6 +346,8 @@ Notes:
   detectors do not take these arguments.
 - Two conventions are the package's, not each source's: every duration limit is an inclusive
   round-half-up sample count (`sample_count_within`), and immobility is `speed <= speed_threshold`.
+- "Close events" above says what each detector does by default. `merge_close_events` applies
+  the other convention, joining nearby events into one, to any inventory afterwards.
   The gating rule itself (endpoints, majority, interval containment) stays as each source defines it.
 - The other defaults reproduce each source's published or lab settings where one exists; they are
   not harmonized across detectors, so the same recording yields different event counts under
