@@ -16,6 +16,7 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
   - `Shvartsman_ripple_detector` - Per-channel detection requiring a minimum fraction of participating channels
   - `Roumis_ripple_detector` - Alternative detection method
   - `Yu_ripple_detector` - Median consensus with a data-driven noise-percentile threshold (Yu et al. 2017)
+  - `Carey_candidate_detector` - Joint ripple-power x multiunit candidate events (Carey, Tank & van der Meer 2019); takes LFP and spikes
   - `Zugaro_ripple_detector` - The FMAToolbox/buzcode `FindRipples` two-threshold algorithm (Hirase; Zugaro)
   - `Long_sharp_wave_ripple_detector` - Two-channel detector using the sharp wave on a stratum radiatum channel (J. D. Long II, buzcode `bz_DetectSWR`); takes **raw** LFP
   - `multiunit_HSE_detector` - High Synchrony Event detection from multiunit activity

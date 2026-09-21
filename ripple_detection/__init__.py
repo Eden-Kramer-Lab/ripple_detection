@@ -7,6 +7,7 @@ from ripple_detection.core import (
     ripple_bandpass_filter,
 )
 from ripple_detection.detectors import (
+    Carey_candidate_detector,
     Karlsson_ripple_detector,
     Kay_ripple_detector,
     Long_sharp_wave_ripple_detector,
