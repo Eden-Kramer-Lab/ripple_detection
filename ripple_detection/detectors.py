@@ -1247,6 +1247,15 @@ def Zugaro_ripple_detector(
     duration range are discarded. The summed rms-power thresholding it
     descends from is described in Csicsvari et al. 1999 [4]_.
 
+    The same two-threshold rule appears independently in the van der Meer lab's
+    ``getSWR`` (vandermeerlab, ``code-matlab/tasks/Replay_Analysis/getSWR.m``):
+    140-200 Hz, the Hilbert envelope rather than the squared signal, boundaries
+    at 2 SD, merge within 20 ms applied before a 20 ms minimum, peak above
+    5 SD. That variant is not implemented separately; it is this detector with
+    ``low_threshold=2``, ``high_threshold=5``, ``minimum_inter_ripple_interval=0.02``,
+    ``minimum_duration=0.02`` and no maximum, up to the envelope-versus-power
+    difference.
+
     This is a reimplementation from the algorithm, not a transcription (the
     original is GPL-3). Two departures from the original, both documented
     per parameter below: the endpoint speed rule shared by this package is
