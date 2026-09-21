@@ -578,15 +578,18 @@ def Shvartsman_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (in cm/s) for ripple detection. Events during movement
-        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
+        Maximum speed (in cm/s) for ripple detection. An event is kept only if
+        at least half of its samples have speed at or below this value
+        (``exclude_movement_by_majority``); movement over up to half of an
+        event does not exclude it. Default is 4.0 cm/s, which corresponds
         to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
-        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        The signal must stay at or above ``zscore_threshold`` for at least
+        ``round(minimum_duration * sampling_frequency)`` consecutive samples
         (per Karlsson et al. 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
@@ -796,15 +799,18 @@ def Kay_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (in cm/s) for ripple detection. Events during movement
-        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
+        Maximum speed (in cm/s) for ripple detection. An event is kept only if
+        the speed at its first and last sample is at or below this value
+        (``exclude_movement``); speed inside the event is not tested. Apply a
+        whole-event rule afterwards if one is needed. Default is 4.0 cm/s, which corresponds
         to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
-        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        The signal must stay at or above ``zscore_threshold`` for at least
+        ``round(minimum_duration * sampling_frequency)`` consecutive samples
         (per Karlsson et al. 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
@@ -1147,15 +1153,18 @@ def Karlsson_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (in cm/s) for ripple detection. Events during movement
-        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
+        Maximum speed (in cm/s) for ripple detection. An event is kept only if
+        the speed at its first and last sample is at or below this value
+        (``exclude_movement``); speed inside the event is not tested. Apply a
+        whole-event rule afterwards if one is needed. Default is 4.0 cm/s, which corresponds
         to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
-        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        The signal must stay at or above ``zscore_threshold`` for at least
+        ``round(minimum_duration * sampling_frequency)`` consecutive samples
         (per Karlsson et al. 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
@@ -1190,7 +1199,11 @@ def Karlsson_ripple_detector(
     -------
     ripple_times : pd.DataFrame
         DataFrame with detected ripples and comprehensive statistics (see
-        Kay_ripple_detector for column descriptions).
+        Kay_ripple_detector for column descriptions). The z-score statistics
+        (``max_thresh``, ``mean_zscore``, ``max_zscore``, ...) are computed on
+        the elementwise maximum across channels of the per-channel z-scores,
+        i.e. the strongest tetrode at each sample, so ``max_thresh`` is at
+        least ``zscore_threshold`` for every event.
 
         Returns empty DataFrame if no ripples detected. If this occurs, try:
         - Lowering zscore_threshold (e.g., from 3.0 to 2.0)
@@ -1236,8 +1249,10 @@ def Karlsson_ripple_detector(
     )
     ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
 
+    # statistics on the strongest channel at each sample, so an event that one
+    # channel triggered cannot report a sub-threshold max_thresh
     return _get_event_stats(
-        ripple_times, time, filtered_lfps.mean(axis=1), speed, minimum_duration
+        ripple_times, time, filtered_lfps.max(axis=1), speed, minimum_duration
     )
 
 
@@ -1273,15 +1288,18 @@ def Roumis_ripple_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (in cm/s) for ripple detection. Events during movement
-        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
+        Maximum speed (in cm/s) for ripple detection. An event is kept only if
+        the speed at its first and last sample is at or below this value
+        (``exclude_movement``); speed inside the event is not tested. Apply a
+        whole-event rule afterwards if one is needed. Default is 4.0 cm/s, which corresponds
         to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
-        This is the minimum time the signal must stay *above* ``zscore_threshold``
+        The signal must stay at or above ``zscore_threshold`` for at least
+        ``round(minimum_duration * sampling_frequency)`` consecutive samples
         (per Karlsson et al. 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
@@ -1405,7 +1423,8 @@ def multiunit_HSE_detector(
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
     minimum_duration : float, optional
         Minimum event duration in **seconds**. Default is 0.015 (15 milliseconds).
-        This is the minimum time the firing rate must stay *above* ``zscore_threshold``;
+        The firing rate must stay at or above ``zscore_threshold`` for at least
+        ``round(minimum_duration * sampling_frequency)`` consecutive samples;
         the event is then extended to the surrounding mean-crossings, so the reported
         ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
@@ -1572,7 +1591,7 @@ def _get_event_stats(
     zscore_metric : array_like, if participants is None: shape (n_time,); else shape (n_time, n_channels)
         Signal the per-event statistics (mean/median/max/min z-score, area,
         total_energy, max_thresh) are computed from. Its exact meaning depends on
-        the caller -- e.g. the consensus trace for Kay, the per-channel mean for
+        the caller -- e.g. the consensus trace for Kay, the per-channel maximum for
         Karlsson, or the multiunit firing rate for multiunit_HSE. When participants
         is None, pass a single 1-D trace of shape (n_time,). When participants is
         provided, pass the per-channel signal of shape (n_time, n_channels) so that

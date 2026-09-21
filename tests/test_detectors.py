@@ -830,6 +830,33 @@ class TestKarlssonRippleDetector:
         assert len(ripples) <= 2
 
 
+class TestKarlssonEventStatistics:
+    """Per-event statistics reflect the strongest channel, so an event that one
+    channel triggered at 3 SD cannot report a sub-threshold max_thresh."""
+
+    def test_max_thresh_never_below_threshold(self, time_3s, sampling_frequency):
+        # ripples on one channel only, four quiet channels
+        loud = simulate_LFP(
+            time_3s,
+            ripple_times=[1.0, 2.0],
+            noise_amplitude=1.3,
+            ripple_amplitude=1.0,
+            random_state=1,
+        )
+        quiet = [
+            simulate_LFP(time_3s, ripple_times=[], noise_amplitude=1.3, random_state=s)
+            for s in (2, 3, 4, 5)
+        ]
+        lfps = filter_ripple_band(np.column_stack([loud, *quiet]))
+        speed = np.full(len(time_3s), 2.0)
+        events = Karlsson_ripple_detector(
+            time_3s, lfps, speed, sampling_frequency, zscore_threshold=3.0
+        )
+        assert len(events) >= 2
+        assert np.all(events.max_thresh >= 3.0)
+        assert np.all(events.max_zscore >= 3.0)
+
+
 class TestRoumisRippleDetector:
     """Test suite for Roumis ripple detector."""
 
