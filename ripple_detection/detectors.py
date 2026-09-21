@@ -10,6 +10,7 @@ from scipy.ndimage import convolve1d, gaussian_filter1d
 from scipy.signal import butter, filtfilt
 
 from ripple_detection.core import (
+    _boolean_run_bounds,
     _get_normalization_mask,
     _validate_normalization_params,
     estimate_noise_threshold,
@@ -472,13 +473,6 @@ def get_Yu_ripple_consensus_trace(
     return consensus_trace
 
 
-def _boolean_runs(mask: NDArray) -> NDArray:
-    """Start (inclusive) and stop (exclusive) indices of each run of True."""
-    padded = np.concatenate([[False], np.asarray(mask, dtype=bool), [False]])
-    changes = np.flatnonzero(padded[1:] != padded[:-1])
-    return changes.reshape(-1, 2)
-
-
 def _extract_Yu_ripple_events(
     trace: NDArray,
     time: NDArray,
@@ -536,12 +530,12 @@ def _extract_Yu_ripple_events(
     time = np.asarray(time, dtype=float)
     n_min = minimum_sample_count(time, minimum_duration)
 
-    supra_runs = _boolean_runs(trace >= threshold)
+    supra_runs = _boolean_run_bounds(trace >= threshold)
     supra_runs = supra_runs[(supra_runs[:, 1] - supra_runs[:, 0]) >= n_min]
     if len(supra_runs) == 0:
         return np.empty((0, 2)), np.empty((0, 2), dtype=bool), np.empty(0, dtype=int)
 
-    above_zero_runs = _boolean_runs(trace > 0)
+    above_zero_runs = _boolean_run_bounds(trace > 0)
     # the above-zero run containing each qualifying run's first sample
     containing = np.searchsorted(above_zero_runs[:, 0], supra_runs[:, 0], side="right") - 1
     run_lengths = supra_runs[:, 1] - supra_runs[:, 0]
@@ -817,6 +811,61 @@ def Shvartsman_ripple_detector(
     return ripple_data
 
 
+def _detect_from_trace(
+    trace: NDArray,
+    time: NDArray,
+    speed: NDArray,
+    *,
+    minimum_duration: float,
+    zscore_threshold: float,
+    speed_threshold: float,
+    close_event_threshold: float,
+    normalization_method: str = "zscore",
+    normalization_mask: ArrayLike | None = None,
+    normalization_time_range: tuple[float, float] | None = None,
+) -> pd.DataFrame:
+    """Normalize one detection trace, threshold it, and summarize the events.
+
+    The shared tail of every detector that thresholds a single trace: normalize,
+    take runs above ``zscore_threshold`` that last ``minimum_duration`` and
+    extend them to the normalization center, drop events whose first or last
+    sample is above ``speed_threshold``, drop events too close to the last
+    retained one, then compute the per-event statistics.
+
+    Parameters
+    ----------
+    trace : ndarray, shape (n_time,)
+        The unnormalized detection trace.
+    time : ndarray, shape (n_time,)
+        Sample timestamps in seconds.
+    speed : ndarray, shape (n_time,)
+        Speed in cm/s.
+    minimum_duration, zscore_threshold, speed_threshold, close_event_threshold : float
+        As in the public detectors.
+    normalization_method, normalization_mask, normalization_time_range
+        Passed to ``normalize_signal``.
+
+    Returns
+    -------
+    events : pd.DataFrame
+        One row per event, indexed by ``event_number``.
+
+    """
+    normalized = normalize_signal(
+        trace,
+        time=time,
+        method=normalization_method,
+        normalization_mask=normalization_mask,
+        normalization_time_range=normalization_time_range,
+    )
+    candidate_times = threshold_by_zscore(normalized, time, minimum_duration, zscore_threshold)
+    event_times = exclude_movement(
+        candidate_times, speed, time, speed_threshold=speed_threshold
+    )
+    event_times = exclude_close_events(event_times, close_event_threshold)
+    return _get_event_stats(event_times, time, normalized, speed, minimum_duration)
+
+
 def Kay_ripple_detector(
     time: ArrayLike,
     filtered_lfps: ArrayLike,
@@ -954,23 +1003,17 @@ def Kay_ripple_detector(
     combined_filtered_lfps = get_Kay_ripple_consensus_trace(
         filtered_lfps, sampling_frequency, smoothing_sigma=smoothing_sigma
     )
-    combined_filtered_lfps = normalize_signal(
+    return _detect_from_trace(
         combined_filtered_lfps,
-        time=time,
-        method=normalization_method,
+        time,
+        speed,
+        minimum_duration=minimum_duration,
+        zscore_threshold=zscore_threshold,
+        speed_threshold=speed_threshold,
+        close_event_threshold=close_ripple_threshold,
+        normalization_method=normalization_method,
         normalization_mask=normalization_mask,
         normalization_time_range=normalization_time_range,
-    )
-    candidate_ripple_times = threshold_by_zscore(
-        combined_filtered_lfps, time, minimum_duration, zscore_threshold
-    )
-    ripple_times = exclude_movement(
-        candidate_ripple_times, speed, time, speed_threshold=speed_threshold
-    )
-    ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
-
-    return _get_event_stats(
-        ripple_times, time, combined_filtered_lfps, speed, minimum_duration
     )
 
 
@@ -1245,7 +1288,7 @@ def _two_threshold_events(
     # a run needs both a rising and a falling crossing, so runs that touch
     # either end of the block are dropped; an event spans from the last sample
     # below the low threshold before the run to the last sample of the run
-    runs = _boolean_runs(zscored > low_threshold)
+    runs = _boolean_run_bounds(zscored > low_threshold)
     runs = runs[(runs[:, 0] > 0) & (runs[:, 1] < len(zscored))]
     if len(runs) == 0:
         return empty
@@ -1456,11 +1499,8 @@ def _gaussian_lowpass_fir(
     """Unit-area Gaussian low-pass kernel with standard deviation
     ``fs / (2 pi cutoff)`` samples, truncated at ``n_sd`` standard deviations
     (Eran Stark's ``makegausslpfir``)."""
-    sd = sampling_frequency / (2.0 * np.pi * cutoff)
-    half = int(np.ceil(max(n_sd, 3.0) * sd))
-    x = np.arange(-half, half + 1)
-    kernel = np.exp(-(x**2) / (2.0 * sd**2))
-    return kernel / kernel.sum()
+    sigma_samples = sampling_frequency / (2.0 * np.pi * cutoff)
+    return _unit_area_gaussian(sigma_samples, max(n_sd, 3.0))
 
 
 def _firfilt(x: NDArray, kernel: NDArray) -> NDArray:
@@ -1811,7 +1851,7 @@ def _state_intervals(
     """Contiguous runs of a state, merged across gaps shorter than ``merge_gap``
     and dropped when shorter than ``minimum_length`` (vandermeerlab ``TSDtoIV``).
     Returns ``[start_index, stop_index]`` rows, inclusive."""
-    bounds = _boolean_runs(is_in_state)
+    bounds = _boolean_run_bounds(is_in_state)
     if len(bounds) == 0:
         return np.empty((0, 2), dtype=int)
     starts, stops = bounds[:, 0], bounds[:, 1] - 1
@@ -2009,7 +2049,7 @@ def Carey_candidate_detector(
     zscored = normalize_signal(joint)
 
     # two-threshold segmentation (TSDtoIV2): runs above the edge, kept if peak above
-    bounds = _boolean_runs(zscored > edge_threshold)
+    bounds = _boolean_run_bounds(zscored > edge_threshold)
     candidates = []
     for start, stop in bounds:
         if zscored[start:stop].max() > peak_threshold:
@@ -2323,23 +2363,17 @@ def Roumis_ripple_detector(
         filtered_lfps, sigma=smoothing_sigma, sampling_frequency=sampling_frequency
     )
     combined_filtered_lfps = np.mean(np.sqrt(filtered_lfps), axis=1)
-    combined_filtered_lfps = normalize_signal(
+    return _detect_from_trace(
         combined_filtered_lfps,
-        time=time,
-        method=normalization_method,
+        time,
+        speed,
+        minimum_duration=minimum_duration,
+        zscore_threshold=zscore_threshold,
+        speed_threshold=speed_threshold,
+        close_event_threshold=close_ripple_threshold,
+        normalization_method=normalization_method,
         normalization_mask=normalization_mask,
         normalization_time_range=normalization_time_range,
-    )
-    candidate_ripple_times = threshold_by_zscore(
-        combined_filtered_lfps, time, minimum_duration, zscore_threshold
-    )
-    ripple_times = exclude_movement(
-        candidate_ripple_times, speed, time, speed_threshold=speed_threshold
-    )
-    ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
-
-    return _get_event_stats(
-        ripple_times, time, combined_filtered_lfps, speed, minimum_duration
     )
 
 
@@ -2507,22 +2541,18 @@ def multiunit_HSE_detector(
         if normalization_mask is None and normalization_time_range is None:
             normalization_mask = speed <= speed_threshold
 
-    firing_rate = normalize_signal(
+    return _detect_from_trace(
         firing_rate,
-        time=time,
-        method=normalization_method,
+        time,
+        speed,
+        minimum_duration=minimum_duration,
+        zscore_threshold=zscore_threshold,
+        speed_threshold=speed_threshold,
+        close_event_threshold=close_event_threshold,
+        normalization_method=normalization_method,
         normalization_mask=normalization_mask,
         normalization_time_range=normalization_time_range,
     )
-    candidate_high_synchrony_events = threshold_by_zscore(
-        firing_rate, time, minimum_duration, zscore_threshold
-    )
-    high_synchrony_events = exclude_movement(
-        candidate_high_synchrony_events, speed, time, speed_threshold=speed_threshold
-    )
-    high_synchrony_events = exclude_close_events(high_synchrony_events, close_event_threshold)
-
-    return _get_event_stats(high_synchrony_events, time, firing_rate, speed, minimum_duration)
 
 
 def _find_max_thresh(
