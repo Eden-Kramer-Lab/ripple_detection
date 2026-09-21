@@ -16,6 +16,9 @@ DETECTORS = [
 HELPERS = [
     "DETECTORS",
     "DetectorSpec",
+    "MULTIUNIT",
+    "RAW_LFP_PAIR",
+    "RIPPLE_BAND_LFP",
     "get_detector",
     "filter_ripple_band",
     "ripple_bandpass_filter",

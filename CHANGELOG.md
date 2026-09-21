@@ -39,7 +39,8 @@ with the events that you detect. Entries marked **Breaking** change the results.
   `exclude_close_events` keeps the first event and discards the others.
 - `DETECTORS` and `get_detector`, which resolve a detector by name and give the
   signals that it takes. A pipeline that holds a detector by name does not need
-  its own list.
+  its own list. The signal names `RIPPLE_BAND_LFP`, `RAW_LFP_PAIR` and
+  `MULTIUNIT` are exported, so a caller can check `spec.inputs` against them.
 - `load_literature_parameters`, the survey of detection parameters in 57 papers
   that decode replay content.
 - `ripple_snr`, `random_state` and ranges for `ripple_frequency` and

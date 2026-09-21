@@ -37,7 +37,14 @@ from ripple_detection.detectors import (
     multiunit_HSE_detector,
 )
 from ripple_detection.literature import load_literature_parameters
-from ripple_detection.registry import DETECTORS, DetectorSpec, get_detector
+from ripple_detection.registry import (
+    DETECTORS,
+    MULTIUNIT,
+    RAW_LFP_PAIR,
+    RIPPLE_BAND_LFP,
+    DetectorSpec,
+    get_detector,
+)
 from ripple_detection.simulate import simulate_LFP, simulate_time
 
 try:
@@ -47,6 +54,9 @@ except ImportError:
 
 __all__ = [
     "DETECTORS",
+    "MULTIUNIT",
+    "RAW_LFP_PAIR",
+    "RIPPLE_BAND_LFP",
     "Carey_candidate_detector",
     "DetectorSpec",
     "Karlsson_ripple_detector",

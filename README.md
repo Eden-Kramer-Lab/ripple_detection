@@ -152,10 +152,10 @@ database-backed workflow, can resolve the name here instead of keeping its own
 list that goes stale whenever this package gains a detector.
 
 ```python
-from ripple_detection import DETECTORS, get_detector
+from ripple_detection import DETECTORS, RIPPLE_BAND_LFP, get_detector
 
 spec = get_detector("Kay_ripple_detector")
-spec.inputs                       # ('ripple_band_lfp',)
+spec.inputs == (RIPPLE_BAND_LFP,)  # True
 events = spec.detector(time, filtered_lfps, speed, sampling_frequency)
 
 sorted(DETECTORS)                 # every detector this package has
