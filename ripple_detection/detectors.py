@@ -181,7 +181,7 @@ def _validate_speed_units(speed: NDArray, speed_threshold: float) -> None:
                     f"Speed values appear very small (median non-zero: {median_speed:.4f}).\n"
                     f"Speed should be in cm/s, not m/s.\n"
                     f"If your speed is in m/s, multiply by 100:\n"
-                    f"  speed_cms = speed_ms * 100",
+                    "  speed_cms = speed_ms * 100",
                     UserWarning,
                     stacklevel=4,
                 )
@@ -668,6 +668,22 @@ def Shvartsman_ripple_detector(
         - Increasing speed_threshold if movement exclusion is too strict
         - Verifying your data contains ripple oscillations (150-250 Hz)
 
+    Notes
+    -----
+    Missing samples: rows with NaN in any channel of ``filtered_lfps`` or in
+    ``speed`` are dropped and the remaining samples are treated as contiguous,
+    so an event can span the gap. Pass one contiguous block per call if that
+    matters; ``Yu_ripple_detector`` and ``Zugaro_ripple_detector`` instead
+    handle gaps block-wise. See the README's "Choosing a detector" table for
+    how the detectors' conventions differ.
+
+    References
+    ----------
+    Unpublished variant contributed by Gabrielle Shvartsman (2026, pull
+    request #11); it has no paper of its own. The participation rule requires
+    ``participation_threshold`` channels (a count, default 2) to detect the
+    ripple, so a single-channel input never produces an event.
+
     """
     time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
         time,
@@ -860,6 +876,15 @@ def Kay_ripple_detector(
         - Lowering minimum_duration (e.g., from 0.015 to 0.010)
         - Increasing speed_threshold if movement exclusion is too strict
         - Verifying your data contains ripple oscillations (150-250 Hz)
+
+    Notes
+    -----
+    Missing samples: rows with NaN in any channel of ``filtered_lfps`` or in
+    ``speed`` are dropped and the remaining samples are treated as contiguous,
+    so an event can span the gap. Pass one contiguous block per call if that
+    matters; ``Yu_ripple_detector`` and ``Zugaro_ripple_detector`` instead
+    handle gaps block-wise. See the README's "Choosing a detector" table for
+    how the detectors' conventions differ.
 
     Examples
     --------
@@ -1806,8 +1831,8 @@ def Carey_candidate_detector(
       never zero, so a burst without a ripple can be. The joint score is
       therefore closer to "burst, weighted by ripple power" than to a
       symmetric conjunction. Candidates are runs strictly above ``edge_threshold`` whose
-      maximum is strictly above ``peak_threshold``, at least
-      ``minimum_duration`` long.
+      maximum is strictly above ``peak_threshold``, longer than
+      ``minimum_duration``.
     - **State**: a candidate is kept only if it lies entirely inside a
       low-speed interval (speed below ``speed_threshold``, runs merged across
       gaps under ``state_merge_gap`` and dropped under
@@ -1841,7 +1866,8 @@ def Carey_candidate_detector(
         Boundary and peak thresholds on the z-scored joint score. Defaults 1
         and 3 (the original's ``DetectorThreshold`` and ``DetectorThreshold2``).
     minimum_duration : float, optional
-        Minimum candidate duration in seconds. Default 0.020.
+        Candidates must be longer than this, in seconds (strict, as the
+        original's ``RemoveIV``). Default 0.020.
     minimum_active_units : int, optional
         Minimum number of units with a spike inside the candidate. Default 5.
     ripple_smoothing_sigma, spike_kernel_sigma, baseline_sigma : float, optional
@@ -1853,7 +1879,7 @@ def Carey_candidate_detector(
         Raw LFP of a theta channel; when given, candidates during elevated
         theta are excluded. Default None (no theta exclusion).
     theta_band : tuple of (float, float), optional
-        Theta pass-band in Hz, Butterworth order 4. Default (6, 10).
+        Theta pass-band in Hz, Butterworth of total order 4 (order 2 per edge, as MATLAB's `fdesign` 'N' counts it). Default (6, 10).
     theta_threshold : float, optional
         Theta-envelope z-score at or above which a period is excluded. Default 2.
     state_merge_gap, state_minimum_length : float, optional
@@ -1925,7 +1951,6 @@ def Carey_candidate_detector(
     multiunit_score = np.maximum(0.0, (summed - baseline - cap) / mean_summed)
 
     joint = np.sqrt(ripple_score * multiunit_score)
-    joint = joint * (0.5 / joint.mean()) if joint.mean() > 0 else joint
     zscored = normalize_signal(joint)
 
     # two-threshold segmentation (TSDtoIV2): runs above the edge, kept if peak above
@@ -1949,7 +1974,7 @@ def Carey_candidate_detector(
         theta_lfp = np.asarray(theta_lfp, dtype=float)
         if theta_lfp.shape != (n_time,):
             raise ValueError(f"theta_lfp must have shape ({n_time},), got {theta_lfp.shape}.")
-        b, a = butter(4, np.asarray(theta_band) / (0.5 * sampling_frequency), btype="bandpass")
+        b, a = butter(2, np.asarray(theta_band) / (0.5 * sampling_frequency), btype="bandpass")
         theta_envelope = get_envelope(filtfilt(b, a, theta_lfp))
         low_theta = _state_intervals(
             normalize_signal(theta_envelope) < theta_threshold,
@@ -2072,6 +2097,15 @@ def Karlsson_ripple_detector(
         - Lowering minimum_duration (e.g., from 0.015 to 0.010)
         - Increasing speed_threshold if movement exclusion is too strict
         - Verifying your data contains ripple oscillations (150-250 Hz)
+
+    Notes
+    -----
+    Missing samples: rows with NaN in any channel of ``filtered_lfps`` or in
+    ``speed`` are dropped and the remaining samples are treated as contiguous,
+    so an event can span the gap. Pass one contiguous block per call if that
+    matters; ``Yu_ripple_detector`` and ``Zugaro_ripple_detector`` instead
+    handle gaps block-wise. See the README's "Choosing a detector" table for
+    how the detectors' conventions differ.
 
     References
     ----------
@@ -2203,6 +2237,21 @@ def Roumis_ripple_detector(
         - Lowering minimum_duration (e.g., from 0.015 to 0.010)
         - Increasing speed_threshold if movement exclusion is too strict
         - Verifying your data contains ripple oscillations (150-250 Hz)
+
+    Notes
+    -----
+    Missing samples: rows with NaN in any channel of ``filtered_lfps`` or in
+    ``speed`` are dropped and the remaining samples are treated as contiguous,
+    so an event can span the gap. Pass one contiguous block per call if that
+    matters; ``Yu_ripple_detector`` and ``Zugaro_ripple_detector`` instead
+    handle gaps block-wise. See the README's "Choosing a detector" table for
+    how the detectors' conventions differ.
+
+    References
+    ----------
+    Unpublished Frank-lab variant contributed by Demetris Roumis (2017); it has
+    no paper of its own. It averages each channel's smoothed envelope before
+    z-scoring, between Kay's consensus trace and Karlsson's per-channel rule.
 
     """
     time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
@@ -2347,6 +2396,16 @@ def multiunit_HSE_detector(
         - Lowering minimum_duration (e.g., from 0.015 to 0.010)
         - Increasing speed_threshold if movement exclusion is too strict
         - Verifying your multiunit data shows synchronous spiking activity
+
+    Notes
+    -----
+    Missing samples: a NaN anywhere in ``multiunit`` or ``speed`` raises; pass
+    one contiguous, finite block per call.
+
+    The defaults (2 SD, 15 ms smoothing, 15 ms minimum, 4 cm/s) are this
+    package's convention. Published multiunit-burst detectors in the same
+    lineage use their own values (Davidson et al. 2009 among them), so set them
+    explicitly when reproducing a paper.
 
     References
     ----------

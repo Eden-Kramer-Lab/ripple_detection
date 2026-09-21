@@ -13,13 +13,13 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
 - **Multiple Detection Algorithms**
   - `Kay_ripple_detector` - Multi-channel consensus approach (Kay et al. 2016)
   - `Karlsson_ripple_detector` - Per-channel detection with merging (Karlsson et al. 2009)
-  - `Shvartsman_ripple_detector` - Per-channel detection requiring a minimum fraction of participating channels
-  - `Roumis_ripple_detector` - Alternative detection method
+  - `Shvartsman_ripple_detector` - Per-channel detection requiring a minimum number of participating channels (unpublished)
+  - `Roumis_ripple_detector` - Per-channel envelopes averaged across channels (Frank-lab variant, unpublished)
   - `Yu_ripple_detector` - Median consensus with a data-driven noise-percentile threshold (Yu et al. 2017)
   - `Carey_candidate_detector` - Joint ripple-power x multiunit candidate events (Carey, Tank & van der Meer 2019); takes LFP and spikes
   - `Zugaro_ripple_detector` - The FMAToolbox/buzcode `FindRipples` two-threshold algorithm (Hirase; Zugaro)
   - `Long_sharp_wave_ripple_detector` - Two-channel detector using the sharp wave on a stratum radiatum channel (J. D. Long II, buzcode `bz_DetectSWR`); takes **raw** LFP
-  - `multiunit_HSE_detector` - High Synchrony Event detection from multiunit activity
+  - `multiunit_HSE_detector` - High Synchrony Event detection from multiunit activity (population rate, no LFP)
 
 - **Comprehensive Event Statistics**
   - Temporal metrics (start time, end time, duration)
@@ -162,6 +162,17 @@ All detectors return a pandas DataFrame with comprehensive event statistics:
 | `median_speed` | Median speed during event |
 | `mean_speed` | Mean speed during event |
 
+The index is `event_number`. Some detectors add columns:
+
+| Detector | Additional columns |
+|---|---|
+| `Shvartsman_ripple_detector` | `participants` (channel indices), `n_participants`, `frac_participants` |
+| `Yu_ripple_detector` | `clipped_start`, `clipped_end` (event cut by a gap or the record edge), `n_suprathreshold_samples`, `detection_threshold_zscore` |
+| `Zugaro_ripple_detector` | `peak_time` |
+| `Long_sharp_wave_ripple_detector` | `peak_time`, `sharp_wave_zscore`, `sharp_wave_local_percentile`, `ripple_power_zscore`, `ripple_power_local_percentile`, `sharp_wave_duration`, `ripple_duration` |
+| `Carey_candidate_detector` | `n_active_units` |
+| `mean_speed` | Mean speed during event |
+
 ## Examples
 
 ### Simulating realistic ripples
@@ -255,17 +266,18 @@ ripples = Kay_ripple_detector(
 1. Check if your LFPs actually contain ripples (150-250 Hz oscillations)
 2. Verify speed is in cm/s (not m/s)
 3. Plot the filtered LFP to visually inspect for ripple events
-4. Try different detector algorithms (Kay, Karlsson, Roumis)
+4. Try a different detector (see [Choosing a detector](#choosing-a-detector))
 
 ### Parameter Selection Guide
 
 | Parameter | Default | Description | When to Adjust |
 |-----------|---------|-------------|----------------|
 | `speed_threshold` | 4.0 cm/s | Maximum speed for ripple detection | Increase if too many events excluded during slow movement |
-| `minimum_duration` | 0.015 s | Minimum ripple duration (15 ms) | Decrease to 0.010 for shorter ripples; increase to 0.020 for stricter detection |
-| `zscore_threshold` | 2.0 (Kay/Roumis)<br>3.0 (Karlsson) | Detection sensitivity | Decrease for more detections; increase for fewer, higher-confidence events |
+| `minimum_duration` | 0.015 s (Kay, Karlsson, Roumis, Shvartsman, HSE)<br>0.020 s (Yu, Zugaro, Carey) | Minimum event duration: counted in samples from the median timestamp step (Kay, Karlsson, Roumis, Shvartsman, HSE, Yu) or compared as elapsed time (Zugaro inclusive, Carey strict) | Decrease for shorter events; increase for stricter detection; see each detector's docstring for its rule |
+| `zscore_threshold` | 2.0 (Kay, Roumis, HSE)<br>3.0 (Karlsson, Shvartsman) | Detection sensitivity | Decrease for more detections; increase for fewer, higher-confidence events |
 | `smoothing_sigma` | 0.004 s | Gaussian smoothing window (4 ms) | Rarely needs adjustment; increase for noisier data |
 | `percentile` | 99.99 (Yu) | Percentile of the mirrored immobility-noise distribution used as the threshold | Lower for more detections; the threshold is estimated per call, so it adapts to each recording |
+| `close_ripple_threshold` (`close_event_threshold` on the HSE detector) | 0.0 s | Events closer than this are treated as one: the later event is dropped | Raise (e.g. 0.05) to suppress fragments; Zugaro merges instead via `minimum_inter_ripple_interval` |
 | `low_threshold`, `high_threshold` | 2.0, 5.0 (Zugaro) | Boundary and peak thresholds of the two-threshold rule | Lower `high_threshold` for more detections; `low_threshold` sets where events start and end |
 
 ### Getting Help
@@ -278,13 +290,36 @@ ripples = Kay_ripple_detector(
 
 For detailed documentation on the detection algorithms and signal processing pipeline, see [CLAUDE.md](CLAUDE.md).
 
-## Algorithm Comparison
+## Choosing a detector
 
-| Algorithm | Approach | Best For |
-|-----------|----------|----------|
-| **Kay** | Multi-channel consensus (sum of squared envelopes) | High-density electrode arrays |
-| **Karlsson** | Per-channel detection with merging | Independent channel analysis |
-| **Roumis** | Averaged square-root of squared envelopes | Balanced multi-channel approach |
+All detectors take `time`, the signal, `speed`, and `sampling_frequency` as positional arguments
+(`Carey_candidate_detector` takes `filtered_lfps` then `multiunit`) and return the DataFrame
+described under [Output Format](#output-format). They differ in what they threshold and in the
+conventions below.
+
+| Detector | Signal input | What is thresholded | Threshold (default) | Duration (default) | Close events | Missing samples (NaN) | Speed rule (default 4 cm/s) | Source |
+|---|---|---|---|---|---|---|---|---|
+| `Kay_ripple_detector` | ripple-band LFP `(n_time, n_channels)` | z-scored consensus √(smoothed Σ envelope²), 4 ms | `zscore_threshold` 2.0 | ≥ 0.015 s | `close_ripple_threshold` 0.0, drops the later event | rows dropped, rest stitched | speed at first and last sample ≤ threshold | Kay et al. 2016 |
+| `Karlsson_ripple_detector` | same | each channel's z-scored envelope; overlapping per-channel events merged | 3.0 | ≥ 0.015 s | same | same | same | Karlsson & Frank 2009 |
+| `Roumis_ripple_detector` | same | z-scored mean over channels of √(smoothed envelope²), 4 ms | 2.0 | ≥ 0.015 s | same | same | same | Frank-lab variant (D. Roumis), unpublished |
+| `Shvartsman_ripple_detector` | same | per-channel z-scored envelopes; event kept when ≥ `participation_threshold` channels (2) detect it | 3.0 | ≥ 0.015 s | same | same | at least half the event's samples ≤ threshold | lab variant (G. Shvartsman), unpublished |
+| `Yu_ripple_detector` | same | median over channels of each channel's z-scored 4 ms-smoothed envelope | `percentile` 99.99 of the mirrored immobility-noise distribution, estimated per call | ≥ 0.020 s, counted in samples | `close_ripple_threshold` 0.0 | block-wise: nothing smoothed or joined across a gap; clipped events flagged | noise from `speed < threshold`; event endpoints ≤ threshold | Yu et al. 2017 |
+| `Zugaro_ripple_detector` | same, channels summed | z-scored smoothed squared signal, two thresholds | `low_threshold` 2.0 (bounds), `high_threshold` 5.0 (peak) | 0.020–0.100 s | `minimum_inter_ripple_interval` 0.030 s, merges | block-wise | endpoints ≤ threshold | FMAToolbox `FindRipples` (Hirase; Zugaro) |
+| `Long_sharp_wave_ripple_detector` | **raw** LFP `(n_time, 2)`: ripple channel, stratum radiatum channel | sharp-wave difference and ripple power, split by k-means with local (±5 s) statistics | `sharp_wave_thresholds`, `ripple_thresholds` (0.5, 2.5) | sharp wave 0.020–0.500 s, ripple ≥ 0.025 s | `minimum_separation` 0.050 s, drops | raises | endpoints ≤ threshold | Long, buzcode/neurocode `DetectSWR` |
+| `Carey_candidate_detector` | ripple-band LFP **and** spikes `(n_time, n_units)` | geometric mean of a ripple-power score and a multiunit score | `edge_threshold` 1.0, `peak_threshold` 3.0; ≥ `minimum_active_units` 5 | > 0.020 s | none | raises | whole event inside a low-speed interval (`speed < threshold`) | Carey, Tank & van der Meer 2019 |
+| `multiunit_HSE_detector` | spikes `(n_time, n_units)`, no LFP | z-scored 15 ms-smoothed population rate | `zscore_threshold` 2.0 | ≥ 0.015 s | `close_event_threshold` 0.0 | raises | endpoints ≤ threshold | package convention; Davidson et al. 2009 lineage |
+
+Notes:
+
+- "rows dropped, rest stitched" means samples with NaN in any channel or in `speed` are removed
+  and the remaining samples are treated as contiguous, so an event can span a gap. Pass one
+  contiguous block at a time if that matters; the Yu and Zugaro detectors do this for you.
+- Every detector normalizes over the whole recording unless `normalization_mask` or
+  `normalization_time_range` restricts it (Yu defaults to immobility); the Long and Carey
+  detectors do not take these arguments.
+- The defaults reproduce each source's published or lab settings where one exists; they are not
+  harmonized across detectors, so the same recording yields different event counts under
+  different detectors by design.
 
 ## Development
 
@@ -301,32 +336,23 @@ pip install -e .[dev,examples]
 
 ### Run Tests
 
-The package has comprehensive test coverage (93%) across 163 tests organized in 6 modules:
-
 ```bash
 # Run all tests with coverage
-pytest --cov=ripple_detection --cov-report=term-missing tests/
+pytest
 
-# Run specific test modules
-pytest tests/test_core.py          # Core signal processing tests (70 tests)
-pytest tests/test_detectors.py     # Detector integration tests (25 tests)
-pytest tests/test_simulate.py      # Simulation module tests (36 tests)
-pytest tests/test_properties.py    # Property-based tests (23 tests)
-pytest tests/test_snapshots.py     # Snapshot/regression tests (9 tests)
+# Run one module
+pytest tests/test_core.py          # signal processing
+pytest tests/test_detectors.py     # detector behaviour and conventions
+pytest tests/test_simulate.py      # synthetic LFP
+pytest tests/test_properties.py    # property-based (hypothesis)
+pytest tests/test_snapshots.py     # regression snapshots
 
-# Run specific test
-pytest tests/test_core.py::TestSegmentBooleanSeries::test_single_segment
-
-# Generate HTML coverage report
-pytest --cov=ripple_detection --cov-report=html tests/
-# Open htmlcov/index.html in browser
+# HTML coverage report (open htmlcov/index.html)
+pytest --cov=ripple_detection --cov-report=html
 ```
 
-**Test Coverage:**
-- `core.py`: 93%
-- `detectors.py`: 92%
-- `simulate.py`: 100%
-- **Overall: 93%**
+Test modules mirror the package modules (`test_core`, `test_detectors`, `test_simulate`);
+`test_properties` and `test_snapshots` cut across all three.
 
 ### Code Quality
 
