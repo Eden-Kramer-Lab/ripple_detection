@@ -35,6 +35,7 @@ from ripple_detection.detectors import (
     get_Yu_ripple_consensus_trace,
     multiunit_HSE_detector,
 )
+from ripple_detection.literature import load_literature_parameters
 from ripple_detection.simulate import simulate_LFP, simulate_time
 
 try:
@@ -59,6 +60,7 @@ __all__ = [
     "get_Yu_ripple_consensus_trace",
     "get_envelope",
     "get_multiunit_population_firing_rate",
+    "load_literature_parameters",
     "merge_close_events",
     "minimum_sample_count",
     "multiunit_HSE_detector",

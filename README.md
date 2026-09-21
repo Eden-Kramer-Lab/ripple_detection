@@ -318,6 +318,17 @@ papers that decode replay content (1999-2025), each value read from the paper's
 Methods; counts are of papers stating a bare number for that parameter, so
 entries like ">4" or "33% of the ensemble" are excluded rather than coerced.
 
+The per-paper table ships with the package, so you can ask it your own question
+rather than take the summary below:
+
+```python
+from ripple_detection import load_literature_parameters
+
+parameters = load_literature_parameters()
+parameters.groupby("Detection")["SWR Z-score Thresh. (STD)"].median()
+parameters.loc[parameters["Spike sorting"] == "Clusterless", ["First Author", "Year", "DOI"]]
+```
+
 | Parameter | Papers | Published range | Median | Most common | Package default |
 |---|---|---|---|---|---|
 | `zscore_threshold` (ripple) | 27 | 1-8 SD | 3 SD | 3, 2, 4 | 2.0 Kay/Roumis, 3.0 Karlsson/Shvartsman |

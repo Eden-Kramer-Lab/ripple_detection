@@ -55,6 +55,7 @@ packages = ["ripple_detection"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "ripple_detection/ripplefilter.mat" = "ripple_detection/ripplefilter.mat"
+"ripple_detection/data/literature_detection_parameters.csv" = "ripple_detection/data/literature_detection_parameters.csv"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
