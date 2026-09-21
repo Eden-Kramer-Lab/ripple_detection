@@ -25,6 +25,7 @@ from ripple_detection.detectors import (
     Roumis_ripple_detector,
     _extract_Yu_ripple_events,
     _find_max_thresh,
+    _firfilt,
     _two_threshold_events,
     _zugaro_smoothing_window,
     get_Kay_ripple_consensus_trace,
@@ -1276,6 +1277,11 @@ class TestYuRippleDetector:
         assert events.n_suprathreshold_samples.iloc[0] >= 20
         assert np.isfinite(events.detection_threshold_zscore.iloc[0])
 
+    def test_no_finite_sample_raises(self, time, stationary):
+        lfps = np.full((self.N_TIME, 2), np.nan)
+        with pytest.raises(ValueError, match="finite"):
+            Zugaro_ripple_detector(time, lfps, stationary, self.FS)
+
     def test_spyglass_style_keyword_call_matches_direct_call(self, time, stationary):
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
         params = {
@@ -1494,6 +1500,12 @@ class TestTwoThresholdEvents:
         events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
         np.testing.assert_allclose(events, [[t[199], t[249]]])
 
+    def test_record_that_starts_above_threshold_yields_no_event(self):
+        # only a falling crossing exists: the unpaired first stop is discarded
+        z, t = self._trace(500, [(0, 50, 6.0)])
+        events, peaks = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        assert events.shape == (0, 2) and peaks.shape == (0,)
+
     def test_empty(self):
         z, t = self._trace(500, [])
         events, peaks = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
@@ -1628,6 +1640,24 @@ def _synthetic_two_channel_lfp(
     return lfp
 
 
+class TestFirfilt:
+    def test_one_dimensional_input_matches_a_single_column(self):
+        rng = np.random.default_rng(0)
+        x = rng.normal(size=300)
+        kernel = np.ones(7) / 7
+        np.testing.assert_allclose(
+            _firfilt(x, kernel), _firfilt(x[:, np.newaxis], kernel)[:, 0]
+        )
+        assert _firfilt(x, kernel).shape == (300,)
+
+    def test_kernel_longer_than_signal_returns_nan_of_the_input_shape(self):
+        kernel = np.ones(11) / 11
+        one_d = _firfilt(np.zeros(5), kernel)
+        two_d = _firfilt(np.zeros((5, 3)), kernel)
+        assert one_d.shape == (5,) and np.all(np.isnan(one_d))
+        assert two_d.shape == (5, 3) and np.all(np.isnan(two_d))
+
+
 class TestLongSharpWaveRippleDetector:
     FS = 1000
     N_TIME = 40_000  # 40 s; events must sit more than 5 s from either end
@@ -1731,6 +1761,31 @@ class TestLongSharpWaveRippleDetector:
         moved = Long_sharp_wave_ripple_detector(time, lfp, speed, self.FS, random_state=0)
         assert any((events.start_time <= time[7000]) & (events.end_time >= time[7000]))
         assert not any((moved.start_time <= time[7000]) & (moved.end_time >= time[7000]))
+
+    def test_recording_too_short_to_cluster_raises(self):
+        n_time = 50  # one 40 ms block: fewer than two candidate features
+        lfp = _synthetic_two_channel_lfp(n_time, self.FS, ())
+        with pytest.raises(ValueError, match="too short"):
+            Long_sharp_wave_ripple_detector(
+                np.arange(n_time) / self.FS, lfp, np.full(n_time, 2.0), self.FS
+            )
+
+    def test_minimum_separation_keeps_only_the_last_of_close_candidates(
+        self, time, stationary
+    ):
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp, stationary, self.FS, minimum_separation=1e6, random_state=0
+        )
+        assert len(events) <= 1
+
+    def test_no_event_survives_a_tiny_maximum_sharp_wave_duration(self, time, stationary):
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp, stationary, self.FS, maximum_sharp_wave_duration=0.001, random_state=0
+        )
+        assert events.empty
+        assert "start_time" in events.columns and "sharp_wave_duration" in events.columns
 
     def test_requires_exactly_two_channels(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
