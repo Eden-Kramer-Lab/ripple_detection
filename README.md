@@ -16,6 +16,7 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
   - `Shvartsman_ripple_detector` - Per-channel detection requiring a minimum fraction of participating channels
   - `Roumis_ripple_detector` - Alternative detection method
   - `Yu_ripple_detector` - Median consensus with a data-driven noise-percentile threshold (Yu et al. 2017)
+  - `Zugaro_ripple_detector` - The FMAToolbox/buzcode `FindRipples` two-threshold algorithm (Hirase; Zugaro)
   - `multiunit_HSE_detector` - High Synchrony Event detection from multiunit activity
 
 - **Comprehensive Event Statistics**
@@ -234,6 +235,7 @@ ripples = Kay_ripple_detector(
 | `zscore_threshold` | 2.0 (Kay/Roumis)<br>3.0 (Karlsson) | Detection sensitivity | Decrease for more detections; increase for fewer, higher-confidence events |
 | `smoothing_sigma` | 0.004 s | Gaussian smoothing window (4 ms) | Rarely needs adjustment; increase for noisier data |
 | `percentile` | 99.99 (Yu) | Percentile of the mirrored immobility-noise distribution used as the threshold | Lower for more detections; the threshold is estimated per call, so it adapts to each recording |
+| `low_threshold`, `high_threshold` | 2.0, 5.0 (Zugaro) | Boundary and peak thresholds of the two-threshold rule | Lower `high_threshold` for more detections; `low_threshold` sets where events start and end |
 
 ### Getting Help
 

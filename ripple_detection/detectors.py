@@ -1116,6 +1116,261 @@ def Yu_ripple_detector(
     return events
 
 
+def _zugaro_smoothing_window(sampling_frequency: float) -> int:
+    """Moving-average length of the FindRipples power trace: 11 samples at 1250 Hz,
+    scaled with the rate and kept odd so the filter is zero-phase."""
+    window = round(sampling_frequency / 1250.0 * 11.0)
+    return window + 1 if window % 2 == 0 else window
+
+
+def _two_threshold_events(
+    zscored: NDArray,
+    time: NDArray,
+    low_threshold: float,
+    high_threshold: float,
+    minimum_inter_ripple_interval: float,
+    minimum_duration: float,
+    maximum_duration: float,
+) -> tuple[NDArray, NDArray]:
+    """Segment a normalized power trace with the FindRipples two-threshold rule.
+
+    Transliterates the segmentation of FMAToolbox ``FindRipples``:
+
+    1. Candidate events are runs strictly above ``low_threshold``. An event
+       starts at the last sample *below* the threshold before the run and
+       ends at the run's last sample, as the original's ``diff``-based
+       crossing search does. A run touching the first or last sample has no
+       paired crossing and is discarded.
+    2. Consecutive candidates are merged, one neighbour per pass, while the
+       gap between them is under ``minimum_inter_ripple_interval`` and the
+       merged span is under ``maximum_duration``.
+    3. A candidate is kept only if its maximum is strictly above
+       ``high_threshold``.
+    4. Candidates shorter than ``minimum_duration`` or longer than
+       ``maximum_duration`` are dropped (strict comparisons).
+
+    Parameters
+    ----------
+    zscored : ndarray, shape (n_time,)
+        Normalized smoothed power for one contiguous block.
+    time : ndarray, shape (n_time,)
+        Sample timestamps in seconds.
+    low_threshold, high_threshold : float
+        Boundary and peak thresholds in standard deviations.
+    minimum_inter_ripple_interval, minimum_duration, maximum_duration : float
+        In seconds.
+
+    Returns
+    -------
+    event_times : ndarray, shape (n_events, 2)
+        ``[start_time, end_time]`` per event.
+    peak_times : ndarray, shape (n_events,)
+        Time of the maximum of ``zscored`` within each event.
+
+    """
+    zscored = np.asarray(zscored, dtype=float)
+    time = np.asarray(time, dtype=float)
+    empty = (np.empty((0, 2)), np.empty(0))
+    above = (zscored > low_threshold).astype(int)
+    crossings = np.diff(above)
+    starts = np.flatnonzero(crossings > 0)  # last sample below, before the run
+    stops = np.flatnonzero(crossings < 0)  # last sample of the run
+    if len(stops) == len(starts) - 1:
+        starts = starts[:-1]
+    if len(stops) - 1 == len(starts):
+        stops = stops[1:]
+    if len(starts) and len(stops) and starts[0] > stops[0]:
+        stops = stops[1:]
+        starts = starts[:-1]
+    if len(starts) == 0:
+        return empty
+    events = np.column_stack([starts, stops])
+
+    while len(events) > 1:
+        gap = time[events[1:, 0]] - time[events[:-1, 1]]
+        merged_span = time[events[1:, 1]] - time[events[:-1, 0]]
+        to_merge = (gap < minimum_inter_ripple_interval) & (merged_span < maximum_duration)
+        if not np.any(to_merge):
+            break
+        padded = np.concatenate([[False], to_merge])
+        run_starts = np.flatnonzero(~padded[:-1] & padded[1:])
+        events[run_starts, 1] = events[run_starts + 1, 1]
+        events = np.delete(events, run_starts + 1, axis=0)
+
+    kept = []
+    peaks = []
+    for start, stop in events:
+        segment = zscored[start : stop + 1]
+        if segment.max() > high_threshold:
+            kept.append((start, stop))
+            peaks.append(start + int(np.argmax(segment)))
+    if not kept:
+        return empty
+    events = np.asarray(kept)
+    peaks = np.asarray(peaks)
+    duration = time[events[:, 1]] - time[events[:, 0]]
+    # a tolerance so a span that is exactly the limit is not lost to round-off
+    tolerance = 1e-9
+    keep = ~(
+        (duration > maximum_duration + tolerance) | (duration < minimum_duration - tolerance)
+    )
+    events, peaks = events[keep], peaks[keep]
+    return np.column_stack([time[events[:, 0]], time[events[:, 1]]]), time[peaks]
+
+
+def Zugaro_ripple_detector(
+    time: ArrayLike,
+    filtered_lfps: ArrayLike,
+    speed: ArrayLike,
+    sampling_frequency: float,
+    speed_threshold: float = 4.0,
+    low_threshold: float = 2.0,
+    high_threshold: float = 5.0,
+    minimum_inter_ripple_interval: float = 0.030,
+    minimum_duration: float = 0.020,
+    maximum_duration: float = 0.100,
+    smoothing_window: int | None = None,
+    normalization_mask: ArrayLike | None = None,
+    normalization_time_range: tuple[float, float] | None = None,
+) -> pd.DataFrame:
+    """Detect ripples with the FMAToolbox ``FindRipples`` two-threshold algorithm.
+
+    The algorithm of Hajime Hirase as implemented by Michaël Zugaro in
+    FMAToolbox [1]_ (``FindRipples``), carried into buzcode as
+    ``bz_FindRipples`` [2]_ and into neurocode [3]_. The ripple-band signal is
+    squared, summed across channels, smoothed with a short moving average and
+    z-scored. An event is bounded where the trace crosses a **low** threshold
+    and kept only if its **peak** exceeds a **high** threshold; neighbouring
+    events closer than a minimum interval are merged, and events outside a
+    duration range are discarded. The summed rms-power thresholding it
+    descends from is described in Csicsvari et al. 1999 [4]_.
+
+    This is a reimplementation from the algorithm, not a transcription (the
+    original is GPL-3). Two departures from the original, both documented
+    per parameter below: the endpoint speed rule shared by this package is
+    applied, and the peak is the maximum of the normalized power rather than
+    the trough of a single filtered channel. Missing samples are handled
+    block-wise: smoothing and segmentation never cross a gap.
+
+    Parameters
+    ----------
+    time : array_like, shape (n_time,)
+        Time values for each sample in seconds.
+    filtered_lfps : array_like, shape (n_time, n_channels)
+        LFP signals already bandpass filtered to the ripple band. FMAToolbox
+        documents 100-200 Hz input, buzcode filters 130-200 Hz, neurocode
+        80-250 Hz; this package's ``filter_ripple_band`` gives 150-250 Hz.
+        Channels are squared and summed, as the original does. NaN marks
+        missing samples.
+    speed : array_like, shape (n_time,)
+        Animal's running speed in cm/s.
+    sampling_frequency : float
+        Sampling rate in Hz.
+    speed_threshold : float, optional
+        An event is kept only if the speed at its first and last sample is at
+        or below this value (``exclude_movement``). **Not part of the original
+        algorithm**, which has no speed criterion; pass ``np.inf`` to disable.
+        Default is 4.0.
+    low_threshold : float, optional
+        Boundary threshold in standard deviations. Default is 2.0 (FMAToolbox
+        and buzcode; neurocode's copy uses 0.5).
+    high_threshold : float, optional
+        Peak threshold in standard deviations. Default is 5.0 (FMAToolbox and
+        buzcode; neurocode's copy uses 2.5).
+    minimum_inter_ripple_interval : float, optional
+        Events separated by less than this are merged, provided the merged
+        event stays under ``maximum_duration``. Default is 0.030 s
+        (FMAToolbox; neurocode uses 0.050).
+    minimum_duration, maximum_duration : float, optional
+        Events shorter or longer than these are discarded. Defaults are
+        0.020 and 0.100 s (FMAToolbox; neurocode uses 0.025 and 0.500).
+    smoothing_window : int, optional
+        Moving-average length in samples. Default is the original's 11
+        samples at 1250 Hz scaled to ``sampling_frequency`` and kept odd.
+    normalization_mask : array_like, shape (n_time,), optional
+        Samples used for the z-score statistics (the original's ``restrict``).
+    normalization_time_range : tuple of (float, float), optional
+        Time range used for the z-score statistics instead of a mask.
+
+    Returns
+    -------
+    ripple_times : pd.DataFrame
+        One row per event, indexed by ``event_number``, with the columns of
+        the other detectors plus ``peak_time``, the time of the maximum
+        normalized power within the event.
+
+    References
+    ----------
+    .. [1] Zugaro, M. FMAToolbox, ``Analyses/FindRipples.m``
+       (initial algorithm by H. Hirase), https://github.com/michael-zugaro/FMAToolbox
+    .. [2] Buzsáki lab, buzcode, ``analysis/SharpWaveRipples/bz_FindRipples.m``
+       (edited by D. Tingley, 2017), https://github.com/buzsakilab/buzcode
+    .. [3] AYA lab, neurocode, ``SharpWaveRipples/FindRipples.m``,
+       https://github.com/ayalab1/neurocode, doi:10.5281/zenodo.7819979
+    .. [4] Csicsvari, J., Hirase, H., Czurkó, A., Mamiya, A., & Buzsáki, G.
+       (1999). Oscillatory coupling of hippocampal pyramidal cells and
+       interneurons in the behaving rat. J Neurosci, 19(1), 274-287.
+
+    """
+    filtered_lfps = np.asarray(filtered_lfps, dtype=float)
+    speed = np.asarray(speed, dtype=float)
+    time = np.asarray(time, dtype=float)
+    _validate_lfp_dimensions(filtered_lfps)
+    _validate_array_lengths(time, filtered_lfps, speed)
+    _validate_time_units(time, sampling_frequency, len(time))
+    _validate_speed_units(speed, speed_threshold)
+
+    is_valid = np.all(np.isfinite(filtered_lfps), axis=1) & np.isfinite(speed)
+    if not np.any(is_valid):
+        raise ValueError("No sample has finite values in every channel and in speed.")
+    window = (
+        _zugaro_smoothing_window(sampling_frequency)
+        if smoothing_window is None
+        else int(smoothing_window)
+    )
+    kernel = np.ones(window) / window
+    power = np.sum(filtered_lfps**2, axis=1)
+    smoothed = np.full(len(time), np.nan)
+    blocks = _contiguous_valid_blocks(is_valid, time, sampling_frequency)
+    for start, stop in blocks:
+        smoothed[start:stop] = np.convolve(power[start:stop], kernel, mode="same")
+
+    mask = _get_normalization_mask(
+        smoothed.shape, time, normalization_mask, normalization_time_range
+    )
+    mask = is_valid if mask is None else (np.asarray(mask, dtype=bool) & is_valid)
+    normalized = normalize_signal(smoothed, time=time, normalization_mask=mask)
+
+    event_times = []
+    peak_times = []
+    for start, stop in blocks:
+        block_events, block_peaks = _two_threshold_events(
+            normalized[start:stop],
+            time[start:stop],
+            low_threshold,
+            high_threshold,
+            minimum_inter_ripple_interval,
+            minimum_duration,
+            maximum_duration,
+        )
+        event_times.append(block_events)
+        peak_times.append(block_peaks)
+    event_times = np.concatenate(event_times) if event_times else np.empty((0, 2))
+    peak_times = np.concatenate(peak_times) if peak_times else np.empty(0)
+
+    if len(event_times):
+        speed_at_start = speed[np.searchsorted(time, event_times[:, 0])]
+        speed_at_end = speed[np.searchsorted(time, event_times[:, 1])]
+        keep = (speed_at_start <= speed_threshold) & (speed_at_end <= speed_threshold)
+        event_times, peak_times = event_times[keep], peak_times[keep]
+
+    events = _get_event_stats(
+        event_times, time, normalized, speed, minimum_duration=minimum_duration
+    )
+    events["peak_time"] = peak_times
+    return events
+
+
 def Karlsson_ripple_detector(
     time: ArrayLike,
     filtered_lfps: ArrayLike,
