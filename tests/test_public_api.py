@@ -27,6 +27,7 @@ HELPERS = [
     "merge_close_events",
     "minimum_sample_count",
     "nearest_sample_index",
+    "require_overlap",
     "sample_count_within",
     "simulate_LFP",
     "simulate_time",

@@ -1365,6 +1365,99 @@ def merge_close_events(
     return events
 
 
+def require_overlap(
+    event_times: ArrayLike | pd.DataFrame,
+    reference_event_times: ArrayLike | pd.DataFrame,
+    minimum_overlap: float = 0.0,
+) -> NDArray | pd.DataFrame:
+    """Keep the events that overlap an event in a second inventory.
+
+    Thirteen of the 57 papers in the project's detection-parameter survey
+    require a ripple and a population burst together, usually by keeping the
+    multiunit bursts that overlap a detected ripple. This composes any two
+    detectors into that conjunction::
+
+        bursts = multiunit_HSE_detector(time, multiunit, speed, fs)
+        ripples = Kay_ripple_detector(time, lfps, speed, fs)
+        both = require_overlap(bursts, ripples)
+
+    The returned events keep their own bounds. This is a filter on
+    `event_times`, not an intersection of the two inventories, and it is not
+    symmetric: swapping the arguments asks the other question.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2), or pd.DataFrame
+        The events to filter. A DataFrame needs ``start_time`` and
+        ``end_time`` columns and is returned as a DataFrame, with every column
+        and its index preserved.
+    reference_event_times : array_like, shape (n_reference, 2), or pd.DataFrame
+        The events to overlap with. Reduced to its union first, so references
+        that overlap each other are not counted twice. Need not be sorted.
+    minimum_overlap : float, optional
+        Least total overlap, in the units of the event times, for an event to
+        be kept. Default is 0.0, which requires overlap of positive duration:
+        events that merely touch at an endpoint are dropped, the convention
+        the project uses for event-level overlap.
+
+    Returns
+    -------
+    kept_events : ndarray, shape (n_kept, 2), or pd.DataFrame
+        The subset of `event_times` meeting the criterion, in its input order
+        and type.
+
+    Raises
+    ------
+    ValueError
+        If `minimum_overlap` is negative.
+
+    Examples
+    --------
+    >>> bursts = np.array([(0.0, 0.1), (1.0, 1.1)])
+    >>> ripples = np.array([(1.05, 1.5)])
+    >>> require_overlap(bursts, ripples)
+    array([[1. , 1.1]])
+
+    """
+    if minimum_overlap < 0:
+        raise ValueError(
+            f"minimum_overlap must be non-negative, got {minimum_overlap}. "
+            "It is a duration in the units of the event times."
+        )
+
+    is_frame = isinstance(event_times, pd.DataFrame)
+    if is_frame:
+        events = event_times[["start_time", "end_time"]].to_numpy(dtype=float)
+    else:
+        events = np.asarray(event_times, dtype=float).reshape(-1, 2)
+    if isinstance(reference_event_times, pd.DataFrame):
+        reference = reference_event_times[["start_time", "end_time"]].to_numpy(dtype=float)
+    else:
+        reference = np.asarray(reference_event_times, dtype=float).reshape(-1, 2)
+
+    keep = np.zeros(len(events), dtype=bool)
+    if len(events) and len(reference):
+        reference = reference[np.argsort(reference[:, 0], kind="stable")]
+        reference = merge_close_events(reference)
+        starts, ends = events[:, 0], events[:, 1]
+        ref_start, ref_end = reference[:, 0], reference[:, 1]
+        # the reference is disjoint and sorted, so the intervals that can meet
+        # an event form one contiguous run; cumulative lengths then give the
+        # total overlap without looping over the pairs
+        cumulative = np.concatenate([[0.0], np.cumsum(ref_end - ref_start)])
+        first = np.searchsorted(ref_end, starts, side="right")
+        last = np.searchsorted(ref_start, ends, side="left")
+        meets = last > first
+        head = np.maximum(0.0, starts - ref_start[np.clip(first, 0, len(reference) - 1)])
+        tail = np.maximum(0.0, ref_end[np.clip(last - 1, 0, len(reference) - 1)] - ends)
+        overlap = np.where(meets, cumulative[last] - cumulative[first] - head - tail, 0.0)
+        keep = (overlap > 0) & (overlap >= minimum_overlap)
+
+    if is_frame:
+        return event_times.iloc[np.flatnonzero(keep)]
+    return events[keep]
+
+
 YU_HISTOGRAM_EDGES = np.round(np.arange(-10.0, 50.0 + 0.005, 0.01), 6)
 """Histogram grid of the Yu et al. 2017 noise-threshold estimator.
 

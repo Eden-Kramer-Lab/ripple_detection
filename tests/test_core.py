@@ -26,6 +26,7 @@ from ripple_detection.core import (
     nearest_sample_index,
     normalize_signal,
     normalize_signal_manually,
+    require_overlap,
     ripple_bandpass_filter,
     sample_count_within,
     segment_boolean_series,
@@ -1391,3 +1392,121 @@ class TestCustomFrequencyBand:
         narrow_transition, _ = ripple_bandpass_filter(self.FS, transition_width=10.0)
 
         assert len(narrow_transition) > len(wide_transition)
+
+
+class TestRequireOverlap:
+    """Thirteen of the 57 surveyed papers require a ripple and a burst together."""
+
+    def test_keeps_an_overlapping_event(self):
+        events = np.array([(0.0, 0.1)])
+        reference = np.array([(0.05, 0.2)])
+
+        np.testing.assert_allclose(require_overlap(events, reference), [[0.0, 0.1]])
+
+    def test_drops_a_non_overlapping_event(self):
+        events = np.array([(0.0, 0.1)])
+        reference = np.array([(0.2, 0.3)])
+
+        assert len(require_overlap(events, reference)) == 0
+
+    def test_touching_events_do_not_overlap(self):
+        """Overlap has to be positive, the project's event-level convention."""
+        events = np.array([(0.0, 0.1)])
+        reference = np.array([(0.1, 0.2)])
+
+        assert len(require_overlap(events, reference)) == 0
+
+    def test_keeps_the_event_bounds_not_the_intersection(self):
+        """This is a filter, not an intersection."""
+        events = np.array([(0.0, 1.0)])
+        reference = np.array([(0.4, 0.5)])
+
+        np.testing.assert_allclose(require_overlap(events, reference), [[0.0, 1.0]])
+
+    def test_filters_a_mixture(self):
+        events = np.array([(0.0, 0.1), (1.0, 1.1), (2.0, 2.1)])
+        reference = np.array([(1.05, 1.5)])
+
+        np.testing.assert_allclose(require_overlap(events, reference), [[1.0, 1.1]])
+
+    def test_minimum_overlap_drops_a_brief_touch(self):
+        events = np.array([(0.0, 0.1), (1.0, 1.1)])
+        reference = np.array([(0.099, 0.5), (1.0, 1.1)])
+
+        kept = require_overlap(events, reference, minimum_overlap=0.01)
+
+        np.testing.assert_allclose(kept, [[1.0, 1.1]])
+
+    def test_overlap_with_several_references_adds_up(self):
+        """Two short references together can meet the minimum."""
+        events = np.array([(0.0, 1.0)])
+        reference = np.array([(0.1, 0.2), (0.5, 0.6)])
+
+        assert len(require_overlap(events, reference, minimum_overlap=0.15)) == 1
+        assert len(require_overlap(events, reference, minimum_overlap=0.25)) == 0
+
+    def test_event_starting_inside_a_reference_counts_only_its_own_span(self):
+        """The reference's part before the event start is not overlap."""
+        events = np.array([(0.5, 1.0)])
+        reference = np.array([(0.0, 0.7)])
+
+        assert len(require_overlap(events, reference, minimum_overlap=0.15)) == 1
+        assert len(require_overlap(events, reference, minimum_overlap=0.25)) == 0
+
+    def test_event_ending_inside_a_reference_counts_only_its_own_span(self):
+        """The reference's part after the event end is not overlap either."""
+        events = np.array([(0.0, 0.5)])
+        reference = np.array([(0.3, 1.0)])
+
+        assert len(require_overlap(events, reference, minimum_overlap=0.15)) == 1
+        assert len(require_overlap(events, reference, minimum_overlap=0.25)) == 0
+
+    def test_event_inside_one_reference_counts_its_whole_span(self):
+        """Both ends trimmed at once."""
+        events = np.array([(0.4, 0.6)])
+        reference = np.array([(0.0, 1.0)])
+
+        assert len(require_overlap(events, reference, minimum_overlap=0.15)) == 1
+        assert len(require_overlap(events, reference, minimum_overlap=0.25)) == 0
+
+    def test_overlapping_references_are_not_double_counted(self):
+        """The reference is reduced to its union first."""
+        events = np.array([(0.0, 1.0)])
+        reference = np.array([(0.1, 0.5), (0.2, 0.6)])
+
+        assert len(require_overlap(events, reference, minimum_overlap=0.45)) == 1
+        assert len(require_overlap(events, reference, minimum_overlap=0.55)) == 0
+
+    def test_accepts_and_returns_dataframes(self):
+        """Detector output goes straight in and comes back with every column."""
+        events = pd.DataFrame(
+            {"start_time": [0.0, 1.0], "end_time": [0.1, 1.1], "max_thresh": [3.0, 4.0]}
+        )
+        reference = pd.DataFrame({"start_time": [1.05], "end_time": [1.5]})
+
+        kept = require_overlap(events, reference)
+
+        assert isinstance(kept, pd.DataFrame)
+        assert list(kept.index) == [1]
+        assert list(kept.max_thresh) == [4.0]
+
+    def test_empty_reference_keeps_nothing(self):
+        events = np.array([(0.0, 0.1)])
+
+        assert len(require_overlap(events, np.empty((0, 2)))) == 0
+
+    def test_empty_events_stay_empty(self):
+        kept = require_overlap(np.empty((0, 2)), np.array([(0.0, 0.1)]))
+
+        assert kept.shape == (0, 2)
+
+    def test_unsorted_reference_is_handled(self):
+        """The reference does not have to arrive in order."""
+        events = np.array([(1.0, 1.1)])
+        reference = np.array([(2.0, 2.5), (1.05, 1.5)])
+
+        assert len(require_overlap(events, reference)) == 1
+
+    def test_negative_minimum_overlap_raises(self):
+        with pytest.raises(ValueError, match="minimum_overlap"):
+            require_overlap(np.array([(0.0, 0.1)]), np.array([(0.0, 0.1)]), -1.0)

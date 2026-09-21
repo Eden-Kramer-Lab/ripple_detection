@@ -139,6 +139,41 @@ print(f"Mean duration: {ripples['duration'].mean():.3f} seconds")
 print(f"Mean z-score: {ripples['mean_zscore'].mean():.2f}")
 ```
 
+### Matching the literature's criteria
+
+A survey of 57 decoding-replay papers (in the companion analysis project) shows four
+criteria the detectors above do not apply by default. Each is available:
+
+```python
+from ripple_detection import (
+    Kay_ripple_detector,
+    filter_ripple_band,
+    merge_close_events,
+    multiunit_HSE_detector,
+    require_overlap,
+)
+
+# a band other than 150-250 Hz (13 of the 29 papers stating one)
+filtered = filter_ripple_band(lfps, sampling_frequency, band=(80.0, 250.0))
+
+# a ceiling on event duration (25 of 57 papers; published limits are 400-2000 ms)
+ripples = Kay_ripple_detector(
+    time, filtered, speed, sampling_frequency, maximum_duration=0.5
+)
+
+# a minimum number of units in a burst (21 of the 36 multiunit papers, usually five)
+bursts = multiunit_HSE_detector(
+    time, multiunit, speed, sampling_frequency, minimum_active_units=5
+)
+
+# require a ripple and a burst together (13 of 57 papers)
+bursts_with_ripples = require_overlap(bursts, ripples)
+
+# merge events separated by a short gap (14 of 57 papers, median 50 ms).
+# exclude_close_events is the other convention: it drops the later event instead.
+merged = merge_close_events(ripples[["start_time", "end_time"]].to_numpy(), 0.05)
+```
+
 ## Output Format
 
 All detectors return a pandas DataFrame with comprehensive event statistics:

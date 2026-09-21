@@ -12,6 +12,7 @@ from ripple_detection.core import (
     gaussian_smooth,
     get_envelope,
     merge_overlapping_ranges,
+    require_overlap,
     segment_boolean_series,
     threshold_by_zscore,
 )
@@ -437,3 +438,45 @@ class TestSegmentBooleanSeriesProperties:
         # Number of segments should not exceed number of True values
         n_true = np.sum(bool_array)
         assert len(segments) <= n_true + 1
+
+
+def _brute_force_overlap(event, reference):
+    """Total overlap of one event with a set of reference intervals, by union."""
+    covered = 0.0
+    step = 1e-4
+    grid = np.arange(event[0], event[1], step)
+    for point in grid:
+        if np.any((reference[:, 0] <= point) & (point < reference[:, 1])):
+            covered += step
+    return covered
+
+
+@settings(max_examples=50, deadline=None)
+@given(
+    events=arrays(float, (6, 2), elements=st.floats(0.0, 5.0, width=32)),
+    reference=arrays(float, (5, 2), elements=st.floats(0.0, 5.0, width=32)),
+    minimum_overlap=st.floats(0.0, 1.0),
+)
+def test_require_overlap_matches_a_brute_force_sweep(events, reference, minimum_overlap):
+    """The searchsorted arithmetic agrees with counting covered time directly."""
+    events = np.sort(events, axis=1)
+    reference = np.sort(reference, axis=1)
+    events = events[events[:, 1] > events[:, 0]]
+    reference = reference[reference[:, 1] > reference[:, 0]]
+
+    kept = require_overlap(events, reference, minimum_overlap)
+
+    expected, rejected = [], []
+    for event in events:
+        overlap = _brute_force_overlap(event, reference) if len(reference) else 0.0
+        # the sweep resolves overlap to its step, so skip events within a step
+        # of the decision boundary rather than assert on a coin flip
+        if abs(overlap - minimum_overlap) < 1e-3 or overlap < 1e-3:
+            continue
+        (expected if overlap >= minimum_overlap else rejected).append(tuple(event))
+    kept_set = [tuple(k) for k in np.asarray(kept)]
+    for event in expected:
+        assert any(np.allclose(event, k) for k in kept_set), f"missing {event}"
+    for event in rejected:
+        assert not any(np.allclose(event, k) for k in kept_set), f"kept {event}"
+    assert len(kept_set) <= len(events)

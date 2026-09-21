@@ -16,6 +16,7 @@ from ripple_detection.core import (
     nearest_sample_index,
     normalize_signal,
     normalize_signal_manually,
+    require_overlap,
     ripple_bandpass_filter,
     sample_count_within,
 )
@@ -62,6 +63,7 @@ __all__ = [
     "nearest_sample_index",
     "normalize_signal",
     "normalize_signal_manually",
+    "require_overlap",
     "ripple_bandpass_filter",
     "sample_count_within",
     "simulate_LFP",
