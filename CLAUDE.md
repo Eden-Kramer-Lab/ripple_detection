@@ -303,7 +303,7 @@ The package also validates that example notebooks run without errors in CI.
 - Uses f-strings for formatting
 - Modular functions with single responsibility
 - Comprehensive test coverage: 93% overall, 100% on core and detector modules
-- **Code quality tools**: Black (formatting), Ruff (linting), Mypy (type checking)
+- **Code quality tools**: Ruff (formatting and linting), Mypy (type checking)
 - Continuous integration with GitHub Actions (tests on Python 3.10, 3.11, 3.12, 3.13)
 
 ### Type Hints
