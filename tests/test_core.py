@@ -902,9 +902,22 @@ class TestEstimateNoiseThreshold:
         assert diag["min"] == pytest.approx(values.min())
         # flank ratio: left-flank width over mode-to-mean distance; > 1 is the
         # regime in which the mirrored distribution can reach past the mean
-        assert diag["flank_ratio"] == pytest.approx(
+        expected_ratio = (
             (diag["mode"] - values.min()) / (values.mean() - diag["mode"])
+            if values.mean() > diag["mode"]
+            else np.inf
         )
+        assert diag["flank_ratio"] == pytest.approx(expected_ratio)
+
+    def test_flank_ratio_is_infinite_when_mean_is_at_or_below_the_mode(self):
+        # left-skewed sample: the mode lies above the mean, so the mirrored
+        # distribution trivially reaches past the mean
+        rng = np.random.default_rng(12)
+        values = -rng.gamma(2.0, 0.4, 200_000) - 0.2
+        threshold, diag = estimate_noise_threshold(values, return_diagnostics=True)
+        assert diag["mean"] <= diag["mode"]
+        assert diag["flank_ratio"] == np.inf
+        assert threshold > diag["mean"]
 
     def test_reflection_equals_original_formula_when_mode_nonpositive(self):
         rng = np.random.default_rng(3)

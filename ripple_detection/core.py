@@ -1329,7 +1329,7 @@ def estimate_noise_threshold(
         "min": minimum,
         # left-flank width over mode-to-mean distance; the mirrored distribution
         # can only reach past the mean when this exceeds 1
-        "flank_ratio": (mode - minimum) / (mean - mode) if mean != mode else np.inf,
+        "flank_ratio": (mode - minimum) / (mean - mode) if mean > mode else np.inf,
         "histogram_edges": edges,
         "counts": counts,
         "smoothed_counts": smoothed,
