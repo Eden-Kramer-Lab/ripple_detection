@@ -2567,7 +2567,6 @@ def multiunit_HSE_detector(
     zscore_threshold: float = 2.0,
     smoothing_sigma: float = 0.015,
     close_event_threshold: float = 0.0,
-    use_speed_threshold_for_zscore: bool = False,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
     normalization_time_range: tuple[float, float] | None = None,
@@ -2646,12 +2645,6 @@ def multiunit_HSE_detector(
         criterion. Published criteria are most often around five units.
         ``Carey_candidate_detector`` applies the same rule with its original's
         default of 5.
-    use_speed_threshold_for_zscore : bool, optional
-        **DEPRECATED**: Use `normalization_mask` instead. If True, compute
-        z-score statistics (mean/std) using only immobility periods (speed <
-        threshold). Default is False (use all time points). This parameter is
-        maintained for backwards compatibility but will be removed in a future
-        version.
     normalization_method : {'zscore', 'median_mad'}, optional
         Method for normalizing the firing rate. Default is 'zscore' (mean/std).
         Use 'median_mad' for more robust normalization when data contains outliers.
@@ -2660,12 +2653,12 @@ def multiunit_HSE_detector(
         Boolean mask to specify which samples to use for computing normalization
         statistics. For example, use `speed <= speed_threshold` to compute
         statistics only during immobility. Cannot be used with
-        `normalization_time_range` or `use_speed_threshold_for_zscore`.
+        `normalization_time_range`.
         Default is None (use all data).
     normalization_time_range : tuple of (float, float), optional
         Time range (start_time, end_time) in seconds for computing normalization
         statistics. Useful for baseline normalization. Cannot be used with
-        `normalization_mask` or `use_speed_threshold_for_zscore`.
+        `normalization_mask`.
         Default is None (use all data).
 
     Returns
@@ -2729,20 +2722,6 @@ def multiunit_HSE_detector(
     firing_rate = get_multiunit_population_firing_rate(
         multiunit, sampling_frequency, smoothing_sigma
     )
-
-    # Handle backwards compatibility with use_speed_threshold_for_zscore
-    if use_speed_threshold_for_zscore:
-        import warnings
-
-        warnings.warn(
-            "The 'use_speed_threshold_for_zscore' parameter is deprecated. "
-            "Use 'normalization_mask=speed <= speed_threshold' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        # If old parameter is used, override normalization_mask unless explicitly set
-        if normalization_mask is None and normalization_time_range is None:
-            normalization_mask = speed <= speed_threshold
 
     events = _detect_from_trace(
         firing_rate,

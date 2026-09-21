@@ -949,31 +949,36 @@ class TestMultiunitHSEDetector:
         # Should detect fewer or equal events during movement
         assert len(events_movement) <= len(events_stationary)
 
-    def test_use_speed_threshold_for_zscore(
+    def test_normalization_mask_restricts_the_baseline(
         self, time_3s, multiunit_data, stationary_speed, sampling_frequency
     ):
-        """Test use_speed_threshold_for_zscore parameter."""
-        # This parameter changes whether z-score is calculated on all data
-        # or only stationary periods
+        """The replacement for the removed use_speed_threshold_for_zscore."""
         events_all_data = multiunit_HSE_detector(
+            time_3s, multiunit_data, stationary_speed, sampling_frequency
+        )
+        events_immobile_baseline = multiunit_HSE_detector(
             time_3s,
             multiunit_data,
             stationary_speed,
             sampling_frequency,
-            use_speed_threshold_for_zscore=False,
+            normalization_mask=stationary_speed <= 4.0,
         )
 
-        events_stationary_zscore = multiunit_HSE_detector(
-            time_3s,
-            multiunit_data,
-            stationary_speed,
-            sampling_frequency,
-            use_speed_threshold_for_zscore=True,
-        )
-
-        # Both should return valid DataFrames
         assert isinstance(events_all_data, pd.DataFrame)
-        assert isinstance(events_stationary_zscore, pd.DataFrame)
+        assert isinstance(events_immobile_baseline, pd.DataFrame)
+
+    def test_the_removed_parameter_is_gone(
+        self, time_3s, multiunit_data, stationary_speed, sampling_frequency
+    ):
+        """It warned from 1.7.0 and is removed in 2.0."""
+        with pytest.raises(TypeError, match="use_speed_threshold_for_zscore"):
+            multiunit_HSE_detector(
+                time_3s,
+                multiunit_data,
+                stationary_speed,
+                sampling_frequency,
+                use_speed_threshold_for_zscore=True,
+            )
 
 
 class TestMultiunitHSEValidation:

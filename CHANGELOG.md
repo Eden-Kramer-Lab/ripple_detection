@@ -59,9 +59,7 @@ with the events that you detect. Entries marked **Breaking** change the results.
   Karlsson 20 % more.
 - **Breaking.** All detectors use one duration rule: inclusive sample counts,
   rounded half up. Zugaro and Carey compared elapsed time, and Long rounded down.
-- **Breaking.** Immobility is `speed <= speed_threshold` in all detectors. In
-  `multiunit_HSE_detector` the deprecated `use_speed_threshold_for_zscore` path
-  used `<`, so its normalization baseline, and therefore its events, change.
+- **Breaking.** Immobility is `speed <= speed_threshold` in all detectors.
 - **Breaking.** A duration ceiling below the minimum raises an error. Zugaro and
   Long gave an empty result.
 - `Karlsson_ripple_detector` calculates its per-event z-score statistics on the
@@ -73,6 +71,13 @@ with the events that you detect. Entries marked **Breaking** change the results.
 - Documentation. Each reference has a DOI that CrossRef resolved. Each link to
   laboratory code gives a file at a commit, and states its license. Each
   detector states its movement rule and its policy for missing samples.
+
+### Removed
+
+- `use_speed_threshold_for_zscore` on `multiunit_HSE_detector`. It has warned
+  since 1.7.0. Use `normalization_mask=speed <= speed_threshold`, which does the
+  same and says so. The three normalization parameters after it move one
+  position earlier, so a call that gives them by position must change.
 
 ### Fixed
 
