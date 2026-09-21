@@ -2842,3 +2842,96 @@ class TestEventStatisticsShapeValidation:
             _get_event_stats(
                 events, time, np.zeros(1000).tolist(), speed, 0.015, participants=[{0}]
             )
+
+
+LFP_DETECTORS_WITHOUT_A_CEILING = [
+    Kay_ripple_detector,
+    Karlsson_ripple_detector,
+    Roumis_ripple_detector,
+    Shvartsman_ripple_detector,
+    Yu_ripple_detector,
+]
+
+
+class TestMaximumDuration:
+    """A ceiling on event duration, which 25 of the 57 surveyed papers impose."""
+
+    FS = 1000
+    N_TIME = 20_000  # long enough for the Yu noise threshold
+    SHORT = (5_000, 5_060, 20.0)  # 60 ms burst
+    LONG = (12_000, 12_500, 20.0)  # 500 ms burst
+
+    @pytest.fixture
+    def time(self):
+        return np.arange(self.N_TIME) / self.FS
+
+    @pytest.fixture
+    def stationary(self):
+        return np.full(self.N_TIME, 2.0)
+
+    @pytest.fixture
+    def lfps(self):
+        return _synthetic_ripple_band(self.N_TIME, self.FS, [self.SHORT, self.LONG])
+
+    @pytest.mark.parametrize("detector", LFP_DETECTORS_WITHOUT_A_CEILING)
+    def test_none_detects_what_the_default_detects(self, detector, time, lfps, stationary):
+        """Passing None explicitly changes nothing."""
+        default = detector(time, lfps, stationary, self.FS)
+        explicit = detector(time, lfps, stationary, self.FS, maximum_duration=None)
+
+        pd.testing.assert_frame_equal(default, explicit)
+
+    @pytest.mark.parametrize("detector", LFP_DETECTORS_WITHOUT_A_CEILING)
+    def test_ceiling_drops_the_long_event(self, detector, time, lfps, stationary):
+        """Both bursts are found; a ceiling between them keeps only the short one."""
+        without = detector(time, lfps, stationary, self.FS)
+        assert len(without) == 2
+
+        with_ceiling = detector(time, lfps, stationary, self.FS, maximum_duration=0.2)
+
+        assert len(with_ceiling) == 1
+        assert with_ceiling.iloc[0].start_time < 6.0
+
+    @pytest.mark.parametrize("detector", LFP_DETECTORS_WITHOUT_A_CEILING)
+    def test_every_kept_event_is_within_the_ceiling(self, detector, time, lfps, stationary):
+        """The limit applies to the reported event, not the suprathreshold run."""
+        events = detector(time, lfps, stationary, self.FS, maximum_duration=0.2)
+
+        durations = events.end_time - events.start_time
+        assert (durations <= 0.2 + 1 / self.FS).all()
+
+    @pytest.mark.parametrize("detector", LFP_DETECTORS_WITHOUT_A_CEILING)
+    def test_ceiling_never_adds_events(self, detector, time, lfps, stationary):
+        """Tightening the ceiling can only remove events."""
+        loose = detector(time, lfps, stationary, self.FS, maximum_duration=1.0)
+        tight = detector(time, lfps, stationary, self.FS, maximum_duration=0.2)
+
+        assert set(tight.start_time) <= set(loose.start_time)
+
+    def test_multiunit_detector_takes_a_ceiling(self, time, stationary):
+        """The burst detector gets the same limit."""
+        rng = np.random.default_rng(0)
+        multiunit = rng.poisson(0.02, (self.N_TIME, 20)).astype(float)
+        multiunit[5_000:5_060] += rng.poisson(0.6, (60, 20))
+        multiunit[12_000:12_500] += rng.poisson(0.6, (500, 20))
+
+        without = multiunit_HSE_detector(time, multiunit, stationary, self.FS)
+        with_ceiling = multiunit_HSE_detector(
+            time, multiunit, stationary, self.FS, maximum_duration=0.2
+        )
+
+        assert len(with_ceiling) < len(without)
+        durations = with_ceiling.end_time - with_ceiling.start_time
+        assert (durations <= 0.2 + 1 / self.FS).all()
+
+    def test_a_ceiling_below_the_minimum_raises(self, time, lfps, stationary):
+        """The two limits have to leave a usable window."""
+        with pytest.raises(ValueError, match="maximum_duration"):
+            Kay_ripple_detector(
+                time,
+                lfps,
+                stationary,
+                self.FS,
+                minimum_duration=0.050,
+                maximum_duration=0.010,
+            )

@@ -568,6 +568,7 @@ def Shvartsman_ripple_detector(
     sampling_frequency: float,
     speed_threshold: float = 4.0,
     minimum_duration: float = 0.015,
+    maximum_duration: float | None = None,
     zscore_threshold: float = 3.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
@@ -621,6 +622,12 @@ def Shvartsman_ripple_detector(
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
+    maximum_duration : float, optional
+        Longest allowed event duration in **seconds**, applied to the event as
+        it is reported rather than to the run above threshold, because that is
+        what a published maximum describes. Default is None (no upper limit).
+        Twenty-five of the 57 papers in the project's detection-parameter
+        survey impose one, from 400 to 2000 ms.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
         Default is 3.0 (higher than Kay's 2.0 because per-channel detection
@@ -721,6 +728,7 @@ def Shvartsman_ripple_detector(
             "must be left at their defaults. Drop them, or set "
             "manual_normalization=False."
         )
+    _validate_duration_limits(minimum_duration, maximum_duration)
     time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
         time,
         filtered_lfps,
@@ -801,6 +809,10 @@ def Shvartsman_ripple_detector(
     # Keep participant metadata aligned through movement and proximity exclusion.
     participant_sets = merged_candidates[participation_mask, 2]
     participants = participant_sets[included_ripple_inds]
+
+    ripple_times, keep = _exclude_long_events(ripple_times, time, maximum_duration)
+    participants = participants[keep]
+
     n_participants = np.array([len(p) for p in participants])
     frac_participants = n_participants / n_elecs
 
@@ -819,6 +831,55 @@ def Shvartsman_ripple_detector(
     return ripple_data
 
 
+def _validate_duration_limits(minimum_duration: float, maximum_duration: float | None) -> None:
+    """Reject duration limits that leave no admissible event."""
+    if maximum_duration is not None and maximum_duration < minimum_duration:
+        raise ValueError(
+            f"maximum_duration ({maximum_duration}) is below minimum_duration "
+            f"({minimum_duration}); no event could satisfy both. Both are in seconds."
+        )
+
+
+def _exclude_long_events(
+    event_times: ArrayLike, time: NDArray, maximum_duration: float | None
+) -> tuple[NDArray, NDArray]:
+    """Drop events longer than ``maximum_duration``.
+
+    The limit applies to the event as it will be reported, after the bounds
+    have been extended past the threshold crossing, because that is the
+    duration the literature's maxima describe. ``minimum_duration`` is the
+    other way round: it applies to the run above threshold, the Frank lab
+    convention the package already follows. Duration is counted in samples
+    through :func:`~ripple_detection.core.sample_count_within`, so an event of
+    exactly the limit is kept.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2)
+        ``[start_time, end_time]`` per event.
+    time : ndarray, shape (n_time,)
+        Sample timestamps in seconds.
+    maximum_duration : float or None
+        Longest allowed duration in seconds. None keeps every event.
+
+    Returns
+    -------
+    event_times : ndarray, shape (n_kept, 2)
+        The events within the limit.
+    keep : ndarray, shape (n_events,)
+        Boolean mask into the input, for filtering arrays that run alongside
+        the events.
+
+    """
+    events = np.asarray(event_times, dtype=float).reshape(-1, 2)
+    if maximum_duration is None or len(events) == 0:
+        return events, np.ones(len(events), dtype=bool)
+    start = nearest_sample_index(time, events[:, 0])
+    stop = nearest_sample_index(time, events[:, 1])
+    keep = np.asarray(sample_count_within(stop - start + 1, time, 0.0, maximum_duration))
+    return events[keep], keep
+
+
 def _detect_from_trace(
     trace: NDArray,
     time: NDArray,
@@ -828,6 +889,7 @@ def _detect_from_trace(
     zscore_threshold: float,
     speed_threshold: float,
     close_event_threshold: float,
+    maximum_duration: float | None = None,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
     normalization_time_range: tuple[float, float] | None = None,
@@ -872,6 +934,7 @@ def _detect_from_trace(
         candidate_times, speed, time, speed_threshold=speed_threshold
     )
     event_times = exclude_close_events(event_times, close_event_threshold)
+    event_times, _ = _exclude_long_events(event_times, time, maximum_duration)
     return _get_event_stats(event_times, time, normalized, speed, minimum_duration)
 
 
@@ -882,6 +945,7 @@ def Kay_ripple_detector(
     sampling_frequency: float,
     speed_threshold: float = 4.0,
     minimum_duration: float = 0.015,
+    maximum_duration: float | None = None,
     zscore_threshold: float = 2.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
@@ -924,6 +988,12 @@ def Kay_ripple_detector(
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
+    maximum_duration : float, optional
+        Longest allowed event duration in **seconds**, applied to the event as
+        it is reported rather than to the run above threshold, because that is
+        what a published maximum describes. Default is None (no upper limit).
+        Twenty-five of the 57 papers in the project's detection-parameter
+        survey impose one, from 400 to 2000 ms.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
         Default is 2.0. Lower values (e.g., 1.5) detect more events but may
@@ -1001,6 +1071,7 @@ def Kay_ripple_detector(
        doi:10.1038/nature17144
 
     """
+    _validate_duration_limits(minimum_duration, maximum_duration)
     time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
         time,
         filtered_lfps,
@@ -1021,6 +1092,7 @@ def Kay_ripple_detector(
         zscore_threshold=zscore_threshold,
         speed_threshold=speed_threshold,
         close_event_threshold=close_ripple_threshold,
+        maximum_duration=maximum_duration,
         normalization_method=normalization_method,
         normalization_mask=normalization_mask,
         normalization_time_range=normalization_time_range,
@@ -1034,6 +1106,7 @@ def Yu_ripple_detector(
     sampling_frequency: float,
     speed_threshold: float = 4.0,
     minimum_duration: float = 0.020,
+    maximum_duration: float | None = None,
     percentile: float = 99.99,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
@@ -1077,6 +1150,12 @@ def Yu_ripple_detector(
     minimum_duration : float, optional
         Minimum time the consensus must stay at or above the threshold, in
         seconds, applied as a sample count (round-half-up). Default is 0.020.
+    maximum_duration : float, optional
+        Longest allowed event duration in **seconds**, applied to the event as
+        it is reported rather than to the run above threshold, because that is
+        what a published maximum describes. Default is None (no upper limit).
+        Twenty-five of the 57 papers in the project's detection-parameter
+        survey impose one, from 400 to 2000 ms.
     percentile : float, optional
         Percentile of the mirrored noise distribution used as the threshold.
         Default is 99.99.
@@ -1139,6 +1218,7 @@ def Yu_ripple_detector(
     _validate_array_lengths(time, filtered_lfps, speed)
     _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
     _validate_speed_units(speed, speed_threshold, stacklevel=3)
+    _validate_duration_limits(minimum_duration, maximum_duration)
 
     consensus = get_Yu_ripple_consensus_trace(
         filtered_lfps,
@@ -1228,6 +1308,10 @@ def Yu_ripple_detector(
         kept = np.asarray(kept, dtype=int)
         event_times = np.asarray(event_times).reshape(-1, 2)
         is_clipped, n_suprathreshold = is_clipped[kept], n_suprathreshold[kept]
+
+    if len(event_times):
+        event_times, keep = _exclude_long_events(event_times, time, maximum_duration)
+        is_clipped, n_suprathreshold = is_clipped[keep], n_suprathreshold[keep]
 
     events = _get_event_stats(
         event_times, time, normalized, speed, minimum_duration=minimum_duration
@@ -1906,6 +1990,7 @@ def Carey_candidate_detector(
     edge_threshold: float = 1.0,
     peak_threshold: float = 3.0,
     minimum_duration: float = 0.020,
+    maximum_duration: float | None = None,
     minimum_active_units: int = 5,
     ripple_smoothing_sigma: float = 0.010,
     spike_kernel_sigma: float = 0.020,
@@ -1983,6 +2068,12 @@ def Carey_candidate_detector(
         Minimum candidate duration in seconds, applied as an inclusive
         round-half-up sample count (``sample_count_within``); the original's
         ``RemoveIV`` compared elapsed time strictly. Default 0.020.
+    maximum_duration : float, optional
+        Longest allowed event duration in **seconds**, applied to the event as
+        it is reported rather than to the run above threshold, because that is
+        what a published maximum describes. Default is None (no upper limit).
+        Twenty-five of the 57 papers in the project's detection-parameter
+        survey impose one, from 400 to 2000 ms.
     minimum_active_units : int, optional
         Minimum number of units with a spike inside the candidate. Default 5.
     ripple_smoothing_sigma, spike_kernel_sigma, baseline_sigma : float, optional
@@ -2035,6 +2126,7 @@ def Carey_candidate_detector(
         )
     _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
     _validate_speed_units(speed, speed_threshold, stacklevel=3)
+    _validate_duration_limits(minimum_duration, maximum_duration)
     if (
         np.any(np.isnan(filtered_lfps))
         or np.any(np.isnan(multiunit))
@@ -2117,6 +2209,8 @@ def Carey_candidate_detector(
         if len(candidates)
         else np.empty((0, 2))
     )
+    event_times, keep = _exclude_long_events(event_times, time, maximum_duration)
+    n_active = n_active[keep]
     events = _get_event_stats(
         event_times, time, zscored, speed, minimum_duration=minimum_duration
     )
@@ -2131,6 +2225,7 @@ def Karlsson_ripple_detector(
     sampling_frequency: float,
     speed_threshold: float = 4.0,
     minimum_duration: float = 0.015,
+    maximum_duration: float | None = None,
     zscore_threshold: float = 3.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
@@ -2172,6 +2267,12 @@ def Karlsson_ripple_detector(
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
+    maximum_duration : float, optional
+        Longest allowed event duration in **seconds**, applied to the event as
+        it is reported rather than to the run above threshold, because that is
+        what a published maximum describes. Default is None (no upper limit).
+        Twenty-five of the 57 papers in the project's detection-parameter
+        survey impose one, from 400 to 2000 ms.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
         Default is 3.0 (higher than Kay's 2.0 because per-channel detection
@@ -2230,6 +2331,7 @@ def Karlsson_ripple_detector(
        doi:10.1038/nn.2344
 
     """
+    _validate_duration_limits(minimum_duration, maximum_duration)
     time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
         time,
         filtered_lfps,
@@ -2261,6 +2363,7 @@ def Karlsson_ripple_detector(
         candidate_ripple_times, speed, time, speed_threshold=speed_threshold
     )
     ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
+    ripple_times, _ = _exclude_long_events(ripple_times, time, maximum_duration)
 
     # statistics on the strongest channel at each sample, so an event that one
     # channel triggered cannot report a sub-threshold max_thresh
@@ -2276,6 +2379,7 @@ def Roumis_ripple_detector(
     sampling_frequency: float,
     speed_threshold: float = 4.0,
     minimum_duration: float = 0.015,
+    maximum_duration: float | None = None,
     zscore_threshold: float = 2.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
@@ -2317,6 +2421,12 @@ def Roumis_ripple_detector(
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
+    maximum_duration : float, optional
+        Longest allowed event duration in **seconds**, applied to the event as
+        it is reported rather than to the run above threshold, because that is
+        what a published maximum describes. Default is None (no upper limit).
+        Twenty-five of the 57 papers in the project's detection-parameter
+        survey impose one, from 400 to 2000 ms.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
         Default is 2.0. Lower values (e.g., 1.5) detect more events but may
@@ -2371,6 +2481,7 @@ def Roumis_ripple_detector(
     z-scoring, between Kay's consensus trace and Karlsson's per-channel rule.
 
     """
+    _validate_duration_limits(minimum_duration, maximum_duration)
     time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
         time,
         filtered_lfps,
@@ -2393,6 +2504,7 @@ def Roumis_ripple_detector(
         zscore_threshold=zscore_threshold,
         speed_threshold=speed_threshold,
         close_event_threshold=close_ripple_threshold,
+        maximum_duration=maximum_duration,
         normalization_method=normalization_method,
         normalization_mask=normalization_mask,
         normalization_time_range=normalization_time_range,
@@ -2406,6 +2518,7 @@ def multiunit_HSE_detector(
     sampling_frequency: float,
     speed_threshold: float = 4.0,
     minimum_duration: float = 0.015,
+    maximum_duration: float | None = None,
     zscore_threshold: float = 2.0,
     smoothing_sigma: float = 0.015,
     close_event_threshold: float = 0.0,
@@ -2462,6 +2575,12 @@ def multiunit_HSE_detector(
         ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
+    maximum_duration : float, optional
+        Longest allowed event duration in **seconds**, applied to the event as
+        it is reported rather than to the run above threshold, because that is
+        what a published maximum describes. Default is None (no upper limit).
+        Twenty-five of the 57 papers in the project's detection-parameter
+        survey impose one, from 400 to 2000 ms.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
         Default is 2.0. Lower values (e.g., 1.5) detect more events but may
@@ -2536,6 +2655,7 @@ def multiunit_HSE_detector(
     _validate_array_lengths(time, multiunit, speed)
     _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
     _validate_speed_units(speed, speed_threshold, stacklevel=3)
+    _validate_duration_limits(minimum_duration, maximum_duration)
     if np.any(np.isnan(multiunit)):
         raise ValueError(
             "multiunit contains NaN. Spike counts cannot be missing: fill absent "
@@ -2572,6 +2692,7 @@ def multiunit_HSE_detector(
         zscore_threshold=zscore_threshold,
         speed_threshold=speed_threshold,
         close_event_threshold=close_event_threshold,
+        maximum_duration=maximum_duration,
         normalization_method=normalization_method,
         normalization_mask=normalization_mask,
         normalization_time_range=normalization_time_range,
