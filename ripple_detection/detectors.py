@@ -847,11 +847,19 @@ def _exclude_long_events(
 
     The limit applies to the event as it will be reported, after the bounds
     have been extended past the threshold crossing, because that is the
-    duration the literature's maxima describe. ``minimum_duration`` is the
-    other way round: it applies to the run above threshold, the Frank lab
-    convention the package already follows. Duration is counted in samples
-    through :func:`~ripple_detection.core.sample_count_within`, so an event of
-    exactly the limit is kept.
+    duration a published maximum describes. ``minimum_duration`` is the other
+    way round: it applies to the run above threshold, the Frank lab convention
+    the package already follows.
+
+    Duration is a sample count, not elapsed time: an event is kept when it
+    holds at most ``round(maximum_duration * sampling_frequency)`` samples,
+    the same rule ``minimum_duration`` uses. An event whose elapsed time is
+    exactly ``maximum_duration`` holds one sample more than that and is
+    dropped, so the effective ceiling is one sample short of the number given.
+    At 1500 Hz a 0.5 s ceiling admits 750 samples, which span 499.3 ms.
+
+    Applied after close events are excluded or merged, so an over-long event
+    still suppresses or absorbs its neighbours before it is itself dropped.
 
     Parameters
     ----------
@@ -900,8 +908,8 @@ def _detect_from_trace(
     normalizes the trace. It takes the runs above ``zscore_threshold`` that
     last ``minimum_duration`` and extends each to the normalization center. It
     drops events whose first or last sample exceeds ``speed_threshold``, then
-    events too close to the last retained event. It then computes the
-    per-event statistics.
+    events too close to the last retained event, then events longer than
+    ``maximum_duration``. It then computes the per-event statistics.
 
     Parameters
     ----------
@@ -913,6 +921,8 @@ def _detect_from_trace(
         Speed in cm/s.
     minimum_duration, zscore_threshold, speed_threshold, close_event_threshold : float
         As in the public detectors.
+    maximum_duration : float, optional
+        As in the public detectors. Default is None (no upper limit).
     normalization_method, normalization_mask, normalization_time_range
         Passed to ``normalize_signal``.
 
@@ -1350,7 +1360,12 @@ def _two_threshold_events(
        paired crossing and is discarded.
     2. Consecutive candidates are merged, one neighbor per pass, while the
        gap between them is under ``minimum_inter_ripple_interval`` and the
-       merged span is under ``maximum_duration``.
+       merged span is under ``maximum_duration``. This is deliberately not
+       :func:`~ripple_detection.core.merge_close_events`: that helper works on
+       times with a tolerance at the boundary and an inclusive span cap, while
+       FindRipples compares sample indices with strict inequalities. Keeping
+       this loop is what keeps the detector faithful to the algorithm it is
+       named for.
     3. A candidate is kept only if its maximum is strictly above
        ``high_threshold``.
     4. Candidates whose sample count (first to last sample, inclusive) is
@@ -2729,6 +2744,9 @@ def multiunit_HSE_detector(
     keep = n_active >= minimum_active_units
     events = events.iloc[np.flatnonzero(keep)].copy()
     events["n_active_units"] = n_active[keep]
+    # renumber, so the index is 1..n with no holes as it is for every other
+    # detector; Carey filters before _get_event_stats and gets this for free
+    events.index = pd.RangeIndex(1, len(events) + 1, name=events.index.name)
     return events
 
 

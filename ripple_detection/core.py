@@ -15,11 +15,17 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.signal import filtfilt, hilbert, remez
 from scipy.stats import median_abs_deviation, zscore
 
+DEFAULT_RIPPLE_BAND = (150.0, 250.0)
+"""Default passband in Hz, the most common choice in the replay literature."""
+
+DEFAULT_TRANSITION_WIDTH = 25.0
+"""Default width in Hz of the transition on each side of the passband."""
+
 
 def ripple_bandpass_filter(
     sampling_frequency: float,
-    band: tuple[float, float] = (150.0, 250.0),
-    transition_width: float = 25.0,
+    band: tuple[float, float] = DEFAULT_RIPPLE_BAND,
+    transition_width: float = DEFAULT_TRANSITION_WIDTH,
 ) -> tuple[NDArray, float]:
     """Generate a bandpass filter for a ripple frequency band.
 
@@ -91,6 +97,17 @@ def ripple_bandpass_filter(
         nyquist,
     ]
     return remez(numtaps, desired, [0, 1, 0], fs=sampling_frequency), 1.0
+
+
+_GAP_TOLERANCE = 1e-9
+"""Relative tolerance for comparing an inter-event gap with a threshold.
+
+Applied by :func:`exclude_close_events` and :func:`merge_close_events` so that
+a gap equal to the threshold is treated as equal rather than as smaller, which
+binary floating point would otherwise decide for it: 0.15 - 0.1 is 4.999...e-2,
+just under 0.05. The tolerance is relative only, with no absolute term, so the
+comparison stays monotonic in the threshold.
+"""
 
 
 def minimum_sample_count(time: ArrayLike, minimum_duration: float) -> int:
@@ -220,7 +237,7 @@ def filter_ripple_band(
     data: ArrayLike,
     sampling_frequency: float | None = None,
     band: tuple[float, float] | None = None,
-    transition_width: float = 25.0,
+    transition_width: float = DEFAULT_TRANSITION_WIDTH,
 ) -> NDArray:
     """Bandpass filter signal(s) to the ripple band, 150-250 Hz by default.
 
@@ -248,8 +265,10 @@ def filter_ripple_band(
         design. A custom band needs `sampling_frequency`, because the shipped
         kernel is fixed.
     transition_width : float, optional
-        Width in Hz of the transition on each side of a custom band. Default
-        is 25.0. Ignored unless `band` is given.
+        Width in Hz of the transition on each side of the passband. Default is
+        25.0. The shipped kernel is a fixed design, so a value other than the
+        default raises when that kernel would be used.
+
     Returns
     -------
     filtered_data : ndarray, shape (n_time,) or (n_time, n_channels)
@@ -259,10 +278,14 @@ def filter_ripple_band(
     Raises
     ------
     ValueError
-        If the sampling rate cannot represent the band. That is, the Nyquist
-        frequency is at or below 275 Hz, the 250 Hz upper edge plus the 25 Hz
-        transition band. Also if the signal holds fewer non-NaN samples than
-        ``filtfilt`` needs, which is one more than three times the tap count.
+        If the sampling rate cannot represent the default band, that is, the
+        Nyquist frequency is at or below 275 Hz, the 250 Hz upper edge plus
+        the 25 Hz transition band. If `band` is given without a
+        `sampling_frequency`, or `transition_width` is changed where the fixed
+        shipped kernel would be used, since neither can retune that kernel. If
+        the band itself is unusable, from `ripple_bandpass_filter`. And if the
+        signal holds fewer non-NaN samples than ``filtfilt`` needs, which is
+        one more than three times the tap count.
 
     See Also
     --------
@@ -284,15 +307,23 @@ def filter_ripple_band(
             "A custom band needs a sampling_frequency: the shipped kernel is a fixed "
             "150-250 Hz design for 1500 Hz data and cannot be retuned."
         )
+    uses_shipped_kernel = band is None and (
+        sampling_frequency is None
+        or np.isclose(sampling_frequency, SHIPPED_KERNEL_SAMPLING_FREQUENCY)
+    )
+    if uses_shipped_kernel and transition_width != DEFAULT_TRANSITION_WIDTH:
+        raise ValueError(
+            f"transition_width={transition_width} cannot apply here: with no band and "
+            "1500 Hz data the shipped kernel is used, and it is a fixed design. Pass "
+            "`band` to design a filter instead."
+        )
     if band is not None:
         filter_numerator, filter_denominator = ripple_bandpass_filter(
             sampling_frequency,  # type: ignore[arg-type]
             band=band,
             transition_width=transition_width,
         )
-    elif sampling_frequency is None or np.isclose(
-        sampling_frequency, SHIPPED_KERNEL_SAMPLING_FREQUENCY
-    ):
+    elif uses_shipped_kernel:
         filter_numerator, filter_denominator = _get_ripplefilter_kernel()
     else:
         if 0.5 * sampling_frequency <= MINIMUM_NYQUIST:
@@ -301,7 +332,9 @@ def filter_ripple_band(
                 f"{0.5 * sampling_frequency} Hz, which cannot represent the 150-250 Hz "
                 f"ripple band with its 25 Hz transition band (need > {2 * MINIMUM_NYQUIST} Hz)."
             )
-        filter_numerator, filter_denominator = ripple_bandpass_filter(sampling_frequency)
+        filter_numerator, filter_denominator = ripple_bandpass_filter(
+            sampling_frequency, transition_width=transition_width
+        )
 
     data_array = np.asarray(data, dtype=float)
     if data_array.ndim > 1:
@@ -1260,7 +1293,12 @@ def exclude_close_events(
     keep_mask[0] = True
     last_retained_end = ends[0]
     for event in range(1, len(candidate_event_times)):
-        if starts[event] - last_retained_end >= close_event_threshold:
+        gap = starts[event] - last_retained_end
+        # the same boundary rule as merge_close_events: a gap equal to the
+        # threshold is far enough apart, and round-off does not decide it
+        if gap >= close_event_threshold or np.isclose(
+            gap, close_event_threshold, rtol=_GAP_TOLERANCE, atol=0.0
+        ):
             keep_mask[event] = True
             last_retained_end = ends[event]
 
@@ -1331,7 +1369,9 @@ def merge_close_events(
     events = np.asarray(event_times, dtype=float)
     if events.size == 0:
         return np.empty((0, 2))
-    events = np.atleast_2d(events).copy()
+    # reshape rather than atleast_2d, so a flat array of the wrong length raises
+    # instead of becoming one very wide row that is returned unmerged
+    events = events.reshape(-1, 2).copy()
     if np.any(np.diff(events[:, 0]) < 0):
         raise ValueError(
             "event_times must be sorted by start time. Sort the events before merging: "
@@ -1342,9 +1382,14 @@ def merge_close_events(
         gap = events[1:, 0] - events[:-1, 1]
         merged_span = np.maximum(events[1:, 1], events[:-1, 1]) - events[:-1, 0]
         if close_event_threshold > 0:
-            # a gap equal to the threshold does not merge; ``isclose`` keeps that
-            # boundary from turning on round-off, since 0.15 - 0.1 < 0.05 in binary
-            to_merge = (gap < close_event_threshold) & ~np.isclose(gap, close_event_threshold)
+            # a gap equal to the threshold does not merge; the relative tolerance
+            # keeps that boundary from turning on round-off, since 0.15 - 0.1 is
+            # below 0.05 in binary. atol is 0 so the rule stays monotonic in the
+            # threshold: a default atol would make a threshold near zero merge
+            # less than a threshold of zero.
+            to_merge = (gap < close_event_threshold) & ~np.isclose(
+                gap, close_event_threshold, rtol=_GAP_TOLERANCE, atol=0.0
+            )
         else:
             to_merge = gap <= 0
         if maximum_duration is not None:
@@ -1451,7 +1496,7 @@ def require_overlap(
         keep = (overlap > 0) & (overlap >= minimum_overlap)
 
     if is_frame:
-        return event_times.iloc[np.flatnonzero(keep)]
+        return event_times.iloc[np.flatnonzero(keep)].copy()
     return events[keep]
 
 

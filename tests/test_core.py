@@ -1510,3 +1510,114 @@ class TestRequireOverlap:
     def test_negative_minimum_overlap_raises(self):
         with pytest.raises(ValueError, match="minimum_overlap"):
             require_overlap(np.array([(0.0, 0.1)]), np.array([(0.0, 0.1)]), -1.0)
+
+
+class TestCloseEventBoundaryAgreement:
+    """The merge and drop conventions decide the same gap the same way."""
+
+    EVENTS = np.array([(0.0, 0.1), (0.15, 0.2)])  # gap is 0.05, below it in binary
+
+    def test_a_gap_equal_to_the_threshold_is_not_close_for_either_convention(self):
+        merged = merge_close_events(self.EVENTS, 0.05)
+        kept = exclude_close_events(self.EVENTS, 0.05)
+
+        assert len(merged) == 2
+        assert len(kept) == 2
+
+    def test_a_gap_below_the_threshold_is_close_for_both(self):
+        events = np.array([(0.0, 0.1), (0.12, 0.2)])
+
+        assert len(merge_close_events(events, 0.05)) == 1
+        assert len(exclude_close_events(events, 0.05)) == 1
+
+    def test_merging_is_monotonic_in_the_threshold(self):
+        """Raising the gap can only merge more, never less."""
+        events = np.array([(0.0, 0.1), (0.1, 0.2)])
+
+        counts = [len(merge_close_events(events, gap)) for gap in (0.0, 1e-9, 1e-6, 0.05)]
+
+        assert counts == sorted(counts, reverse=True)
+        assert counts[0] == 1  # touching events merge at every threshold
+
+
+class TestHelperBoundaries:
+    """The comparisons at the edge of each new rule."""
+
+    def test_a_merged_span_exactly_at_the_cap_is_allowed(self):
+        events = np.array([(0.0, 0.1), (0.12, 0.3)])
+
+        merged = merge_close_events(events, 0.05, maximum_duration=0.3)
+
+        np.testing.assert_allclose(merged, [[0.0, 0.3]])
+
+    def test_overlap_exactly_at_the_minimum_is_kept(self):
+        events = np.array([(0.0, 0.1)])
+        reference = np.array([(0.0, 0.1)])
+
+        assert len(require_overlap(events, reference, minimum_overlap=0.1)) == 1
+
+    def test_merge_does_not_modify_its_argument(self):
+        events = np.array([(0.0, 0.1), (0.12, 0.2)])
+        before = events.copy()
+
+        merge_close_events(events, 0.05)
+
+        np.testing.assert_array_equal(events, before)
+
+    def test_require_overlap_does_not_modify_its_arguments(self):
+        events = np.array([(0.0, 0.1), (1.0, 1.1)])
+        reference = np.array([(1.05, 1.2), (0.5, 0.6)])
+        before_events, before_reference = events.copy(), reference.copy()
+
+        require_overlap(events, reference)
+
+        np.testing.assert_array_equal(events, before_events)
+        np.testing.assert_array_equal(reference, before_reference)
+
+    def test_a_non_positive_transition_width_raises(self):
+        with pytest.raises(ValueError, match="transition_width"):
+            ripple_bandpass_filter(2000.0, transition_width=0.0)
+
+    def test_a_band_edge_exactly_at_the_transition_raises(self):
+        """The lower edge must leave room for the whole transition above 0 Hz."""
+        with pytest.raises(ValueError, match="transition"):
+            ripple_bandpass_filter(2000.0, band=(25.0, 250.0), transition_width=25.0)
+
+    def test_a_band_edge_exactly_at_nyquist_raises(self):
+        with pytest.raises(ValueError, match="Nyquist"):
+            ripple_bandpass_filter(1000.0, band=(150.0, 475.0), transition_width=25.0)
+
+    def test_the_default_transition_width_is_25_hz(self):
+        """Changing it silently redesigns the filter at every non-1500 Hz rate."""
+        default, _ = ripple_bandpass_filter(2000.0)
+
+        # Kaiser's estimate for 45 dB over a 25 Hz transition at 2 kHz, made odd
+        assert len(default) == 207
+        explicit, _ = ripple_bandpass_filter(2000.0, transition_width=25.0)
+        np.testing.assert_allclose(default, explicit)
+
+
+def test_merge_close_events_rejects_a_flat_array_of_the_wrong_length():
+    """A 1-D input has to be pairs of bounds."""
+    with pytest.raises(ValueError):
+        merge_close_events(np.array([0.0, 1.0, 2.0]), 0.05)
+
+
+def test_transition_width_raises_where_the_shipped_kernel_is_used():
+    """A silently ignored keyword would give the caller the wrong filter."""
+    signal = np.random.default_rng(0).normal(size=4000)
+
+    with pytest.raises(ValueError, match="transition_width"):
+        filter_ripple_band(signal, 1500.0, transition_width=10.0)
+    with pytest.raises(ValueError, match="transition_width"):
+        filter_ripple_band(signal, transition_width=10.0)
+
+
+def test_transition_width_applies_without_a_band_at_other_rates():
+    """Designing a filter honors the transition width even with the default band."""
+    default = filter_ripple_band(np.random.default_rng(0).normal(size=6000), 2000.0)
+    narrow = filter_ripple_band(
+        np.random.default_rng(0).normal(size=6000), 2000.0, transition_width=10.0
+    )
+
+    assert not np.allclose(default, narrow)
