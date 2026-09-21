@@ -300,17 +300,17 @@ pytest --cov=ripple_detection --cov-report=html tests/
 ### Code Quality
 
 ```bash
-# Format code with black
-black ripple_detection/ tests/
+# Format code with ruff
+ruff format ripple_detection/ tests/
 
-# Lint code with ruff (modern, fast linter)
+# Lint code with ruff
 ruff check ripple_detection/ tests/
 
 # Type check with mypy
 mypy ripple_detection/
 
 # Check formatting without modifying
-black --check ripple_detection/ tests/
+ruff format --check ripple_detection/ tests/
 ```
 
 ### Release Process
@@ -320,7 +320,7 @@ Releases are automated via GitHub Actions when a version tag is pushed:
 ```bash
 # 1. Ensure all tests pass and code quality checks pass
 pytest --cov=ripple_detection tests/
-black --check ripple_detection/ tests/
+ruff format --check ripple_detection/ tests/
 ruff check ripple_detection/ tests/
 mypy ripple_detection/
 
