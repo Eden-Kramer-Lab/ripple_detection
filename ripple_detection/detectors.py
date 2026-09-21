@@ -7,6 +7,8 @@ import pandas as pd
 from numpy.typing import ArrayLike, NDArray
 
 from ripple_detection.core import (
+    _get_normalization_mask,
+    estimate_noise_threshold,
     exclude_close_events,
     exclude_movement,
     exclude_movement_by_majority,
@@ -903,6 +905,215 @@ def Kay_ripple_detector(
     return _get_event_stats(
         ripple_times, time, combined_filtered_lfps, speed, minimum_duration
     )
+
+
+def Yu_ripple_detector(
+    time: ArrayLike,
+    filtered_lfps: ArrayLike,
+    speed: ArrayLike,
+    sampling_frequency: float,
+    speed_threshold: float = 4.0,
+    minimum_duration: float = 0.020,
+    percentile: float = 99.99,
+    smoothing_sigma: float = 0.004,
+    close_ripple_threshold: float = 0.0,
+    normalization_mask: ArrayLike | None = None,
+    normalization_time_range: tuple[float, float] | None = None,
+    zscore_per_tetrode: bool = True,
+) -> pd.DataFrame:
+    """Detect sharp-wave ripples with a data-driven noise threshold (Yu et al. 2017).
+
+    The consensus trace is the median across tetrodes of each tetrode's
+    smoothed, z-scored ripple-band envelope (``get_Yu_ripple_consensus_trace``).
+    Its values during immobility are taken as noise plus a signal tail; the
+    distribution below the mode is mirrored about the mode to estimate the
+    noise distribution, and the detection threshold is the ``percentile`` of
+    that mirrored distribution (``estimate_noise_threshold``). Events are runs
+    of at least ``minimum_duration`` at or above the threshold, extended to
+    where the trace returns to the immobility mean.
+
+    Unlike the other detectors in this module, samples with missing data are
+    not dropped before processing: the recording is split into contiguous
+    valid blocks, and smoothing, thresholding, and event extraction never
+    cross a gap. An event truncated by a gap or by the end of the recording is
+    kept and flagged in ``clipped_start`` / ``clipped_end``.
+
+    Parameters
+    ----------
+    time : array_like, shape (n_time,)
+        Time values for each sample in seconds.
+    filtered_lfps : array_like, shape (n_time, n_channels)
+        LFP signals already bandpass filtered to the ripple band (150-250 Hz),
+        e.g. with ``filter_ripple_band``. NaN marks missing samples.
+    speed : array_like, shape (n_time,)
+        Animal's running speed in cm/s.
+    sampling_frequency : float
+        Sampling rate in Hz.
+    speed_threshold : float, optional
+        Immobility is speed strictly below this value (cm/s); it selects the
+        noise sample for the threshold and, at event boundaries, which events
+        are kept. Default is 4.0.
+    minimum_duration : float, optional
+        Minimum time the consensus must stay at or above the threshold, in
+        seconds, applied as a sample count (round-half-up). Default is 0.020.
+    percentile : float, optional
+        Percentile of the mirrored noise distribution used as the threshold.
+        Default is 99.99.
+    smoothing_sigma : float, optional
+        Standard deviation of the per-tetrode Gaussian envelope smoothing, in
+        seconds. Default is 0.004 (4 ms).
+    close_ripple_threshold : float, optional
+        Minimum separation between events in seconds; a later event starting
+        within this time of the previous event's end is dropped. Default is
+        0.0 (no exclusion).
+    normalization_mask : array_like, shape (n_time,), optional
+        Boolean mask selecting the noise sample instead of ``speed <
+        speed_threshold``. Cannot be combined with ``normalization_time_range``.
+    normalization_time_range : tuple of (float, float), optional
+        Time range selecting the noise sample instead of the speed rule.
+    zscore_per_tetrode : bool, optional
+        Z-score each tetrode's smoothed envelope before the median, as the
+        original implementation does; the threshold is then estimated on that
+        trace and converted to immobility-normalized units. If False, the
+        median of raw envelopes is normalized to immobility first and the
+        threshold is estimated on the normalized trace, the reading of the
+        published text. Default is True.
+
+    Returns
+    -------
+    ripple_times : pd.DataFrame
+        One row per event, indexed by ``event_number``, with the columns of
+        the other detectors (``start_time``, ``end_time``, ``duration``,
+        ``max_thresh``, z-score and speed statistics) plus ``clipped_start``
+        and ``clipped_end`` (event truncated by missing data or the recording
+        edge), ``n_suprathreshold_samples`` (longest run at or above the
+        threshold), and ``detection_threshold_zscore`` (the threshold in the
+        normalized units the statistics are reported in).
+
+    Raises
+    ------
+    ValueError
+        If inputs are malformed, no valid immobility samples exist, the noise
+        distribution cannot be resolved (see ``estimate_noise_threshold``), or
+        the estimated threshold does not lie above the immobility mean.
+
+    Notes
+    -----
+    ``max_thresh`` uses the same sample-count duration convention as event
+    selection, so an event's ``max_thresh`` is never undefined.
+
+    References
+    ----------
+    .. [1] Yu, J. Y., et al. (2017). Distinct hippocampal-cortical memory
+       representations for experiences associated with movement versus
+       immobility. eLife, 6, e27621.
+
+    """
+    filtered_lfps = np.asarray(filtered_lfps, dtype=float)
+    speed = np.asarray(speed, dtype=float)
+    time = np.asarray(time, dtype=float)
+    _validate_lfp_dimensions(filtered_lfps)
+    _validate_array_lengths(time, filtered_lfps, speed)
+    _validate_time_units(time, sampling_frequency, len(time))
+    _validate_speed_units(speed, speed_threshold)
+
+    consensus = get_Yu_ripple_consensus_trace(
+        filtered_lfps,
+        sampling_frequency,
+        smoothing_sigma=smoothing_sigma,
+        zscore_per_tetrode=zscore_per_tetrode,
+        time=time,
+    )
+    is_valid = np.isfinite(consensus) & np.isfinite(speed)
+
+    noise_mask = _get_normalization_mask(
+        consensus.shape, time, normalization_mask, normalization_time_range
+    )
+    if noise_mask is None:
+        noise_mask = speed < speed_threshold
+    noise_mask = noise_mask & is_valid
+    if not np.any(noise_mask):
+        raise ValueError(
+            "No valid immobility samples to estimate the noise threshold from "
+            f"(speed < {speed_threshold} cm/s with finite LFP in every channel)."
+        )
+
+    noise_values = consensus[noise_mask]
+    baseline = np.mean(noise_values)
+    scale = np.std(noise_values, ddof=0)  # the ddof normalize_signal uses
+    if not np.isfinite(scale) or scale <= 0:
+        raise ValueError(
+            "Immobility consensus has zero or undefined spread; cannot normalize."
+        )
+    normalized = normalize_signal(consensus, time=time, normalization_mask=noise_mask)
+    if zscore_per_tetrode:
+        # The original estimates on the median of per-tetrode z-scores, whose
+        # units the histogram grid assumes; convert the result to the
+        # immobility-normalized units the events are extracted in.
+        threshold = estimate_noise_threshold(noise_values, percentile=percentile)
+        threshold_zscore = (threshold - baseline) / scale
+    else:
+        # A raw median of envelopes is not in the grid's units, so follow the
+        # paper's text instead: normalize to immobility, then estimate.
+        threshold_zscore = estimate_noise_threshold(
+            normalized[noise_mask], percentile=percentile
+        )
+    if not np.isfinite(threshold_zscore) or threshold_zscore <= 0:
+        raise ValueError(
+            f"Estimated threshold ({threshold_zscore:.4f} SD) does not lie above the "
+            "immobility mean; the detection rule is undefined."
+        )
+
+    event_times = []
+    is_clipped = []
+    n_suprathreshold = []
+    for start, stop in _contiguous_valid_blocks(is_valid, time, sampling_frequency):
+        block_events, block_clipped, block_n = _extract_Yu_ripple_events(
+            normalized[start:stop],
+            time[start:stop],
+            sampling_frequency,
+            minimum_duration,
+            threshold_zscore,
+        )
+        event_times.append(block_events)
+        is_clipped.append(block_clipped)
+        n_suprathreshold.append(block_n)
+    event_times = np.concatenate(event_times) if event_times else np.empty((0, 2))
+    is_clipped = np.concatenate(is_clipped) if is_clipped else np.empty((0, 2), dtype=bool)
+    n_suprathreshold = (
+        np.concatenate(n_suprathreshold) if n_suprathreshold else np.empty(0, dtype=int)
+    )
+
+    # exclude_movement's rule, kept here so the per-event flags stay aligned
+    if len(event_times):
+        speed_at_start = speed[np.searchsorted(time, event_times[:, 0])]
+        speed_at_end = speed[np.searchsorted(time, event_times[:, 1])]
+        keep = (speed_at_start <= speed_threshold) & (speed_at_end <= speed_threshold)
+        event_times, is_clipped, n_suprathreshold = (
+            event_times[keep],
+            is_clipped[keep],
+            n_suprathreshold[keep],
+        )
+    if len(event_times):
+        event_times, kept = exclude_close_events(
+            event_times,
+            close_ripple_threshold,
+            included_ripple_inds=np.arange(len(event_times)),
+        )
+        kept = np.asarray(kept, dtype=int)
+        event_times = np.asarray(event_times).reshape(-1, 2)
+        is_clipped, n_suprathreshold = is_clipped[kept], n_suprathreshold[kept]
+
+    n_min = max(1, int(np.floor(minimum_duration * sampling_frequency + 0.5)))
+    stats_minimum_duration = (n_min - 1) / sampling_frequency
+    events = _get_event_stats(
+        event_times, time, normalized, speed, minimum_duration=stats_minimum_duration
+    )
+    events["clipped_start"] = is_clipped[:, 0]
+    events["clipped_end"] = is_clipped[:, 1]
+    events["n_suprathreshold_samples"] = n_suprathreshold
+    events["detection_threshold_zscore"] = threshold_zscore
+    return events
 
 
 def Karlsson_ripple_detector(

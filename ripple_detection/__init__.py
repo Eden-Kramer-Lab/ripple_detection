@@ -10,6 +10,7 @@ from ripple_detection.detectors import (
     Kay_ripple_detector,
     Roumis_ripple_detector,
     Shvartsman_ripple_detector,
+    Yu_ripple_detector,
     multiunit_HSE_detector,
 )
 

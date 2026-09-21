@@ -338,6 +338,6 @@ class TestRegressionPrevention:
         if len(ripples) > 0:
             # Check that detected ripple is near expected time
             detected_times = ripples["start_time"].values
-            assert any(
-                abs(t - 1.0) < 0.1 for t in detected_times
-            ), "Detected ripple not near expected time"
+            assert any(abs(t - 1.0) < 0.1 for t in detected_times), (
+                "Detected ripple not near expected time"
+            )

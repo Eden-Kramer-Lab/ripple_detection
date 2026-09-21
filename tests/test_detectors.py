@@ -1,5 +1,6 @@
 """Integration tests for ripple detection algorithms."""
 
+import warnings
 from unittest.mock import patch
 
 import numpy as np
@@ -11,6 +12,7 @@ from ripple_detection import (
     Karlsson_ripple_detector,
     Kay_ripple_detector,
     Shvartsman_ripple_detector,
+    Yu_ripple_detector,
     filter_ripple_band,
 )
 from ripple_detection.core import (
@@ -1208,6 +1210,157 @@ class TestExtractYuRippleEvents:
         assert events.shape == (0, 2)
         assert clipped.shape == (0, 2)
         assert n_supra.shape == (0,)
+
+
+def _synthetic_ripple_band(n_time, sampling_frequency, bursts, n_channels=3, seed=0):
+    """Ripple-band-like input: Gaussian noise plus 200 Hz bursts of amplitude
+    ``gain`` times the noise SD on the given (start_sample, stop_sample, gain)
+    intervals, identical on every channel."""
+    rng = np.random.default_rng(seed)
+    lfps = rng.normal(0.0, 1.0, (n_time, n_channels))
+    t = np.arange(n_time) / sampling_frequency
+    carrier = np.sin(2 * np.pi * 200.0 * t)
+    for start, stop, gain in bursts:
+        lfps[start:stop] += gain * carrier[start:stop, np.newaxis]
+    return lfps
+
+
+class TestYuRippleDetector:
+    """Yu et al. 2017: median consensus, mirrored-histogram threshold, 20 ms."""
+
+    FS = 1000
+    N_TIME = 20_000  # 20 s: enough immobility to resolve the 99.99th percentile
+
+    @pytest.fixture
+    def time(self):
+        return np.arange(self.N_TIME) / self.FS
+
+    @pytest.fixture
+    def stationary(self):
+        return np.full(self.N_TIME, 2.0)
+
+    def test_recovers_planted_bursts(self, time, stationary):
+        bursts = [(5000, 5060, 20.0), (12000, 12080, 20.0)]
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, bursts)
+        events = Yu_ripple_detector(time, lfps, stationary, self.FS)
+        assert len(events) == 2
+        for (start, stop, _), (_, row) in zip(bursts, events.iterrows(), strict=True):
+            assert row.start_time <= time[start] + 0.010
+            assert row.end_time >= time[stop - 1] - 0.010
+            assert row.end_time - row.start_time < 0.150
+
+    def test_output_columns(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        events = Yu_ripple_detector(time, lfps, stationary, self.FS)
+        for column in (
+            "start_time",
+            "end_time",
+            "duration",
+            "max_thresh",
+            "mean_zscore",
+            "max_zscore",
+            "speed_at_start",
+            "max_speed",
+            "clipped_start",
+            "clipped_end",
+            "n_suprathreshold_samples",
+            "detection_threshold_zscore",
+        ):
+            assert column in events.columns
+        assert events.index.name == "event_number"
+        assert not events.clipped_start.iloc[0] and not events.clipped_end.iloc[0]
+        assert events.n_suprathreshold_samples.iloc[0] >= 20
+        assert np.isfinite(events.detection_threshold_zscore.iloc[0])
+
+    def test_spyglass_style_keyword_call_matches_direct_call(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        params = {
+            "speed_threshold": 4.0,
+            "minimum_duration": 0.020,
+            "percentile": 99.99,
+            "smoothing_sigma": 0.004,
+            "zscore_per_tetrode": True,
+        }
+        via_dict = Yu_ripple_detector(
+            time=time,
+            filtered_lfps=lfps,
+            speed=stationary,
+            sampling_frequency=self.FS,
+            **params,
+        )
+        direct = Yu_ripple_detector(time, lfps, stationary, self.FS)
+        pd.testing.assert_frame_equal(via_dict, direct)
+
+    def test_bursts_abutting_a_gap_are_not_joined_across_it(self, time, stationary):
+        # Two short bursts on either side of 50 ms of missing LFP. Dropping the
+        # missing rows (what the other detectors do) makes them one contiguous
+        # burst that qualifies; processing blocks separately must not.
+        bursts = [(8008, 8012, 20.0), (8062, 8066, 20.0)]
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, bursts)
+        lfps[8012:8062, :] = np.nan
+        with_gap = Yu_ripple_detector(time, lfps, stationary, self.FS)
+        assert len(with_gap) == 0
+
+        keep = np.ones(self.N_TIME, dtype=bool)
+        keep[8012:8062] = False
+        dropped = Yu_ripple_detector(
+            np.arange(keep.sum()) / self.FS,  # time made contiguous, as row-dropping does
+            lfps[keep],
+            stationary[keep],
+            self.FS,
+        )
+        assert len(dropped) == 1  # positive control: the join is what creates the event
+
+    def test_burst_reaching_a_gap_is_clipped_and_flagged(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(8000, 8040, 20.0)])
+        lfps[8030:8100, :] = np.nan  # the burst runs into missing data
+        events = Yu_ripple_detector(time, lfps, stationary, self.FS)
+        assert len(events) == 1
+        assert events.end_time.iloc[0] == time[8029]
+        assert bool(events.clipped_end.iloc[0])
+        assert not bool(events.clipped_start.iloc[0])
+
+    def test_movement_at_endpoint_excludes_event(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        speed = stationary.copy()
+        speed[4900:5100] = 10.0  # moving throughout the burst
+        events = Yu_ripple_detector(time, lfps, speed, self.FS)
+        assert len(events) == 0
+
+    def test_threshold_is_estimated_from_immobility_only(self, time, stationary):
+        # a loud, long "artifact" during movement must not raise the threshold
+        # enough to hide the immobile burst
+        lfps = _synthetic_ripple_band(
+            self.N_TIME, self.FS, [(5000, 5060, 20.0), (15000, 17000, 20.0)]
+        )
+        speed = stationary.copy()
+        speed[14000:18000] = 10.0
+        events = Yu_ripple_detector(time, lfps, speed, self.FS)
+        assert len(events) == 1
+        assert abs(events.start_time.iloc[0] - time[5000]) < 0.020
+
+    def test_no_immobility_raises(self, time):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [])
+        with pytest.raises(ValueError):
+            Yu_ripple_detector(time, lfps, np.full(self.N_TIME, 10.0), self.FS)
+
+    @pytest.mark.parametrize("zscore_per_tetrode", [True, False])
+    def test_both_normalization_readings_detect_without_warnings(
+        self, time, stationary, zscore_per_tetrode
+    ):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # in particular, no positive-mode warning
+            events = Yu_ripple_detector(
+                time, lfps, stationary, self.FS, zscore_per_tetrode=zscore_per_tetrode
+            )
+        assert len(events) == 1
+        assert abs(events.start_time.iloc[0] - time[5000]) < 0.020
+
+    def test_exported_from_package_root(self):
+        import ripple_detection
+
+        assert ripple_detection.Yu_ripple_detector is Yu_ripple_detector
 
 
 class TestDetectorErrorHandling:
