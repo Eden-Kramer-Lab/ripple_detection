@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike, NDArray
 from scipy.cluster.vq import kmeans2
-from scipy.signal import lfilter
+from scipy.ndimage import convolve1d
 
 from ripple_detection.core import (
     _get_normalization_mask,
@@ -1136,7 +1136,7 @@ def _two_threshold_events(
 ) -> tuple[NDArray, NDArray]:
     """Segment a normalized power trace with the FindRipples two-threshold rule.
 
-    Transliterates the segmentation of FMAToolbox ``FindRipples``:
+    Follows the segmentation rule of FMAToolbox ``FindRipples``:
 
     1. Candidate events are runs strictly above ``low_threshold``. An event
        starts at the last sample *below* the threshold before the run and
@@ -1173,20 +1173,14 @@ def _two_threshold_events(
     zscored = np.asarray(zscored, dtype=float)
     time = np.asarray(time, dtype=float)
     empty = (np.empty((0, 2)), np.empty(0))
-    above = (zscored > low_threshold).astype(int)
-    crossings = np.diff(above)
-    starts = np.flatnonzero(crossings > 0)  # last sample below, before the run
-    stops = np.flatnonzero(crossings < 0)  # last sample of the run
-    if len(stops) == len(starts) - 1:
-        starts = starts[:-1]
-    if len(stops) - 1 == len(starts):
-        stops = stops[1:]
-    if len(starts) and len(stops) and starts[0] > stops[0]:
-        stops = stops[1:]
-        starts = starts[:-1]
-    if len(starts) == 0:
+    # a run needs both a rising and a falling crossing, so runs that touch
+    # either end of the block are dropped; an event spans from the last sample
+    # below the low threshold before the run to the last sample of the run
+    runs = _boolean_runs(zscored > low_threshold)
+    runs = runs[(runs[:, 0] > 0) & (runs[:, 1] < len(zscored))]
+    if len(runs) == 0:
         return empty
-    events = np.column_stack([starts, stops])
+    events = np.column_stack([runs[:, 0] - 1, runs[:, 1] - 1])
 
     while len(events) > 1:
         gap = time[events[1:, 0]] - time[events[:-1, 1]]
@@ -1261,7 +1255,10 @@ def Zugaro_ripple_detector(
     per parameter below: the endpoint speed rule shared by this package is
     applied, and the peak is the maximum of the normalized power rather than
     the trough of a single filtered channel. Missing samples are handled
-    block-wise: smoothing and segmentation never cross a gap.
+    block-wise: smoothing and segmentation never cross a gap. A run that
+    touches a gap or the record edge lacks one of its two crossings and is
+    dropped, as in the original; ``Yu_ripple_detector`` keeps and flags such
+    runs instead.
 
     Parameters
     ----------
@@ -1297,7 +1294,8 @@ def Zugaro_ripple_detector(
         0.020 and 0.100 s (FMAToolbox; neurocode uses 0.025 and 0.500).
     smoothing_window : int, optional
         Moving-average length in samples. Default is the original's 11
-        samples at 1250 Hz scaled to ``sampling_frequency`` and kept odd.
+        samples at 1250 Hz scaled to ``sampling_frequency`` and kept odd. A
+        supplied value must be a positive odd integer.
     normalization_mask : array_like, shape (n_time,), optional
         Samples used for the z-score statistics (the original's ``restrict``).
     normalization_time_range : tuple of (float, float), optional
@@ -1339,6 +1337,8 @@ def Zugaro_ripple_detector(
         if smoothing_window is None
         else int(smoothing_window)
     )
+    if window < 1 or window % 2 == 0:
+        raise ValueError(f"smoothing_window must be a positive odd integer, got {window}.")
     kernel = np.ones(window) / window
     power = np.sum(filtered_lfps**2, axis=1)
     smoothed = np.full(len(time), np.nan)
@@ -1396,23 +1396,13 @@ def _gaussian_lowpass_fir(
 
 
 def _firfilt(x: NDArray, kernel: NDArray) -> NDArray:
-    """Zero-phase FIR filtering with symmetric end padding (Stark's ``firfilt``).
+    """Zero-phase FIR filtering along axis 0 with the ends reflected.
 
-    The signal is extended at both ends by its own mirror image (kernel length
-    samples), filtered causally, and cropped so the output is centred.
+    A centred convolution with the signal mirrored at both ends, which is what
+    Eran Stark's ``firfilt`` (mirror-pad, causal filter, crop the delay)
+    computes for the odd symmetric kernels used here.
     """
-    x = np.asarray(x, dtype=float)
-    was_1d = x.ndim == 1
-    if was_1d:
-        x = x[:, np.newaxis]
-    n_kernel = len(kernel)
-    if n_kernel > x.shape[0]:
-        return np.full(x.shape[0] if was_1d else x.shape, np.nan)
-    delay = int(np.ceil(n_kernel / 2)) - 1
-    padded = np.concatenate([x[:n_kernel][::-1], x, x[-n_kernel:][::-1]], axis=0)
-    filtered = lfilter(kernel, 1.0, padded, axis=0)
-    out = filtered[n_kernel + delay : len(padded) - n_kernel + delay]
-    return out[:, 0] if was_1d else out
+    return convolve1d(np.asarray(x, dtype=float), kernel, axis=0, mode="reflect")
 
 
 def _difference_of_gaussians_band(
@@ -1501,14 +1491,19 @@ def Long_sharp_wave_ripple_detector(
         Endpoint speed rule (``exclude_movement``); not part of the original.
         Default is 4.0.
     sharp_wave_band, ripple_band : tuple of (float, float), optional
-        Difference-of-Gaussians pass-bands in Hz. Defaults (2, 50) and
+        Difference-of-Gaussians pass-bands in Hz. The edges are the corner
+        frequencies of Gaussian low-passes, not a brick wall: gain is well
+        under 1 at the nominal edges and tails off gradually beyond them, as
+        in the original. Defaults (2, 50) and
         (80, 250).
     sharp_wave_percentile, ripple_power_percentile : float, optional
         Cluster-derived thresholds: a candidate must exceed this percentile
         of the SWR cluster's sharp-wave feature and this percentile of the
         non-SWR cluster's ripple power. Defaults 10 and 50.
     window_size : float, optional
-        Candidate block length in seconds. Default is 0.040.
+        Candidate block length in seconds. Default is 0.040, following
+        neurocode ``DetectSWR`` (as does ``minimum_separation`` 0.050); buzcode
+        ``bz_DetectSWR`` uses 0.200 and 0.100.
     local_window : float, optional
         Half-width in seconds of the window for local statistics. Candidates
         closer than this to either end of the record are not evaluated.
@@ -1533,8 +1528,8 @@ def Long_sharp_wave_ripple_detector(
         ``end_time``, ``peak_time`` (sharp-wave peak), ``duration``, the
         package's z-score statistics computed on the globally z-scored ripple
         power, the speed statistics, and ``sharp_wave_zscore``,
-        ``sharp_wave_percentile``, ``ripple_power_zscore``,
-        ``ripple_power_percentile`` (peak values against the local window),
+        ``sharp_wave_local_percentile``, ``ripple_power_zscore``,
+        ``ripple_power_local_percentile`` (peak values against the local window),
         ``sharp_wave_duration`` and ``ripple_duration`` in seconds.
 
     References
@@ -1562,6 +1557,13 @@ def Long_sharp_wave_ripple_detector(
             "contiguous data. Pass a contiguous epoch instead."
         )
     n_time = len(time)
+    slowest_kernel = len(_gaussian_lowpass_fir(sharp_wave_band[0], sampling_frequency))
+    if n_time < slowest_kernel:
+        raise ValueError(
+            f"lfp must hold at least {slowest_kernel} samples "
+            f"({slowest_kernel / sampling_frequency:.2f} s) for the {sharp_wave_band[0]} Hz "
+            f"sharp-wave low-pass, got {n_time}."
+        )
     rng = np.random.default_rng(random_state)
 
     # features
@@ -1600,7 +1602,7 @@ def Long_sharp_wave_ripple_detector(
         raise ValueError("Too few candidate blocks to cluster; the recording is too short.")
 
     features = np.column_stack([sharp_wave_feature, ripple_feature])
-    _, labels = kmeans2(features, 2, minit="++", seed=rng)
+    _, labels = kmeans2(features, 2, iter=100, minit="++", seed=rng)
     is_swr_cluster = labels == (0 if np.sum(labels == 0) <= np.sum(labels == 1) else 1)
     if not np.any(is_swr_cluster) or np.all(is_swr_cluster):
         raise ValueError("k-means did not separate the candidate features into two clusters.")
@@ -1670,9 +1672,9 @@ def Long_sharp_wave_ripple_detector(
                 "start": peak - start_offset,
                 "end": peak + stop_offset,
                 "sharp_wave_zscore": (candidate_sharp[ii] - sw_median) / sw_sd,
-                "sharp_wave_percentile": np.mean(sw_window < candidate_sharp[ii]),
+                "sharp_wave_local_percentile": np.mean(sw_window < candidate_sharp[ii]),
                 "ripple_power_zscore": (candidate_ripple[ii] - rp_median) / rp_sd,
-                "ripple_power_percentile": np.mean(rp_window < candidate_ripple[ii]),
+                "ripple_power_local_percentile": np.mean(rp_window < candidate_ripple[ii]),
                 "sharp_wave_duration": sharp_wave_samples / sampling_frequency,
                 "ripple_duration": ripple_samples / sampling_frequency,
             }
@@ -1699,9 +1701,9 @@ def Long_sharp_wave_ripple_detector(
     )
     for column in (
         "sharp_wave_zscore",
-        "sharp_wave_percentile",
+        "sharp_wave_local_percentile",
         "ripple_power_zscore",
-        "ripple_power_percentile",
+        "ripple_power_local_percentile",
         "sharp_wave_duration",
         "ripple_duration",
     ):

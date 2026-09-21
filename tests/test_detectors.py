@@ -1277,11 +1277,6 @@ class TestYuRippleDetector:
         assert events.n_suprathreshold_samples.iloc[0] >= 20
         assert np.isfinite(events.detection_threshold_zscore.iloc[0])
 
-    def test_no_finite_sample_raises(self, time, stationary):
-        lfps = np.full((self.N_TIME, 2), np.nan)
-        with pytest.raises(ValueError, match="finite"):
-            Zugaro_ripple_detector(time, lfps, stationary, self.FS)
-
     def test_spyglass_style_keyword_call_matches_direct_call(self, time, stationary):
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
         params = {
@@ -1581,11 +1576,55 @@ class TestZugaroRippleDetector:
         pd.testing.assert_frame_equal(one, two)
 
     def test_missing_data_is_handled_block_wise(self, time, stationary):
-        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(8000, 8040, 20.0)])
+        # one burst well inside the first block is found; the burst that runs
+        # into the gap touches its block's edge and is dropped, as FindRipples
+        # drops a run without both crossings (Yu keeps and flags such runs)
+        lfps = _synthetic_ripple_band(
+            self.N_TIME, self.FS, [(7000, 7040, 20.0), (8000, 8040, 20.0)]
+        )
         lfps[8030:8100, :] = np.nan
         events = Zugaro_ripple_detector(time, lfps, stationary, self.FS)
-        assert np.all(events.end_time <= time[8029])
-        assert np.all((events.start_time >= time[8100]) | (events.end_time <= time[8029]))
+        assert len(events) == 1
+        assert time[6990] <= events.start_time.iloc[0] <= time[7010]
+        assert events.end_time.iloc[0] <= time[7060]
+
+    def test_no_finite_sample_raises(self, time, stationary):
+        lfps = np.full((self.N_TIME, 2), np.nan)
+        with pytest.raises(ValueError, match="finite"):
+            Zugaro_ripple_detector(time, lfps, stationary, self.FS)
+
+    def test_even_smoothing_window_is_rejected(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        with pytest.raises(ValueError, match="odd"):
+            Zugaro_ripple_detector(time, lfps, stationary, self.FS, smoothing_window=10)
+        explicit = Zugaro_ripple_detector(
+            time, lfps, stationary, self.FS, smoothing_window=_zugaro_smoothing_window(self.FS)
+        )
+        default = Zugaro_ripple_detector(time, lfps, stationary, self.FS)
+        pd.testing.assert_frame_equal(explicit, default)
+
+    def test_normalization_restricted_to_a_quiet_stretch_raises_the_zscores(
+        self, time, stationary
+    ):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        whole = Zugaro_ripple_detector(time, lfps, stationary, self.FS)
+        mask = np.zeros(self.N_TIME, dtype=bool)
+        mask[:4000] = True
+        masked = Zugaro_ripple_detector(
+            time, lfps, stationary, self.FS, normalization_mask=mask
+        )
+        ranged = Zugaro_ripple_detector(
+            time, lfps, stationary, self.FS, normalization_time_range=(time[0], time[3999])
+        )
+
+        def planted(events):
+            hit = events[(events.start_time <= time[5030]) & (events.end_time >= time[5030])]
+            assert len(hit) == 1
+            return hit.iloc[0]
+
+        # the burst is excluded from the normalization stretch, so its z-score rises
+        assert planted(masked).max_zscore > planted(whole).max_zscore
+        pd.testing.assert_frame_equal(masked, ranged)
 
     def test_movement_at_endpoint_excludes_event(self, time, stationary):
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
@@ -1649,13 +1688,6 @@ class TestFirfilt:
             _firfilt(x, kernel), _firfilt(x[:, np.newaxis], kernel)[:, 0]
         )
         assert _firfilt(x, kernel).shape == (300,)
-
-    def test_kernel_longer_than_signal_returns_nan_of_the_input_shape(self):
-        kernel = np.ones(11) / 11
-        one_d = _firfilt(np.zeros(5), kernel)
-        two_d = _firfilt(np.zeros((5, 3)), kernel)
-        assert one_d.shape == (5,) and np.all(np.isnan(one_d))
-        assert two_d.shape == (5, 3) and np.all(np.isnan(two_d))
 
 
 class TestLongSharpWaveRippleDetector:
@@ -1735,9 +1767,9 @@ class TestLongSharpWaveRippleDetector:
             "peak_time",
             "duration",
             "sharp_wave_zscore",
-            "sharp_wave_percentile",
+            "sharp_wave_local_percentile",
             "ripple_power_zscore",
-            "ripple_power_percentile",
+            "ripple_power_local_percentile",
             "sharp_wave_duration",
             "ripple_duration",
             "speed_at_start",
@@ -1762,10 +1794,10 @@ class TestLongSharpWaveRippleDetector:
         assert any((events.start_time <= time[7000]) & (events.end_time >= time[7000]))
         assert not any((moved.start_time <= time[7000]) & (moved.end_time >= time[7000]))
 
-    def test_recording_too_short_to_cluster_raises(self):
-        n_time = 50  # one 40 ms block: fewer than two candidate features
+    def test_record_shorter_than_the_slowest_kernel_raises(self):
+        n_time = 500  # the 2 Hz Gaussian low-pass spans 957 samples at 1 kHz
         lfp = _synthetic_two_channel_lfp(n_time, self.FS, ())
-        with pytest.raises(ValueError, match="too short"):
+        with pytest.raises(ValueError, match=r"at least .* samples"):
             Long_sharp_wave_ripple_detector(
                 np.arange(n_time) / self.FS, lfp, np.full(n_time, 2.0), self.FS
             )
