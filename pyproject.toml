@@ -172,6 +172,7 @@ ignore = [
     "NPY002",  # Allow legacy np.random in notebooks for pedagogical simplicity
 ]
 "tests/*" = ["ARG"]  # pytest fixtures are used by name, not by value
+"examples/*.py" = ["T201"]  # a study script reports its progress
 
 [tool.codespell]
 skip = "uv.lock,*.ipynb,*.csv,*.mat,tests/snapshots"

@@ -3631,7 +3631,7 @@ class TestNoEventSpansAGap:
         events = detector(*self._cut(gap, time, lfps, speed), self.FS, **kwargs)
         self._check(events, time, gap)
 
-    @pytest.mark.parametrize("where", ["spikes", "time"])
+    @pytest.mark.parametrize("where", ["spikes", "speed", "time"])
     def test_burst_detector(self, where, time):
         multiunit = np.zeros((self.N_TIME, 6))
         multiunit[slice(*self.BURST)] = 1.0
@@ -3639,19 +3639,27 @@ class TestNoEventSpansAGap:
         if where == "spikes":
             multiunit[slice(*self.GAP), 2] = np.nan
             events = multiunit_HSE_detector(time, multiunit, speed, self.FS)
+        elif where == "speed":
+            speed[slice(*self.GAP)] = np.nan
+            events = multiunit_HSE_detector(time, multiunit, speed, self.FS)
         else:
             events = multiunit_HSE_detector(
                 *self._cut(self.GAP, time, multiunit, speed), self.FS
             )
         self._check(events, time, self.GAP)
 
-    @pytest.mark.parametrize("where", ["spikes", "time"])
+    @pytest.mark.parametrize("where", ["spikes", "speed", "time"])
     def test_joint_detector(self, where, time):
         lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, (self.BURST[0] + 40,))
         gap = (self.BURST[0] + 35, self.BURST[0] + 45)
         speed = np.full(self.N_TIME, 2.0)
         if where == "spikes":
             multiunit[slice(*gap), 0] = np.nan
+            events = Carey_candidate_detector(
+                time, lfps, multiunit, speed, self.FS, minimum_active_units=1
+            )
+        elif where == "speed":
+            speed[slice(*gap)] = np.nan
             events = Carey_candidate_detector(
                 time, lfps, multiunit, speed, self.FS, minimum_active_units=1
             )
@@ -3664,14 +3672,17 @@ class TestNoEventSpansAGap:
         )
         assert len(events) >= 1
 
-    def test_two_channel_detector_never_evaluates_a_candidate_across_a_gap(self, time):
+    @pytest.mark.parametrize("where", ["lfp", "speed"])
+    def test_two_channel_detector_never_evaluates_a_candidate_across_a_gap(self, where, time):
         centers = (3000, 7000, 11000, 15000)
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, centers)
-        lfp[7000:7002, 1] = np.nan  # a gap through the second event
+        speed = np.full(self.N_TIME, 2.0)
+        if where == "lfp":
+            lfp[7000:7002, 1] = np.nan  # a gap through the second event
+        else:
+            speed[7000:7002] = np.nan
         # candidates within the 5 s local window of a block edge are not evaluated
-        events = Long_sharp_wave_ripple_detector(
-            time, lfp, np.full(self.N_TIME, 2.0), self.FS, random_state=0
-        )
+        events = Long_sharp_wave_ripple_detector(time, lfp, speed, self.FS, random_state=0)
         assert not any((events.start_time < time[7000]) & (events.end_time > time[7001]))
         assert not events.clipped_start.any()
         assert not events.clipped_end.any()
