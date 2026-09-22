@@ -428,8 +428,10 @@ def Shvartsman_ripple_detector(
     blocks, and every step runs within a block, so nothing is computed across
     a gap and no event spans one. An event cut off by a gap or by the
     recording edge is kept and flagged in ``clipped_start`` and
-    ``clipped_end``. Every detector in the package follows this rule. A NaN
-    in ``speed`` is an unknown speed, not a missing sample: it splits no
+    ``clipped_end``. A block too short for an event of ``minimum_duration``
+    is treated as missing, with a warning, and no block left raises. Every
+    detector in the package follows this rule. A NaN in ``speed`` is an
+    unknown speed, not a missing sample: it splits no
     block, and an event whose first or last sample has unknown speed fails
     the speed criterion.
     See the README's "Choosing a detector" table for how the detectors'
@@ -496,7 +498,7 @@ def Shvartsman_ripple_detector(
             f"minimum_participating_channels={filtered_lfps.shape[1]} or fewer, or more channels."
         )
         raise ValueError(msg)
-    is_valid, blocks = _valid_blocks(time, filtered_lfps)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     if manual:
@@ -669,8 +671,10 @@ def Kay_ripple_detector(
     blocks, and every step runs within a block, so nothing is computed across
     a gap and no event spans one. An event cut off by a gap or by the
     recording edge is kept and flagged in ``clipped_start`` and
-    ``clipped_end``. Every detector in the package follows this rule. A NaN
-    in ``speed`` is an unknown speed, not a missing sample: it splits no
+    ``clipped_end``. A block too short for an event of ``minimum_duration``
+    is treated as missing, with a warning, and no block left raises. Every
+    detector in the package follows this rule. A NaN in ``speed`` is an
+    unknown speed, not a missing sample: it splits no
     block, and an event whose first or last sample has unknown speed fails
     the speed criterion.
     See the README's "Choosing a detector" table for how the detectors'
@@ -706,7 +710,7 @@ def Kay_ripple_detector(
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
-    is_valid, blocks = _valid_blocks(time, filtered_lfps)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
 
     consensus = get_Kay_ripple_consensus_trace(
         _mask_invalid(filtered_lfps, is_valid),
@@ -849,7 +853,7 @@ def Yu_ripple_detector(
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
-    is_valid, blocks = _valid_blocks(time, filtered_lfps)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
 
     consensus = get_Yu_ripple_consensus_trace(
         _mask_invalid(filtered_lfps, is_valid),
@@ -891,12 +895,9 @@ def Yu_ripple_detector(
         )
         raise ValueError(msg)
 
-    n_min = minimum_sample_count(time, minimum_duration)
     event_time_blocks: list[FloatArray] = [np.empty((0, 2))]
     n_suprathreshold_blocks: list[IntArray] = [np.empty(0, dtype=int)]
     for start, stop in blocks:
-        if stop - start < n_min:
-            continue
         block_events, block_n = _extract_Yu_ripple_events(
             normalized[start:stop], time[start:stop], minimum_duration, threshold_zscore
         )
@@ -1025,8 +1026,10 @@ def Karlsson_ripple_detector(
     blocks, and every step runs within a block, so nothing is computed across
     a gap and no event spans one. An event cut off by a gap or by the
     recording edge is kept and flagged in ``clipped_start`` and
-    ``clipped_end``. Every detector in the package follows this rule. A NaN
-    in ``speed`` is an unknown speed, not a missing sample: it splits no
+    ``clipped_end``. A block too short for an event of ``minimum_duration``
+    is treated as missing, with a warning, and no block left raises. Every
+    detector in the package follows this rule. A NaN in ``speed`` is an
+    unknown speed, not a missing sample: it splits no
     block, and an event whose first or last sample has unknown speed fails
     the speed criterion.
     See the README's "Choosing a detector" table for how the detectors'
@@ -1043,7 +1046,7 @@ def Karlsson_ripple_detector(
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
-    is_valid, blocks = _valid_blocks(time, filtered_lfps)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
@@ -1169,8 +1172,10 @@ def Roumis_ripple_detector(
     blocks, and every step runs within a block, so nothing is computed across
     a gap and no event spans one. An event cut off by a gap or by the
     recording edge is kept and flagged in ``clipped_start`` and
-    ``clipped_end``. Every detector in the package follows this rule. A NaN
-    in ``speed`` is an unknown speed, not a missing sample: it splits no
+    ``clipped_end``. A block too short for an event of ``minimum_duration``
+    is treated as missing, with a warning, and no block left raises. Every
+    detector in the package follows this rule. A NaN in ``speed`` is an
+    unknown speed, not a missing sample: it splits no
     block, and an event whose first or last sample has unknown speed fails
     the speed criterion.
     See the README's "Choosing a detector" table for how the detectors'
@@ -1188,7 +1193,7 @@ def Roumis_ripple_detector(
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
-    is_valid, blocks = _valid_blocks(time, filtered_lfps)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
 
     smoothed_power = _smoothed_envelope(
         filtered_lfps, blocks, sampling_frequency, smoothing_sigma, square=True

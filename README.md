@@ -540,7 +540,9 @@ Notes:
   nothing is smoothed, thresholded or merged across a gap and no event spans one. An event cut off
   by a gap or by the recording edge is kept and flagged in `clipped_start` and `clipped_end`. A
   block too short for a detector's transform (Zugaro's smoothing window, Long's sharp-wave kernel,
-  Carey's theta filter) is treated as missing, with a warning.
+  Carey's theta filter) or for an event of `minimum_duration` is treated as missing, with a warning
+  that gives its sample ranges; a detector left with no block raises rather than return an empty
+  result.
 - **Unknown speed** (NaN in `speed`, as from a tracking dropout) is not a missing sample: speed
   enters no trace, so it splits no block. An event whose first or last sample has unknown speed
   fails the endpoint rule; Shvartsman's majority is taken over the samples with known speed;

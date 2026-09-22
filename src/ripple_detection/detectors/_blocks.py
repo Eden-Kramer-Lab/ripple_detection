@@ -19,7 +19,7 @@ from ripple_detection.core import (
 
 
 def _valid_blocks(
-    time: FloatArray, *signals: FloatArray
+    time: FloatArray, *signals: FloatArray, minimum_duration: float | None = None
 ) -> tuple[BoolArray, list[tuple[int, int]]]:
     """The samples every detector may use, and their contiguous blocks.
 
@@ -33,11 +33,19 @@ def _valid_blocks(
     in speed is an unknown speed, which the movement rules handle, not a
     missing sample that would split a block and cut a ripple in two.
 
+    A block with fewer samples than ``minimum_duration`` spans cannot hold an
+    event, so it is treated as missing with a warning that gives its sample
+    ranges, and the detector raises if no block is left: a result emptied by
+    missing data should say so, not look like a recording without ripples.
+
     Parameters
     ----------
     time : ndarray, shape (n_time,)
     *signals : ndarray, shape (n_time,) or (n_time, n_channels)
         The LFP and spikes the detector reads.
+    minimum_duration : float, optional
+        The detector's minimum event duration in seconds. Default None keeps
+        every block.
 
     Returns
     -------
@@ -48,7 +56,7 @@ def _valid_blocks(
     Raises
     ------
     ValueError
-        If no sample is valid.
+        If no sample is valid, or no block is long enough for an event.
 
     """
     is_valid = np.ones(len(time), dtype=bool)
@@ -61,7 +69,16 @@ def _valid_blocks(
             "detect on. Check the alignment of the inputs."
         )
         raise ValueError(msg)
-    return is_valid, _contiguous_valid_blocks(is_valid, time)
+    blocks = _contiguous_valid_blocks(is_valid, time)
+    if minimum_duration is not None:
+        blocks = _drop_short_blocks(
+            blocks,
+            is_valid,
+            minimum_sample_count(time, minimum_duration),
+            f"an event of minimum_duration ({minimum_duration} s)",
+            stacklevel=4,
+        )
+    return is_valid, blocks
 
 
 def _drop_short_blocks(
@@ -131,22 +148,16 @@ def _threshold_blocks(
 ) -> list[tuple[float, float]]:
     """``threshold_by_zscore`` within each block; events never span a gap.
 
-    A block with fewer samples than the minimum duration cannot hold an
-    event and is skipped, which also keeps the sample count from being
-    measured on a block too short to have a median step.
+    The blocks come from ``_valid_blocks`` with ``minimum_duration``, so each
+    can hold an event.
     """
-    n_min = minimum_sample_count(time, minimum_duration)
     events: list[tuple[float, float]] = []
     for start, stop in blocks:
-        if stop - start >= n_min:
-            events.extend(
-                threshold_by_zscore(
-                    normalized[start:stop],
-                    time[start:stop],
-                    minimum_duration,
-                    zscore_threshold,
-                )
+        events.extend(
+            threshold_by_zscore(
+                normalized[start:stop], time[start:stop], minimum_duration, zscore_threshold
             )
+        )
     return events
 
 

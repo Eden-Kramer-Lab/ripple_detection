@@ -202,7 +202,9 @@ raises on zero rows; that is hdmf's, not this package's.
   one. Before, the Kay, Karlsson and Roumis detectors dropped the NaN rows and
   treated what remained as continuous, so an event could span a gap, and the
   HSE detector raised on any NaN. A block too short for a detector's transform
-  is treated as missing, with a warning. Output on data without gaps does not
+  or for an event of `minimum_duration` is treated as missing, with a warning
+  that gives its sample ranges, and a detector left with no block raises, so
+  missing data never empties a result without saying so. Output on data without gaps does not
   change. A NaN in `speed` is an unknown speed, not a missing sample, so a
   tracking dropout does not cut a ripple in two: an event with unknown speed
   at its first or last sample fails the endpoint rule, the majority rule of

@@ -210,7 +210,7 @@ Kay, Roumis and the HSE detector share one pipeline whose tail is `_detect_from_
 7. **Post-processing**: Drop close events, then over-long events; compute statistics with `_get_event_stats`
 8. **Output**: DataFrame indexed by `event_number` with the columns listed under "Output Format" in the README
 
-Yu, Zugaro, Long and Carey use their own segmentation rules but the same blocks: every step of every detector runs within a block, no event spans a gap, and `_get_event_stats` flags events cut off by a block edge in `clipped_start` and `clipped_end` (Zugaro supplies its own flags, meaning a missing crossing). A block too short for a detector's transform is treated as missing with a warning (`_drop_short_blocks`): Zugaro's smoothing window, Long's sharp-wave low-pass kernel, and Carey's theta filter pad length when `theta_lfp` is given.
+Yu, Zugaro, Long and Carey use their own segmentation rules but the same blocks: every step of every detector runs within a block, no event spans a gap, and `_get_event_stats` flags events cut off by a block edge in `clipped_start` and `clipped_end` (Zugaro supplies its own flags, meaning a missing crossing). A block too short for a detector's transform, or for an event of `minimum_duration` (`_valid_blocks(..., minimum_duration=...)`), is treated as missing with a warning, and no block left raises (`_drop_short_blocks`): Zugaro's smoothing window, Long's sharp-wave low-pass kernel, and Carey's theta filter pad length when `theta_lfp` is given.
 
 ### Key Algorithm Differences
 

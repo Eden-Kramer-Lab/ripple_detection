@@ -9,7 +9,6 @@ from ripple_detection.core import (
     FloatArray,
     _boolean_run_bounds,
     _is_immobile_at_endpoints,
-    minimum_sample_count,
     normalize_signal,
     sample_count_within,
 )
@@ -264,7 +263,7 @@ def Zugaro_ripple_detector(
     if window < 1 or window % 2 == 0:
         msg = f"smoothing_window must be a positive odd integer, got {window}."
         raise ValueError(msg)
-    is_valid, blocks = _valid_blocks(time, filtered_lfps)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
     blocks = _drop_short_blocks(blocks, is_valid, window, "the smoothing window")
 
     kernel = np.ones(window) / window
@@ -276,13 +275,10 @@ def Zugaro_ripple_detector(
     mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
     normalized = normalize_signal(smoothed, normalization_mask=mask)
 
-    n_min = minimum_sample_count(time, minimum_duration)
     event_time_blocks: list[FloatArray] = [np.empty((0, 2))]
     peak_time_blocks: list[FloatArray] = [np.empty(0)]
     clipped_blocks: list[BoolArray] = [np.empty((0, 2), dtype=bool)]
     for start, stop in blocks:
-        if stop - start < n_min:
-            continue
         block_events, block_peaks, block_clipped = _two_threshold_events(
             normalized[start:stop],
             time[start:stop],

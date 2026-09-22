@@ -277,7 +277,7 @@ def Carey_candidate_detector(
             raise ValueError(msg)
         theta_envelope = _theta_envelope(theta_signal, time, sampling_frequency, theta_band)
         signals.append(theta_envelope)
-    is_valid, blocks = _valid_blocks(time, *signals)
+    is_valid, blocks = _valid_blocks(time, *signals, minimum_duration=minimum_duration)
 
     # ripple score (OldWizard, 'amplitude', 'wizard' kernel), rescaled to mean 1
     ripple_score = np.full(n_time, np.nan)

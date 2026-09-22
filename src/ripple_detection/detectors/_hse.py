@@ -142,8 +142,10 @@ def multiunit_HSE_detector(
     that sample missing, as does a step in ``time`` larger than 1.5 times its
     median step. The population rate is smoothed within each contiguous block
     of valid samples, no event spans a gap, and an event cut off by one is
-    flagged in ``clipped_start`` and ``clipped_end``. A spike count that is
-    absent rather than missing should be 0, not NaN. A NaN in ``speed`` is an
+    flagged in ``clipped_start`` and ``clipped_end``. A block too short for an
+    event of ``minimum_duration`` is treated as missing, with a warning, and
+    no block left raises. A spike count that is absent rather than missing
+    should be 0, not NaN. A NaN in ``speed`` is an
     unknown speed, not a missing sample: it splits no block, and an event
     whose first or last sample has unknown speed fails the speed criterion.
 
@@ -176,7 +178,7 @@ def multiunit_HSE_detector(
     time, multiunit, speed = _validate_detector_inputs(
         time, multiunit, speed, sampling_frequency, speed_threshold
     )
-    is_valid, blocks = _valid_blocks(time, multiunit)
+    is_valid, blocks = _valid_blocks(time, multiunit, minimum_duration=minimum_duration)
 
     firing_rate = np.full(len(time), np.nan)
     for start, stop in blocks:

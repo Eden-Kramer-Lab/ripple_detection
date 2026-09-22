@@ -1020,8 +1020,9 @@ class TestMultiunitHSEValidation:
         return np.arange(n) / fs, multiunit, np.full(n, 2.0), fs
 
     def test_nan_marks_the_sample_missing_in_spikes_or_speed(self, inputs):
-        """A NaN spike count or speed sample is missing data, not an error: the
-        burst on the far side of it is still found, and nothing spans it."""
+        """A NaN spike count is missing data and a NaN speed an unknown speed,
+        neither an error: the burst on the far side is still found, and nothing
+        spans the missing spike count."""
         time, multiunit, speed, fs = inputs
         multiunit[2000:2060] = 1.0  # a burst
         clean = multiunit_HSE_detector(time, multiunit, speed, fs)
@@ -2182,23 +2183,26 @@ class TestCareyCandidateDetector:
 
     def test_a_gap_in_another_input_does_not_split_the_theta_filtering(self, time, stationary):
         """A five-sample island in the LFP is a block of its own for the
-        detector, but the theta channel is continuous there, so it is filtered
-        as one run: no theta run is too short, and nothing is treated as missing."""
+        detector, too short for an event and dropped with a warning that says
+        so, but the theta channel is continuous there, so it is filtered as one
+        run: no theta run is too short."""
         lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
         lfps[8000:8100] = np.nan
         lfps[8105:8200] = np.nan
         theta = np.random.default_rng(0).standard_normal(self.N_TIME)
-        with warnings.catch_warnings():
-            warnings.simplefilter("error")
+        with pytest.warns(UserWarning, match="minimum_duration") as record:
             events = Carey_candidate_detector(
                 time, lfps, multiunit, stationary, self.FS, theta_lfp=theta
             )
+        assert [str(w.message) for w in record if "theta" in str(w.message)] == []
+        assert "(8100, 8105)" in str(record[0].message)
         assert len(events) >= 1
 
     def test_a_dropout_in_speed_does_not_restart_the_theta_filter(self, time, stationary):
-        """The original filtered the whole theta recording at once. A NaN in speed
-        splits the detector's blocks but not the theta filtering, so the theta
-        exclusion decides the same events with and without the dropout."""
+        """The original filtered the whole theta recording at once. A NaN in
+        speed splits neither the detector's blocks nor the theta filtering, so
+        the theta exclusion decides the same events with and without the
+        dropout."""
         lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
         rng = np.random.default_rng(3)
         theta = rng.normal(0.0, 1.0, self.N_TIME)
@@ -2217,13 +2221,16 @@ class TestCareyCandidateDetector:
         assert not self._hits(with_dropout, time, self.EVENTS)[1]
 
     def test_nan_marks_the_sample_missing(self, time, stationary):
-        """A NaN in the spikes, the LFP or speed ends a block; the candidates
-        elsewhere are still found and none spans the missing sample."""
+        """A NaN in the spikes or the LFP ends a block; the candidates
+        elsewhere are still found and none spans the missing sample. The ten
+        samples before the NaN spike count are too short for an event and are
+        dropped with a warning."""
         lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
         clean = Carey_candidate_detector(time, lfps, multiunit, stationary, self.FS)
         multiunit[10, 0] = np.nan
         lfps[self.EVENTS[0], :] = np.nan  # in the middle of the first event
-        events = Carey_candidate_detector(time, lfps, multiunit, stationary, self.FS)
+        with pytest.warns(UserWarning, match=r"\(0, 10\)"):
+            events = Carey_candidate_detector(time, lfps, multiunit, stationary, self.FS)
         assert len(clean) >= 2
         assert not any(
             (events.start_time < time[self.EVENTS[0]])
@@ -3781,6 +3788,65 @@ class TestUnknownSpeed:
         events = self._run(Kay_ripple_detector, time, speed, speed_threshold=np.inf)
         assert len(events) == 1
         assert events[["max_speed", "speed_at_start"]].isna().all(axis=None)
+
+
+class TestBlocksTooShortForAnEvent:
+    """A block with fewer samples than ``minimum_duration`` spans cannot hold an
+    event. It is treated as missing with a warning that gives its sample
+    ranges, and a detector left with no block raises, so missing data never
+    empties a result without saying so."""
+
+    FS = 1000
+    N_TIME = 20_000
+    BURST = (5000, 5080)
+
+    DETECTORS = (
+        Kay_ripple_detector,
+        Karlsson_ripple_detector,
+        Roumis_ripple_detector,
+        Shvartsman_ripple_detector,
+        Yu_ripple_detector,
+        Zugaro_ripple_detector,
+        multiunit_HSE_detector,
+        Carey_candidate_detector,
+    )
+
+    def _run(self, detector, time, nan_rows):
+        speed = np.full(self.N_TIME, 2.0)
+        if detector is multiunit_HSE_detector:
+            multiunit = np.zeros((self.N_TIME, 6))
+            multiunit[slice(*self.BURST)] = 1.0
+            multiunit[nan_rows, 0] = np.nan
+            return detector(time, multiunit, speed, self.FS)
+        if detector is Carey_candidate_detector:
+            lfps, multiunit = _synthetic_joint_inputs(
+                self.N_TIME, self.FS, (self.BURST[0] + 40,)
+            )
+            lfps[nan_rows, 0] = np.nan
+            return detector(time, lfps, multiunit, speed, self.FS, minimum_active_units=1)
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(*self.BURST, 20.0)])
+        lfps[nan_rows, 0] = np.nan
+        return detector(time, lfps, speed, self.FS)
+
+    @pytest.mark.parametrize("detector", DETECTORS)
+    def test_a_short_block_warns_with_its_range(self, detector, time):
+        # ten valid samples between two NaN runs, far from the burst
+        nan_rows = np.r_[12_000:12_100, 12_110:12_200]
+        with pytest.warns(UserWarning, match=r"minimum_duration.*\(12100, 12110\)"):
+            events = self._run(detector, time, nan_rows)
+        assert len(events) >= 1
+
+    @pytest.mark.parametrize("detector", DETECTORS)
+    def test_no_block_long_enough_raises(self, detector, time):
+        # a NaN every tenth sample leaves blocks of nine, under any default minimum
+        with pytest.raises(ValueError, match="No block of finite samples is as long"):
+            self._run(detector, time, np.arange(0, self.N_TIME, 10))
+
+    def test_the_warning_names_the_callers_line(self, time):
+        nan_rows = np.r_[12_000:12_100, 12_110:12_200]
+        with pytest.warns(UserWarning, match="minimum_duration") as record:
+            self._run(Kay_ripple_detector, time, nan_rows)
+        assert record[0].filename == __file__
 
 
 class TestGapRuleUsesTheObservedStep:
