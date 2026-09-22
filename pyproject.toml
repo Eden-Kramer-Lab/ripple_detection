@@ -26,6 +26,8 @@ classifiers = [
 dependencies = ["numpy>=1.24", "pandas>=2.0", "scipy>=1.10"]
 
 [project.optional-dependencies]
+# `pip install -e .[dev,examples]`. Keep `dev` identical to the `dev` dependency
+# group below, which `uv sync` installs by default.
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
@@ -35,6 +37,18 @@ dev = [
     "mypy>=1.8.0",
 ]
 examples = ["matplotlib>=3.5.0", "jupyter>=1.0.0", "jupyterlab>=3.0.0"]
+
+[dependency-groups]
+# `uv sync` installs the package in editable mode plus this group; add
+# `--extra examples` for the notebooks. Keep identical to the `dev` extra above.
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "hypothesis>=6.0.0",
+    "pytest-snapshot>=0.9.0",
+    "ruff>=0.16,<0.17",
+    "mypy>=1.8.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/Eden-Kramer-Lab/ripple_detection"

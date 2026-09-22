@@ -11,10 +11,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Setup
 
 ```bash
-# Install from source (development mode with dev dependencies)
+# uv (recommended): .venv from uv.lock with the package editable plus the dev tools
+uv sync --extra examples
+uv run pytest            # prefix any command with `uv run` to use that environment
+uv lock                  # after changing dependencies in pyproject.toml
+
+# Or pip into your own environment
 pip install -e .[dev,examples]
 
-# Or create conda environment with all dependencies
+# Or conda
 conda env create -f environment.yml
 conda activate ripple_detection
 pip install -e .[dev,examples]
@@ -22,6 +27,9 @@ pip install -e .[dev,examples]
 # Minimal install (runtime dependencies only)
 pip install -e .
 ```
+
+The `dev` extra and the `dev` dependency group in `pyproject.toml` list the same
+tools; keep them identical.
 
 ### Testing
 
@@ -328,4 +336,4 @@ All code quality tools are configured in [pyproject.toml](pyproject.toml):
 - Auto coverage reporting to terminal with missing lines
 - Test path: `tests/`
 
-Use the `ripple_detection` conda environment if available for testing and development to ensure consistent dependency versions.
+For testing and development use `uv run` (the environment `uv sync` builds from `uv.lock`) or the `ripple_detection` conda environment if available, so dependency versions are consistent.

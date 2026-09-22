@@ -66,7 +66,12 @@ conda install -c edeno ripple_detection
 git clone https://github.com/Eden-Kramer-Lab/ripple_detection.git
 cd ripple_detection
 
-# Install with optional dependencies
+# With uv: an isolated environment with the package in editable mode, the
+# development tools, and (with --extra examples) the notebook dependencies
+uv sync --extra examples
+uv run pytest
+
+# With pip, into an environment of your own
 pip install -e .[dev,examples]
 ```
 
@@ -465,13 +470,18 @@ Notes:
 ### Setup Development Environment
 
 ```bash
-# Create conda environment
+# uv: creates .venv from the committed uv.lock with the dev tools installed
+uv sync --extra examples
+uv run pytest                     # any command runs in that environment
+
+# Or conda
 conda env create -f environment.yml
 conda activate ripple_detection
-
-# Install in editable mode with dev dependencies
 pip install -e .[dev,examples]
 ```
+
+`uv.lock` pins the development environment; `uv lock` refreshes it after a
+dependency change, and CI checks that it is current.
 
 ### Run Tests
 
