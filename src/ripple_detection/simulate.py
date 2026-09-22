@@ -858,7 +858,7 @@ def simulate_multiunit(
     return np.asarray(rng.poisson(rates * step * modulation), dtype=float)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class SimulatedSession:
     """Every signal ``simulate_session`` produced, with the ground truth.
 
@@ -877,9 +877,15 @@ class SimulatedSession:
         Zeros: an immobile animal.
     ripple_times, ripple_durations, ripple_frequencies : ndarray, shape (n_ripples,)
         Centre, duration (six standard deviations of the envelope) and
-        frequency of each ripple.
+        frequency of each ripple, in the order the ripples were given.
     artifact_times : ndarray, shape (n_artifacts,)
     sampling_frequency : float
+
+    Raises
+    ------
+    ValueError
+        If the signals do not share ``time``'s length or the per-ripple
+        arrays do not share one length.
 
     """
 
@@ -894,12 +900,33 @@ class SimulatedSession:
     artifact_times: FloatArray
     sampling_frequency: float
 
+    def __post_init__(self) -> None:
+        n_time = self.time.shape[0]
+        for name in ("lfps", "raw_lfp_pair", "multiunit", "speed"):
+            if getattr(self, name).shape[0] != n_time:
+                msg = f"{name} has {getattr(self, name).shape[0]} samples; time has {n_time}."
+                raise ValueError(msg)
+        n_ripples = self.ripple_times.shape
+        if not self.ripple_durations.shape == self.ripple_frequencies.shape == n_ripples:
+            msg = "ripple_times, ripple_durations and ripple_frequencies differ in length."
+            raise ValueError(msg)
+
     @property
     def ripple_windows(self) -> FloatArray:
         """Start and end of each ripple, shape (n_ripples, 2): the centre plus
-        or minus half the duration, where the envelope is at 1 percent of its peak."""
+        or minus half the duration, where the envelope is at 1 percent of its
+        peak, clipped to the recording.
+
+        In the order the ripples were given. Windows of ripples closer than
+        their durations overlap; each is still one ripple to find.
+        """
         half = self.ripple_durations / 2
-        return np.column_stack([self.ripple_times - half, self.ripple_times + half])
+        return np.column_stack(
+            [
+                np.maximum(self.ripple_times - half, self.time[0]),
+                np.minimum(self.ripple_times + half, self.time[-1]),
+            ]
+        )
 
 
 def simulate_session(
@@ -978,6 +1005,7 @@ def simulate_session(
     """
     if ripple_amplitude is not None:
         ripple_snr = None
+    time = np.asarray(time, dtype=float)
     rng = np.random.default_rng(random_state)
     if isinstance(ripple_times, (int, float)):
         ripple_times = [ripple_times]

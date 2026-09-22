@@ -1,5 +1,6 @@
 """Tests for simulation module."""
 
+import dataclasses
 import hashlib
 
 import numpy as np
@@ -940,6 +941,26 @@ class TestSimulateSession:
             spectrum = np.abs(np.fft.rfft(burst, n=2**16))
             peak = np.fft.rfftfreq(2**16, step)[np.argmax(spectrum)]
             np.testing.assert_allclose(peak, frequency, atol=1.0)
+
+    def test_windows_are_clipped_to_the_recording(self):
+        t = simulate_time(self.FS * 2, self.FS)
+        session = simulate_session(t, [0.01, 1.99], ripple_duration=0.1, random_state=0)
+        np.testing.assert_allclose(session.ripple_windows, [[t[0], 0.06], [1.94, t[-1]]])
+
+    def test_a_list_of_times_is_accepted_and_sessions_compare_by_identity(self):
+        t = simulate_time(3000, self.FS)
+        session = simulate_session(list(t), [1.0], random_state=0)
+        assert isinstance(session.time, np.ndarray)
+        assert session != simulate_session(t, [1.0], random_state=0)
+        assert session == session
+
+    def test_mismatched_lengths_raise(self):
+        t = simulate_time(3000, self.FS)
+        session = simulate_session(t, [1.0], random_state=0)
+        with pytest.raises(ValueError, match="samples"):
+            dataclasses.replace(session, speed=np.zeros(10))
+        with pytest.raises(ValueError, match="length"):
+            dataclasses.replace(session, ripple_durations=np.zeros(2))
 
     def test_the_ripple_channel_is_shared_by_the_lfps_and_the_pair(self):
         t = simulate_time(3000, self.FS)
