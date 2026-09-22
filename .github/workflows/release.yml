@@ -89,6 +89,7 @@ jobs:
           jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/detection_examples.ipynb
           jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/test_individual_algorithm_components.ipynb
           jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/ripple_detection_tutorial.ipynb
+          jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/simulation_study.ipynb
 
   test-minimum-pins:
     name: Test at the declared dependency floors

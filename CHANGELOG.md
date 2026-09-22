@@ -56,6 +56,12 @@ raises on zero rows; that is hdmf's, not this package's.
 
 ### Added
 
+- A simulation study, `examples/simulation_study.py` with its results and
+  `examples/simulation_study.ipynb`: every detector at its defaults on
+  simulated sessions, over ripple size, channel count, a ripple-free
+  condition, a sparse population and common-mode artifacts, reporting recall,
+  precision, event timing and false positives per minute. The README
+  summarizes it under "How the detectors compare on simulated data".
 - Simulators for the inputs the detectors take, sharing one set of ripples:
   `simulate_multichannel_LFP` (channels with a common ripple scaled by gain,
   noise part shared and part their own, optional common-mode artifacts),

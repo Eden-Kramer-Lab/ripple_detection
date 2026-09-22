@@ -60,6 +60,10 @@ open htmlcov/index.html
 jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/detection_examples.ipynb
 jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/test_individual_algorithm_components.ipynb
 jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/ripple_detection_tutorial.ipynb
+jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/simulation_study.ipynb
+
+# Re-run the simulation study sweep the notebook reads (about ten minutes)
+uv run python examples/simulation_study.py
 ```
 
 ### Code Quality
@@ -178,9 +182,12 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
    - All detectors return pandas DataFrames with event statistics
 
 3. **[src/ripple_detection/simulate.py](src/ripple_detection/simulate.py)** - Synthetic data generation
-   - Simulate LFPs with embedded ripples
-   - Multiple noise types (white, pink, brown)
-   - Used for testing and validation
+   - `simulate_LFP`: one channel of coloured noise (pink by default; brown was the 1.x default and has almost no ripple-band power) with Gaussian-windowed sine bursts, sized in signal units or by `ripple_snr`
+   - `simulate_multichannel_LFP`: channels sharing one ripple (per-channel gains) in noise that is part shared, part their own; optional common-mode artifacts
+   - `simulate_sharp_wave_ripple_pair`: the raw pyramidal and stratum radiatum pair the Long detector takes
+   - `simulate_multiunit`: Poisson units that burst with the ripples
+   - `simulate_session`: all of the above from one draw of per-ripple durations and frequencies, returned with the ground truth as a `SimulatedSession` (`ripple_windows` are the intervals a detected event should overlap)
+   - The basis of the integration tests and of `examples/simulation_study.py`
 
 4. **[src/ripple_detection/registry.py](src/ripple_detection/registry.py)** - `DETECTORS`, `get_detector`, `DetectorSpec`
    - Resolves a detector by name and says which signal kind it takes (`RIPPLE_BAND_LFP`, `RAW_LFP_PAIR`, `MULTIUNIT`)
@@ -254,8 +261,9 @@ The suite has one shared fixture module and eight test modules:
 7. **[tests/test_public_api.py](tests/test_public_api.py)** - Pins `__all__`
 8. **[tests/test_registry.py](tests/test_registry.py)** - Every exported detector is registered; each spec matches its signature by kind and position
 9. **[tests/test_literature.py](tests/test_literature.py)** - The shipped survey loads with the documented shape and types
+10. **[tests/test_integration.py](tests/test_integration.py)** - Every detector driven by name from the registry on `simulate_session` output and judged against the ground truth: the registry path and the parameter set Spyglass stores, recall with a false-positive budget per detector, event bounds against the ripple windows, the filter-then-detect chain at 1000, 2000 and 30000 Hz, cross-detector agreement on one ripple, the output contract including the empty-result schema, time-offset, scale and channel-order invariance, clipped flags at the recording edges, Long's seeding, and Yu's threshold under shared channel noise
 
-**Test Execution**: about 650 tests in ~10 seconds (`pytest --collect-only -q | tail -1` for the current count)
+**Test Execution**: about 770 tests in ~20 seconds (`pytest --collect-only -q | tail -1` for the current count)
 
 The package also validates that example notebooks run without errors in CI.
 

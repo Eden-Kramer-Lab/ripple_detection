@@ -199,6 +199,56 @@ except ValueError as error:
 # the ripple channel then the sharp-wave channel, got 4.
 ```
 
+## How the detectors compare on simulated data
+
+[`examples/simulation_study.py`](examples/simulation_study.py) runs every detector at its
+defaults on `simulate_session` output: pink noise, 40 ripples in 120 s of known time, duration
+and frequency, sized by `ripple_snr` (their filtered peak over the filtered background's SD),
+channels sharing half their noise, a sharp wave under each ripple for Long, and 100 Poisson
+units bursting with each ripple for Carey and HSE; three seeds per condition. An event is a
+hit when it overlaps the ripple's window. The [notebook](examples/simulation_study.ipynb)
+plots the whole sweep; four channels, means over seeds:
+
+| Detector | Recall, `ripple_snr` 2 | Recall, `ripple_snr` 4 | False positives per minute, no ripples | Precision with 20 common-mode artifacts | Event start minus ripple start, `ripple_snr` 4 |
+|---|---|---|---|---|---|
+| Kay | 0.41 | 0.98 | 18 | 0.05 | +10 ms |
+| Karlsson | 0.18 | 0.92 | 2 | 0.00 | +4 ms |
+| Roumis | 0.43 | 0.98 | 21 | 0.05 | +10 ms |
+| Shvartsman | 0.04 | 0.71 | 0 | 0.00 | +4 ms |
+| Yu | 0.38 | 0.97 | 14 | 0.39 | +10 ms |
+| Zugaro | 0.28 | 0.87 | 11 | 0.00 | +22 ms |
+| Long | 0.42 | 0.80 | 8 | 1.00 | +19 ms |
+| Carey | 0.90 | 0.98 | 0.7 | 0.77 | -4 ms |
+| HSE | 1.00 | 1.00 | 50 | 0.84 | -16 ms |
+
+What it shows:
+
+- **The defaults sit at very different operating points.** On ripple-free sessions Kay and
+  Roumis at 2 SD produce about 20 events a minute, Karlsson at 3 SD 2, Shvartsman none; the
+  z-scored population rate at 2 SD gives HSE 50. With ripples present the same thresholds look
+  better, because the ripples inflate the standard deviation they are measured against.
+- **Karlsson and Shvartsman trade recall for precision**: they need one channel (or two) to
+  cross 3 SD on its own, so quiet channels (gains of 0.5 to 1 here) cost them ripples at
+  `ripple_snr` below 4, and Shvartsman finds nothing on one channel at its default.
+- **The spike detectors' recall is set by the population burst, not the LFP**: Carey and HSE
+  find 90 to 100 percent of ripples at every `ripple_snr`. With 20 units instead of 100 their
+  precision falls to 0.49 and 0.35 (see the notebook's sparse-population table).
+- **Long's recall plateaus near 0.9** by construction: its percentile cuts drop the weakest
+  tenth of the sharp-wave cluster, and it does not evaluate candidates within 5 s of a block
+  edge. Its events mark the sharp wave, so they start about 20 ms after the ripple window and
+  end 20 ms before it.
+- **Yu's data-driven threshold falls when channels share noise**, to about 1.1 SD here, and
+  its false-positive rate rises with it; check `detection_threshold_zscore`.
+- **Common-mode artifacts silence the ripple-band detectors at their defaults**: twenty
+  broadband bursts inflate the z-scoring until the ripples fall below threshold. Long cancels
+  them in its channel difference, and the spike detectors barely notice them. The notebook
+  shows what `normalization_method="median_mad"` recovers.
+
+What it cannot show: the simulator's ripples are sinusoids under a Gaussian envelope, its
+sharp wave a Gaussian, its units Poisson, its noise stationary 1/f with no theta or state
+changes, and its artifacts crude. The numbers rank the defaults and expose their mechanics;
+they are not the recall or precision to expect on a recording.
+
 ## Output Format
 
 All detectors return a pandas DataFrame with comprehensive event statistics:
