@@ -59,6 +59,7 @@ packages = ["ripple_detection"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]
 addopts = ["--cov=ripple_detection", "--cov-report=term-missing", "--verbose"]
 
 [tool.coverage.run]

@@ -286,3 +286,19 @@ def multiunit_data(time_3s):
         multiunit[time_mask, :] = rng.random((time_mask.sum(), n_units)) < hse_rate
 
     return multiunit.astype(float)
+
+
+# Class-aware fixtures for the detector tests. A test class states FS and
+# N_TIME once; these build the time axis and a stationary speed from them.
+
+
+@pytest.fixture
+def time(request):
+    """``np.arange(N_TIME) / FS`` for the requesting class's constants."""
+    return np.arange(request.cls.N_TIME) / request.cls.FS
+
+
+@pytest.fixture
+def stationary(request):
+    """A speed of 2 cm/s at every sample, below every default speed threshold."""
+    return np.full(request.cls.N_TIME, 2.0)

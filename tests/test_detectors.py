@@ -6,6 +6,11 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 import pytest
+from _synthetic import (
+    _synthetic_joint_inputs,
+    _synthetic_ripple_band,
+    _synthetic_two_channel_lfp,
+)
 
 import ripple_detection.detectors as detectors_module
 from ripple_detection import (
@@ -1306,32 +1311,11 @@ class TestExtractYuRippleEvents:
         assert n_supra.shape == (0,)
 
 
-def _synthetic_ripple_band(n_time, sampling_frequency, bursts, n_channels=3, seed=0):
-    """Ripple-band-like input: Gaussian noise plus 200 Hz bursts of amplitude
-    ``gain`` times the noise SD on the given (start_sample, stop_sample, gain)
-    intervals, identical on every channel."""
-    rng = np.random.default_rng(seed)
-    lfps = rng.normal(0.0, 1.0, (n_time, n_channels))
-    t = np.arange(n_time) / sampling_frequency
-    carrier = np.sin(2 * np.pi * 200.0 * t)
-    for start, stop, gain in bursts:
-        lfps[start:stop] += gain * carrier[start:stop, np.newaxis]
-    return lfps
-
-
 class TestYuRippleDetector:
     """Yu et al. 2017: median consensus, mirrored-histogram threshold, 20 ms."""
 
     FS = 1000
     N_TIME = 20_000  # 20 s: enough immobility to resolve the 99.99th percentile
-
-    @pytest.fixture
-    def time(self):
-        return np.arange(self.N_TIME) / self.FS
-
-    @pytest.fixture
-    def stationary(self):
-        return np.full(self.N_TIME, 2.0)
 
     def test_speed_at_the_threshold_counts_as_immobile(self, time):
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
@@ -1635,14 +1619,6 @@ class TestZugaroRippleDetector:
     FS = 1000
     N_TIME = 20_000
 
-    @pytest.fixture
-    def time(self):
-        return np.arange(self.N_TIME) / self.FS
-
-    @pytest.fixture
-    def stationary(self):
-        return np.full(self.N_TIME, 2.0)
-
     def test_recovers_planted_bursts(self, time, stationary):
         bursts = [(5000, 5060, 20.0), (12000, 12080, 20.0)]
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, bursts)
@@ -1805,26 +1781,6 @@ class TestZugaroRippleDetector:
         assert ripple_detection.Zugaro_ripple_detector is Zugaro_ripple_detector
 
 
-def _synthetic_two_channel_lfp(
-    n_time, sampling_frequency, event_samples, seed=0, sharp_wave=True, ripple=True, gain=1.0
-):
-    """Raw two-channel LFP: column 0 pyramidal-layer (ripple) channel, column 1
-    stratum radiatum (sharp-wave) channel. Each event plants a 200 Hz burst on
-    channel 0 and a slow deflection, negative on channel 1 and positive on
-    channel 0, both with a Gaussian envelope (sigma 15 ms)."""
-    rng = np.random.default_rng(seed)
-    lfp = rng.normal(0.0, 1.0, (n_time, 2))
-    t = np.arange(n_time) / sampling_frequency
-    for center in event_samples:
-        envelope = np.exp(-0.5 * ((t - t[center]) / 0.015) ** 2)
-        if ripple:
-            lfp[:, 0] += gain * 5.0 * envelope * np.sin(2 * np.pi * 200.0 * t)
-        if sharp_wave:
-            lfp[:, 0] += gain * 3.0 * envelope
-            lfp[:, 1] -= gain * 8.0 * envelope
-    return lfp
-
-
 class TestFirfilt:
     def test_one_dimensional_input_matches_a_single_column(self):
         rng = np.random.default_rng(0)
@@ -1840,14 +1796,6 @@ class TestLongSharpWaveRippleDetector:
     FS = 1000
     N_TIME = 40_000  # 40 s; events must sit more than 5 s from either end
     EVENTS = (7000, 11000, 15500, 19000, 23800, 28000, 31500, 34000)
-
-    @pytest.fixture
-    def time(self):
-        return np.arange(self.N_TIME) / self.FS
-
-    @pytest.fixture
-    def stationary(self):
-        return np.full(self.N_TIME, 2.0)
 
     def test_recovers_planted_sharp_wave_ripples(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
@@ -2000,35 +1948,6 @@ class TestLongSharpWaveRippleDetector:
         )
 
 
-def _synthetic_joint_inputs(
-    n_time,
-    sampling_frequency,
-    events,
-    n_units=8,
-    seed=0,
-    ripple=True,
-    spikes=True,
-    ripple_gain=20.0,
-    rate_gain=8.0,
-):
-    """Ripple-band LFP (3 channels) plus a multiunit spike matrix. Each event
-    adds a 200 Hz burst to the LFP and raises every unit's spike probability
-    over a 60 ms window."""
-    rng = np.random.default_rng(seed)
-    lfps = rng.normal(0.0, 1.0, (n_time, 3))
-    base_rate = 0.004  # spikes per sample per unit
-    prob = np.full((n_time, n_units), base_rate)
-    t = np.arange(n_time) / sampling_frequency
-    for center in events:
-        window = slice(center - 30, center + 30)
-        if ripple:
-            lfps[window] += ripple_gain * np.sin(2 * np.pi * 200.0 * t[window])[:, np.newaxis]
-        if spikes:
-            prob[window] = base_rate * rate_gain
-    multiunit = (rng.random((n_time, n_units)) < prob).astype(float)
-    return lfps, multiunit
-
-
 class TestCareyStateHelpers:
     """Boundary rules of vandermeerlab TSDtoIV and restrict: gaps merge when
     strictly shorter than merge_gap, intervals survive when strictly longer than
@@ -2075,14 +1994,6 @@ class TestCareyCandidateDetector:
     FS = 1000
     N_TIME = 20_000
     EVENTS = (3000, 7000, 11000, 15000)
-
-    @pytest.fixture
-    def time(self):
-        return np.arange(self.N_TIME) / self.FS
-
-    @pytest.fixture
-    def stationary(self):
-        return np.full(self.N_TIME, 2.0)
 
     @staticmethod
     def _hits(events, time, centers):
@@ -2989,14 +2900,6 @@ class TestMaximumDuration:
     SHORT = (12_000, 12_060, 20.0)  # 60 ms burst
 
     @pytest.fixture
-    def time(self):
-        return np.arange(self.N_TIME) / self.FS
-
-    @pytest.fixture
-    def stationary(self):
-        return np.full(self.N_TIME, 2.0)
-
-    @pytest.fixture
     def lfps(self):
         return _synthetic_ripple_band(self.N_TIME, self.FS, [self.LONG, self.SHORT])
 
@@ -3177,14 +3080,6 @@ class TestMultiunitActiveUnits:
     N_UNITS = 20
 
     @pytest.fixture
-    def time(self):
-        return np.arange(self.N_TIME) / self.FS
-
-    @pytest.fixture
-    def stationary(self):
-        return np.full(self.N_TIME, 2.0)
-
-    @pytest.fixture
     def multiunit(self):
         """A three-unit burst at 1.0 s and a ten-unit burst at 3.0 s."""
         multiunit = np.zeros((self.N_TIME, self.N_UNITS))
@@ -3292,14 +3187,6 @@ class TestDurationLimitValidation:
 
     FS = 1000
     N_TIME = 5_000
-
-    @pytest.fixture
-    def time(self):
-        return np.arange(self.N_TIME) / self.FS
-
-    @pytest.fixture
-    def stationary(self):
-        return np.full(self.N_TIME, 2.0)
 
     @pytest.fixture
     def lfps(self):
@@ -3461,10 +3348,6 @@ class TestNoEventSpansAGap:
     N_TIME = 20_000
     BURST = (5000, 5080)
     GAP = (5035, 5045)
-
-    @pytest.fixture
-    def time(self):
-        return np.arange(self.N_TIME) / self.FS
 
     @staticmethod
     def _check(events, time, gap):
