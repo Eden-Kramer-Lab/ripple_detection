@@ -72,9 +72,20 @@ packages = ["ripple_detection"]
 "ripple_detection/data/literature_detection_parameters.csv" = "ripple_detection/data/literature_detection_parameters.csv"
 
 [tool.pytest.ini_options]
+minversion = "7"
 testpaths = ["tests"]
 pythonpath = ["tests"]
-addopts = ["--cov=ripple_detection", "--cov-report=term-missing", "--verbose"]
+addopts = [
+    "-ra",
+    "--strict-config",
+    "--strict-markers",
+    "--cov=ripple_detection",
+    "--cov-report=term-missing",
+]
+xfail_strict = true
+log_level = "INFO"
+# every warning is an error: a test that expects one says so with pytest.warns
+filterwarnings = ["error"]
 
 [tool.coverage.run]
 branch = true

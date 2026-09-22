@@ -1783,7 +1783,8 @@ class TestZugaroRippleDetector:
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
         lfps[8000:8100] = np.nan
         lfps[8105:8200] = np.nan  # a five-sample island between two gaps
-        events = Zugaro_ripple_detector(time, lfps, stationary, self.FS)
+        with pytest.warns(UserWarning, match="treated as missing"):
+            events = Zugaro_ripple_detector(time, lfps, stationary, self.FS)
         assert len(events) == 1
 
     def test_spyglass_style_keyword_call_matches_direct_call(self, time, stationary):

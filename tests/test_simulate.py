@@ -100,9 +100,9 @@ class TestNormalize:
     def test_normalize_preserves_zeros(self):
         """Test that zero signal remains zero or NaN."""
         signal = np.zeros(100)
-        normalized = normalize(signal)
-        # Zero signal causes divide by zero, results in NaN
-        assert np.all(np.isnan(normalized)) or np.all(normalized == 0)
+        with pytest.warns(RuntimeWarning):  # divide by zero, documented as NaN
+            normalized = normalize(signal)
+        assert np.all(np.isnan(normalized))
 
 
 class TestWhiteNoise:
