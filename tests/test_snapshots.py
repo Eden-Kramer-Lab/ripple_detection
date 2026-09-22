@@ -2,10 +2,20 @@
 
 import numpy as np
 import pytest
+from _synthetic import (
+    _synthetic_joint_inputs,
+    _synthetic_ripple_band,
+    _synthetic_two_channel_lfp,
+)
 
 from ripple_detection import (
+    Carey_candidate_detector,
     Karlsson_ripple_detector,
     Kay_ripple_detector,
+    Long_sharp_wave_ripple_detector,
+    Shvartsman_ripple_detector,
+    Yu_ripple_detector,
+    Zugaro_ripple_detector,
     filter_ripple_band,
 )
 from ripple_detection.detectors import (
@@ -348,3 +358,59 @@ class TestRegressionPrevention:
             assert any(abs(t - 1.0) < 0.1 for t in detected_times), (
                 "Detected ripple not near expected time"
             )
+
+
+def _pin(snapshot, events, prefix):
+    """Pin the count, the columns, and the first event rounded to 6 places."""
+    snapshot.assert_match(str(len(events)), f"{prefix}_n_detections")
+    snapshot.assert_match(str(sorted(events.columns.tolist())), f"{prefix}_columns")
+    if len(events):
+        first = {
+            k: (round(float(v), 6) if not isinstance(v, tuple) else v)
+            for k, v in events.iloc[0].to_dict().items()
+        }
+        snapshot.assert_match(str(first), f"{prefix}_first_detection")
+
+
+class TestNewDetectorSnapshots:
+    """Regression pins for the detectors added in 2.0: change detectors, not
+    correctness oracles. Inputs come from tests/_synthetic.py at 1000 Hz."""
+
+    FS = 1000
+
+    def test_shvartsman(self, snapshot):
+        n = 20_000
+        time = np.arange(n) / self.FS
+        lfps = _synthetic_ripple_band(n, self.FS, [(5000, 5060, 20.0), (12000, 12060, 20.0)])
+        events = Shvartsman_ripple_detector(time, lfps, np.full(n, 2.0), self.FS)
+        _pin(snapshot, events, "shvartsman")
+
+    def test_yu(self, snapshot):
+        n = 20_000
+        time = np.arange(n) / self.FS
+        lfps = _synthetic_ripple_band(n, self.FS, [(5000, 5060, 20.0), (12000, 12060, 20.0)])
+        events = Yu_ripple_detector(time, lfps, np.full(n, 2.0), self.FS)
+        _pin(snapshot, events, "yu")
+
+    def test_zugaro(self, snapshot):
+        n = 20_000
+        time = np.arange(n) / self.FS
+        lfps = _synthetic_ripple_band(n, self.FS, [(5000, 5060, 20.0), (12000, 12060, 20.0)])
+        events = Zugaro_ripple_detector(time, lfps, np.full(n, 2.0), self.FS)
+        _pin(snapshot, events, "zugaro")
+
+    def test_long(self, snapshot):
+        n = 40_000
+        time = np.arange(n) / self.FS
+        lfp = _synthetic_two_channel_lfp(n, self.FS, (7000, 11000, 15500, 19000, 23800, 28000))
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp, np.full(n, 2.0), self.FS, random_state=0
+        )
+        _pin(snapshot, events, "long")
+
+    def test_carey(self, snapshot):
+        n = 20_000
+        time = np.arange(n) / self.FS
+        lfps, multiunit = _synthetic_joint_inputs(n, self.FS, (3000, 7000, 11000, 15000))
+        events = Carey_candidate_detector(time, lfps, multiunit, np.full(n, 2.0), self.FS)
+        _pin(snapshot, events, "carey")

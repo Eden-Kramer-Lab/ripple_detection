@@ -987,7 +987,7 @@ class TestEstimateNoiseThreshold:
     def test_positive_mode_warns_and_uses_intended_reflection(self):
         rng = np.random.default_rng(4)
         mean, sd = 0.5, 0.2
-        values = rng.normal(mean, sd, 2_000_000)
+        values = rng.normal(mean, sd, 500_000)
         with pytest.warns(UserWarning, match="mode"):
             threshold = estimate_noise_threshold(values)
         expected = mean + sd * 3.719016
@@ -1720,3 +1720,20 @@ class TestEventHelpersAcceptADetectorDataFrame:
     def test_a_wide_array_raises_instead_of_being_paired_up(self, events, helper):
         with pytest.raises(ValueError, match=r"shape \(n_events, 2\)"):
             helper(events.to_numpy(dtype=float))
+
+
+class TestEstimateNoiseThresholdArgumentValidation:
+    def test_edges_must_increase(self):
+        with pytest.raises(ValueError, match="strictly increasing"):
+            estimate_noise_threshold(np.zeros(100), histogram_edges=[0.0, 1.0, 1.0])
+
+    @pytest.mark.parametrize("percentile", [0.0, 100.0, -1.0])
+    def test_percentile_must_lie_inside_the_open_interval(self, percentile):
+        with pytest.raises(ValueError, match="percentile"):
+            estimate_noise_threshold(
+                np.random.default_rng(0).normal(size=100), percentile=percentile
+            )
+
+    def test_empty_values_raise(self):
+        with pytest.raises(ValueError, match="empty"):
+            estimate_noise_threshold(np.array([]))

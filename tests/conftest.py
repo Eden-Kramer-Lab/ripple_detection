@@ -1,9 +1,17 @@
 """Shared fixtures for ripple detection tests."""
 
+import os
+
 import numpy as np
 import pytest
+from hypothesis import settings
 
 from ripple_detection.simulate import simulate_LFP, simulate_time
+
+# Hypothesis draws fresh examples on every run. In CI, derandomize so a
+# failure there reproduces here; locally keep the search random.
+settings.register_profile("ci", derandomize=True)
+settings.load_profile("ci" if os.environ.get("CI") else "default")
 
 
 @pytest.fixture

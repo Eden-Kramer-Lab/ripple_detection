@@ -1753,6 +1753,18 @@ class TestZugaroRippleDetector:
         events = Zugaro_ripple_detector(time, lfps, stationary, self.FS, high_threshold=50.0)
         assert events.empty and "peak_time" in events.columns
 
+    def test_close_events_merge_when_there_is_no_ceiling(self, time, stationary):
+        """Two bursts 20 ms apart, under the 30 ms merge interval, become one
+        event whether or not a duration ceiling is in force."""
+        lfps = _synthetic_ripple_band(
+            self.N_TIME, self.FS, [(5000, 5030, 20.0), (5050, 5080, 20.0)]
+        )
+        assert (
+            len(Zugaro_ripple_detector(time, lfps, stationary, self.FS, maximum_duration=None))
+            == 1
+        )
+        assert len(Zugaro_ripple_detector(time, lfps, stationary, self.FS)) == 1
+
     def test_no_maximum_duration_keeps_a_long_event(self, time, stationary):
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5300, 20.0)])
         capped = Zugaro_ripple_detector(time, lfps, stationary, self.FS)
@@ -2112,6 +2124,21 @@ class TestCareyCandidateDetector:
             Carey_candidate_detector(time, lfps, multiunit[:-1], stationary, self.FS)
         with pytest.raises(ValueError, match="2D"):
             Carey_candidate_detector(time, lfps, multiunit[:, 0], stationary, self.FS)
+
+    def test_a_block_shorter_than_the_theta_filter_is_treated_as_missing(
+        self, time, stationary
+    ):
+        """filtfilt needs more samples than its pad length; a five-sample island
+        between two gaps cannot be theta-filtered and is dropped with a warning."""
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        lfps[8000:8100] = np.nan
+        lfps[8105:8200] = np.nan
+        theta = np.random.default_rng(0).standard_normal(self.N_TIME)
+        with pytest.warns(UserWarning, match="treated as missing"):
+            events = Carey_candidate_detector(
+                time, lfps, multiunit, stationary, self.FS, theta_lfp=theta
+            )
+        assert len(events) >= 1
 
     def test_nan_marks_the_sample_missing(self, time, stationary):
         """A NaN in the spikes, the LFP or speed ends a block; the candidates
@@ -2866,9 +2893,16 @@ class TestRowDropDetectorsSmoothWithinBlocks:
     FS = 1500
 
     @pytest.mark.parametrize(
-        "detector", [Kay_ripple_detector, Karlsson_ripple_detector, Roumis_ripple_detector]
+        "detector",
+        [
+            Kay_ripple_detector,
+            Karlsson_ripple_detector,
+            Roumis_ripple_detector,
+            Shvartsman_ripple_detector,
+        ],
     )
-    def test_events_before_a_gap_match_the_block_run_alone(self, detector):
+    @pytest.mark.parametrize("how", ["nan", "deleted"])
+    def test_events_before_a_gap_match_the_block_run_alone(self, detector, how):
         time = np.arange(self.FS * 8) / self.FS
         lfp = _synthetic_ripple_band(
             len(time), self.FS, [(4400, 4500, 20.0), (9000, 9100, 20.0)]
@@ -2876,11 +2910,19 @@ class TestRowDropDetectorsSmoothWithinBlocks:
         lfp = np.column_stack([lfp, lfp * 0.8])
         speed = np.full(len(time), 2.0)
         gap = slice(4600, 7000)
-        with_gap = lfp.copy()
-        with_gap[gap] = np.nan
+        if how == "nan":
+            with_gap = lfp.copy()
+            with_gap[gap] = np.nan
+            gap_time, gap_speed = time, speed
+        else:
+            keep = np.ones(len(time), dtype=bool)
+            keep[gap] = False
+            with_gap, gap_time, gap_speed = lfp[keep], time[keep], speed[keep]
 
         # normalize both over the first block, so only the transform can differ
-        whole = detector(time, with_gap, speed, self.FS, normalization_mask=time <= time[4599])
+        whole = detector(
+            gap_time, with_gap, gap_speed, self.FS, normalization_mask=gap_time <= time[4599]
+        )
         first_block = detector(
             time[:4600],
             lfp[:4600],
@@ -3447,6 +3489,14 @@ class TestNoEventSpansAGap:
         assert not before.clipped_start.item() and not after.clipped_end.item()
         assert np.isfinite(events.select_dtypes(float).to_numpy()).all()
 
+    @staticmethod
+    def _cut(gap, time, *arrays):
+        """The gap as concatenated disjoint intervals: the samples are deleted
+        and the timestamps jump, with no NaN anywhere."""
+        keep = np.ones(len(time), dtype=bool)
+        keep[slice(*gap)] = False
+        return (time[keep], *(array[keep] for array in arrays))
+
     @pytest.mark.parametrize(
         "detector",
         [
@@ -3458,32 +3508,70 @@ class TestNoEventSpansAGap:
             Zugaro_ripple_detector,
         ],
     )
-    @pytest.mark.parametrize("where", ["lfp", "speed"])
+    @pytest.mark.parametrize("where", ["lfp", "speed", "time"])
     def test_ripple_band_detectors(self, detector, where, time):
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(*self.BURST, 20.0)])
         speed = np.full(self.N_TIME, 2.0)
+        kwargs = {"maximum_duration": None} if detector is Zugaro_ripple_detector else {}
         if where == "lfp":
             lfps[slice(*self.GAP), 0] = np.nan
-        else:
+            events = detector(time, lfps, speed, self.FS, **kwargs)
+        elif where == "speed":
             speed[slice(*self.GAP)] = np.nan
-        kwargs = {"maximum_duration": None} if detector is Zugaro_ripple_detector else {}
-        events = detector(time, lfps, speed, self.FS, **kwargs)
+            events = detector(time, lfps, speed, self.FS, **kwargs)
+        else:
+            events = detector(*self._cut(self.GAP, time, lfps, speed), self.FS, **kwargs)
         self._check(events, time, self.GAP)
 
-    def test_burst_detector(self, time):
+    @pytest.mark.parametrize(
+        "detector",
+        [
+            Kay_ripple_detector,
+            Karlsson_ripple_detector,
+            Roumis_ripple_detector,
+            Shvartsman_ripple_detector,
+            Yu_ripple_detector,
+            Zugaro_ripple_detector,
+        ],
+    )
+    def test_a_single_dropped_sample_is_a_gap(self, detector, time):
+        """One missing timestamp is a step of two intervals, past the 1.5 the
+        rule allows, so it ends a block like any longer gap."""
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(*self.BURST, 20.0)])
+        speed = np.full(self.N_TIME, 2.0)
+        kwargs = {"maximum_duration": None} if detector is Zugaro_ripple_detector else {}
+        gap = (5040, 5041)
+        events = detector(*self._cut(gap, time, lfps, speed), self.FS, **kwargs)
+        self._check(events, time, gap)
+
+    @pytest.mark.parametrize("where", ["spikes", "time"])
+    def test_burst_detector(self, where, time):
         multiunit = np.zeros((self.N_TIME, 6))
         multiunit[slice(*self.BURST)] = 1.0
-        multiunit[slice(*self.GAP), 2] = np.nan
-        events = multiunit_HSE_detector(time, multiunit, np.full(self.N_TIME, 2.0), self.FS)
+        speed = np.full(self.N_TIME, 2.0)
+        if where == "spikes":
+            multiunit[slice(*self.GAP), 2] = np.nan
+            events = multiunit_HSE_detector(time, multiunit, speed, self.FS)
+        else:
+            events = multiunit_HSE_detector(
+                *self._cut(self.GAP, time, multiunit, speed), self.FS
+            )
         self._check(events, time, self.GAP)
 
-    def test_joint_detector(self, time):
+    @pytest.mark.parametrize("where", ["spikes", "time"])
+    def test_joint_detector(self, where, time):
         lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, (self.BURST[0] + 40,))
         gap = (self.BURST[0] + 35, self.BURST[0] + 45)
-        multiunit[slice(*gap), 0] = np.nan
-        events = Carey_candidate_detector(
-            time, lfps, multiunit, np.full(self.N_TIME, 2.0), self.FS, minimum_active_units=1
-        )
+        speed = np.full(self.N_TIME, 2.0)
+        if where == "spikes":
+            multiunit[slice(*gap), 0] = np.nan
+            events = Carey_candidate_detector(
+                time, lfps, multiunit, speed, self.FS, minimum_active_units=1
+            )
+        else:
+            events = Carey_candidate_detector(
+                *self._cut(gap, time, lfps, multiunit, speed), self.FS, minimum_active_units=1
+            )
         assert not any(
             (events.start_time < time[gap[0]]) & (events.end_time > time[gap[1] - 1])
         )
@@ -3530,3 +3618,22 @@ class TestGapRuleUsesTheObservedStep:
             assert any(
                 (events.start_time <= time[start + 30]) & (events.end_time >= time[start + 30])
             )
+
+
+class TestValidationPaths:
+    FS = 1000
+    N_TIME = 5000
+
+    def test_speed_that_looks_like_metres_per_second_warns(self, time):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2000, 2060, 20.0)])
+        speed = np.full(self.N_TIME, 0.02)  # 2 cm/s written in m/s
+        with pytest.warns(UserWarning, match="cm/s, not m/s"):
+            Kay_ripple_detector(time, lfps, speed, self.FS)
+
+    def test_a_mask_that_selects_only_missing_samples_raises(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2000, 2060, 20.0)])
+        lfps[:1000] = np.nan
+        mask = np.zeros(self.N_TIME, dtype=bool)
+        mask[:1000] = True
+        with pytest.raises(ValueError, match="no sample that is finite"):
+            Kay_ripple_detector(time, lfps, stationary, self.FS, normalization_mask=mask)
