@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
 from scipy.ndimage import convolve1d, gaussian_filter1d
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, sosfiltfilt
 
 from ripple_detection.core import (
     BoolArray,
@@ -17,7 +17,9 @@ from ripple_detection.core import (
     sample_count_within,
 )
 from ripple_detection.detectors._blocks import (
+    _contiguous_valid_blocks,
     _drop_short_blocks,
+    _mask_invalid,
     _valid_blocks,
 )
 from ripple_detection.detectors._events import (
@@ -61,6 +63,39 @@ def _contained_in_intervals(event_bounds: IntArray, intervals: IntArray) -> Bool
         event_bounds[:, [1]] <= intervals[:, 1]
     )
     return np.asarray(inside.any(axis=1), dtype=bool)
+
+
+def _theta_envelope(
+    theta_lfp: FloatArray,
+    time: FloatArray,
+    sampling_frequency: float,
+    theta_band: tuple[float, float],
+) -> FloatArray:
+    """Theta-band envelope of the theta channel, NaN where it cannot be formed.
+
+    The original filters the whole theta recording at once (vandermeerlab
+    ``FilterLFP``: a fourth-order Butterworth band-pass applied with
+    ``filtfilt``, then the Hilbert envelope in ``LFPpower``). Here the channel
+    is filtered over each of its own runs of finite samples, split also at
+    gaps in ``time``, and not over the blocks the detector's other inputs
+    define, so a NaN in speed or the spikes does not restart the filter. A run
+    with no more samples than the filter's pad length cannot be filtered and
+    is NaN, which makes its samples missing for the detector, with a warning.
+    """
+    sos = butter(
+        2, np.asarray(theta_band) / (0.5 * sampling_frequency), btype="bandpass", output="sos"
+    )
+    padlen = 3 * (2 * len(sos) + 1)  # sosfiltfilt's default pad; a run needs more than this
+    finite = np.isfinite(theta_lfp)
+    envelope = np.full(theta_lfp.size, np.nan)
+    if not np.any(finite):
+        return envelope  # every sample missing; _valid_blocks reports it
+    runs = _drop_short_blocks(
+        _contiguous_valid_blocks(finite, time), finite, padlen + 1, "the theta filter", 4
+    )
+    for start, stop in runs:
+        envelope[start:stop] = get_envelope(sosfiltfilt(sos, theta_lfp[start:stop]))
+    return envelope
 
 
 def Carey_candidate_detector(
@@ -133,8 +168,14 @@ def Carey_candidate_detector(
     into blocks; the scores, the segmentation and the state intervals run
     within each block, so no candidate spans a gap, and a candidate cut off by
     one is flagged in ``clipped_start`` and ``clipped_end``. With
-    ``theta_lfp`` given, a block shorter than the theta filter's pad length
-    (16 samples) is treated as missing, with a warning.
+    ``theta_lfp`` given, the theta channel is filtered over each of its own
+    runs of finite samples, as the original filtered the whole recording, so a
+    NaN in speed or the spikes does not restart the theta filter; a run of
+    theta samples no longer than the filter's pad length (15) cannot be
+    filtered and is treated as missing, with a warning. The filter's
+    transient lasts about three time constants, 0.4 s for a 6-10 Hz band, so
+    the theta state within that distance of a theta gap or the record edges
+    is unreliable; the original has the same transient at its record edges.
 
     Parameters
     ----------
@@ -176,7 +217,9 @@ def Carey_candidate_detector(
         Baseline cap in units' worth. Default 4.
     theta_lfp : array_like, shape (n_time,), optional
         Raw LFP of a theta channel; when given, candidates during elevated
-        theta are excluded. Default None (no theta exclusion).
+        theta are excluded, as the original's theta restriction does. It
+        needs a channel the other inputs do not, so it is optional here.
+        Default None (no theta exclusion).
     theta_band : tuple of (float, float), optional
         Theta pass-band in Hz, Butterworth of total order 4 (order 2 per edge, as MATLAB's `fdesign` 'N' counts it). Default (6, 10).
     theta_threshold : float, optional
@@ -222,22 +265,15 @@ def Carey_candidate_detector(
         msg = f"Array length mismatch: multiunit has {multiunit.shape[0]} samples but time has {n_time}."
         raise ValueError(msg)
     signals = [filtered_lfps, multiunit, speed]
-    theta_signal: FloatArray | None = None
-    theta_filter = None
+    theta_envelope: FloatArray | None = None
     if theta_lfp is not None:
         theta_signal = np.asarray(theta_lfp, dtype=float)
         if theta_signal.shape != (n_time,):
             msg = f"theta_lfp must have shape ({n_time},), got {theta_signal.shape}."
             raise ValueError(msg)
-        signals.append(theta_signal)
-        theta_filter = butter(
-            2, np.asarray(theta_band) / (0.5 * sampling_frequency), btype="bandpass"
-        )
+        theta_envelope = _theta_envelope(theta_signal, time, sampling_frequency, theta_band)
+        signals.append(theta_envelope)
     is_valid, blocks = _valid_blocks(time, *signals)
-    if theta_filter is not None:
-        # filtfilt needs strictly more samples than its default pad length
-        padlen = 3 * max(len(theta_filter[0]), len(theta_filter[1]))
-        blocks = _drop_short_blocks(blocks, is_valid, padlen + 1, "the theta filter")
 
     # ripple score (OldWizard, 'amplitude', 'wizard' kernel), rescaled to mean 1
     ripple_score = np.full(n_time, np.nan)
@@ -318,14 +354,11 @@ def Carey_candidate_detector(
         candidates = candidates[
             _contained_in_intervals(candidates, _intervals(speed <= speed_threshold))
         ]
-    if len(candidates) and theta_filter is not None and theta_signal is not None:
-        theta_envelope = np.full(n_time, np.nan)
-        for start, stop in blocks:
-            theta_envelope[start:stop] = get_envelope(
-                filtfilt(*theta_filter, theta_signal[start:stop])
-            )
-        low_theta = _intervals(normalize_signal(theta_envelope) < theta_threshold)
-        candidates = candidates[_contained_in_intervals(candidates, low_theta)]
+    if len(candidates) and theta_envelope is not None:
+        theta_z = normalize_signal(_mask_invalid(theta_envelope, is_valid))
+        candidates = candidates[
+            _contained_in_intervals(candidates, _intervals(theta_z < theta_threshold))
+        ]
 
     # minimum number of active units
     n_active = _count_active_units(multiunit, candidates)

@@ -128,6 +128,13 @@ raises on zero rows; that is hdmf's, not this package's.
 
 ### Changed
 
+- `Carey_candidate_detector` filters `theta_lfp` over each run of finite theta
+  samples, as the original filtered the whole recording, rather than within
+  the blocks its other inputs define. A dropout in speed or the spikes no
+  longer restarts the theta filter, whose transient reads as high theta for
+  up to 0.4 s and excluded candidates near every such edge; at 30 kHz the
+  first sample of a block read 2.1 SD where the truth was -0.7. The filter
+  runs in second-order sections.
 - `filter_ripple_band` treats `band=(150, 250)` as the default band, so at
   1500 Hz it uses the shipped kernel as `band=None` does; before, naming the
   default band designed a different filter whose output differed by up to

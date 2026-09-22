@@ -2141,20 +2141,57 @@ class TestCareyCandidateDetector:
         with pytest.raises(ValueError, match="2D"):
             Carey_candidate_detector(time, lfps, multiunit[:, 0], stationary, self.FS)
 
-    def test_a_block_shorter_than_the_theta_filter_is_treated_as_missing(
+    def test_a_theta_run_shorter_than_the_theta_filter_is_treated_as_missing(
         self, time, stationary
     ):
-        """filtfilt needs more samples than its pad length; a five-sample island
-        between two gaps cannot be theta-filtered and is dropped with a warning."""
+        """The theta filter needs more samples than its pad length; a five-sample
+        island of theta between two theta gaps cannot be filtered, so its samples
+        are missing for the detector, with a warning."""
         lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
-        lfps[8000:8100] = np.nan
-        lfps[8105:8200] = np.nan
         theta = np.random.default_rng(0).standard_normal(self.N_TIME)
+        theta[8000:8100] = np.nan
+        theta[8105:8200] = np.nan
         with pytest.warns(UserWarning, match="treated as missing"):
             events = Carey_candidate_detector(
                 time, lfps, multiunit, stationary, self.FS, theta_lfp=theta
             )
         assert len(events) >= 1
+
+    def test_a_gap_in_another_input_does_not_split_the_theta_filtering(self, time, stationary):
+        """A five-sample island in the LFP is a block of its own for the
+        detector, but the theta channel is continuous there, so it is filtered
+        as one run: no theta run is too short, and nothing is treated as missing."""
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        lfps[8000:8100] = np.nan
+        lfps[8105:8200] = np.nan
+        theta = np.random.default_rng(0).standard_normal(self.N_TIME)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            events = Carey_candidate_detector(
+                time, lfps, multiunit, stationary, self.FS, theta_lfp=theta
+            )
+        assert len(events) >= 1
+
+    def test_a_dropout_in_speed_does_not_restart_the_theta_filter(self, time, stationary):
+        """The original filtered the whole theta recording at once. A NaN in speed
+        splits the detector's blocks but not the theta filtering, so the theta
+        exclusion decides the same events with and without the dropout."""
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        rng = np.random.default_rng(3)
+        theta = rng.normal(0.0, 1.0, self.N_TIME)
+        theta[6000:8000] += 15.0 * np.sin(2 * np.pi * 8.0 * time[6000:8000])
+        speed_with_dropout = stationary.copy()
+        speed_with_dropout[5900:5910] = np.nan
+        without = Carey_candidate_detector(
+            time, lfps, multiunit, stationary, self.FS, theta_lfp=theta
+        )
+        with_dropout = Carey_candidate_detector(
+            time, lfps, multiunit, speed_with_dropout, self.FS, theta_lfp=theta
+        )
+        assert self._hits(without, time, self.EVENTS) == self._hits(
+            with_dropout, time, self.EVENTS
+        )
+        assert not self._hits(with_dropout, time, self.EVENTS)[1]
 
     def test_nan_marks_the_sample_missing(self, time, stationary):
         """A NaN in the spikes, the LFP or speed ends a block; the candidates
