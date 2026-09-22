@@ -453,16 +453,31 @@ def nearest_sample_index(time: ArrayLike, query_times: ArrayLike) -> NDArray:
     return np.where(closer_to_right, right, left)
 
 
+def _is_immobile_at_endpoints(
+    event_times: NDArray, speed: ArrayLike, time: ArrayLike, speed_threshold: float
+) -> NDArray:
+    """The package's endpoint speed rule: speed at the event's first and last
+    sample is at or below ``speed_threshold``. Returns a bool mask over events."""
+    events = np.asarray(event_times, dtype=float).reshape(-1, 2)
+    if len(events) == 0:
+        return np.zeros(0, dtype=bool)
+    speed = np.asarray(speed, dtype=float)
+    speed_at_start = speed[nearest_sample_index(time, events[:, 0])]
+    speed_at_end = speed[nearest_sample_index(time, events[:, 1])]
+    return (speed_at_start <= speed_threshold) & (speed_at_end <= speed_threshold)
+
+
 def exclude_movement(
     candidate_ripple_times: ArrayLike,
     speed: ArrayLike,
     time: ArrayLike,
     speed_threshold: float = 4.0,
-) -> NDArray | list:
+) -> NDArray:
     """Filter out candidate ripples that occur during animal movement.
 
     Removes events where the animal's speed at either the start or end of the
-    event exceeds the specified threshold.
+    event exceeds the specified threshold. Speed inside the event is not
+    tested.
 
     Parameters
     ----------
@@ -479,22 +494,13 @@ def exclude_movement(
 
     Returns
     -------
-    ripple_times : ndarray or list
-        Filtered event times where animal speed is at or below the threshold,
-        with shape (n_stationary_ripples, 2). An empty list is returned when
-        there are no candidate events to test.
+    ripple_times : ndarray, shape (n_stationary_ripples, 2)
+        Event times where animal speed is at or below the threshold at both
+        ends. Shape ``(0, 2)`` when none remain.
 
     """
-    candidate_ripple_times = np.asarray(candidate_ripple_times, dtype=float)
-    if candidate_ripple_times.size == 0:
-        return []
-    speed = np.asarray(speed, dtype=float)
-    start_index = nearest_sample_index(time, candidate_ripple_times[:, 0])
-    end_index = nearest_sample_index(time, candidate_ripple_times[:, 1])
-    is_below_speed_threshold = (speed[start_index] <= speed_threshold) & (
-        speed[end_index] <= speed_threshold
-    )
-    return candidate_ripple_times[is_below_speed_threshold]
+    events = np.asarray(candidate_ripple_times, dtype=float).reshape(-1, 2)
+    return events[_is_immobile_at_endpoints(events, speed, time, speed_threshold)]
 
 
 def exclude_movement_by_majority(
@@ -503,13 +509,12 @@ def exclude_movement_by_majority(
     time: ArrayLike,
     speed_threshold: float = 4.0,
     majority_threshold: float = 0.5,
-) -> tuple[list, list]:
+) -> tuple[NDArray, NDArray]:
     """Filter out candidate ripples that occur during animal movement.
 
     Retains an event only if the animal's speed is at or below `speed_threshold`
-    for at least `majority_threshold` of the samples within the event. This
-    expands on `exclude_movement`, which excludes an event if *any* movement
-    occurs during it.
+    for at least `majority_threshold` of the samples within the event.
+    `exclude_movement` instead tests only the event's first and last sample.
 
     Parameters
     ----------
@@ -528,15 +533,14 @@ def exclude_movement_by_majority(
 
     Returns
     -------
-    included_ripple_times : list
-        Retained event times as a list of ``[start_time, end_time]`` pairs
-        (empty list if no events remain).
-    included_ripple_inds : list
+    included_ripple_times : ndarray, shape (n_kept, 2)
+        Retained event times; shape ``(0, 2)`` if no events remain.
+    included_ripple_inds : ndarray of int, shape (n_kept,)
         Indices of the retained ripples in the original candidate list, useful
         for filtering associated data arrays.
 
     """
-    candidate_ripple_times = np.array(candidate_ripple_times)
+    candidate_ripple_times = np.asarray(candidate_ripple_times, dtype=float).reshape(-1, 2)
 
     speed_df = pd.DataFrame({"speed": speed}, index=time)
 
@@ -552,10 +556,13 @@ def exclude_movement_by_majority(
                 "speed and time do not cover the candidate event."
             )
         if n_below_threshold / n_total >= majority_threshold:
-            included_ripple_times.append([start_time, end_time])  # keep this ripple
+            included_ripple_times.append([start_time, end_time])
             included_ripple_inds.append(r)
 
-    return included_ripple_times, included_ripple_inds
+    return (
+        np.asarray(included_ripple_times, dtype=float).reshape(-1, 2),
+        np.asarray(included_ripple_inds, dtype=int),
+    )
 
 
 def _find_containing_interval(
@@ -1205,8 +1212,8 @@ def _is_gap_below(gap: NDArray | float, close_event_threshold: float) -> NDArray
 def exclude_close_events(
     candidate_event_times: ArrayLike,
     close_event_threshold: float = 1.0,
-    included_ripple_inds: list | None = None,
-) -> NDArray | list | tuple[NDArray | list, NDArray | list]:
+    included_ripple_inds: ArrayLike | None = None,
+) -> NDArray | tuple[NDArray, NDArray]:
     """Remove events that occur too close together in time.
 
     Filters out successive events that start within `close_event_threshold`
@@ -1214,8 +1221,9 @@ def exclude_close_events(
     in each cluster of closely-spaced events.
 
     The Frank lab ``extractevents`` routine instead *merges* events separated
-    by less than its minimum separation into one longer event. This function
-    drops the later event, so the retained events keep their original bounds.
+    by less than its minimum separation into one longer event
+    (:func:`merge_close_events`). This function drops the later event, so the
+    retained events keep their original bounds.
 
     Parameters
     ----------
@@ -1225,21 +1233,19 @@ def exclude_close_events(
     close_event_threshold : float, optional
         Minimum time between events. Events starting within this time after
         a previous event ends are excluded. Default is 1.0 (seconds).
-    included_ripple_inds: list, optional
-        Indices of the included ripples from the original candidate list. This is useful
-        for filtering associated data arrays.
+    included_ripple_inds : array_like, shape (n_events,), optional
+        Values that run alongside the events, such as their indices in an
+        earlier candidate list. Returned filtered the same way, so data
+        aligned with the events stays aligned.
 
     Returns
     -------
-    filtered_event_times : ndarray or list
-        Filtered event times with shape (n_filtered_events, 2), or empty
-        list if no events remain. Returned alone when `included_ripple_inds`
-        is None (the default).
-    included_ripple_inds : list
-        Only returned when `included_ripple_inds` was provided: the retained
-        subset of those indices, aligned with `filtered_event_times`. In that
-        case the function returns the tuple
-        ``(filtered_event_times, included_ripple_inds)``.
+    filtered_event_times : ndarray, shape (n_filtered_events, 2)
+        The retained events; shape ``(0, 2)`` when none remain. Returned
+        alone when `included_ripple_inds` is None (the default).
+    included_ripple_inds : ndarray, shape (n_filtered_events,)
+        Only when `included_ripple_inds` was given: its retained entries, in
+        the tuple ``(filtered_event_times, included_ripple_inds)``.
 
     Notes
     -----
@@ -1247,42 +1253,22 @@ def exclude_close_events(
     is not sorted, results may be incorrect.
 
     """
-    candidate_event_times = np.array(candidate_event_times)
-    if included_ripple_inds is not None:
-        included_ripple_inds = np.array(included_ripple_inds)
-
-    if candidate_event_times.size == 0:
-        return ([], []) if included_ripple_inds is not None else []
-
-    # For single event, no filtering needed
-    if candidate_event_times.shape[0] == 1:
-        if included_ripple_inds is not None:
-            return candidate_event_times, included_ripple_inds
-        return candidate_event_times
-
+    events = np.asarray(candidate_event_times, dtype=float).reshape(-1, 2)
     # Each event is compared with the last *retained* event, so a cluster is
     # reduced to its first event. Comparing with the immediately preceding
     # candidate instead would let a dropped event go on excluding its
     # successors, removing more than the first-of-each-cluster rule.
-    starts = candidate_event_times[:, 0]
-    ends = candidate_event_times[:, 1]
-    keep_mask = np.zeros(len(candidate_event_times), dtype=bool)
-    keep_mask[0] = True
-    last_retained_end = ends[0]
-    for event in range(1, len(candidate_event_times)):
-        gap = starts[event] - last_retained_end
-        if not _is_gap_below(gap, close_event_threshold):
-            keep_mask[event] = True
-            last_retained_end = ends[event]
-
-    filtered_events = candidate_event_times[keep_mask]
-    if included_ripple_inds is not None:
-        included_ripple_inds = included_ripple_inds[keep_mask]
-        return filtered_events if filtered_events.size > 0 else [], (
-            included_ripple_inds if len(included_ripple_inds) > 0 else []
-        )
-    else:
-        return filtered_events if filtered_events.size > 0 else []
+    keep = np.zeros(len(events), dtype=bool)
+    if len(events):
+        keep[0] = True
+        last_retained_end = events[0, 1]
+        for event in range(1, len(events)):
+            if not _is_gap_below(events[event, 0] - last_retained_end, close_event_threshold):
+                keep[event] = True
+                last_retained_end = events[event, 1]
+    if included_ripple_inds is None:
+        return events[keep]
+    return events[keep], np.asarray(included_ripple_inds)[keep]
 
 
 def merge_close_events(

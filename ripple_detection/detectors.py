@@ -13,6 +13,7 @@ from scipy.signal import butter, filtfilt
 from ripple_detection.core import (
     _boolean_run_bounds,
     _get_normalization_mask,
+    _is_immobile_at_endpoints,
     _validate_normalization_params,
     estimate_noise_threshold,
     exclude_close_events,
@@ -106,7 +107,7 @@ def _validate_array_lengths(time: NDArray, filtered_lfps: NDArray, speed: NDArra
 
 
 def _validate_time_units(
-    time: NDArray, sampling_frequency: float, n_samples: int, stacklevel: int = 4
+    time: NDArray, sampling_frequency: float, stacklevel: int = 4
 ) -> None:
     """Validate that time array is in seconds (not samples).
 
@@ -116,8 +117,8 @@ def _validate_time_units(
         Time array to validate.
     sampling_frequency : float
         Expected sampling frequency in Hz.
-    n_samples : int
-        Number of samples.
+    stacklevel : int, optional
+        Frames between this function and the caller's line, for the warning.
 
     Raises
     ------
@@ -132,7 +133,7 @@ def _validate_time_units(
         If time step differs significantly from expected.
 
     """
-    if n_samples > 1:
+    if len(time) > 1:
         steps = np.diff(time)
         if np.any(steps < 0):
             raise ValueError(
@@ -269,7 +270,7 @@ def _preprocess_detector_inputs(
     # Run all validations
     _validate_lfp_dimensions(filtered_lfps)
     _validate_array_lengths(time, filtered_lfps, speed)
-    _validate_time_units(time, sampling_frequency, len(time))
+    _validate_time_units(time, sampling_frequency)
     _validate_speed_units(speed, speed_threshold)
 
     # Remove NaN values
@@ -830,7 +831,6 @@ def Shvartsman_ripple_detector(
             normalization_time_range=normalization_time_range,
         )
 
-    # thresholding the normalized ripple times
     candidate_ripple_times = [
         threshold_by_zscore(filtered_lfp, time, minimum_duration, zscore_threshold)
         for filtered_lfp in filtered_lfps.T
@@ -873,7 +873,6 @@ def Shvartsman_ripple_detector(
     n_participants = np.array([len(p) for p in participants])
     frac_participants = n_participants / n_elecs
 
-    # get final event stats
     ripple_data = _get_event_stats(
         ripple_times,
         time,
@@ -1286,7 +1285,7 @@ def Yu_ripple_detector(
     time = np.asarray(time, dtype=float)
     _validate_lfp_dimensions(filtered_lfps)
     _validate_array_lengths(time, filtered_lfps, speed)
-    _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
+    _validate_time_units(time, sampling_frequency, stacklevel=3)
     _validate_speed_units(speed, speed_threshold, stacklevel=3)
     _validate_duration_limits(minimum_duration, maximum_duration)
 
@@ -1359,29 +1358,19 @@ def Yu_ripple_detector(
         np.concatenate(n_suprathreshold) if n_suprathreshold else np.empty(0, dtype=int)
     )
 
-    # exclude_movement's rule, kept here so the per-event flags stay aligned
-    if len(event_times):
-        speed_at_start = speed[np.searchsorted(time, event_times[:, 0])]
-        speed_at_end = speed[np.searchsorted(time, event_times[:, 1])]
-        keep = (speed_at_start <= speed_threshold) & (speed_at_end <= speed_threshold)
-        event_times, is_clipped, n_suprathreshold = (
-            event_times[keep],
-            is_clipped[keep],
-            n_suprathreshold[keep],
-        )
-    if len(event_times):
-        event_times, kept = exclude_close_events(
-            event_times,
-            close_ripple_threshold,
-            included_ripple_inds=np.arange(len(event_times)),
-        )
-        kept = np.asarray(kept, dtype=int)
-        event_times = np.asarray(event_times).reshape(-1, 2)
-        is_clipped, n_suprathreshold = is_clipped[kept], n_suprathreshold[kept]
-
-    if len(event_times):
-        event_times, keep = _exclude_long_events(event_times, time, maximum_duration)
-        is_clipped, n_suprathreshold = is_clipped[keep], n_suprathreshold[keep]
+    # the per-event flags are filtered alongside the events at each step
+    keep = _is_immobile_at_endpoints(event_times, speed, time, speed_threshold)
+    event_times, is_clipped, n_suprathreshold = (
+        event_times[keep],
+        is_clipped[keep],
+        n_suprathreshold[keep],
+    )
+    event_times, kept = exclude_close_events(
+        event_times, close_ripple_threshold, included_ripple_inds=np.arange(len(event_times))
+    )
+    is_clipped, n_suprathreshold = is_clipped[kept], n_suprathreshold[kept]
+    event_times, keep = _exclude_long_events(event_times, time, maximum_duration)
+    is_clipped, n_suprathreshold = is_clipped[keep], n_suprathreshold[keep]
 
     events = _get_event_stats(
         event_times, time, normalized, speed, minimum_duration=minimum_duration
@@ -1620,7 +1609,7 @@ def Zugaro_ripple_detector(
     time = np.asarray(time, dtype=float)
     _validate_lfp_dimensions(filtered_lfps)
     _validate_array_lengths(time, filtered_lfps, speed)
-    _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
+    _validate_time_units(time, sampling_frequency, stacklevel=3)
     _validate_speed_units(speed, speed_threshold, stacklevel=3)
     _validate_duration_limits(minimum_duration, maximum_duration)
 
@@ -1677,11 +1666,8 @@ def Zugaro_ripple_detector(
     event_times = np.concatenate(event_times) if event_times else np.empty((0, 2))
     peak_times = np.concatenate(peak_times) if peak_times else np.empty(0)
 
-    if len(event_times):
-        speed_at_start = speed[np.searchsorted(time, event_times[:, 0])]
-        speed_at_end = speed[np.searchsorted(time, event_times[:, 1])]
-        keep = (speed_at_start <= speed_threshold) & (speed_at_end <= speed_threshold)
-        event_times, peak_times = event_times[keep], peak_times[keep]
+    keep = _is_immobile_at_endpoints(event_times, speed, time, speed_threshold)
+    event_times, peak_times = event_times[keep], peak_times[keep]
 
     events = _get_event_stats(
         event_times, time, normalized, speed, minimum_duration=minimum_duration
@@ -1864,7 +1850,7 @@ def Long_sharp_wave_ripple_detector(
             f"channel first and the sharp-wave channel second; got shape {lfp.shape}."
         )
     _validate_array_lengths(time, lfp, speed)
-    _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
+    _validate_time_units(time, sampling_frequency, stacklevel=3)
     _validate_speed_units(speed, speed_threshold, stacklevel=3)
     _validate_duration_limits(minimum_sharp_wave_duration, maximum_sharp_wave_duration)
     if np.any(np.isnan(lfp)) or np.any(np.isnan(speed)):
@@ -2006,16 +1992,13 @@ def Long_sharp_wave_ripple_detector(
             }
         )
 
+    detected = pd.DataFrame(records)
     if records:
-        detected = pd.DataFrame(records)
         event_times = np.column_stack([time[detected["start"]], time[detected["end"]]])
-        keep = (speed[detected["start"]] <= speed_threshold) & (
-            speed[detected["end"]] <= speed_threshold
-        )
+        keep = _is_immobile_at_endpoints(event_times, speed, time, speed_threshold)
         detected = detected[keep].reset_index(drop=True)
         event_times = event_times[keep]
     else:
-        detected = pd.DataFrame(records)
         event_times = np.empty((0, 2))
 
     ripple_power_z = normalize_signal(ripple_power)
@@ -2260,7 +2243,7 @@ def Carey_candidate_detector(
         raise ValueError(
             f"Array length mismatch: multiunit has {multiunit.shape[0]} samples but time has {len(time)}."
         )
-    _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
+    _validate_time_units(time, sampling_frequency, stacklevel=3)
     _validate_speed_units(speed, speed_threshold, stacklevel=3)
     _validate_duration_limits(minimum_duration, maximum_duration)
     if (
@@ -2797,7 +2780,7 @@ def multiunit_HSE_detector(
             f"{multiunit.shape}. For a single unit, pass multiunit[:, np.newaxis]."
         )
     _validate_array_lengths(time, multiunit, speed)
-    _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
+    _validate_time_units(time, sampling_frequency, stacklevel=3)
     _validate_speed_units(speed, speed_threshold, stacklevel=3)
     _validate_duration_limits(minimum_duration, maximum_duration)
     if minimum_active_units < 0:
@@ -2897,14 +2880,16 @@ def _get_event_stats(
     """Compute comprehensive statistics for detected events.
 
     Calculates temporal, z-score, signal, and speed metrics for each event.
+    An event's samples are those with ``start_time <= time <= end_time``,
+    found by bisection, so the cost does not grow with the recording length.
 
     Parameters
     ----------
     event_times : array_like, shape (n_events, 2)
         Array of [start_time, end_time] for each event.
     time : array_like, shape (n_time,)
-        Time values for each sample.
-    zscore_metric : array_like, if participants is None: shape (n_time,); else shape (n_time, n_channels)
+        Time values for each sample, increasing.
+    zscore_metric : array_like, shape (n_time,) or (n_time, n_channels)
         Signal the per-event statistics (mean/median/max/min z-score, area,
         total_energy, max_thresh) are computed from. Its exact meaning depends on
         the caller -- e.g. the consensus trace for Kay, the per-channel maximum for
@@ -2916,27 +2901,23 @@ def _get_event_stats(
         Animal's speed at each time point.
     minimum_duration : float, optional
         Minimum duration for max_thresh calculation. Default is 0.015 (15 ms).
-    participants: array_like of set, shape (n_events,)
+    participants : array_like of set, shape (n_events,), optional
         Set of channels that participate in each event; z-score metrics are
         averaged over these channels. Used by Shvartsman_ripple_detector.
-        Optional, default is None.
-    n_participants: array_like, shape (n_events,)
-        Number of distinct participating channels per event. For
-        Shvartsman_ripple_detector this equals ``len(participants[i])``.
-        Optional, default is None.
-    frac_participants: array_like, shape (n_events,)
-        ``n_participants`` divided by the total channel count, per event, as
-        supplied by the caller. Used by Shvartsman_ripple_detector. Optional,
-        default is None.
+    n_participants : array_like, shape (n_events,), optional
+        Number of distinct participating channels per event.
+    frac_participants : array_like, shape (n_events,), optional
+        ``n_participants`` divided by the total channel count, per event.
 
     Returns
     -------
     event_stats : pd.DataFrame
-        DataFrame with one row per event and columns:
+        One row per event, indexed by ``event_number`` from 1, with columns:
         - start_time, end_time: Event boundaries
         - duration: Event duration (end - start)
-        - max_thresh: Maximum z-score sustained for minimum_duration (nan for an
-            event shorter than minimum_duration; not produced by the detectors)
+        - max_thresh: Largest value sustained for minimum_duration (NaN for an
+            event holding fewer samples than the minimum; only
+            ``Long_sharp_wave_ripple_detector`` produces one)
         - mean_zscore, median_zscore, max_zscore, min_zscore: Z-score statistics
         - area: Integral of z-score over event duration
         - total_energy: Integral of squared z-score
@@ -2947,107 +2928,78 @@ def _get_event_stats(
             (returned if 'participants' input is not None)
 
     """
-    event_times_arr = np.asarray(event_times)
-    time_arr = np.asarray(time)
-    zscore_metric_arr = np.asarray(zscore_metric)
-    speed_arr = np.asarray(speed)
-
-    index = pd.Index(np.arange(len(event_times_arr)) + 1, name="event_number")
-    if len(event_times_arr):
-        speed_at_start = speed_arr[nearest_sample_index(time_arr, event_times_arr[:, 0])]
-        speed_at_end = speed_arr[nearest_sample_index(time_arr, event_times_arr[:, 1])]
-    else:
-        speed_at_start = np.empty(0)
-        speed_at_end = np.empty(0)
-
-    mean_zscore = []
-    median_zscore = []
-    max_zscore = []
-    min_zscore = []
-    duration = []
-    max_speed = []
-    min_speed = []
-    median_speed = []
-    mean_speed = []
-    max_thresh = []
-    area = []
-    total_energy = []
-
-    for r, (start_time, end_time) in enumerate(event_times_arr):
-        time_mask = np.logical_and(time_arr >= start_time, time_arr <= end_time)
-
-        if participants is None:
-            if zscore_metric_arr.ndim != 1:
-                raise ValueError(
-                    "Without participants, zscore_metric must have shape "
-                    f"(n_time,). Got shape {zscore_metric_arr.shape}."
-                )
-
-            event_zscore = zscore_metric_arr[time_mask]
-
-        else:
-            time_ind = np.where(time_mask)[0]
-            elec_ind = np.asarray(list(participants[r]))
-
-            # check that zscore_metric is 2-D
-            if zscore_metric_arr.ndim != 2:
-                raise ValueError(
-                    "With participants, zscore_metric must have shape "
-                    "(n_time, n_channels), so each event's metrics can come "
-                    f"from its participating channels. Got shape "
-                    f"{zscore_metric_arr.shape}."
-                )
-
-            event_zscore = zscore_metric_arr[np.ix_(time_ind, elec_ind)].mean(
-                axis=1
-            )  # only include the participating electrodes for all of these metrics
-
-        max_thresh.append(
-            _find_max_thresh(time_arr[time_mask], event_zscore, minimum_duration)
+    events = np.asarray(event_times, dtype=float).reshape(-1, 2)
+    time_arr = np.asarray(time, dtype=float)
+    metric = np.asarray(zscore_metric, dtype=float)
+    speed_arr = np.asarray(speed, dtype=float)
+    if participants is None and metric.ndim != 1:
+        raise ValueError(
+            f"Without participants, zscore_metric must have shape (n_time,). Got shape "
+            f"{metric.shape}."
         )
-        mean_zscore.append(np.mean(event_zscore))
-        median_zscore.append(np.median(event_zscore))
-        max_zscore.append(np.max(event_zscore))
-        min_zscore.append(np.min(event_zscore))
-        area.append(trapezoid(event_zscore, time_arr[time_mask]))
-        total_energy.append(trapezoid(event_zscore**2, time_arr[time_mask]))
-        duration.append(end_time - start_time)
-        max_speed.append(np.max(speed_arr[time_mask]))
-        min_speed.append(np.min(speed_arr[time_mask]))
-        median_speed.append(np.median(speed_arr[time_mask]))
-        mean_speed.append(np.mean(speed_arr[time_mask]))
+    if participants is not None and metric.ndim != 2:
+        raise ValueError(
+            "With participants, zscore_metric must have shape (n_time, n_channels), so "
+            f"each event's metrics can come from its participating channels. Got shape "
+            f"{metric.shape}."
+        )
 
-    event_start_times: NDArray | list
-    event_end_times: NDArray | list
-    try:
-        event_start_times = event_times_arr[:, 0]
-        event_end_times = event_times_arr[:, 1]
-    except (IndexError, TypeError):
-        event_start_times = []
-        event_end_times = []
+    first = np.searchsorted(time_arr, events[:, 0], side="left")
+    last = np.searchsorted(time_arr, events[:, 1], side="right")
+    rows = []
+    for index, ((start_time, end_time), a, b) in enumerate(
+        zip(events, first, last, strict=True)
+    ):
+        event_time = time_arr[a:b]
+        event_speed = speed_arr[a:b]
+        if participants is None:
+            z = metric[a:b]
+        else:
+            z = metric[a:b][:, list(participants[index])].mean(axis=1)
+        rows.append(
+            (
+                start_time,
+                end_time,
+                end_time - start_time,
+                _find_max_thresh(event_time, z, minimum_duration),
+                z.mean(),
+                np.median(z),
+                z.max(),
+                z.min(),
+                trapezoid(z, event_time),
+                trapezoid(z**2, event_time),
+                event_speed[0],
+                event_speed[-1],
+                event_speed.max(),
+                event_speed.min(),
+                np.median(event_speed),
+                event_speed.mean(),
+            )
+        )
 
-    event_stats = {
-        "start_time": event_start_times,
-        "end_time": event_end_times,
-        "duration": duration,
-        "max_thresh": max_thresh,
-        "mean_zscore": mean_zscore,
-        "median_zscore": median_zscore,
-        "max_zscore": max_zscore,
-        "min_zscore": min_zscore,
-        "area": area,
-        "total_energy": total_energy,
-        "speed_at_start": speed_at_start,
-        "speed_at_end": speed_at_end,
-        "max_speed": max_speed,
-        "min_speed": min_speed,
-        "median_speed": median_speed,
-        "mean_speed": mean_speed,
-    }
-    # Shvartsman_ripple_detector passes participation info; the other detectors do not.
+    columns = [
+        "start_time",
+        "end_time",
+        "duration",
+        "max_thresh",
+        "mean_zscore",
+        "median_zscore",
+        "max_zscore",
+        "min_zscore",
+        "area",
+        "total_energy",
+        "speed_at_start",
+        "speed_at_end",
+        "max_speed",
+        "min_speed",
+        "median_speed",
+        "mean_speed",
+    ]
+    values = np.asarray(rows, dtype=float).reshape(-1, len(columns))
+    index = pd.Index(np.arange(len(events)) + 1, name="event_number")
+    event_stats = pd.DataFrame(dict(zip(columns, values.T, strict=True)), index=index)
     if participants is not None:
         event_stats["participants"] = participants
         event_stats["n_participants"] = n_participants
         event_stats["frac_participants"] = frac_participants
-
-    return pd.DataFrame(event_stats, index=index)
+    return event_stats

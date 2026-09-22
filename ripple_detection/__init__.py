@@ -8,8 +8,11 @@ where this package's defaults sit in it.
 """
 
 from ripple_detection.core import (
+    DEFAULT_RIPPLE_BAND,
+    DEFAULT_TRANSITION_WIDTH,
     estimate_noise_threshold,
     exclude_close_events,
+    exclude_movement,
     filter_ripple_band,
     gaussian_smooth,
     get_envelope,
@@ -54,6 +57,8 @@ except ImportError:
     __version__ = "unknown"
 
 __all__ = [
+    "DEFAULT_RIPPLE_BAND",
+    "DEFAULT_TRANSITION_WIDTH",
     "DETECTORS",
     "MULTIUNIT",
     "RAW_LFP_PAIR",
@@ -71,6 +76,7 @@ __all__ = [
     "__version__",
     "estimate_noise_threshold",
     "exclude_close_events",
+    "exclude_movement",
     "filter_ripple_band",
     "gaussian_smooth",
     "get_Kay_ripple_consensus_trace",
