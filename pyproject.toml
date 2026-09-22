@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling>=1.27", "hatch-vcs"]  # 1.27: PEP 639 license expressions
 build-backend = "hatchling.build"
 
 [project]
@@ -7,14 +7,14 @@ name = "ripple_detection"
 dynamic = ["version"]
 description = "Tools for finding sharp-wave ripple events (150-250 Hz) from local field potentials."
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "Eric Denovellis", email = "edeno@bu.edu" }]
 keywords = ["neuroscience", "hippocampus", "ripple", "LFP", "sharp-wave"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
