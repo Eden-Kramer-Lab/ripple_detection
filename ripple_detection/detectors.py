@@ -254,7 +254,7 @@ def _valid_blocks(
 
     A sample is valid when every channel of every signal is finite. Valid
     samples are split into blocks at every invalid sample and wherever the
-    timestamp step exceeds 1.5 sample intervals. Every step of every
+    timestamp step exceeds 1.5 times the median step. Every step of every
     detector runs within a block, so nothing is computed across a gap and
     no event spans one.
 
@@ -286,7 +286,7 @@ def _valid_blocks(
             "Every sample has a NaN in a signal or in speed, so there is nothing to "
             "detect on. Check the alignment of the inputs."
         )
-    return is_valid, _contiguous_valid_blocks(is_valid, time, sampling_frequency)
+    return is_valid, _contiguous_valid_blocks(is_valid, time)
 
 
 def _drop_short_blocks(
@@ -428,27 +428,27 @@ def get_Kay_ripple_consensus_trace(
     not_null = np.all(pd.notna(ripple_filtered_lfps), axis=1)
 
     time_array = None if time is None else np.asarray(time, dtype=float)
-    for start, stop in _contiguous_valid_blocks(not_null, time_array, sampling_frequency):
+    for start, stop in _contiguous_valid_blocks(not_null, time_array):
         block = ripple_filtered_lfps[start:stop]
         ripple_consensus_trace[start:stop] = get_envelope(block)
 
     summed_power = np.sum(ripple_consensus_trace**2, axis=1)
     smoothed = np.full(len(summed_power), np.nan)
-    for start, stop in _contiguous_valid_blocks(not_null, time_array, sampling_frequency):
+    for start, stop in _contiguous_valid_blocks(not_null, time_array):
         smoothed[start:stop] = gaussian_smooth(
             summed_power[start:stop], smoothing_sigma, sampling_frequency
         )
     return np.sqrt(smoothed)
 
 
-def _contiguous_valid_blocks(
-    is_valid: NDArray, time: NDArray | None, sampling_frequency: float
-) -> list[tuple[int, int]]:
+def _contiguous_valid_blocks(is_valid: NDArray, time: NDArray | None) -> list[tuple[int, int]]:
     """Split rows into maximal contiguous valid blocks.
 
     A block ends at an invalid row or, when ``time`` is given, wherever the
-    timestamp step exceeds 1.5 sample intervals (a recording gap or the join
-    between disjoint intervals).
+    timestamp step exceeds 1.5 times the median step (a recording gap or the
+    join between disjoint intervals). The median step is measured from
+    ``time`` rather than taken from the nominal sampling rate, so an
+    overstated rate cannot turn every sample into its own block.
 
     Parameters
     ----------
@@ -456,8 +456,6 @@ def _contiguous_valid_blocks(
         True for rows with finite data in every channel.
     time : ndarray, shape (n_time,), optional
         Sample timestamps in seconds. None declares a regular sample grid.
-    sampling_frequency : float
-        Nominal sampling rate in Hz.
 
     Returns
     -------
@@ -470,8 +468,9 @@ def _contiguous_valid_blocks(
     boundary[0] = boundary[-1] = True
     # a block boundary sits between rows i-1 and i where validity changes
     boundary[1:-1] |= is_valid[1:] != is_valid[:-1]
-    if time is not None:
-        boundary[1:-1] |= np.diff(time) > 1.5 / sampling_frequency
+    if time is not None and n_time > 1:
+        steps = np.diff(time)
+        boundary[1:-1] |= steps > 1.5 * np.median(steps)
     edges = np.flatnonzero(boundary)
     return [(int(start), int(stop)) for start, stop in pairwise(edges) if is_valid[start]]
 
@@ -591,7 +590,7 @@ def get_Yu_ripple_consensus_trace(
         raise ValueError("No sample has finite values in every channel.")
 
     smoothed = np.full_like(ripple_filtered_lfps, np.nan)
-    for start, stop in _contiguous_valid_blocks(is_valid, time, sampling_frequency):
+    for start, stop in _contiguous_valid_blocks(is_valid, time):
         envelope = get_envelope(ripple_filtered_lfps[start:stop])
         smoothed[start:stop] = gaussian_smooth(envelope, smoothing_sigma, sampling_frequency)
 

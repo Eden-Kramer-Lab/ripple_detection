@@ -3414,3 +3414,34 @@ class TestNoEventSpansAGap:
         )
         assert not any((events.start_time < time[7000]) & (events.end_time > time[7001]))
         assert not events.clipped_start.any() and not events.clipped_end.any()
+
+
+class TestGapRuleUsesTheObservedStep:
+    """The block splitter measures the sample step from the timestamps. With a
+    nominal rate 1.5 times too high, every step would exceed 1.5 nominal
+    intervals and every sample would be its own block, so no event could be
+    found; measured from the data, the blocks and the events are unchanged."""
+
+    FS = 1000
+    N_TIME = 20_000  # enough immobility for the Yu noise threshold
+
+    @pytest.mark.parametrize(
+        "detector",
+        [
+            Kay_ripple_detector,
+            Karlsson_ripple_detector,
+            Yu_ripple_detector,
+            Zugaro_ripple_detector,
+        ],
+    )
+    def test_an_overstated_rate_warns_but_still_finds_the_ripples(
+        self, detector, time, stationary
+    ):
+        bursts = [(4000, 4060, 20.0), (10000, 10060, 20.0), (16000, 16060, 20.0)]
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, bursts)
+        with pytest.warns(UserWarning, match="differs from expected sampling interval"):
+            events = detector(time, lfps, stationary, 1.6 * self.FS)
+        for start, _, _ in bursts:
+            assert any(
+                (events.start_time <= time[start + 30]) & (events.end_time >= time[start + 30])
+            )
