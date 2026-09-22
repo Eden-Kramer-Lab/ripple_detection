@@ -1718,6 +1718,28 @@ class TestEndpointSpeedRule:
         assert len(exclude_movement(event, speed, time, np.inf)) == 1
 
 
+class TestHelperErrorPaths:
+    def test_threshold_by_zscore_rejects_a_negative_threshold(self):
+        with pytest.raises(ValueError, match="must be non-negative"):
+            threshold_by_zscore(np.zeros(100), np.arange(100) / 1000.0, 0.015, -1.0)
+
+    def test_majority_rule_raises_for_an_event_outside_the_recording(self):
+        time = np.arange(100) / 1000.0
+        with pytest.raises(ValueError, match="No speed samples fall within"):
+            exclude_movement_by_majority(np.array([[1.0, 1.1]]), np.zeros(100), time, 4.0)
+
+    def test_nearest_sample_of_a_single_timestamp_is_it(self):
+        np.testing.assert_array_equal(nearest_sample_index([2.0], [0.0, 5.0]), [0, 0])
+
+    def test_containing_interval_must_start_before_and_cover_the_target(self):
+        intervals = [(1.0, 2.0), (3.0, 4.0)]
+        assert _find_containing_interval(intervals, (3.2, 3.5)) == (3.0, 4.0)
+        with pytest.raises(ValueError, match="No candidate interval starts"):
+            _find_containing_interval(intervals, (0.5, 0.6))
+        with pytest.raises(ValueError, match="does not contain"):
+            _find_containing_interval(intervals, (1.5, 2.5))
+
+
 class TestCloseEventGap:
     @pytest.mark.parametrize("gap", [-1.0, np.nan])
     def test_exclude_close_events_rejects_a_negative_or_nan_gap(self, gap):

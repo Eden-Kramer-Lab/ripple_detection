@@ -71,12 +71,13 @@ EMPTY_PARAMS = {
 }
 
 # False positives a detector at its defaults is allowed on this 30 s session.
-# Kay and Roumis threshold at 2 SD and give about 13 spurious events a minute on
-# pink noise; Yu's data-driven threshold falls to about 1.1 SD when channels
-# share half their noise (see TestYuUnderCorrelatedNoise), so its budget is wide.
+# Measured on seeds 0-7 of this session: Kay 0-4, Roumis 0-5; each budget is
+# one above the worst seed. Yu's data-driven threshold falls to about 1.1 SD
+# when channels share half their noise (see TestYuUnderCorrelatedNoise) and
+# gave 0-17, so its budget is wide.
 FALSE_POSITIVE_BUDGET = {
-    "Kay_ripple_detector": 12,
-    "Roumis_ripple_detector": 12,
+    "Kay_ripple_detector": 5,
+    "Roumis_ripple_detector": 6,
     "Karlsson_ripple_detector": 4,
     "Shvartsman_ripple_detector": 2,
     "Yu_ripple_detector": 20,

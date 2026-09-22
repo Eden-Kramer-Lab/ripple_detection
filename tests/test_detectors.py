@@ -36,7 +36,11 @@ from ripple_detection.detectors import (
 )
 from ripple_detection.detectors import _events as events_module
 from ripple_detection.detectors._blocks import _contiguous_valid_blocks
-from ripple_detection.detectors._carey import _contained_in_intervals, _state_intervals
+from ripple_detection.detectors._carey import (
+    _contained_in_intervals,
+    _state_intervals,
+    _theta_envelope,
+)
 from ripple_detection.detectors._events import (
     _count_active_units,
     _exclude_long_events,
@@ -1505,6 +1509,10 @@ class TestYuRippleDetector:
         hits = [any((events.start_time <= t) & (events.end_time >= t)) for t in planted]
         assert all(hits)
         assert len(events) <= len(planted) + 2
+        # the mirrored-noise estimate sits about 1 SD above the immobility mean
+        # on this pink-noise background; near 0 it would be thresholding the
+        # mean itself, which a degenerate histogram produces
+        assert 0.5 < events.detection_threshold_zscore.iloc[0] < 3.0
 
     def test_pure_noise_yields_few_events(self):
         fs = 1500
@@ -1520,10 +1528,6 @@ class TestYuRippleDetector:
         )
         events = Yu_ripple_detector(time, lfps, np.full(len(time), 2.0), fs)
         assert len(events) <= 3
-        # the threshold must lie above the immobility mean, which the detector
-        # guarantees; how far above depends on the envelope's skew, and 1.8 to
-        # 2.5 SD is typical of the mirrored-noise estimate on Gaussian noise
-        assert events.detection_threshold_zscore.iloc[0] > 0.0 if len(events) else True
 
     def test_ripples_dominating_the_variance_raise_explicitly(self):
         # When ripples inflate the immobility SD so far that the mean sits
@@ -2280,11 +2284,11 @@ class TestDetectorErrorHandling:
                 np.array([]), np.array([]).reshape(0, 1), np.array([]), sampling_frequency
             )
 
-    def test_nan_in_lfp_rows_are_dropped_and_the_ripples_still_found(
+    def test_nan_in_lfp_rows_are_missing_and_the_ripples_still_found(
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
-        """Rows with NaN are dropped; the planted ripples away from them survive
-        and every statistic is finite."""
+        """Rows with NaN are missing samples that end a block; the planted
+        ripples away from them survive and every statistic is finite."""
         lfp_with_nan = single_lfp_with_ripples.copy()
         lfp_with_nan[100:200, 0] = np.nan
 
@@ -2295,7 +2299,7 @@ class TestDetectorErrorHandling:
         )
 
         assert len(ripples) >= 2
-        assert np.isfinite(ripples.drop(columns=[]).to_numpy(dtype=float)).all()
+        assert np.isfinite(ripples.to_numpy(dtype=float)).all()
 
     def test_nan_speed_inside_a_ripple_leaves_it_whole(
         self, time_3s, stationary_speed, sampling_frequency
@@ -3713,6 +3717,14 @@ class TestNoEventSpansAGap:
             (events.start_time < time[gap[0]]) & (events.end_time > time[gap[1] - 1])
         )
         assert len(events) >= 1
+        # the event cut by the gap ends and starts on its edges, flagged there
+        before = events[events.end_time == time[gap[0] - 1]]
+        after = events[events.start_time == time[gap[1]]]
+        assert len(before) == len(after) == 1
+        assert before.clipped_end.item()
+        assert not before.clipped_start.item()
+        assert after.clipped_start.item()
+        assert not after.clipped_end.item()
 
     @pytest.mark.parametrize("where", ["lfp", "time"])
     def test_two_channel_detector_never_evaluates_a_candidate_across_a_gap(self, where, time):
@@ -4071,6 +4083,69 @@ class TestInputContents:
         filtered = filter_ripple_band(raw, sampling_frequency=1500)
         assert np.isnan(filtered[3000]).all()
         assert np.isfinite(np.delete(filtered, 3000, axis=0)).all()
+
+
+class TestRemainingErrorPaths:
+    """Error paths no other test reached."""
+
+    FS = 1000
+
+    def test_theta_is_filtered_separately_on_each_side_of_a_timestamp_gap(self):
+        time = np.arange(20_000) / self.FS
+        time[10_000:] += 0.5  # a half-second hole in the timestamps
+        theta = np.random.default_rng(0).standard_normal(20_000)
+        theta[10_000:] += 50.0  # a step the filter would ring on if it spanned the gap
+        envelope = _theta_envelope(theta, time, self.FS, (6.0, 10.0))
+        left = _theta_envelope(theta[:10_000], time[:10_000], self.FS, (6.0, 10.0))
+        right = _theta_envelope(theta[10_000:], time[10_000:], self.FS, (6.0, 10.0))
+        np.testing.assert_allclose(envelope, np.concatenate([left, right]))
+
+    def test_theta_with_no_finite_sample_leaves_nothing_to_detect(self):
+        time = np.arange(5000) / self.FS
+        lfps, multiunit = _synthetic_joint_inputs(5000, self.FS, (2500,))
+        with pytest.raises(ValueError, match="nothing to detect"):
+            Carey_candidate_detector(
+                time,
+                lfps,
+                multiunit,
+                np.full(5000, 2.0),
+                self.FS,
+                theta_lfp=np.full(5000, np.nan),
+            )
+
+    def test_yu_consensus_of_all_missing_samples_raises(self):
+        with pytest.raises(ValueError, match="No sample has finite values"):
+            get_Yu_ripple_consensus_trace(np.full((100, 2), np.nan), self.FS)
+
+    def test_yu_consensus_raises_for_a_channel_with_no_spread(self):
+        lfps = np.random.default_rng(0).standard_normal((2000, 3))
+        lfps[:, 1] = 0.0
+        with pytest.raises(ValueError, match=r"channel indices \[1\]"):
+            get_Yu_ripple_consensus_trace(lfps, self.FS, zscore_per_channel=True)
+
+    def test_shvartsman_statistics_without_manual_normalization_raise(self):
+        time = np.arange(5000) / self.FS
+        lfps = _synthetic_ripple_band(5000, self.FS, [(2500, 2560, 20.0)])
+        with pytest.raises(ValueError, match="apply only with"):
+            Shvartsman_ripple_detector(
+                time, lfps, np.full(5000, 2.0), self.FS, channel_baselines=[0.0, 0.0, 0.0]
+            )
+
+    def test_long_with_one_candidate_window_raises(self):
+        # a window longer than half the recording leaves one window to cluster
+        time = np.arange(5000) / self.FS
+        lfp = _synthetic_two_channel_lfp(5000, self.FS, (2500,))
+        with pytest.raises(ValueError, match="Too few candidate windows"):
+            Long_sharp_wave_ripple_detector(
+                time, lfp, np.full(5000, 2.0), self.FS, window_size=3.0
+            )
+
+    @pytest.mark.parametrize(
+        ("lfps", "match"), [(np.float64(1.0), "scalar"), (np.zeros((10, 2, 2)), "3D")]
+    )
+    def test_lfp_of_the_wrong_rank_raises(self, lfps, match):
+        with pytest.raises(ValueError, match=match):
+            Kay_ripple_detector(np.arange(10) / self.FS, lfps, np.zeros(10), self.FS)
 
 
 class TestGapRule:
