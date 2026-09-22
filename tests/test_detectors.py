@@ -982,13 +982,6 @@ class TestMultiunitHSEDetector:
 
 
 class TestMultiunitHSEValidation:
-    def test_nan_in_speed_raises(self, time_3s, sampling_frequency):
-        multiunit = np.zeros((len(time_3s), 3))
-        speed = np.full(len(time_3s), 2.0)
-        speed[10] = np.nan
-        with pytest.raises(ValueError, match="speed"):
-            multiunit_HSE_detector(time_3s, multiunit, speed, sampling_frequency)
-
     """multiunit_HSE_detector validates its inputs like the LFP detectors."""
 
     @pytest.fixture
@@ -999,11 +992,17 @@ class TestMultiunitHSEValidation:
         multiunit = (rng.random((n, 4)) < 0.02).astype(float)
         return np.arange(n) / fs, multiunit, np.full(n, 2.0), fs
 
-    def test_nan_spike_counts_raise(self, inputs):
+    def test_nan_marks_the_sample_missing_in_spikes_or_speed(self, inputs):
+        """A NaN spike count or speed sample is missing data, not an error: the
+        burst on the far side of it is still found, and nothing spans it."""
         time, multiunit, speed, fs = inputs
+        multiunit[2000:2060] = 1.0  # a burst
+        clean = multiunit_HSE_detector(time, multiunit, speed, fs)
         multiunit[100, 1] = np.nan
-        with pytest.raises(ValueError, match="NaN"):
-            multiunit_HSE_detector(time, multiunit, speed, fs)
+        speed[300] = np.nan
+        events = multiunit_HSE_detector(time, multiunit, speed, fs)
+        assert len(events) == len(clean) >= 1
+        assert not any((events.start_time <= time[100]) & (events.end_time >= time[100]))
 
     def test_length_mismatch_raises(self, inputs):
         time, multiunit, speed, fs = inputs
@@ -1198,7 +1197,7 @@ class TestExtractYuRippleEvents:
         for n_run, expected in [(n_min - 1, 0), (n_min, 1)]:
             trace = np.zeros(3000)
             trace[1000 : 1000 + n_run] = 5.0
-            events, _, _ = _extract_Yu_ripple_events(trace, time, duration, 2.0)
+            events, _ = _extract_Yu_ripple_events(trace, time, duration, 2.0)
             assert len(events) == expected, (n_run, len(events))
 
     """Sample-count qualification and mean-crossing extension, Yu et al. 2017."""
@@ -1230,7 +1229,7 @@ class TestExtractYuRippleEvents:
         trace = self._trace(
             n_time, above_zero=[(100, 300)], above_threshold=[(150, 150 + n_samples)]
         )
-        events, _, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
+        events, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         assert (len(events) == 1) == qualifies
 
     def test_extends_to_containing_above_zero_run(self):
@@ -1238,7 +1237,7 @@ class TestExtractYuRippleEvents:
         n_time = 500
         time = np.arange(n_time) / fs
         trace = self._trace(n_time, above_zero=[(100, 300)], above_threshold=[(150, 200)])
-        events, _, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
+        events, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         np.testing.assert_allclose(events, [[time[100], time[299]]])
 
     def test_a_sample_at_the_mean_stays_in_the_run_and_one_below_ends_it(self):
@@ -1249,10 +1248,10 @@ class TestExtractYuRippleEvents:
         time = np.arange(n_time) / fs
         trace = self._trace(n_time, above_zero=[(100, 300)], above_threshold=[(150, 200)])
         trace[250] = 0.0
-        events, _, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
+        events, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         np.testing.assert_allclose(events, [[time[100], time[299]]])
         trace[250] = -1e-9
-        events, _, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
+        events, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         np.testing.assert_allclose(events, [[time[100], time[249]]])
 
     def test_two_exceedances_in_one_run_yield_one_event(self):
@@ -1262,7 +1261,7 @@ class TestExtractYuRippleEvents:
         trace = self._trace(
             n_time, above_zero=[(100, 300)], above_threshold=[(120, 160), (220, 260)]
         )
-        events, _, n_supra = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
+        events, n_supra = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         assert len(events) == 1
         assert n_supra[0] == 40  # the longest qualifying run
 
@@ -1271,28 +1270,24 @@ class TestExtractYuRippleEvents:
         n_time = 500
         time = np.arange(n_time) / fs
         trace = self._trace(n_time, above_zero=[(100, 300)], above_threshold=[(150, 160)])
-        events, _, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
+        events, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         assert len(events) == 0
 
-    def test_clipped_at_block_edges_is_flagged(self):
+    def test_a_run_reaching_the_block_edge_is_kept(self):
         fs = 1000
         n_time = 200
         time = np.arange(n_time) / fs
-        # above zero from the very first sample to the last: clipped both sides
+        # above zero from the very first sample to the last
         trace = self._trace(n_time, above_zero=[(0, 200)], above_threshold=[(50, 100)])
-        events, clipped, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
+        events, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         np.testing.assert_allclose(events, [[time[0], time[-1]]])
-        assert clipped.tolist() == [[True, True]]
-        trace = self._trace(n_time, above_zero=[(20, 200)], above_threshold=[(50, 100)])
-        _, clipped, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
-        assert clipped.tolist() == [[False, True]]
 
     def test_uses_native_timestamps(self):
         fs = 1000
         n_time = 500
         time = 100.0 + np.arange(n_time) / fs + 1e-4 * np.sin(np.arange(n_time))
         trace = self._trace(n_time, above_zero=[(100, 300)], above_threshold=[(150, 200)])
-        events, _, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
+        events, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         assert events[0, 0] == time[100]
         assert events[0, 1] == time[299]
 
@@ -1306,11 +1301,8 @@ class TestExtractYuRippleEvents:
     def test_empty_result_shapes(self):
         fs = 1000
         time = np.arange(100) / fs
-        events, clipped, n_supra = _extract_Yu_ripple_events(
-            np.full(100, -0.5), time, 0.020, 3.0
-        )
+        events, n_supra = _extract_Yu_ripple_events(np.full(100, -0.5), time, 0.020, 3.0)
         assert events.shape == (0, 2)
-        assert clipped.shape == (0, 2)
         assert n_supra.shape == (0,)
 
 
@@ -1610,17 +1602,12 @@ class TestTwoThresholdEvents:
         events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
         assert len(events) == 0
 
-    def test_event_at_the_record_start_or_end_is_dropped(self):
-        # FindRipples pairs starts with stops and discards an unpaired first or last run
+    def test_event_at_the_block_start_or_end_is_kept(self):
+        # FindRipples discards an unpaired first or last run; this package keeps
+        # it, starting or ending on the block edge, and flags it downstream
         z, t = self._trace(500, [(0, 50, 6.0), (200, 250, 6.0), (470, 500, 6.0)])
         events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
-        np.testing.assert_allclose(events, [[t[199], t[249]]])
-
-    def test_record_that_starts_above_threshold_yields_no_event(self):
-        # only a falling crossing exists: the unpaired first stop is discarded
-        z, t = self._trace(500, [(0, 50, 6.0)])
-        events, peaks = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
-        assert events.shape == (0, 2) and peaks.shape == (0,)
+        np.testing.assert_allclose(events, [[t[0], t[49]], [t[199], t[249]], [t[469], t[499]]])
 
     def test_duration_limits_are_inclusive_sample_counts(self):
         # an event spans from the sample before the run to the run's last sample;
@@ -1705,21 +1692,23 @@ class TestZugaroRippleDetector:
         pd.testing.assert_frame_equal(one, two)
 
     def test_missing_data_is_handled_block_wise(self, time, stationary):
-        # one burst well inside the first block is found; the burst that runs
-        # into the gap touches its block's edge and is dropped, as FindRipples
-        # drops a run without both crossings (Yu keeps and flags such runs)
+        # one burst well inside the first block is found whole; the burst that
+        # runs into the gap ends on its block's last sample and is flagged
         lfps = _synthetic_ripple_band(
             self.N_TIME, self.FS, [(7000, 7040, 20.0), (8000, 8040, 20.0)]
         )
         lfps[8030:8100, :] = np.nan
         events = Zugaro_ripple_detector(time, lfps, stationary, self.FS)
-        assert len(events) == 1
+        assert len(events) == 2
         assert time[6990] <= events.start_time.iloc[0] <= time[7010]
         assert events.end_time.iloc[0] <= time[7060]
+        assert not events.clipped_start.iloc[0] and not events.clipped_end.iloc[0]
+        assert events.end_time.iloc[1] == time[8029]
+        assert events.clipped_end.iloc[1] and not events.clipped_start.iloc[1]
 
     def test_no_finite_sample_raises(self, time, stationary):
         lfps = np.full((self.N_TIME, 2), np.nan)
-        with pytest.raises(ValueError, match="finite"):
+        with pytest.raises(ValueError, match="nothing to detect"):
             Zugaro_ripple_detector(time, lfps, stationary, self.FS)
 
     def test_even_smoothing_window_is_rejected(self, time, stationary):
@@ -1958,7 +1947,7 @@ class TestLongSharpWaveRippleDetector:
     def test_record_shorter_than_the_slowest_kernel_raises(self):
         n_time = 500  # the 2 Hz Gaussian low-pass spans 957 samples at 1 kHz
         lfp = _synthetic_two_channel_lfp(n_time, self.FS, ())
-        with pytest.raises(ValueError, match=r"at least .* samples"):
+        with pytest.raises(ValueError, match=r"as long as the .* samples"):
             Long_sharp_wave_ripple_detector(
                 np.arange(n_time) / self.FS, lfp, np.full(n_time, 2.0), self.FS
             )
@@ -1993,11 +1982,19 @@ class TestLongSharpWaveRippleDetector:
         with pytest.raises(ValueError, match="two"):
             Long_sharp_wave_ripple_detector(time, np.hstack([lfp, lfp]), stationary, self.FS)
 
-    def test_nan_raises(self, time, stationary):
+    def test_nan_splits_the_record_and_events_far_from_it_survive(self, time, stationary):
+        """A NaN sample ends a block. Blocks shorter than the sharp-wave kernel
+        are treated as missing with a warning; the events on the long side
+        are found as before."""
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
-        lfp[100, 0] = np.nan
-        with pytest.raises(ValueError, match="NaN"):
-            Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS)
+        clean = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, random_state=0)
+        lfp[100, 0] = np.nan  # leaves a 100-sample block before it
+        with pytest.warns(UserWarning, match="treated as missing"):
+            events = Long_sharp_wave_ripple_detector(
+                time, lfp, stationary, self.FS, random_state=0
+            )
+        assert len(events) == len(clean) >= 1
+        assert not events.clipped_start.any() and not events.clipped_end.any()
 
     def test_exported_from_package_root(self):
         import ripple_detection
@@ -2191,10 +2188,21 @@ class TestCareyCandidateDetector:
             Carey_candidate_detector(time, lfps, multiunit[:-1], stationary, self.FS)
         with pytest.raises(ValueError, match="2D"):
             Carey_candidate_detector(time, lfps, multiunit[:, 0], stationary, self.FS)
-        bad = multiunit.copy()
-        bad[10, 0] = np.nan
-        with pytest.raises(ValueError, match="NaN"):
-            Carey_candidate_detector(time, lfps, bad, stationary, self.FS)
+
+    def test_nan_marks_the_sample_missing(self, time, stationary):
+        """A NaN in the spikes, the LFP or speed ends a block; the candidates
+        elsewhere are still found and none spans the missing sample."""
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        clean = Carey_candidate_detector(time, lfps, multiunit, stationary, self.FS)
+        multiunit[10, 0] = np.nan
+        lfps[self.EVENTS[0], :] = np.nan  # in the middle of the first event
+        events = Carey_candidate_detector(time, lfps, multiunit, stationary, self.FS)
+        assert len(clean) >= 2
+        assert not any(
+            (events.start_time < time[self.EVENTS[0]])
+            & (events.end_time > time[self.EVENTS[0]])
+        )
+        assert set(self._hits(events, time, self.EVENTS[1:])) == {True}
 
     def test_multiunit_without_spikes_raises(self, time, stationary):
         lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
@@ -2254,11 +2262,11 @@ class TestDetectorErrorHandling:
         assert len(ripples) >= 2
         assert np.isfinite(ripples.drop(columns=[]).to_numpy(dtype=float)).all()
 
-    def test_nan_speed_inside_a_ripple_is_dropped_and_the_event_kept(
+    def test_nan_speed_inside_a_ripple_splits_it_into_two_clipped_events(
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
-        """The row-drop contract: NaN speed samples are removed, the event
-        spans them, and its speed statistics come from the remaining samples."""
+        """Missing speed is missing data: the ripple is cut at the gap, and the
+        two halves end and start on the gap's edges, flagged as clipped."""
         speed_with_nan = stationary_speed.copy()
         speed_with_nan[1640:1660] = np.nan  # inside the ripple planted at 1.1 s
 
@@ -2267,9 +2275,12 @@ class TestDetectorErrorHandling:
             time_3s, filtered_lfps, speed_with_nan, sampling_frequency
         )
 
-        covering = ripples[(ripples.start_time <= 1.1) & (ripples.end_time >= 1.1)]
-        assert len(covering) == 1
-        assert np.isfinite(covering.to_numpy(dtype=float)).all()
+        before = ripples[ripples.end_time == time_3s[1639]]
+        after = ripples[ripples.start_time == time_3s[1660]]
+        assert len(before) == 1 and len(after) == 1
+        assert before.clipped_end.item() and not before.clipped_start.item()
+        assert after.clipped_start.item() and not after.clipped_end.item()
+        assert not ripples[(ripples.start_time < 1.1) & (ripples.end_time > 1.1)].shape[0]
 
         filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
         ripples = Kay_ripple_detector(
@@ -3422,3 +3433,86 @@ class TestCareyMinimumDuration:
             time, lfps, multiunit, speed, self.FS, minimum_duration=n_min / self.FS
         )
         assert len(none) == 0
+
+
+class TestNoEventSpansAGap:
+    """The one missing-sample policy: a NaN in any signal or in speed ends a
+    block, nothing is computed across the gap, no event spans it, and an event
+    cut off by the gap is flagged. Here a gap is cut through the middle of a
+    burst, so every detector must return one event ending on the sample before
+    the gap and one starting on the sample after it."""
+
+    FS = 1000
+    N_TIME = 20_000
+    BURST = (5000, 5080)
+    GAP = (5035, 5045)
+
+    @pytest.fixture
+    def time(self):
+        return np.arange(self.N_TIME) / self.FS
+
+    @staticmethod
+    def _check(events, time, gap):
+        gap_start, gap_stop = gap
+        assert not any(
+            (events.start_time < time[gap_start]) & (events.end_time > time[gap_stop - 1])
+        ), "an event spans the gap"
+        before = events[events.end_time == time[gap_start - 1]]
+        after = events[events.start_time == time[gap_stop]]
+        assert len(before) == 1 and len(after) == 1
+        assert before.clipped_end.item() and after.clipped_start.item()
+        assert not before.clipped_start.item() and not after.clipped_end.item()
+        assert np.isfinite(events.select_dtypes(float).to_numpy()).all()
+
+    @pytest.mark.parametrize(
+        "detector",
+        [
+            Kay_ripple_detector,
+            Karlsson_ripple_detector,
+            Roumis_ripple_detector,
+            Shvartsman_ripple_detector,
+            Yu_ripple_detector,
+            Zugaro_ripple_detector,
+        ],
+    )
+    @pytest.mark.parametrize("where", ["lfp", "speed"])
+    def test_ripple_band_detectors(self, detector, where, time):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(*self.BURST, 20.0)])
+        speed = np.full(self.N_TIME, 2.0)
+        if where == "lfp":
+            lfps[slice(*self.GAP), 0] = np.nan
+        else:
+            speed[slice(*self.GAP)] = np.nan
+        kwargs = {"maximum_duration": None} if detector is Zugaro_ripple_detector else {}
+        events = detector(time, lfps, speed, self.FS, **kwargs)
+        self._check(events, time, self.GAP)
+
+    def test_burst_detector(self, time):
+        multiunit = np.zeros((self.N_TIME, 6))
+        multiunit[slice(*self.BURST)] = 1.0
+        multiunit[slice(*self.GAP), 2] = np.nan
+        events = multiunit_HSE_detector(time, multiunit, np.full(self.N_TIME, 2.0), self.FS)
+        self._check(events, time, self.GAP)
+
+    def test_joint_detector(self, time):
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, (self.BURST[0] + 40,))
+        gap = (self.BURST[0] + 35, self.BURST[0] + 45)
+        multiunit[slice(*gap), 0] = np.nan
+        events = Carey_candidate_detector(
+            time, lfps, multiunit, np.full(self.N_TIME, 2.0), self.FS, minimum_active_units=1
+        )
+        assert not any(
+            (events.start_time < time[gap[0]]) & (events.end_time > time[gap[1] - 1])
+        )
+        assert len(events) >= 1
+
+    def test_two_channel_detector_never_evaluates_a_candidate_across_a_gap(self, time):
+        centers = (3000, 7000, 11000, 15000)
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, centers)
+        lfp[7000:7002, 1] = np.nan  # a gap through the second event
+        # candidates within the 5 s local window of a block edge are not evaluated
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp, np.full(self.N_TIME, 2.0), self.FS, random_state=0
+        )
+        assert not any((events.start_time < time[7000]) & (events.end_time > time[7001]))
+        assert not events.clipped_start.any() and not events.clipped_end.any()

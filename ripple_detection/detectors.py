@@ -204,108 +204,184 @@ def _validate_speed_units(speed: NDArray, speed_threshold: float, stacklevel: in
                 )
 
 
-def _preprocess_detector_inputs(
+def _validate_detector_inputs(
     time: ArrayLike,
-    filtered_lfps: ArrayLike,
+    signal: ArrayLike,
     speed: ArrayLike,
     sampling_frequency: float,
-    speed_threshold: float = 4.0,
-    normalization_mask: ArrayLike | None = None,
-) -> tuple[NDArray, NDArray, NDArray, NDArray | None]:
-    """Remove NaN values from detector inputs and validate units.
-
-    Ensures all inputs are aligned by removing any time points where
-    LFP data or speed contains NaN values. Also validates that time
-    and speed appear to be in the correct units. This preprocessing
-    step is shared by all ripple detectors.
+    speed_threshold: float,
+    stacklevel: int = 4,
+) -> tuple[NDArray, NDArray, NDArray]:
+    """Cast the inputs to float arrays and check shapes, lengths and units.
 
     Parameters
     ----------
     time : array_like, shape (n_time,)
-        Time values for each sample in seconds.
-    filtered_lfps : array_like, shape (n_time, n_channels)
-        Bandpass filtered LFP signals.
+    signal : array_like, shape (n_time, n_channels)
+        Ripple-band LFP, raw LFP or spike counts, checked to be 2-D.
     speed : array_like, shape (n_time,)
-        Animal's running speed in cm/s.
     sampling_frequency : float
-        Sampling rate in Hz, used to validate time units.
-    speed_threshold : float, optional
-        Speed threshold in cm/s, used to validate speed units. Default is 4.0.
-    normalization_mask : array_like, shape (n_time,), optional
-        Boolean mask over the original time samples. Filtered by the same NaN
-        removal so it stays aligned with the cleaned data. Default is None.
+    speed_threshold : float
+        Used only to judge whether speed is in cm/s.
+    stacklevel : int, optional
+        Frames between this function and the caller's line, for warnings.
 
     Returns
     -------
-    time_clean : ndarray, shape (n_clean_time,)
-        Time array with NaN rows removed.
-    filtered_lfps_clean : ndarray, shape (n_clean_time, n_channels)
-        LFP array with NaN rows removed.
-    speed_clean : ndarray, shape (n_clean_time,)
-        Speed array with NaN values removed.
-    normalization_mask_clean : ndarray or None, shape (n_clean_time,)
-        The normalization mask with the same NaN rows removed, or None if no
-        mask was provided.
+    time, signal, speed : ndarray
+        The inputs as float arrays.
 
     Raises
     ------
     ValueError
-        If filtered_lfps is not 2D, if array lengths don't match, if time is
-        not increasing or appears to be in samples, or if every sample holds
-        a NaN.
-
-    Warnings
-    --------
-    UserWarning
-        If speed values appear to be in wrong units (m/s instead of cm/s), or
-        if removing NaN samples changed the median time step by more than
-        20 %, since the smoothing then assumes a rate the data no longer has.
+        If the signal is not 2-D, the lengths differ, time is not increasing
+        or appears to be in samples.
 
     """
-    # Convert to arrays
-    filtered_lfps = np.asarray(filtered_lfps, dtype=float)
-    speed = np.asarray(speed)
-    time = np.asarray(time)
+    signal = np.asarray(signal, dtype=float)
+    speed = np.asarray(speed, dtype=float)
+    time = np.asarray(time, dtype=float)
+    _validate_lfp_dimensions(signal)
+    _validate_array_lengths(time, signal, speed)
+    _validate_time_units(time, sampling_frequency, stacklevel=stacklevel)
+    _validate_speed_units(speed, speed_threshold, stacklevel=stacklevel)
+    return time, signal, speed
 
-    # Run all validations
-    _validate_lfp_dimensions(filtered_lfps)
-    _validate_array_lengths(time, filtered_lfps, speed)
-    _validate_time_units(time, sampling_frequency)
-    _validate_speed_units(speed, speed_threshold)
 
-    # Remove NaN values
-    not_null = np.all(pd.notna(filtered_lfps), axis=1) & pd.notna(speed)
-    if not np.any(not_null):
+def _valid_blocks(
+    time: NDArray, sampling_frequency: float, *signals: NDArray
+) -> tuple[NDArray, list[tuple[int, int]]]:
+    """The samples every detector may use, and their contiguous blocks.
+
+    A sample is valid when every channel of every signal is finite. Valid
+    samples are split into blocks at every invalid sample and wherever the
+    timestamp step exceeds 1.5 sample intervals. Every step of every
+    detector runs within a block, so nothing is computed across a gap and
+    no event spans one.
+
+    Parameters
+    ----------
+    time : ndarray, shape (n_time,)
+    sampling_frequency : float
+    *signals : ndarray, shape (n_time,) or (n_time, n_channels)
+        The LFP, spikes and speed the detector reads.
+
+    Returns
+    -------
+    is_valid : ndarray of bool, shape (n_time,)
+    blocks : list of (start, stop)
+        Half-open index ranges of the valid blocks, in order.
+
+    Raises
+    ------
+    ValueError
+        If no sample is valid.
+
+    """
+    is_valid = np.ones(len(time), dtype=bool)
+    for signal in signals:
+        finite = np.isfinite(signal)
+        is_valid &= finite.all(axis=1) if finite.ndim == 2 else finite
+    if not np.any(is_valid):
         raise ValueError(
-            "Every sample has NaN in filtered_lfps or in speed, so there is nothing to "
+            "Every sample has a NaN in a signal or in speed, so there is nothing to "
             "detect on. Check the alignment of the inputs."
         )
-    if not np.all(not_null):
-        step = np.median(np.diff(time[not_null]))
-        if not np.isclose(step, 1.0 / sampling_frequency, rtol=0.2):
-            warnings.warn(
-                f"Removing {int(np.sum(~not_null))} samples with NaN left a median time "
-                f"step of {step:.6f} s, not the {1.0 / sampling_frequency:.6f} s that "
-                f"sampling_frequency={sampling_frequency} implies. The envelope and the "
-                "smoothing kernel assume that rate. Interpolate NaN speed samples, or pass "
-                "one contiguous block per call.",
-                UserWarning,
-                stacklevel=3,
-            )
+    return is_valid, _contiguous_valid_blocks(is_valid, time, sampling_frequency)
 
-    # Filter the normalization mask by the same rows so it stays aligned with
-    # the cleaned data (otherwise its length no longer matches after NaN removal).
-    mask_clean: NDArray | None = None
-    if normalization_mask is not None:
-        mask = np.asarray(normalization_mask)
-        if len(mask) != len(not_null):
-            raise ValueError(
-                f"normalization_mask length ({len(mask)}) must match "
-                f"the number of time samples ({len(not_null)})."
-            )
-        mask_clean = mask[not_null]
 
-    return time[not_null], filtered_lfps[not_null], speed[not_null], mask_clean
+def _drop_short_blocks(
+    blocks: list[tuple[int, int]],
+    is_valid: NDArray,
+    minimum_length: int,
+    reason: str,
+    stacklevel: int = 3,
+) -> list[tuple[int, int]]:
+    """Treat blocks shorter than a detector's transform needs as missing.
+
+    Marks their samples invalid in place, warns with their sample ranges, and
+    raises if no block remains.
+    """
+    short = [(start, stop) for start, stop in blocks if stop - start < minimum_length]
+    if not short:
+        return blocks
+    for start, stop in short:
+        is_valid[start:stop] = False
+    kept = [(start, stop) for start, stop in blocks if stop - start >= minimum_length]
+    if not kept:
+        raise ValueError(
+            f"No block of finite samples is as long as the {minimum_length} samples that "
+            f"{reason} needs."
+        )
+    warnings.warn(
+        f"{len(short)} block(s) of finite samples shorter than the {minimum_length} samples "
+        f"that {reason} needs are treated as missing (sample ranges "
+        f"{short[:5]}{', ...' if len(short) > 5 else ''}).",
+        UserWarning,
+        stacklevel=stacklevel,
+    )
+    return kept
+
+
+def _mask_invalid(signal: NDArray, is_valid: NDArray) -> NDArray:
+    """A copy of ``signal`` with NaN at every invalid sample, so a helper that
+    splits blocks on its own splits them where the detector does."""
+    masked = signal.copy()
+    masked[~is_valid] = np.nan
+    return masked
+
+
+def _normalization_mask_over_valid(
+    n_time: int,
+    time: NDArray,
+    is_valid: NDArray,
+    normalization_method: str,
+    normalization_mask: ArrayLike | None,
+    normalization_time_range: tuple[float, float] | None,
+) -> NDArray:
+    """The samples the normalization statistics come from: the caller's mask
+    or time range, if any, restricted to valid samples."""
+    _validate_normalization_params(
+        normalization_method, normalization_mask, normalization_time_range, time
+    )
+    mask = _get_normalization_mask(
+        (n_time,), time, normalization_mask, normalization_time_range
+    )
+    mask = is_valid if mask is None else mask & is_valid
+    if not np.any(mask):
+        raise ValueError(
+            "The normalization mask selects no sample that is finite in every signal; "
+            "cannot compute normalization statistics."
+        )
+    return mask
+
+
+def _threshold_blocks(
+    normalized: NDArray,
+    time: NDArray,
+    blocks: list[tuple[int, int]],
+    minimum_duration: float,
+    zscore_threshold: float,
+) -> list[tuple[float, float]]:
+    """``threshold_by_zscore`` within each block; events never span a gap.
+
+    A block with fewer samples than the minimum duration cannot hold an
+    event and is skipped, which also keeps the sample count from being
+    measured on a block too short to have a median step.
+    """
+    n_min = minimum_sample_count(time, minimum_duration)
+    events: list[tuple[float, float]] = []
+    for start, stop in blocks:
+        if stop - start >= n_min:
+            events.extend(
+                threshold_by_zscore(
+                    normalized[start:stop],
+                    time[start:stop],
+                    minimum_duration,
+                    zscore_threshold,
+                )
+            )
+    return events
 
 
 def get_Kay_ripple_consensus_trace(
@@ -413,23 +489,22 @@ def _contiguous_valid_blocks(
 
 def _smoothed_envelope(
     filtered_lfps: NDArray,
-    time: NDArray,
+    blocks: list[tuple[int, int]],
     sampling_frequency: float,
     smoothing_sigma: float,
     square: bool = False,
 ) -> NDArray:
-    """Per-channel envelope, squared if asked, smoothed within each contiguous block.
+    """Per-channel envelope, squared if asked, smoothed within each block.
 
-    A block ends wherever the timestamp step exceeds 1.5 sample intervals,
-    so neither the Hilbert transform nor the Gaussian kernel spans a gap left
-    by removed samples. Blocks are otherwise treated as adjacent.
+    Neither the Hilbert transform nor the Gaussian kernel spans a gap.
+    Samples outside every block are NaN.
 
     Parameters
     ----------
     filtered_lfps : ndarray, shape (n_time, n_channels)
-        Ripple-band LFP with no missing samples.
-    time : ndarray, shape (n_time,)
-        Sample timestamps in seconds, increasing.
+        Ripple-band LFP.
+    blocks : list of (start, stop)
+        Half-open index ranges of the valid blocks (``_valid_blocks``).
     sampling_frequency : float
     smoothing_sigma : float
         Gaussian standard deviation in seconds.
@@ -441,9 +516,8 @@ def _smoothed_envelope(
     smoothed : ndarray, shape (n_time, n_channels)
 
     """
-    smoothed = np.empty_like(filtered_lfps)
-    all_valid = np.ones(len(time), dtype=bool)
-    for start, stop in _contiguous_valid_blocks(all_valid, time, sampling_frequency):
+    smoothed = np.full_like(filtered_lfps, np.nan)
+    for start, stop in blocks:
         envelope = get_envelope(filtered_lfps[start:stop])
         if square:
             envelope = envelope**2
@@ -558,7 +632,7 @@ def _extract_Yu_ripple_events(
     time: NDArray,
     minimum_duration: float,
     threshold: float,
-) -> tuple[NDArray, NDArray, NDArray]:
+) -> tuple[NDArray, NDArray]:
     """Extract events from one contiguous block of a mean-zero consensus trace.
 
     A run of consecutive samples at or above ``threshold`` qualifies when it
@@ -589,9 +663,6 @@ def _extract_Yu_ripple_events(
     event_times : ndarray, shape (n_events, 2)
         ``[start_time, end_time]`` of each event: the native timestamps of the
         first and last samples of the containing run at or above zero.
-    is_clipped : ndarray of bool, shape (n_events, 2)
-        Whether the event's start or end coincides with the block edge, i.e.
-        the run was truncated by the end of the available data.
     n_suprathreshold_samples : ndarray of int, shape (n_events,)
         Sample count of the longest qualifying run inside each event.
 
@@ -613,7 +684,7 @@ def _extract_Yu_ripple_events(
     supra_runs = _boolean_run_bounds(trace >= threshold)
     supra_runs = supra_runs[(supra_runs[:, 1] - supra_runs[:, 0]) >= n_min]
     if len(supra_runs) == 0:
-        return np.empty((0, 2)), np.empty((0, 2), dtype=bool), np.empty(0, dtype=int)
+        return np.empty((0, 2)), np.empty(0, dtype=int)
 
     above_zero_runs = _boolean_run_bounds(trace >= 0)
     # the above-zero run containing each qualifying run's first sample
@@ -621,18 +692,12 @@ def _extract_Yu_ripple_events(
     run_lengths = supra_runs[:, 1] - supra_runs[:, 0]
 
     event_times = []
-    is_clipped = []
     n_suprathreshold = []
     for run_index in np.unique(containing):
         start, stop = above_zero_runs[run_index]
         event_times.append((time[start], time[stop - 1]))
-        is_clipped.append((start == 0, stop == len(trace)))
         n_suprathreshold.append(int(run_lengths[containing == run_index].max()))
-    return (
-        np.asarray(event_times, dtype=float),
-        np.asarray(is_clipped, dtype=bool),
-        np.asarray(n_suprathreshold, dtype=int),
-    )
+    return np.asarray(event_times, dtype=float), np.asarray(n_suprathreshold, dtype=int)
 
 
 def Shvartsman_ripple_detector(
@@ -773,14 +838,14 @@ def Shvartsman_ripple_detector(
 
     Notes
     -----
-    Missing samples: rows with NaN in any channel of ``filtered_lfps`` or in
-    ``speed`` are dropped. The envelope and the smoothing are computed within
-    each contiguous block of the remaining samples, so neither spans a gap.
-    The threshold test then treats the blocks as adjacent, so a run above
-    threshold on both sides of a gap is one event that spans it. Pass one
-    contiguous block per call if that matters; ``Yu_ripple_detector`` and
-    ``Zugaro_ripple_detector`` instead keep every step within a block. See
-    the README's "Choosing a detector" table for how the detectors'
+    Missing samples: a NaN in any channel of ``filtered_lfps`` or in ``speed``
+    marks that sample missing, as does a step in ``time`` larger than 1.5
+    sample intervals. The valid samples form contiguous blocks, and every
+    step runs within a block, so nothing is computed across a gap and no
+    event spans one. An event cut off by a gap or by the recording edge is
+    kept and flagged in ``clipped_start`` and ``clipped_end``. Every detector
+    in the package follows this rule.
+    See the README's "Choosing a detector" table for how the detectors'
     conventions differ.
 
     References
@@ -802,57 +867,49 @@ def Shvartsman_ripple_detector(
             "must be left at their defaults. Drop them, or set "
             "manual_normalization=False."
         )
+    if participation_threshold < 0:
+        raise ValueError("participation_threshold must be non-negative.")
     _validate_duration_limits(minimum_duration, maximum_duration)
-    time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
-        time,
-        filtered_lfps,
-        speed,
-        sampling_frequency,
-        speed_threshold,
-        normalization_mask=None if manual_normalization else normalization_mask,
+    time, filtered_lfps, speed = _validate_detector_inputs(
+        time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
+    is_valid, blocks = _valid_blocks(time, sampling_frequency, filtered_lfps, speed)
 
-    filtered_lfps = _smoothed_envelope(
-        filtered_lfps, time, sampling_frequency, smoothing_sigma
-    )
-
+    smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     if manual_normalization:
         if elec_baselines is None or elec_deviations is None:
             raise ValueError(
                 "Must provide elec_baselines and elec_deviations for manual normalization."
             )
-        filtered_lfps = normalize_signal_manually(
-            filtered_lfps, elec_baselines, elec_deviations
-        )
+        normalized = normalize_signal_manually(smoothed, elec_baselines, elec_deviations)
     else:
-        filtered_lfps = normalize_signal(
-            filtered_lfps,
-            time=time,
-            method=normalization_method,
-            normalization_mask=normalization_mask,
-            normalization_time_range=normalization_time_range,
+        mask = _normalization_mask_over_valid(
+            len(time),
+            time,
+            is_valid,
+            normalization_method,
+            normalization_mask,
+            normalization_time_range,
+        )
+        normalized = normalize_signal(
+            smoothed, method=normalization_method, normalization_mask=mask
         )
 
     candidate_ripple_times = [
-        threshold_by_zscore(filtered_lfp, time, minimum_duration, zscore_threshold)
-        for filtered_lfp in filtered_lfps.T
+        _threshold_blocks(channel, time, blocks, minimum_duration, zscore_threshold)
+        for channel in normalized.T
     ]
-
     # Merge each channel's mean-crossing-extended intervals and retain the union
     # of contributing channels, preserving the original participation rule.
     merged_candidates = merge_overlapping_ranges_track_participation(candidate_ripple_times)
 
-    # account for different ways to specify participation threshold (fraction or number of electrodes)
-    n_elecs = filtered_lfps.shape[1]
-    if participation_threshold < 0:
-        raise ValueError("participation_threshold must be non-negative.")
+    n_elecs = normalized.shape[1]
     if participation_threshold <= 1:
         # interpret as a fraction of channels (1.0 means all channels)
         n_elecs_thresh = n_elecs * participation_threshold
     else:
         # interpret as an absolute number of channels
         n_elecs_thresh = participation_threshold
-
     participation_mask = (
         np.asarray([len(interval[2]) for interval in merged_candidates]) >= n_elecs_thresh
     )
@@ -864,29 +921,23 @@ def Shvartsman_ripple_detector(
     ripple_times, included_ripple_inds = exclude_close_events(
         candidate_ripple_times, close_ripple_threshold, included_ripple_inds
     )
-
     # Keep participant metadata aligned through movement and proximity exclusion.
-    participant_sets = merged_candidates[participation_mask, 2]
-    participants = participant_sets[included_ripple_inds]
-
+    participants = merged_candidates[participation_mask, 2][included_ripple_inds]
     ripple_times, keep = _exclude_long_events(ripple_times, time, maximum_duration)
     participants = participants[keep]
 
     n_participants = np.array([len(p) for p in participants])
-    frac_participants = n_participants / n_elecs
-
-    ripple_data = _get_event_stats(
+    return _get_event_stats(
         ripple_times,
         time,
-        filtered_lfps,
+        normalized,
         speed,
         minimum_duration,
         participants,
         n_participants,
-        frac_participants,
+        n_participants / n_elecs,
+        blocks=blocks,
     )
-
-    return ripple_data
 
 
 def _validate_duration_limits(minimum_duration: float, maximum_duration: float | None) -> None:
@@ -950,6 +1001,8 @@ def _detect_from_trace(
     trace: NDArray,
     time: NDArray,
     speed: NDArray,
+    is_valid: NDArray,
+    blocks: list[tuple[int, int]],
     *,
     minimum_duration: float,
     zscore_threshold: float,
@@ -963,20 +1016,25 @@ def _detect_from_trace(
     """Normalize one detection trace, threshold it, and summarize the events.
 
     The shared tail of every detector that thresholds a single trace. It
-    normalizes the trace. It takes the runs above ``zscore_threshold`` that
-    last ``minimum_duration`` and extends each to the normalization center. It
-    drops events whose first or last sample exceeds ``speed_threshold``, then
-    events too close to the last retained event, then events longer than
-    ``maximum_duration``. It then computes the per-event statistics.
+    normalizes the trace over the valid samples. Within each block it takes
+    the runs at or above ``zscore_threshold`` that last ``minimum_duration``
+    and extends each to the normalization center. It drops events whose first
+    or last sample exceeds ``speed_threshold``, then events too close to the
+    last retained event, then events longer than ``maximum_duration``. It then
+    computes the per-event statistics, flagging events cut off by a block
+    edge.
 
     Parameters
     ----------
     trace : ndarray, shape (n_time,)
-        The unnormalized detection trace.
+        The unnormalized detection trace, NaN outside the valid blocks.
     time : ndarray, shape (n_time,)
         Sample timestamps in seconds.
     speed : ndarray, shape (n_time,)
         Speed in cm/s.
+    is_valid : ndarray of bool, shape (n_time,)
+    blocks : list of (start, stop)
+        From ``_valid_blocks``.
     minimum_duration, zscore_threshold, speed_threshold, close_event_threshold : float
         As in the public detectors.
     maximum_duration : float, optional
@@ -990,20 +1048,26 @@ def _detect_from_trace(
         One row per event, indexed by ``event_number``.
 
     """
-    normalized = normalize_signal(
-        trace,
-        time=time,
-        method=normalization_method,
-        normalization_mask=normalization_mask,
-        normalization_time_range=normalization_time_range,
+    mask = _normalization_mask_over_valid(
+        len(time),
+        time,
+        is_valid,
+        normalization_method,
+        normalization_mask,
+        normalization_time_range,
     )
-    candidate_times = threshold_by_zscore(normalized, time, minimum_duration, zscore_threshold)
+    normalized = normalize_signal(trace, method=normalization_method, normalization_mask=mask)
+    candidate_times = _threshold_blocks(
+        normalized, time, blocks, minimum_duration, zscore_threshold
+    )
     event_times = exclude_movement(
         candidate_times, speed, time, speed_threshold=speed_threshold
     )
     event_times = exclude_close_events(event_times, close_event_threshold)
     event_times, _ = _exclude_long_events(event_times, time, maximum_duration)
-    return _get_event_stats(event_times, time, normalized, speed, minimum_duration)
+    return _get_event_stats(
+        event_times, time, normalized, speed, minimum_duration, blocks=blocks
+    )
 
 
 def Kay_ripple_detector(
@@ -1098,6 +1162,8 @@ def Kay_ripple_detector(
         - area: integral of z-score
         - total_energy: integral of squared z-score
         - speed metrics: speed_at_start, speed_at_end, max/min/median/mean_speed
+        - clipped_start, clipped_end: whether the event was cut off by missing
+          data or the recording edge
 
         Returns empty DataFrame if no ripples detected. If this occurs, try:
         - Lowering zscore_threshold (e.g., from 2.0 to 1.5)
@@ -1107,14 +1173,14 @@ def Kay_ripple_detector(
 
     Notes
     -----
-    Missing samples: rows with NaN in any channel of ``filtered_lfps`` or in
-    ``speed`` are dropped. The envelope and the smoothing are computed within
-    each contiguous block of the remaining samples, so neither spans a gap.
-    The threshold test then treats the blocks as adjacent, so a run above
-    threshold on both sides of a gap is one event that spans it. Pass one
-    contiguous block per call if that matters; ``Yu_ripple_detector`` and
-    ``Zugaro_ripple_detector`` instead keep every step within a block. See
-    the README's "Choosing a detector" table for how the detectors'
+    Missing samples: a NaN in any channel of ``filtered_lfps`` or in ``speed``
+    marks that sample missing, as does a step in ``time`` larger than 1.5
+    sample intervals. The valid samples form contiguous blocks, and every
+    step runs within a block, so nothing is computed across a gap and no
+    event spans one. An event cut off by a gap or by the recording edge is
+    kept and flagged in ``clipped_start`` and ``clipped_end``. Every detector
+    in the package follows this rule.
+    See the README's "Choosing a detector" table for how the detectors'
     conventions differ.
 
     Examples
@@ -1144,22 +1210,23 @@ def Kay_ripple_detector(
 
     """
     _validate_duration_limits(minimum_duration, maximum_duration)
-    time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
-        time,
-        filtered_lfps,
-        speed,
-        sampling_frequency,
-        speed_threshold,
-        normalization_mask=normalization_mask,
+    time, filtered_lfps, speed = _validate_detector_inputs(
+        time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
+    is_valid, blocks = _valid_blocks(time, sampling_frequency, filtered_lfps, speed)
 
-    combined_filtered_lfps = get_Kay_ripple_consensus_trace(
-        filtered_lfps, sampling_frequency, smoothing_sigma=smoothing_sigma, time=time
+    consensus = get_Kay_ripple_consensus_trace(
+        _mask_invalid(filtered_lfps, is_valid),
+        sampling_frequency,
+        smoothing_sigma=smoothing_sigma,
+        time=time,
     )
     return _detect_from_trace(
-        combined_filtered_lfps,
+        consensus,
         time,
         speed,
+        is_valid,
+        blocks,
         minimum_duration=minimum_duration,
         zscore_threshold=zscore_threshold,
         speed_threshold=speed_threshold,
@@ -1197,11 +1264,11 @@ def Yu_ripple_detector(
     at least ``minimum_duration`` at or above the threshold, extended to where
     the trace returns to the immobility mean.
 
-    This detector does not drop samples with missing data before processing,
-    as the others do. It splits the recording into contiguous valid blocks, so
-    smoothing, thresholding, and event extraction never cross a gap. An event
-    truncated by a gap or by the end of the recording is kept, and flagged in
-    ``clipped_start`` and ``clipped_end``.
+    Like every detector in the package, it splits the recording into
+    contiguous blocks of valid samples, so smoothing, thresholding, and event
+    extraction never cross a gap, and an event truncated by a gap or by the
+    end of the recording is kept and flagged in ``clipped_start`` and
+    ``clipped_end``.
 
     Parameters
     ----------
@@ -1256,11 +1323,10 @@ def Yu_ripple_detector(
     ripple_times : pd.DataFrame
         One row per event, indexed by ``event_number``, with the columns of
         the other detectors (``start_time``, ``end_time``, ``duration``,
-        ``max_thresh``, z-score and speed statistics) plus ``clipped_start``
-        and ``clipped_end`` (event truncated by missing data or the recording
-        edge), ``n_suprathreshold_samples`` (longest run at or above the
-        threshold), and ``detection_threshold_zscore`` (the threshold in the
-        normalized units the statistics are reported in).
+        ``max_thresh``, z-score and speed statistics, ``clipped_start`` and
+        ``clipped_end``) plus ``n_suprathreshold_samples`` (longest run at or
+        above the threshold) and ``detection_threshold_zscore`` (the threshold
+        in the normalized units the statistics are reported in).
 
     Raises
     ------
@@ -1283,47 +1349,29 @@ def Yu_ripple_detector(
        e27621. doi:10.7554/eLife.27621
 
     """
-    filtered_lfps = np.asarray(filtered_lfps, dtype=float)
-    speed = np.asarray(speed, dtype=float)
-    time = np.asarray(time, dtype=float)
-    _validate_lfp_dimensions(filtered_lfps)
-    _validate_array_lengths(time, filtered_lfps, speed)
-    _validate_time_units(time, sampling_frequency, stacklevel=3)
-    _validate_speed_units(speed, speed_threshold, stacklevel=3)
     _validate_duration_limits(minimum_duration, maximum_duration)
+    time, filtered_lfps, speed = _validate_detector_inputs(
+        time, filtered_lfps, speed, sampling_frequency, speed_threshold
+    )
+    is_valid, blocks = _valid_blocks(time, sampling_frequency, filtered_lfps, speed)
 
     consensus = get_Yu_ripple_consensus_trace(
-        filtered_lfps,
+        _mask_invalid(filtered_lfps, is_valid),
         sampling_frequency,
         smoothing_sigma=smoothing_sigma,
         zscore_per_tetrode=zscore_per_tetrode,
         time=time,
     )
-    is_valid = np.isfinite(consensus) & np.isfinite(speed)
 
-    _validate_normalization_params(
-        "zscore", normalization_mask, normalization_time_range, time
+    if normalization_mask is None and normalization_time_range is None:
+        normalization_mask = speed <= speed_threshold
+    noise_mask = _normalization_mask_over_valid(
+        len(time), time, is_valid, "zscore", normalization_mask, normalization_time_range
     )
-    noise_mask = _get_normalization_mask(
-        consensus.shape, time, normalization_mask, normalization_time_range
-    )
-    if noise_mask is None:
-        noise_mask = speed <= speed_threshold
-    noise_mask = noise_mask & is_valid
-    if not np.any(noise_mask):
-        raise ValueError(
-            "No valid immobility samples to estimate the noise threshold from "
-            f"(speed <= {speed_threshold} cm/s with finite LFP in every channel)."
-        )
-
     noise_values = consensus[noise_mask]
     baseline = np.mean(noise_values)
     scale = np.std(noise_values, ddof=0)  # the ddof normalize_signal uses
-    if not np.isfinite(scale) or scale <= 0:
-        raise ValueError(
-            "Immobility consensus has zero or undefined spread; cannot normalize."
-        )
-    normalized = normalize_signal(consensus, time=time, normalization_mask=noise_mask)
+    normalized = normalize_signal(consensus, normalization_mask=noise_mask)
     if zscore_per_tetrode:
         # The original estimates on the median of per-tetrode z-scores, whose
         # units the histogram grid assumes; convert the result to the
@@ -1342,44 +1390,33 @@ def Yu_ripple_detector(
             "immobility mean; the detection rule is undefined."
         )
 
-    event_times = []
-    is_clipped = []
-    n_suprathreshold = []
-    for start, stop in _contiguous_valid_blocks(is_valid, time, sampling_frequency):
-        block_events, block_clipped, block_n = _extract_Yu_ripple_events(
-            normalized[start:stop],
-            time[start:stop],
-            minimum_duration,
-            threshold_zscore,
+    n_min = minimum_sample_count(time, minimum_duration)
+    event_times = [np.empty((0, 2))]
+    n_suprathreshold = [np.empty(0, dtype=int)]
+    for start, stop in blocks:
+        if stop - start < n_min:
+            continue
+        block_events, block_n = _extract_Yu_ripple_events(
+            normalized[start:stop], time[start:stop], minimum_duration, threshold_zscore
         )
         event_times.append(block_events)
-        is_clipped.append(block_clipped)
         n_suprathreshold.append(block_n)
-    event_times = np.concatenate(event_times) if event_times else np.empty((0, 2))
-    is_clipped = np.concatenate(is_clipped) if is_clipped else np.empty((0, 2), dtype=bool)
-    n_suprathreshold = (
-        np.concatenate(n_suprathreshold) if n_suprathreshold else np.empty(0, dtype=int)
-    )
+    event_times = np.concatenate(event_times)
+    n_suprathreshold = np.concatenate(n_suprathreshold)
 
-    # the per-event flags are filtered alongside the events at each step
+    # the per-event count is filtered alongside the events at each step
     keep = _is_immobile_at_endpoints(event_times, speed, time, speed_threshold)
-    event_times, is_clipped, n_suprathreshold = (
-        event_times[keep],
-        is_clipped[keep],
-        n_suprathreshold[keep],
-    )
+    event_times, n_suprathreshold = event_times[keep], n_suprathreshold[keep]
     event_times, kept = exclude_close_events(
         event_times, close_ripple_threshold, included_ripple_inds=np.arange(len(event_times))
     )
-    is_clipped, n_suprathreshold = is_clipped[kept], n_suprathreshold[kept]
+    n_suprathreshold = n_suprathreshold[kept]
     event_times, keep = _exclude_long_events(event_times, time, maximum_duration)
-    is_clipped, n_suprathreshold = is_clipped[keep], n_suprathreshold[keep]
+    n_suprathreshold = n_suprathreshold[keep]
 
     events = _get_event_stats(
-        event_times, time, normalized, speed, minimum_duration=minimum_duration
+        event_times, time, normalized, speed, minimum_duration=minimum_duration, blocks=blocks
     )
-    events["clipped_start"] = is_clipped[:, 0]
-    events["clipped_end"] = is_clipped[:, 1]
     events["n_suprathreshold_samples"] = n_suprathreshold
     events["detection_threshold_zscore"] = threshold_zscore
     return events
@@ -1408,8 +1445,9 @@ def _two_threshold_events(
     1. Candidate events are runs strictly above ``low_threshold``. An event
        starts at the last sample *at or below* the threshold before the run and
        ends at the run's last sample, as the original's ``diff``-based
-       crossing search does. A run touching the first or last sample has no
-       paired crossing and is discarded.
+       crossing search does. A run touching the block's first or last sample
+       lacks one crossing; the original discards it, this package keeps it
+       and flags it ``clipped_start`` or ``clipped_end``.
     2. Consecutive candidates are merged, one neighbor per pass, while the
        gap between them is under ``minimum_inter_ripple_interval`` and the
        merged span is under ``maximum_duration``. This is deliberately not
@@ -1454,10 +1492,12 @@ def _two_threshold_events(
     # either end of the block are dropped; an event spans from the last sample
     # below the low threshold before the run to the last sample of the run
     runs = _boolean_run_bounds(zscored > low_threshold)
-    runs = runs[(runs[:, 0] > 0) & (runs[:, 1] < len(zscored))]
     if len(runs) == 0:
         return empty
-    events = np.column_stack([runs[:, 0] - 1, runs[:, 1] - 1])
+    # an event spans from the last sample at or below the low threshold before
+    # the run to the run's last sample; a run that begins on the block's first
+    # sample starts there instead
+    events = np.column_stack([np.maximum(runs[:, 0] - 1, 0), runs[:, 1] - 1])
 
     while len(events) > 1:
         gap = time[events[1:, 0]] - time[events[:-1, 1]]
@@ -1530,11 +1570,13 @@ def Zugaro_ripple_detector(
     The package's endpoint speed rule is applied. The peak is the maximum of
     the normalized power, not the trough of a single filtered channel.
 
-    Missing samples are handled block-wise, so smoothing and segmentation
-    never cross a gap. A run that touches a gap or the record edge lacks one
-    of its two crossings and is dropped, as in the original.
-    ``Yu_ripple_detector`` keeps such runs and flags them instead. A block
-    shorter than the smoothing window is treated as missing.
+    Missing samples are handled block-wise, as in every detector here, so
+    smoothing and segmentation never cross a gap. A run that touches a gap or
+    the record edge lacks one of its two crossings; the original drops it,
+    this package keeps it and flags it in ``clipped_start`` or
+    ``clipped_end``, so ``events[~(events.clipped_start | events.clipped_end)]``
+    reproduces the original rule. A block shorter than the smoothing window is
+    treated as missing, with a warning.
 
     Parameters
     ----------
@@ -1607,18 +1649,10 @@ def Zugaro_ripple_detector(
        274-287. doi:10.1523/JNEUROSCI.19-01-00274.1999
 
     """
-    filtered_lfps = np.asarray(filtered_lfps, dtype=float)
-    speed = np.asarray(speed, dtype=float)
-    time = np.asarray(time, dtype=float)
-    _validate_lfp_dimensions(filtered_lfps)
-    _validate_array_lengths(time, filtered_lfps, speed)
-    _validate_time_units(time, sampling_frequency, stacklevel=3)
-    _validate_speed_units(speed, speed_threshold, stacklevel=3)
     _validate_duration_limits(minimum_duration, maximum_duration)
-
-    is_valid = np.all(np.isfinite(filtered_lfps), axis=1) & np.isfinite(speed)
-    if not np.any(is_valid):
-        raise ValueError("No sample has finite values in every channel and in speed.")
+    time, filtered_lfps, speed = _validate_detector_inputs(
+        time, filtered_lfps, speed, sampling_frequency, speed_threshold
+    )
     window = (
         _zugaro_smoothing_window(sampling_frequency)
         if smoothing_window is None
@@ -1626,35 +1660,26 @@ def Zugaro_ripple_detector(
     )
     if window < 1 or window % 2 == 0:
         raise ValueError(f"smoothing_window must be a positive odd integer, got {window}.")
+    is_valid, blocks = _valid_blocks(time, sampling_frequency, filtered_lfps, speed)
+    blocks = _drop_short_blocks(blocks, is_valid, window, "the smoothing window")
+
     kernel = np.ones(window) / window
     power = np.sum(filtered_lfps**2, axis=1)
     smoothed = np.full(len(time), np.nan)
-    # a block shorter than the window cannot be smoothed and is treated as missing
-    blocks = _contiguous_valid_blocks(is_valid, time, sampling_frequency)
-    for start, stop in blocks:
-        if stop - start < window:
-            is_valid[start:stop] = False
-    blocks = [(start, stop) for start, stop in blocks if stop - start >= window]
-    if not blocks:
-        raise ValueError(
-            f"No contiguous block of finite samples is as long as the {window}-sample "
-            "smoothing window."
-        )
     for start, stop in blocks:
         smoothed[start:stop] = np.convolve(power[start:stop], kernel, mode="same")
 
-    _validate_normalization_params(
-        "zscore", normalization_mask, normalization_time_range, time
+    mask = _normalization_mask_over_valid(
+        len(time), time, is_valid, "zscore", normalization_mask, normalization_time_range
     )
-    mask = _get_normalization_mask(
-        smoothed.shape, time, normalization_mask, normalization_time_range
-    )
-    mask = is_valid if mask is None else (np.asarray(mask, dtype=bool) & is_valid)
-    normalized = normalize_signal(smoothed, time=time, normalization_mask=mask)
+    normalized = normalize_signal(smoothed, normalization_mask=mask)
 
-    event_times = []
-    peak_times = []
+    n_min = minimum_sample_count(time, minimum_duration)
+    event_times = [np.empty((0, 2))]
+    peak_times = [np.empty(0)]
     for start, stop in blocks:
+        if stop - start < n_min:
+            continue
         block_events, block_peaks = _two_threshold_events(
             normalized[start:stop],
             time[start:stop],
@@ -1666,14 +1691,14 @@ def Zugaro_ripple_detector(
         )
         event_times.append(block_events)
         peak_times.append(block_peaks)
-    event_times = np.concatenate(event_times) if event_times else np.empty((0, 2))
-    peak_times = np.concatenate(peak_times) if peak_times else np.empty(0)
+    event_times = np.concatenate(event_times)
+    peak_times = np.concatenate(peak_times)
 
     keep = _is_immobile_at_endpoints(event_times, speed, time, speed_threshold)
     event_times, peak_times = event_times[keep], peak_times[keep]
 
     events = _get_event_stats(
-        event_times, time, normalized, speed, minimum_duration=minimum_duration
+        event_times, time, normalized, speed, minimum_duration=minimum_duration, blocks=blocks
     )
     events["peak_time"] = peak_times
     return events
@@ -1767,8 +1792,14 @@ def Long_sharp_wave_ripple_detector(
     Five departures, each documented below. ``random_state`` seeds the
     k-means, where MATLAB's is unseeded. A candidate whose local window holds
     no sample below the boundary threshold is rejected, where the original
-    errors. The package's endpoint speed rule is applied afterwards. NaN input
-    raises, because the local statistics need contiguous data.
+    errors. The package's endpoint speed rule is applied afterwards. Missing
+    samples (NaN, or a gap in ``time``) split the recording into blocks: the
+    filters and candidate windows run within each block, the k-means pools
+    the candidates of every block, and a candidate within ``local_window`` of
+    a block edge is not evaluated, as the original does at the record edges.
+    A block shorter than the sharp-wave low-pass kernel is treated as missing,
+    with a warning. ``clipped_start`` and ``clipped_end`` are therefore always
+    False for this detector.
 
     Parameters
     ----------
@@ -1776,7 +1807,7 @@ def Long_sharp_wave_ripple_detector(
         Time values for each sample in seconds.
     raw_lfps : array_like, shape (n_time, 2)
         **Raw** LFP: column 0 the ripple (pyramidal-layer) channel, column 1
-        the sharp-wave (stratum radiatum) channel. No NaN.
+        the sharp-wave (stratum radiatum) channel. NaN marks missing samples.
     speed : array_like, shape (n_time,)
         Animal's running speed in cm/s.
     sampling_frequency : float
@@ -1800,7 +1831,7 @@ def Long_sharp_wave_ripple_detector(
         ``bz_DetectSWR`` uses 0.200 and 0.100.
     local_window : float, optional
         Half-width in seconds of the window for local statistics. Candidates
-        closer than this to either end of the record are not evaluated.
+        closer than this to either end of their block are not evaluated.
         Default is 5.0.
     sharp_wave_thresholds, ripple_thresholds : tuple of (float, float), optional
         ``(boundary, peak)`` in local standard deviations. Defaults (0.5, 2.5).
@@ -1844,67 +1875,72 @@ def Long_sharp_wave_ripple_detector(
        https://github.com/ayalab1/neurocode/blob/d166a67ffb73096d8d11b14be6693d96ad63e4ed/SharpWaveRipples/DetectSWR.m
 
     """
+    _validate_duration_limits(minimum_sharp_wave_duration, maximum_sharp_wave_duration)
     lfp = np.asarray(raw_lfps, dtype=float)
-    speed = np.asarray(speed, dtype=float)
-    time = np.asarray(time, dtype=float)
     if lfp.ndim != 2 or lfp.shape[1] != 2:
         raise ValueError(
             "raw_lfps must have exactly two channels, shape (n_time, 2): the ripple "
             f"channel first and the sharp-wave channel second; got shape {lfp.shape}."
         )
-    _validate_array_lengths(time, lfp, speed)
-    _validate_time_units(time, sampling_frequency, stacklevel=3)
-    _validate_speed_units(speed, speed_threshold, stacklevel=3)
-    _validate_duration_limits(minimum_sharp_wave_duration, maximum_sharp_wave_duration)
-    if np.any(np.isnan(lfp)) or np.any(np.isnan(speed)):
-        raise ValueError(
-            "raw_lfps and speed must not contain NaN: this detector's local statistics "
-            "need contiguous data. Pass a contiguous epoch instead."
-        )
+    time, lfp, speed = _validate_detector_inputs(
+        time, lfp, speed, sampling_frequency, speed_threshold
+    )
     n_time = len(time)
+    is_valid, blocks = _valid_blocks(time, sampling_frequency, lfp, speed)
     slowest_kernel = len(_gaussian_lowpass_fir(sharp_wave_band[0], sampling_frequency))
-    if n_time < slowest_kernel:
-        raise ValueError(
-            f"raw_lfps must hold at least {slowest_kernel} samples "
-            f"({slowest_kernel / sampling_frequency:.2f} s) for the {sharp_wave_band[0]} Hz "
-            f"sharp-wave low-pass, got {n_time}."
-        )
+    blocks = _drop_short_blocks(
+        blocks,
+        is_valid,
+        slowest_kernel,
+        f"the {sharp_wave_band[0]} Hz sharp-wave low-pass "
+        f"({slowest_kernel / sampling_frequency:.2f} s)",
+    )
     rng = np.random.default_rng(random_state)
 
-    # features
-    sharp_wave_band_lfp = _difference_of_gaussians_band(
-        lfp, sharp_wave_band, sampling_frequency
-    )
-    sharp_wave_diff = sharp_wave_band_lfp[:, 0] - sharp_wave_band_lfp[:, 1]
-    referenced = lfp - lfp.mean(axis=1, keepdims=True)
-    ripple = np.abs(_difference_of_gaussians_band(referenced, ripple_band, sampling_frequency))
+    # features, within each block
     power_kernel = _gaussian_lowpass_fir(np.mean(ripple_band) / np.pi, sampling_frequency)
-    ripple_power = _firfilt(ripple, power_kernel).max(axis=1)
+    sharp_wave_diff = np.full(n_time, np.nan)
+    ripple_power = np.full(n_time, np.nan)
+    for start, stop in blocks:
+        block_lfp = lfp[start:stop]
+        band_lfp = _difference_of_gaussians_band(
+            block_lfp, sharp_wave_band, sampling_frequency
+        )
+        sharp_wave_diff[start:stop] = band_lfp[:, 0] - band_lfp[:, 1]
+        referenced = block_lfp - block_lfp.mean(axis=1, keepdims=True)
+        ripple = np.abs(
+            _difference_of_gaussians_band(referenced, ripple_band, sampling_frequency)
+        )
+        ripple_power[start:stop] = _firfilt(ripple, power_kernel).max(axis=1)
 
-    # candidate feature pairs, one per non-overlapping block
-    block = int(np.floor(window_size * sampling_frequency))
-    half_block = block // 2
-    starts = np.arange(0, n_time, block)
-    feature_index, sharp_wave_feature, ripple_feature = [], [], []
-    for b0, b1 in pairwise(starts):
-        segment = sharp_wave_diff[b0:b1]
-        local_arg = int(np.argmax(segment))
-        peak = int(b0) + local_arg
-        if local_arg in (0, block - 1):
-            if peak in (0, n_time - 1):
-                continue
-            neighbors = sharp_wave_diff[peak - 1 : peak + 2]
-            if int(np.argmax(neighbors)) != 1:
-                continue
-        feature_index.append(peak)
-        sharp_wave_feature.append(segment[local_arg])
-        lo, hi = max(peak - half_block, 0), min(peak + half_block, n_time - 1)
-        ripple_feature.append(ripple_power[lo : hi + 1].max())
-    feature_index = np.asarray(feature_index)
+    # candidate feature pairs, one per non-overlapping window within a block
+    window = int(np.floor(window_size * sampling_frequency))
+    half_window = window // 2
+    bound = int(local_window * sampling_frequency)
+    feature_index, sharp_wave_feature, ripple_feature, in_range = [], [], [], []
+    for block_start, block_stop in blocks:
+        for w0, w1 in pairwise(np.arange(block_start, block_stop, window)):
+            segment = sharp_wave_diff[w0:w1]
+            local_arg = int(np.argmax(segment))
+            peak = int(w0) + local_arg
+            if local_arg in (0, window - 1):
+                if peak in (block_start, block_stop - 1):
+                    continue
+                if int(np.argmax(sharp_wave_diff[peak - 1 : peak + 2])) != 1:
+                    continue
+            feature_index.append(peak)
+            sharp_wave_feature.append(segment[local_arg])
+            lo = max(peak - half_window, block_start)
+            hi = min(peak + half_window, block_stop - 1)
+            ripple_feature.append(ripple_power[lo : hi + 1].max())
+            # the local statistics need the whole +/- local_window inside the block
+            in_range.append(peak - bound >= block_start and peak + bound <= block_stop - 1)
+    feature_index = np.asarray(feature_index, dtype=int)
     sharp_wave_feature = np.asarray(sharp_wave_feature)
     ripple_feature = np.asarray(ripple_feature)
+    in_range = np.asarray(in_range, dtype=bool)
     if len(feature_index) < 2:
-        raise ValueError("Too few candidate blocks to cluster; the recording is too short.")
+        raise ValueError("Too few candidate windows to cluster; the recording is too short.")
 
     features = np.column_stack([sharp_wave_feature, ripple_feature])
     _, labels = kmeans2(features, 2, iter=100, minit="++", seed=rng)
@@ -1916,19 +1952,14 @@ def Long_sharp_wave_ripple_detector(
     )
     ripple_cut = _matlab_percentile(ripple_feature[~is_swr_cluster], ripple_power_percentile)
     is_candidate = (
-        is_swr_cluster & (sharp_wave_feature > sharp_wave_cut) & (ripple_feature > ripple_cut)
+        is_swr_cluster
+        & (sharp_wave_feature > sharp_wave_cut)
+        & (ripple_feature > ripple_cut)
+        & in_range
     )
-
-    bound = int(local_window * sampling_frequency)
     candidate_peaks = feature_index[is_candidate]
     candidate_sharp = sharp_wave_feature[is_candidate]
     candidate_ripple = ripple_feature[is_candidate]
-    in_range = (candidate_peaks - bound >= 0) & (candidate_peaks + bound <= n_time - 1)
-    candidate_peaks, candidate_sharp, candidate_ripple = (
-        candidate_peaks[in_range],
-        candidate_sharp[in_range],
-        candidate_ripple[in_range],
-    )
     # time from the previous candidate; the first is measured from the record start
     separation = np.diff(time[candidate_peaks], prepend=time[0])
 
@@ -1955,8 +1986,8 @@ def Long_sharp_wave_ripple_detector(
         start_offset = bound - below_before[-1]  # samples before the peak
         stop_offset = below_after[0]  # samples after the peak
         sharp_wave_samples = start_offset + stop_offset + 1
-        rp_peak_local = (bound - half_block) + int(
-            np.argmax(rp_window[bound - half_block : bound + half_block + 1])
+        rp_peak_local = (bound - half_window) + int(
+            np.argmax(rp_window[bound - half_window : bound + half_window + 1])
         )
         rp_before = np.flatnonzero(
             rp_window[: rp_peak_local + 1] < rp_median + rp_boundary * rp_sd
@@ -2004,15 +2035,15 @@ def Long_sharp_wave_ripple_detector(
     else:
         event_times = np.empty((0, 2))
 
-    ripple_power_z = normalize_signal(ripple_power)
     events = _get_event_stats(
         # the reported event spans the sharp wave, so the sustained-value window
         # is measured against the sharp-wave minimum
         event_times,
         time,
-        ripple_power_z,
+        normalize_signal(ripple_power),
         speed,
         minimum_duration=minimum_sharp_wave_duration,
+        blocks=blocks,
     )
     events["peak_time"] = (
         time[detected["peak"].to_numpy(dtype=int)] if len(detected) else np.empty(0)
@@ -2166,8 +2197,11 @@ def Carey_candidate_detector(
     The original works in samples at 2 kHz (kernel SDs of 40 and 250 samples,
     +/-60-sample ripple smoothing); the defaults here are those values in
     seconds. Its speed limit is 10 pixels/s in tracking units; the default
-    here is the package's 4 cm/s. NaN input raises: the scores need
-    contiguous data.
+    here is the package's 4 cm/s. Missing samples (NaN in the LFP, the
+    spikes, speed or ``theta_lfp``, or a gap in ``time``) split the recording
+    into blocks; the scores, the segmentation and the state intervals run
+    within each block, so no candidate spans a gap, and a candidate cut off by
+    one is flagged in ``clipped_start`` and ``clipped_end``.
 
     Parameters
     ----------
@@ -2233,54 +2267,66 @@ def Carey_candidate_detector(
        https://github.com/vandermeerlab/vandermeerlab/blob/82ba3fe29cc3912575b32a0fcdaaa1c4fe097231/code-matlab/tasks/Alyssa_Tmaze/GenCandidateEvents.m
 
     """
-    filtered_lfps = np.asarray(filtered_lfps, dtype=float)
+    _validate_duration_limits(minimum_duration, maximum_duration)
     multiunit = np.asarray(multiunit, dtype=float)
-    speed = np.asarray(speed, dtype=float)
-    time = np.asarray(time, dtype=float)
-    _validate_lfp_dimensions(filtered_lfps)
     if multiunit.ndim != 2:
         raise ValueError(
             f"multiunit must be a 2D array of shape (n_time, n_units), got shape {multiunit.shape}."
         )
-    _validate_array_lengths(time, filtered_lfps, speed)
-    if multiunit.shape[0] != len(time):
-        raise ValueError(
-            f"Array length mismatch: multiunit has {multiunit.shape[0]} samples but time has {len(time)}."
-        )
-    _validate_time_units(time, sampling_frequency, stacklevel=3)
-    _validate_speed_units(speed, speed_threshold, stacklevel=3)
-    _validate_duration_limits(minimum_duration, maximum_duration)
-    if (
-        np.any(np.isnan(filtered_lfps))
-        or np.any(np.isnan(multiunit))
-        or np.any(np.isnan(speed))
-    ):
-        raise ValueError("filtered_lfps, multiunit, and speed must not contain NaN.")
+    time, filtered_lfps, speed = _validate_detector_inputs(
+        time, filtered_lfps, speed, sampling_frequency, speed_threshold
+    )
     n_time = len(time)
+    if multiunit.shape[0] != n_time:
+        raise ValueError(
+            f"Array length mismatch: multiunit has {multiunit.shape[0]} samples but time has {n_time}."
+        )
+    signals = [filtered_lfps, multiunit, speed]
+    theta_filter = None
     if theta_lfp is not None:
         theta_lfp = np.asarray(theta_lfp, dtype=float)
         if theta_lfp.shape != (n_time,):
             raise ValueError(f"theta_lfp must have shape ({n_time},), got {theta_lfp.shape}.")
+        signals.append(theta_lfp)
+        theta_filter = butter(
+            2, np.asarray(theta_band) / (0.5 * sampling_frequency), btype="bandpass"
+        )
+    is_valid, blocks = _valid_blocks(time, sampling_frequency, *signals)
+    if theta_filter is not None:
+        # filtfilt needs strictly more samples than its default pad length
+        padlen = 3 * max(len(theta_filter[0]), len(theta_filter[1]))
+        blocks = _drop_short_blocks(blocks, is_valid, padlen + 1, "the theta filter")
 
     # ripple score (OldWizard, 'amplitude', 'wizard' kernel), rescaled to mean 1
-    envelope = get_envelope(filtered_lfps).mean(axis=1)
-    ripple_score = gaussian_filter1d(
-        envelope, ripple_smoothing_sigma * sampling_frequency, truncate=3.0, mode="constant"
-    )
-    ripple_score = ripple_score / ripple_score.mean()
+    ripple_score = np.full(n_time, np.nan)
+    for start, stop in blocks:
+        envelope = get_envelope(filtered_lfps[start:stop]).mean(axis=1)
+        ripple_score[start:stop] = gaussian_filter1d(
+            envelope,
+            ripple_smoothing_sigma * sampling_frequency,
+            truncate=3.0,
+            mode="constant",
+        )
+    ripple_score = ripple_score / np.nanmean(ripple_score)
 
     # multiunit score (amMUA)
     sigma_samples = spike_kernel_sigma * sampling_frequency
     spike_kernel = _unit_area_gaussian(sigma_samples, 5.0)
     cap = spike_cap / (sigma_samples * np.sqrt(2.0 * np.pi))
-    summed = np.zeros(n_time)
-    for unit in multiunit.T:
-        summed += np.minimum(np.convolve(unit, spike_kernel, mode="same"), cap)
     baseline_kernel = _unit_area_gaussian(baseline_sigma * sampling_frequency, 12.0)
-    baseline = np.convolve(
-        np.minimum(baseline_cap * cap, summed), baseline_kernel, mode="same"
-    )
-    mean_summed = summed.mean()
+    summed = np.full(n_time, np.nan)
+    baseline = np.full(n_time, np.nan)
+    for start, stop in blocks:
+        # convolve1d with zero padding equals np.convolve(..., "same") for these
+        # odd symmetric kernels, and also works on a block shorter than the kernel
+        block_sum = np.zeros(stop - start)
+        for unit in multiunit[start:stop].T:
+            block_sum += np.minimum(convolve1d(unit, spike_kernel, mode="constant"), cap)
+        summed[start:stop] = block_sum
+        baseline[start:stop] = convolve1d(
+            np.minimum(baseline_cap * cap, block_sum), baseline_kernel, mode="constant"
+        )
+    mean_summed = np.nanmean(summed)
     if mean_summed <= 0:
         raise ValueError("multiunit contains no spikes; cannot form a multiunit score.")
     multiunit_score = np.maximum(0.0, (summed - baseline - cap) / mean_summed)
@@ -2295,32 +2341,46 @@ def Carey_candidate_detector(
     joint = np.sqrt(ripple_score * multiunit_score)
     zscored = normalize_signal(joint)
 
-    # two-threshold segmentation (TSDtoIV2): runs above the edge, kept if peak above
-    bounds = _boolean_run_bounds(zscored > edge_threshold)
+    # two-threshold segmentation (TSDtoIV2) within each block: runs above the
+    # edge, kept if the peak is above
     candidates = []
-    for start, stop in bounds:
-        if zscored[start:stop].max() > peak_threshold:
-            candidates.append((start, stop - 1))
+    for start, stop in blocks:
+        block_z = zscored[start:stop]
+        for run_start, run_stop in _boolean_run_bounds(block_z > edge_threshold):
+            if block_z[run_start:run_stop].max() > peak_threshold:
+                candidates.append((start + run_start, start + run_stop - 1))
     candidates = np.asarray(candidates, dtype=int).reshape(-1, 2)
     if len(candidates):
         n_samples = candidates[:, 1] - candidates[:, 0] + 1
         candidates = candidates[sample_count_within(n_samples, time, minimum_duration)]
 
     # state restriction: contained in a low-speed (and low-theta) interval
+    def _intervals(is_in_state: NDArray) -> NDArray:
+        return np.concatenate(
+            [np.empty((0, 2), dtype=int)]
+            + [
+                start
+                + _state_intervals(
+                    is_in_state[start:stop],
+                    time[start:stop],
+                    state_merge_gap,
+                    state_minimum_length,
+                )
+                for start, stop in blocks
+            ]
+        )
+
     if len(candidates):
-        low_speed = _state_intervals(
-            speed <= speed_threshold, time, state_merge_gap, state_minimum_length
-        )
-        candidates = candidates[_contained_in_intervals(candidates, low_speed)]
-    if len(candidates) and theta_lfp is not None:
-        b, a = butter(2, np.asarray(theta_band) / (0.5 * sampling_frequency), btype="bandpass")
-        theta_envelope = get_envelope(filtfilt(b, a, theta_lfp))
-        low_theta = _state_intervals(
-            normalize_signal(theta_envelope) < theta_threshold,
-            time,
-            state_merge_gap,
-            state_minimum_length,
-        )
+        candidates = candidates[
+            _contained_in_intervals(candidates, _intervals(speed <= speed_threshold))
+        ]
+    if len(candidates) and theta_filter is not None:
+        theta_envelope = np.full(n_time, np.nan)
+        for start, stop in blocks:
+            theta_envelope[start:stop] = get_envelope(
+                filtfilt(*theta_filter, theta_lfp[start:stop])
+            )
+        low_theta = _intervals(normalize_signal(theta_envelope) < theta_threshold)
         candidates = candidates[_contained_in_intervals(candidates, low_theta)]
 
     # minimum number of active units
@@ -2337,7 +2397,7 @@ def Carey_candidate_detector(
     event_times, keep = _exclude_long_events(event_times, time, maximum_duration)
     n_active = n_active[keep]
     events = _get_event_stats(
-        event_times, time, zscored, speed, minimum_duration=minimum_duration
+        event_times, time, zscored, speed, minimum_duration=minimum_duration, blocks=blocks
     )
     events["n_active_units"] = n_active
     return events
@@ -2442,14 +2502,14 @@ def Karlsson_ripple_detector(
 
     Notes
     -----
-    Missing samples: rows with NaN in any channel of ``filtered_lfps`` or in
-    ``speed`` are dropped. The envelope and the smoothing are computed within
-    each contiguous block of the remaining samples, so neither spans a gap.
-    The threshold test then treats the blocks as adjacent, so a run above
-    threshold on both sides of a gap is one event that spans it. Pass one
-    contiguous block per call if that matters; ``Yu_ripple_detector`` and
-    ``Zugaro_ripple_detector`` instead keep every step within a block. See
-    the README's "Choosing a detector" table for how the detectors'
+    Missing samples: a NaN in any channel of ``filtered_lfps`` or in ``speed``
+    marks that sample missing, as does a step in ``time`` larger than 1.5
+    sample intervals. The valid samples form contiguous blocks, and every
+    step runs within a block, so nothing is computed across a gap and no
+    event spans one. An event cut off by a gap or by the recording edge is
+    kept and flagged in ``clipped_start`` and ``clipped_end``. Every detector
+    in the package follows this rule.
+    See the README's "Choosing a detector" table for how the detectors'
     conventions differ.
 
     References
@@ -2460,31 +2520,30 @@ def Karlsson_ripple_detector(
 
     """
     _validate_duration_limits(minimum_duration, maximum_duration)
-    time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
-        time,
-        filtered_lfps,
-        speed,
-        sampling_frequency,
-        speed_threshold,
-        normalization_mask=normalization_mask,
+    time, filtered_lfps, speed = _validate_detector_inputs(
+        time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
+    is_valid, blocks = _valid_blocks(time, sampling_frequency, filtered_lfps, speed)
 
-    filtered_lfps = _smoothed_envelope(
-        filtered_lfps, time, sampling_frequency, smoothing_sigma
+    smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
+    mask = _normalization_mask_over_valid(
+        len(time),
+        time,
+        is_valid,
+        normalization_method,
+        normalization_mask,
+        normalization_time_range,
     )
-    filtered_lfps = normalize_signal(
-        filtered_lfps,
-        time=time,
-        method=normalization_method,
-        normalization_mask=normalization_mask,
-        normalization_time_range=normalization_time_range,
+    normalized = normalize_signal(
+        smoothed, method=normalization_method, normalization_mask=mask
     )
-    candidate_ripple_times = [
-        threshold_by_zscore(filtered_lfp, time, minimum_duration, zscore_threshold)
-        for filtered_lfp in filtered_lfps.T
-    ]
     candidate_ripple_times = list(
-        merge_overlapping_ranges(chain.from_iterable(candidate_ripple_times))
+        merge_overlapping_ranges(
+            chain.from_iterable(
+                _threshold_blocks(channel, time, blocks, minimum_duration, zscore_threshold)
+                for channel in normalized.T
+            )
+        )
     )
     ripple_times = exclude_movement(
         candidate_ripple_times, speed, time, speed_threshold=speed_threshold
@@ -2495,7 +2554,7 @@ def Karlsson_ripple_detector(
     # statistics on the strongest channel at each sample, so an event that one
     # channel triggered cannot report a sub-threshold max_thresh
     return _get_event_stats(
-        ripple_times, time, filtered_lfps.max(axis=1), speed, minimum_duration
+        ripple_times, time, normalized.max(axis=1), speed, minimum_duration, blocks=blocks
     )
 
 
@@ -2594,14 +2653,14 @@ def Roumis_ripple_detector(
 
     Notes
     -----
-    Missing samples: rows with NaN in any channel of ``filtered_lfps`` or in
-    ``speed`` are dropped. The envelope and the smoothing are computed within
-    each contiguous block of the remaining samples, so neither spans a gap.
-    The threshold test then treats the blocks as adjacent, so a run above
-    threshold on both sides of a gap is one event that spans it. Pass one
-    contiguous block per call if that matters; ``Yu_ripple_detector`` and
-    ``Zugaro_ripple_detector`` instead keep every step within a block. See
-    the README's "Choosing a detector" table for how the detectors'
+    Missing samples: a NaN in any channel of ``filtered_lfps`` or in ``speed``
+    marks that sample missing, as does a step in ``time`` larger than 1.5
+    sample intervals. The valid samples form contiguous blocks, and every
+    step runs within a block, so nothing is computed across a gap and no
+    event spans one. An event cut off by a gap or by the recording edge is
+    kept and flagged in ``clipped_start`` and ``clipped_end``. Every detector
+    in the package follows this rule.
+    See the README's "Choosing a detector" table for how the detectors'
     conventions differ.
 
     References
@@ -2613,23 +2672,21 @@ def Roumis_ripple_detector(
 
     """
     _validate_duration_limits(minimum_duration, maximum_duration)
-    time, filtered_lfps, speed, normalization_mask = _preprocess_detector_inputs(
-        time,
-        filtered_lfps,
-        speed,
-        sampling_frequency,
-        speed_threshold,
-        normalization_mask=normalization_mask,
+    time, filtered_lfps, speed = _validate_detector_inputs(
+        time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
+    is_valid, blocks = _valid_blocks(time, sampling_frequency, filtered_lfps, speed)
 
     smoothed_power = _smoothed_envelope(
-        filtered_lfps, time, sampling_frequency, smoothing_sigma, square=True
+        filtered_lfps, blocks, sampling_frequency, smoothing_sigma, square=True
     )
-    combined_filtered_lfps = np.mean(np.sqrt(smoothed_power), axis=1)
+    combined = np.mean(np.sqrt(smoothed_power), axis=1)
     return _detect_from_trace(
-        combined_filtered_lfps,
+        combined,
         time,
         speed,
+        is_valid,
+        blocks,
         minimum_duration=minimum_duration,
         zscore_threshold=zscore_threshold,
         speed_threshold=speed_threshold,
@@ -2762,8 +2819,12 @@ def multiunit_HSE_detector(
 
     Notes
     -----
-    Missing samples: a NaN anywhere in ``multiunit`` or ``speed`` raises; pass
-    one contiguous, finite block per call.
+    Missing samples: a NaN anywhere in ``multiunit`` or ``speed`` marks that
+    sample missing, as does a step in ``time`` larger than 1.5 sample
+    intervals. The population rate is smoothed within each contiguous block
+    of valid samples, no event spans a gap, and an event cut off by one is
+    flagged in ``clipped_start`` and ``clipped_end``. A spike count that is
+    absent rather than missing should be 0, not NaN.
 
     The defaults (2 SD, 15 ms smoothing, 15 ms minimum, 4 cm/s) are this
     package's convention. Published multiunit-burst detectors in the same
@@ -2777,41 +2838,35 @@ def multiunit_HSE_detector(
        doi:10.1016/j.neuron.2009.07.027
 
     """
-    multiunit = np.asarray(multiunit, dtype=float)
-    speed = np.asarray(speed, dtype=float)
-    time = np.asarray(time, dtype=float)
-    if multiunit.ndim != 2:
-        raise ValueError(
-            f"multiunit must be a 2D array of shape (n_time, n_units), got shape "
-            f"{multiunit.shape}. For a single unit, pass multiunit[:, np.newaxis]."
-        )
-    _validate_array_lengths(time, multiunit, speed)
-    _validate_time_units(time, sampling_frequency, stacklevel=3)
-    _validate_speed_units(speed, speed_threshold, stacklevel=3)
-    _validate_duration_limits(minimum_duration, maximum_duration)
     if minimum_active_units < 0:
         raise ValueError(
             f"minimum_active_units must be non-negative, got {minimum_active_units}. "
             "It counts units with at least one spike inside an event; 0 imposes no criterion."
         )
-    if np.any(np.isnan(multiunit)):
+    _validate_duration_limits(minimum_duration, maximum_duration)
+    multiunit = np.asarray(multiunit, dtype=float)
+    if multiunit.ndim != 2:
         raise ValueError(
-            "multiunit contains NaN. Spike counts cannot be missing: fill absent "
-            "samples with 0, or drop those rows from time, multiunit, and speed together."
+            f"multiunit must be a 2D array of shape (n_time, n_units), got shape "
+            f"{multiunit.shape}. For a single unit, pass multiunit[:, np.newaxis]."
         )
-    if np.any(np.isnan(speed)):
-        raise ValueError(
-            "speed contains NaN. Drop those rows from time, multiunit, and speed together."
-        )
-
-    firing_rate = get_multiunit_population_firing_rate(
-        multiunit, sampling_frequency, smoothing_sigma
+    time, multiunit, speed = _validate_detector_inputs(
+        time, multiunit, speed, sampling_frequency, speed_threshold
     )
+    is_valid, blocks = _valid_blocks(time, sampling_frequency, multiunit, speed)
+
+    firing_rate = np.full(len(time), np.nan)
+    for start, stop in blocks:
+        firing_rate[start:stop] = get_multiunit_population_firing_rate(
+            multiunit[start:stop], sampling_frequency, smoothing_sigma
+        )
 
     events = _detect_from_trace(
         firing_rate,
         time,
         speed,
+        is_valid,
+        blocks,
         minimum_duration=minimum_duration,
         zscore_threshold=zscore_threshold,
         speed_threshold=speed_threshold,
@@ -2885,6 +2940,7 @@ def _get_event_stats(
     participants: ArrayLike | None = None,
     n_participants: ArrayLike | None = None,
     frac_participants: ArrayLike | None = None,
+    blocks: list[tuple[int, int]] | None = None,
 ) -> pd.DataFrame:
     """Compute comprehensive statistics for detected events.
 
@@ -2917,6 +2973,10 @@ def _get_event_stats(
         Number of distinct participating channels per event.
     frac_participants : array_like, shape (n_events,), optional
         ``n_participants`` divided by the total channel count, per event.
+    blocks : list of (start, stop), optional
+        The valid blocks the events were found in (``_valid_blocks``), for
+        the ``clipped_start`` and ``clipped_end`` flags. Default is None,
+        one block spanning the whole recording.
 
     Returns
     -------
@@ -2932,6 +2992,9 @@ def _get_event_stats(
         - total_energy: Integral of squared z-score
         - speed_at_start, speed_at_end: Speed at event boundaries
         - max_speed, min_speed, median_speed, mean_speed: Speed statistics
+        - clipped_start, clipped_end: Whether the event's first or last sample
+            is the first or last sample of its block, i.e. the event was cut
+            off by missing data or the recording edge
         - participants, n_participants, frac_participants: Information on
             which channels exhibited a ripple during the detected event
             (returned if 'participants' input is not None)
@@ -3007,6 +3070,14 @@ def _get_event_stats(
     values = np.asarray(rows, dtype=float).reshape(-1, len(columns))
     index = pd.Index(np.arange(len(events)) + 1, name="event_number")
     event_stats = pd.DataFrame(dict(zip(columns, values.T, strict=True)), index=index)
+
+    if blocks is None:
+        blocks = [(0, len(time_arr))]
+    block_starts = np.array([start for start, _ in blocks], dtype=int)
+    block_stops = np.array([stop for _, stop in blocks], dtype=int)
+    which = np.clip(np.searchsorted(block_starts, first, side="right") - 1, 0, None)
+    event_stats["clipped_start"] = first == block_starts[which]
+    event_stats["clipped_end"] = last == block_stops[which]
     if participants is not None:
         event_stats["participants"] = participants
         event_stats["n_participants"] = n_participants

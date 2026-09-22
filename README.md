@@ -113,7 +113,7 @@ from ripple_detection import Yu_ripple_detector
 
 # No z-score threshold to choose: the threshold is the 99.99th percentile of
 # the noise distribution estimated from immobility, per call. Missing samples
-# (NaN) are handled block-wise and never smoothed across; an event cut off by
+# (NaN) are handled block-wise, as in every detector; an event cut off by
 # a gap is kept and flagged in `clipped_start` / `clipped_end`.
 ripples = Yu_ripple_detector(
     time, filtered_lfps, speed, sampling_frequency,
@@ -198,13 +198,15 @@ All detectors return a pandas DataFrame with comprehensive event statistics:
 | `min_speed` | Minimum speed during event |
 | `median_speed` | Median speed during event |
 | `mean_speed` | Mean speed during event |
+| `clipped_start` | The event begins on the first sample of its block: it was cut off by missing data or the recording edge |
+| `clipped_end` | The event ends on the last sample of its block |
 
 The index is `event_number`. Some detectors add columns:
 
 | Detector | Additional columns |
 |---|---|
 | `Shvartsman_ripple_detector` | `participants` (channel indices), `n_participants`, `frac_participants` |
-| `Yu_ripple_detector` | `clipped_start`, `clipped_end` (event cut by a gap or the record edge), `n_suprathreshold_samples`, `detection_threshold_zscore` |
+| `Yu_ripple_detector` | `n_suprathreshold_samples`, `detection_threshold_zscore` |
 | `Zugaro_ripple_detector` | `peak_time` |
 | `Long_sharp_wave_ripple_detector` | `peak_time`, `sharp_wave_zscore`, `sharp_wave_local_percentile`, `ripple_power_zscore`, `ripple_power_local_percentile`, `sharp_wave_duration`, `ripple_duration` |
 | `Carey_candidate_detector` | `n_active_units` |
@@ -405,25 +407,27 @@ All detectors take `time`, the signal, `speed`, and `sampling_frequency` as posi
 described under [Output Format](#output-format). They differ in what they threshold and in the
 conventions below.
 
-| Detector | Signal input | What is thresholded | Threshold (default) | Duration (default) | Close events | Missing samples (NaN) | Speed rule (default 4 cm/s) | Source |
-|---|---|---|---|---|---|---|---|---|
-| `Kay_ripple_detector` | ripple-band LFP `(n_time, n_channels)` | z-scored consensus √(smoothed Σ envelope²), 4 ms | `zscore_threshold` 2.0 | ≥ 0.015 s | `close_ripple_threshold` 0.0, drops the later event | rows dropped; envelope and smoothing within each block; threshold across | speed at first and last sample ≤ threshold | Kay et al. 2016 |
-| `Karlsson_ripple_detector` | same | each channel's z-scored envelope; overlapping per-channel events merged | 3.0 | ≥ 0.015 s | same | same | same | Karlsson & Frank 2009 |
-| `Roumis_ripple_detector` | same | z-scored mean over channels of √(smoothed envelope²), 4 ms | 2.0 | ≥ 0.015 s | same | same | same | Frank-lab variant (D. Roumis), unpublished |
-| `Shvartsman_ripple_detector` | same | per-channel z-scored envelopes; event kept when ≥ `participation_threshold` channels (2) detect it | 3.0 | ≥ 0.015 s | same | same | at least half the event's samples ≤ threshold | lab variant (G. Shvartsman), unpublished |
-| `Yu_ripple_detector` | same | median over channels of each channel's z-scored 4 ms-smoothed envelope | `percentile` 99.99 of the mirrored immobility-noise distribution, estimated per call | ≥ 0.020 s | `close_ripple_threshold` 0.0 | block-wise: nothing smoothed or joined across a gap; clipped events flagged | noise from `speed <= threshold`; event endpoints ≤ threshold | Yu et al. 2017 |
-| `Zugaro_ripple_detector` | same, channels summed | z-scored smoothed squared signal, two thresholds | `low_threshold` 2.0 (bounds), `high_threshold` 5.0 (peak) | 0.020–0.100 s | `minimum_inter_ripple_interval` 0.030 s, merges | block-wise | endpoints ≤ threshold | FMAToolbox `FindRipples` (Hirase; Zugaro) |
-| `Long_sharp_wave_ripple_detector` | **raw** LFP `(n_time, 2)`: ripple channel, stratum radiatum channel | sharp-wave difference and ripple power, split by k-means with local (±5 s) statistics | `sharp_wave_thresholds`, `ripple_thresholds` (0.5, 2.5) | sharp wave 0.020–0.500 s, ripple ≥ 0.025 s | `minimum_separation` 0.050 s, drops | raises | endpoints ≤ threshold | Long, buzcode/neurocode `DetectSWR` |
-| `Carey_candidate_detector` | ripple-band LFP **and** spikes `(n_time, n_units)` | geometric mean of a ripple-power score and a multiunit score | `edge_threshold` 1.0, `peak_threshold` 3.0; ≥ `minimum_active_units` 5 | ≥ 0.020 s | none | raises | whole event inside a low-speed interval (`speed <= threshold`) | Carey, Tanaka & van der Meer 2019 |
-| `multiunit_HSE_detector` | spikes `(n_time, n_units)`, no LFP | z-scored 15 ms-smoothed population rate | `zscore_threshold` 2.0 | ≥ 0.015 s | `close_event_threshold` 0.0 | raises | endpoints ≤ threshold | package convention; Davidson et al. 2009 lineage |
+| Detector | Signal input | What is thresholded | Threshold (default) | Duration (default) | Close events | Speed rule (default 4 cm/s) | Source |
+|---|---|---|---|---|---|---|---|
+| `Kay_ripple_detector` | ripple-band LFP `(n_time, n_channels)` | z-scored consensus √(smoothed Σ envelope²), 4 ms | `zscore_threshold` 2.0 | ≥ 0.015 s | `close_ripple_threshold` 0.0, drops the later event | speed at first and last sample ≤ threshold | Kay et al. 2016 |
+| `Karlsson_ripple_detector` | same | each channel's z-scored envelope; overlapping per-channel events merged | 3.0 | ≥ 0.015 s | same | same | Karlsson & Frank 2009 |
+| `Roumis_ripple_detector` | same | z-scored mean over channels of √(smoothed envelope²), 4 ms | 2.0 | ≥ 0.015 s | same | same | Frank-lab variant (D. Roumis), unpublished |
+| `Shvartsman_ripple_detector` | same | per-channel z-scored envelopes; event kept when ≥ `participation_threshold` channels (2) detect it | 3.0 | ≥ 0.015 s | same | at least half the event's samples ≤ threshold | lab variant (G. Shvartsman), unpublished |
+| `Yu_ripple_detector` | same | median over channels of each channel's z-scored 4 ms-smoothed envelope | `percentile` 99.99 of the mirrored immobility-noise distribution, estimated per call | ≥ 0.020 s | `close_ripple_threshold` 0.0 | noise from `speed <= threshold`; event endpoints ≤ threshold | Yu et al. 2017 |
+| `Zugaro_ripple_detector` | same, channels summed | z-scored smoothed squared signal, two thresholds | `low_threshold` 2.0 (bounds), `high_threshold` 5.0 (peak) | 0.020–0.100 s | `minimum_inter_ripple_interval` 0.030 s, merges | endpoints ≤ threshold | FMAToolbox `FindRipples` (Hirase; Zugaro) |
+| `Long_sharp_wave_ripple_detector` | **raw** LFP `(n_time, 2)`: ripple channel, stratum radiatum channel | sharp-wave difference and ripple power, split by k-means with local (±5 s) statistics | `sharp_wave_thresholds`, `ripple_thresholds` (0.5, 2.5) | sharp wave 0.020–0.500 s, ripple ≥ 0.025 s | `minimum_separation` 0.050 s, drops | endpoints ≤ threshold | Long, buzcode/neurocode `DetectSWR` |
+| `Carey_candidate_detector` | ripple-band LFP **and** spikes `(n_time, n_units)` | geometric mean of a ripple-power score and a multiunit score | `edge_threshold` 1.0, `peak_threshold` 3.0; ≥ `minimum_active_units` 5 | ≥ 0.020 s | none | whole event inside a low-speed interval (`speed <= threshold`) | Carey, Tanaka & van der Meer 2019 |
+| `multiunit_HSE_detector` | spikes `(n_time, n_units)`, no LFP | z-scored 15 ms-smoothed population rate | `zscore_threshold` 2.0 | ≥ 0.015 s | `close_event_threshold` 0.0 | endpoints ≤ threshold | package convention; Davidson et al. 2009 lineage |
 
 Notes:
 
-- "rows dropped" means samples with NaN in any channel or in `speed` are removed. The envelope
-  and the smoothing are computed within each contiguous block of what remains, so neither spans
-  a gap, but the threshold test treats the blocks as adjacent, so an event can still span one.
-  Pass one contiguous block at a time if that matters; the Yu and Zugaro detectors keep every
-  step within a block.
+- **Missing samples** are handled the same way by every detector. A sample is missing when any
+  channel of any signal, or `speed`, is NaN, or when the step in `time` to it exceeds 1.5 sample
+  intervals. The valid samples form contiguous blocks; every step runs within a block, so nothing
+  is smoothed, thresholded or merged across a gap and no event spans one. An event cut off by a
+  gap or by the recording edge is kept and flagged in `clipped_start` and `clipped_end`. A block
+  too short for a detector's transform (Zugaro's smoothing window, Long's sharp-wave kernel,
+  Carey's theta filter) is treated as missing, with a warning.
 - Every detector normalizes over the whole recording unless `normalization_mask` or
   `normalization_time_range` restricts it (Yu defaults to immobility); the Long and Carey
   detectors do not take these arguments.

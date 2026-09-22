@@ -90,10 +90,21 @@ results.
 - **Breaking.** `exclude_close_events`, `exclude_movement` and
   `exclude_movement_by_majority` return arrays of shape `(n, 2)`, and an
   integer index array, never a bare list.
-- The Kay, Karlsson, Roumis and Shvartsman detectors compute the envelope and
-  the smoothing within each contiguous block of the samples that remain after
-  NaN rows are dropped, so neither spans a gap. The threshold test still treats
-  the blocks as adjacent. Output on data without gaps does not change.
+- **Breaking.** One missing-sample policy for every detector. A sample is
+  missing when any channel of any signal, or `speed`, is NaN, or when the step
+  in `time` to it exceeds 1.5 sample intervals. The valid samples form
+  contiguous blocks, and every step of every detector runs within a block, so
+  nothing is smoothed, thresholded or merged across a gap and no event spans
+  one. Before, Kay, Karlsson, Roumis and Shvartsman dropped the NaN rows and
+  treated what remained as continuous, so an event could span a gap; Long,
+  Carey and the HSE detector raised on any NaN; Zugaro dropped an event that
+  touched a gap. A block too short for a detector's transform is treated as
+  missing, with a warning. Output on data without gaps does not change.
+- Every detector returns `clipped_start` and `clipped_end`: whether the event
+  begins on the first, or ends on the last, sample of its block, that is, was
+  cut off by missing data or the recording edge. Before, only Yu had them.
+  `events[~(events.clipped_start | events.clipped_end)]` reproduces the
+  FMAToolbox rule of dropping such events for `Zugaro_ripple_detector`.
 - Per-event statistics are found by bisection on the timestamps. They took
   5.5 s for half an hour of 1500 Hz data with 500 events, and minutes for a
   day; they take 0.03 s. The values do not change.
@@ -140,6 +151,10 @@ results.
   - timestamps that mostly repeat: the median step was zero, the minimum
     duration became one sample, and every single-sample crossing was an event;
   - an input whose every sample holds a NaN, in every detector;
+  - `filtered_lfps`, `multiunit` or `speed` with one NaN, in
+    `Long_sharp_wave_ripple_detector`, `Carey_candidate_detector` and
+    `multiunit_HSE_detector`: no longer an error but a missing sample, see
+    Changed;
   - a normalization mask that selects no samples, or is not boolean (a
     forgotten comparison made every nonzero speed count as immobile);
   - a series holding NaN, or a negative threshold, in `segment_boolean_series`
@@ -150,9 +165,6 @@ results.
   - in `simulate_LFP`, a ripple time outside `time`, a non-positive duration,
     or a frequency outside the Nyquist range, each of which returned an
     all-NaN, empty or aliased signal.
-- The detectors warn when removing NaN rows changes the median time step by
-  more than a fifth, as speed sampled at half the LFP rate does, since the
-  smoothing then assumes a rate the data no longer has.
 - `Zugaro_ripple_detector` crashed with a broadcast error when a block of
   finite samples was shorter than its smoothing window. Such a block is treated
   as missing.

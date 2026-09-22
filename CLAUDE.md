@@ -178,7 +178,7 @@ The package is organized into five modules:
 
 Kay, Karlsson, Roumis, Shvartsman and the HSE detector share one pipeline; `_detect_from_trace` is its tail:
 
-1. **Preprocessing**: Validate shapes, units and time order; drop rows with NaN in the signal or speed (the HSE detector raises instead)
+1. **Preprocessing**: Validate shapes, units and time order; mark samples with NaN in any signal or in speed as missing and split the rest into contiguous blocks (`_valid_blocks`)
 2. **Signal Transformation**: Hilbert envelope and Gaussian smoothing within each contiguous block (`_smoothed_envelope`); combine channels (Kay: consensus trace; Karlsson and Shvartsman: per channel; Roumis: mean; HSE: population rate)
 3. **Normalization**: Z-score (or median/MAD) the trace; a zero or undefined scale raises
 4. **Threshold Detection**: Runs at or above the threshold for at least `minimum_sample_count` samples
@@ -187,7 +187,7 @@ Kay, Karlsson, Roumis, Shvartsman and the HSE detector share one pipeline; `_det
 7. **Post-processing**: Drop close events, then over-long events; compute statistics with `_get_event_stats`
 8. **Output**: DataFrame indexed by `event_number` with the columns listed under "Output Format" in the README
 
-Yu and Zugaro process each contiguous block separately and use their own segmentation rules; Long and Carey raise on NaN and segment with two thresholds. See each docstring.
+Yu, Zugaro, Long and Carey use their own segmentation rules but the same blocks: every step of every detector runs within a block, no event spans a gap, and `_get_event_stats` flags events cut off by a block edge in `clipped_start` and `clipped_end`.
 
 ### Key Algorithm Differences
 
@@ -199,7 +199,7 @@ Yu and Zugaro process each contiguous block separately and use their own segment
 - **Long detector**: Raw two-channel input; sharp-wave difference and ripple power clustered by k-means with local statistics
 - **Carey detector**: Geometric mean of a ripple-power score and a capped multiunit score; whole event inside a low-speed interval
 - **HSE detector**: Z-scored smoothed population spike rate, no LFP
-- Missing-sample policy differs (rows dropped, transform per block, threshold across; fully block-wise; raise) and is stated in each docstring's Notes
+- One missing-sample policy for every detector: NaN in any signal or speed, or a gap in time, ends a block; nothing crosses a gap; clipped events are flagged
 
 ### Pre-computed Filter
 
