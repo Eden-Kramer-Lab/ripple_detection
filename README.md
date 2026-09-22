@@ -172,20 +172,21 @@ and two of the mismatches are silent rather than loud:
 | `("multiunit",)` | `multiunit_HSE_detector` | `(n_time, n_units)` spike counts or indicators |
 
 `Long_sharp_wave_ripple_detector` takes raw LFP through a signature identical to
-the ripple-band detectors', so handing it filtered data would return plausible
-nonsense, and `multiunit_HSE_detector` has the same shape of hazard. The spec
-checks for you: raw LFP holds nearly all of its variance below 100 Hz and
-ripple-band LFP almost none, and spike counts are non-negative whole numbers.
+the ripple-band detectors', so handing it filtered data raises nothing and
+returns plausible nonsense, and `multiunit_HSE_detector` has the same shape of
+hazard. `spec.check_inputs(*signals)` verifies what an array can show: the number
+of signals, that each is 2-D, that a raw pair has two channels, and that spike
+counts are non-negative whole numbers. It cannot tell raw LFP from filtered LFP,
+so `inputs` is the contract to check your pipeline against.
 
 ```python
 spec = get_detector("Long_sharp_wave_ripple_detector")
 try:
-    spec.check_inputs(filtered_lfps[:, :2], sampling_frequency=sampling_frequency)
+    spec.check_inputs(filtered_lfps)  # four channels from Basic Usage
 except ValueError as error:
     print(error)
-# Long_sharp_wave_ripple_detector takes raw_lfp_pair as signal 1, unfiltered LFP,
-# but channel(s) hold only 0%, 0% of their variance below 100 Hz, which looks
-# band-pass filtered. Pass the raw signal; this detector filters it itself.
+# Long_sharp_wave_ripple_detector takes raw_lfp_pair as signal 1: two channels,
+# the ripple channel then the sharp-wave channel, got 4.
 ```
 
 ## Output Format

@@ -7,7 +7,8 @@ because the detectors do not all take the same input through the same
 signature. ``Long_sharp_wave_ripple_detector`` takes **raw** two-channel LFP
 through a signature identical to the ripple-band detectors', so resolving by
 name alone lets a caller hand it filtered data and get plausible nonsense.
-:meth:`DetectorSpec.check_inputs` catches that before the call.
+:attr:`DetectorSpec.inputs` says which it needs; :meth:`DetectorSpec.check_inputs`
+verifies what an array can show, the shapes, but not whether it is filtered.
 """
 
 from collections.abc import Callable, Mapping
@@ -19,7 +20,6 @@ import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
 
-from ripple_detection.core import low_frequency_variance_fraction
 from ripple_detection.detectors import (
     Carey_candidate_detector,
     Karlsson_ripple_detector,
@@ -45,16 +45,6 @@ stratum radiatum channel, in that order."""
 
 MULTIUNIT: SignalKind = "multiunit"
 """``(n_time, n_units)`` spike counts or indicators."""
-
-LOW_FREQUENCY_CUTOFF = 100.0
-"""Hz. Raw LFP holds nearly all of its variance below this; ripple-band LFP
-holds almost none. :meth:`DetectorSpec.check_inputs` tells the two apart by
-the fraction of variance below it, with :data:`RAW_LFP_MINIMUM_LOW_FRACTION`
-as the dividing line."""
-
-RAW_LFP_MINIMUM_LOW_FRACTION = 0.5
-"""Least fraction of variance below :data:`LOW_FREQUENCY_CUTOFF` for a
-channel to count as raw LFP; a ripple-band channel must stay below it."""
 
 
 @dataclass(frozen=True)
@@ -85,43 +75,39 @@ class DetectorSpec:
         """The detector's name, which is also its key in :data:`DETECTORS`."""
         return self.detector.__name__
 
-    def check_inputs(self, *signals: ArrayLike, sampling_frequency: float) -> None:
-        """Raise if the signals are not what this detector takes.
+    def check_inputs(self, *signals: ArrayLike) -> None:
+        """Raise if the signals do not have the shape this detector takes.
 
-        Each signal is checked against its declared kind. A ripple-band LFP
-        must hold less than half of each channel's variance below 100 Hz, and
-        a raw LFP pair must hold at least half there and have two channels,
-        which tells filtered from unfiltered input; spike counts must be
-        non-negative integers. Missing samples (NaN) are left out.
+        Checks what an array can show: the number of signals, that each is
+        2-D, that a raw LFP pair has two channels, and that spike counts are
+        non-negative whole numbers. It cannot tell raw LFP from ripple-band
+        LFP; both are ``(n_time, n_channels)`` floats, and no property of the
+        numbers settles it for every recording. That remains the caller's
+        responsibility, which is why :attr:`inputs` states it.
 
         Parameters
         ----------
         *signals : array_like
             The signals, in the order of :attr:`inputs`.
-        sampling_frequency : float
-            Sampling rate in Hz, needed to place the 100 Hz cutoff.
 
         Raises
         ------
         ValueError
-            If the number of signals is wrong, a signal is not 2-D, a
-            ripple-band signal looks unfiltered, a raw pair looks filtered or
+            If the number of signals is wrong, a signal is not 2-D, a raw pair
             does not have two channels, or spike counts are negative or not
-            whole numbers. The message names the detector, the signal and
-            what was found.
+            whole numbers. The message names the detector and the signal.
 
         Examples
         --------
         >>> import numpy as np
-        >>> from ripple_detection import filter_ripple_band, get_detector
-        >>> raw = np.cumsum(np.random.randn(6000, 2), axis=0)  # brown noise
+        >>> from ripple_detection import get_detector
         >>> spec = get_detector("Long_sharp_wave_ripple_detector")
-        >>> spec.check_inputs(raw, sampling_frequency=1500)  # raw: fine
+        >>> spec.check_inputs(np.zeros((6000, 2)))
         >>> try:
-        ...     spec.check_inputs(filter_ripple_band(raw, 1500), sampling_frequency=1500)
+        ...     spec.check_inputs(np.zeros((6000, 4)))
         ... except ValueError as error:
-        ...     print("looks band-pass filtered" in str(error))
-        True
+        ...     print(error)
+        Long_sharp_wave_ripple_detector takes raw_lfp_pair as signal 1: two channels, the ripple channel then the sharp-wave channel, got 4.
 
         """
         if len(signals) != len(self.inputs):
@@ -136,6 +122,11 @@ class DetectorSpec:
                 raise ValueError(
                     f"{what}, a 2-D array (n_time, n_channels), got shape {array.shape}."
                 )
+            if kind == RAW_LFP_PAIR and array.shape[1] != 2:
+                raise ValueError(
+                    f"{what}: two channels, the ripple channel then the sharp-wave "
+                    f"channel, got {array.shape[1]}."
+                )
             if kind == MULTIUNIT:
                 finite = array[np.isfinite(array)]
                 if np.any(finite < 0) or np.any(finite != np.round(finite)):
@@ -143,28 +134,6 @@ class DetectorSpec:
                         f"{what}: spike counts or indicators, non-negative whole numbers, "
                         "but the array holds other values."
                     )
-                continue
-            if kind == RAW_LFP_PAIR and array.shape[1] != 2:
-                raise ValueError(
-                    f"{what}: two channels, the ripple channel then the sharp-wave "
-                    f"channel, got {array.shape[1]}."
-                )
-            low = low_frequency_variance_fraction(
-                array, sampling_frequency, LOW_FREQUENCY_CUTOFF
-            )
-            percent = ", ".join(f"{100 * f:.0f}%" for f in low)
-            if kind == RIPPLE_BAND_LFP and np.any(low >= RAW_LFP_MINIMUM_LOW_FRACTION):
-                raise ValueError(
-                    f"{what}, LFP filtered to the ripple band, but channel(s) hold "
-                    f"{percent} of their variance below {LOW_FREQUENCY_CUTOFF:.0f} Hz, which "
-                    "looks unfiltered. Pass the output of filter_ripple_band."
-                )
-            if kind == RAW_LFP_PAIR and np.any(low < RAW_LFP_MINIMUM_LOW_FRACTION):
-                raise ValueError(
-                    f"{what}, unfiltered LFP, but channel(s) hold only {percent} of their "
-                    f"variance below {LOW_FREQUENCY_CUTOFF:.0f} Hz, which looks band-pass "
-                    "filtered. Pass the raw signal; this detector filters it itself."
-                )
 
 
 def _spec(detector: Callable[..., pd.DataFrame], *inputs: SignalKind) -> DetectorSpec:

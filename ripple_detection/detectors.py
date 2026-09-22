@@ -1738,8 +1738,8 @@ def Long_sharp_wave_ripple_detector(
     **Unlike the other detectors, this one takes raw, unfiltered LFP**, shape
     ``(n_time, 2)`` with the ripple channel first, because it filters both
     bands itself. Handing it ripple-band data raises nothing and returns
-    nonsense; ``get_detector("Long_sharp_wave_ripple_detector").check_inputs``
-    tells the two apart before the call. The sharp-wave feature is the ripple channel minus the
+    nonsense, and no check on the array can tell the two apart for every
+    recording, so the caller must know which it holds. The sharp-wave feature is the ripple channel minus the
     radiatum channel after a 2-50 Hz difference-of-Gaussians band-pass; the
     ripple feature is the smoothed rectified 80-250 Hz band of the
     common-average-referenced pair, maximum over the two channels. In each

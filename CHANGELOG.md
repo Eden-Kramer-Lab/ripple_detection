@@ -46,12 +46,11 @@ results.
   signals that it takes. A pipeline that holds a detector by name does not need
   its own list. The signal names `RIPPLE_BAND_LFP`, `RAW_LFP_PAIR` and
   `MULTIUNIT` are exported, typed as the `Literal` `SignalKind`, so a caller can
-  check `spec.inputs` against them. `spec.check_inputs(*signals,
-  sampling_frequency=...)` raises when a signal is not what the detector takes:
-  raw LFP for a ripple-band detector, filtered LFP for the Long detector, or
-  spike counts that are not non-negative whole numbers.
-- `low_frequency_variance_fraction`, the fraction of each channel's variance
-  below a cutoff, which that check is built on.
+  check `spec.inputs` against them. `spec.check_inputs(*signals)` raises when
+  the number of signals, a signal's dimensionality, a raw pair's channel count,
+  or the spike counts (non-negative whole numbers) are wrong. It does not
+  judge whether LFP is filtered; no property of the array settles that for
+  every recording.
 - `load_literature_parameters`, the survey of detection parameters in 57 papers
   that decode replay content.
 - `ripple_snr`, `random_state` and ranges for `ripple_frequency` and
