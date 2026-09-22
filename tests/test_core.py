@@ -720,22 +720,26 @@ class TestNormalizeSignal:
         # Other values should be normalized
         assert not np.isnan(normalized[0])
 
-    def test_constant_data_zscore(self):
-        """Test z-score normalization with constant data."""
-        data = np.ones(100)
-        normalized = normalize_signal(data, method="zscore")
+    @pytest.mark.parametrize("method", ["zscore", "median_mad"])
+    def test_constant_data_raises(self, method):
+        """A constant trace has no scale, so it cannot be normalized."""
+        with pytest.raises(ValueError, match="zero or undefined"):
+            normalize_signal(np.ones(100), method=method)
 
-        # scipy.stats.zscore returns NaN for constant data (std=0)
-        # This is expected behavior - constant data has undefined z-score
-        assert np.all(np.isnan(normalized))
+    @pytest.mark.parametrize("method", ["zscore", "median_mad"])
+    def test_constant_channel_raises_and_names_it(self, method):
+        """One dead channel among healthy ones raises and says which."""
+        rng = np.random.default_rng(0)
+        data = rng.standard_normal((200, 3))
+        data[:, 1] = 0.0
+        with pytest.raises(ValueError, match=r"channel\(s\) \[1\]"):
+            normalize_signal(data, method=method)
 
-    def test_constant_data_median_mad(self):
-        """Test median/MAD normalization with constant data."""
-        data = np.ones(100)
-        normalized = normalize_signal(data, method="median_mad")
-
-        # Should return zeros (MAD is 0, avoid division by zero)
-        assert np.allclose(normalized, 0.0)
+    def test_non_boolean_mask_raises(self):
+        """A forgotten comparison (speed instead of speed <= 4) is caught."""
+        data = np.arange(10.0)
+        with pytest.raises(ValueError, match="must be boolean"):
+            normalize_signal(data, normalization_mask=np.arange(10.0))
 
     def test_invalid_method(self):
         """Test that invalid method raises ValueError."""
@@ -849,33 +853,33 @@ class TestNormalizeSignalManually:
             normalize_signal_manually(data, 1.0, 2.0), (data - 1.0) / 2.0
         )
 
-    def test_1d_degenerate_raises(self):
-        """1-D input whose single channel is degenerate is all-degenerate, so it
-        raises instead of silently returning a zero (signal-free) trace."""
-        data = np.arange(5.0)
-        for baseline, deviation in [(0.0, 0.0), (0.0, np.nan), (np.nan, 2.0)]:
-            with pytest.raises(ValueError, match="All channels"):
-                normalize_signal_manually(data, baseline, deviation)
+    @pytest.mark.parametrize(
+        ("baseline", "deviation"), [(0.0, 0.0), (0.0, np.nan), (np.nan, 2.0)]
+    )
+    def test_1d_degenerate_raises(self, baseline, deviation):
+        with pytest.raises(ValueError, match="no scale"):
+            normalize_signal_manually(np.arange(5.0), baseline, deviation)
 
-    def test_multichannel_partial_degenerate_zeros_and_warns(self):
-        """A degenerate channel alongside a healthy one is zeroed with a warning;
-        the healthy channel is normalized normally."""
-        data = np.tile(np.arange(5.0)[:, None], (1, 2))
-        baselines = np.array([1.0, np.nan])  # channel 1 degenerate
-        deviations = np.array([2.0, 1.0])
-        with pytest.warns(UserWarning, match="Zeroing channel"):
-            out = normalize_signal_manually(data, baselines, deviations)
-        np.testing.assert_allclose(out[:, 0], (data[:, 0] - 1.0) / 2.0)
-        assert np.all(out[:, 1] == 0)
-
-    def test_multichannel_all_degenerate_raises(self):
-        """If every channel is degenerate the result would be uniformly zero, so
-        a ValueError is raised rather than returning a signal-free array."""
+    def test_degenerate_channel_raises_and_names_it(self):
+        """A dead channel is not silently zeroed; the caller must drop it."""
         data = np.tile(np.arange(5.0)[:, None], (1, 3))
-        baselines = np.array([0.0, np.nan, 1.0])
-        deviations = np.array([0.0, 1.0, np.nan])  # all three degenerate
-        with pytest.raises(ValueError, match="All channels"):
+        baselines = np.array([1.0, np.nan, 0.0])
+        deviations = np.array([2.0, 1.0, 0.0])
+        with pytest.raises(ValueError, match=r"channel\(s\) \[1, 2\]"):
             normalize_signal_manually(data, baselines, deviations)
+
+    def test_multichannel(self):
+        data = np.tile(np.arange(5.0)[:, None], (1, 2))
+        out = normalize_signal_manually(data, [1.0, 2.0], [2.0, 4.0])
+        np.testing.assert_allclose(out[:, 0], (data[:, 0] - 1.0) / 2.0)
+        np.testing.assert_allclose(out[:, 1], (data[:, 1] - 2.0) / 4.0)
+
+    def test_wrong_channel_count_raises(self):
+        data = np.zeros((5, 4))
+        with pytest.raises(ValueError, match="one entry per channel"):
+            normalize_signal_manually(data, [0.0], [1.0])
+        with pytest.raises(ValueError, match="same shape"):
+            normalize_signal_manually(data, [0.0, 0.0, 0.0, 0.0], [1.0, 1.0])
 
 
 # ---------------------------------------------------------------------------

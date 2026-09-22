@@ -2016,6 +2016,16 @@ class TestCareyCandidateDetector:
             any((events.start_time <= time[c]) & (events.end_time >= time[c])) for c in centers
         ]
 
+    def test_a_population_that_never_bursts_raises(self, time, stationary):
+        """A multiunit score that is zero everywhere would z-score to NaN and
+        silently return no events; the detector says why instead."""
+        rng = np.random.default_rng(0)
+        lfps = rng.standard_normal((self.N_TIME, 1))
+        multiunit = np.zeros((self.N_TIME, 6))
+        multiunit[rng.choice(self.N_TIME, 40, replace=False), 0] = 1.0
+        with pytest.raises(ValueError, match="never rises above its baseline"):
+            Carey_candidate_detector(time, lfps, multiunit, stationary, self.FS)
+
     def test_speed_at_the_threshold_counts_as_immobile(self, time):
         lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
         at_threshold = np.full(self.N_TIME, 4.0)
@@ -2271,17 +2281,17 @@ class TestDetectorErrorHandling:
                 normalization_mask=np.ones(len(time_3s) - 5, dtype=bool),
             )
 
-    def test_manual_normalization_warns_on_degenerate_channel(
+    def test_manual_normalization_rejects_a_degenerate_channel(
         self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
     ):
-        """normalize_signal_manually zeroes a NaN-baseline channel and warns."""
+        """A NaN baseline has no scale, so the detector raises and names the channel."""
         filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
         n_channels = filtered_lfps.shape[1]
         baselines = np.zeros(n_channels)
         baselines[1] = np.nan  # degenerate channel
         deviations = np.ones(n_channels)
 
-        with pytest.warns(UserWarning, match="Zeroing channel"):
+        with pytest.raises(ValueError, match=r"channel\(s\) \[1\]"):
             Shvartsman_ripple_detector(
                 time_3s,
                 filtered_lfps,
@@ -2481,37 +2491,16 @@ class TestShvartsmanParticipationSemantics:
             participation_threshold=1.0,
         ).empty
 
-    def test_degenerate_channel_zeroed_and_counts_in_denominator(
-        self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
+    def test_dead_channel_raises_rather_than_diluting_participation(
+        self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed
     ):
-        """A degenerate (NaN-baseline) channel is zeroed so it never participates,
-        yet still counts in the frac_participants denominator."""
+        """A constant channel has no scale. Rather than zero it and let it dilute
+        frac_participants, the detector raises and names it."""
         filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
-        env = gaussian_smooth(
-            get_envelope(filtered_lfps), sigma=0.004, sampling_frequency=sampling_frequency
-        )
-        baselines = env.mean(axis=0).copy()
-        deviations = env.std(axis=0).copy()
-        baselines[1] = np.nan  # channel 1 degenerate
+        filtered_lfps[:, 1] = 0.0
 
-        with pytest.warns(UserWarning, match="Zeroing channel"):
-            ripples = Shvartsman_ripple_detector(
-                time_3s,
-                filtered_lfps,
-                stationary_speed,
-                sampling_frequency,
-                manual_normalization=True,
-                elec_baselines=baselines,
-                elec_deviations=deviations,
-                participation_threshold=0,
-            )
-
-        assert len(ripples) > 0
-        # The dead channel never appears among participants...
-        assert all(1 not in participants for participants in ripples["participants"])
-        assert all(ripples["n_participants"] == 1)
-        # ...but the denominator still includes it (1 of 2 channels).
-        assert all(ripples["frac_participants"] == 0.5)
+        with pytest.raises(ValueError, match=r"channel\(s\) \[1\]"):
+            Shvartsman_ripple_detector(time_3s, filtered_lfps, stationary_speed, 1500)
 
 
 class TestFindMaxThresh:
@@ -3130,6 +3119,7 @@ class TestMultiunitActiveUnits:
     def test_empty_result_still_has_the_column(self, time, stationary):
         """A detector that finds nothing returns the column anyway."""
         multiunit = np.zeros((self.N_TIME, self.N_UNITS))
+        multiunit[1_000:1_060, 0] = 3.0  # one unit bursts, four short of the minimum
 
         events = multiunit_HSE_detector(
             time, multiunit, stationary, self.FS, minimum_active_units=5

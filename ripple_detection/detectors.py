@@ -665,8 +665,10 @@ def Shvartsman_ripple_detector(
         Baseline (center) value per channel. Required when
         ``manual_normalization=True``.
     elec_deviations : array_like, shape (n_channels,), optional
-        Deviation (scale) value per channel. Required when
-        ``manual_normalization=True``.
+        Deviation (scale) value per channel, on the scale of a standard
+        deviation (multiply a MAD by 1.4826 first). Required when
+        ``manual_normalization=True``. A zero or NaN entry raises; drop that
+        channel before detecting.
     participation_threshold : float, optional
         Participation cutoff for a merged event. If in [0, 1], interpreted as
         the *fraction* of channels that must participate (note 1.0 means all
@@ -676,12 +678,7 @@ def Shvartsman_ripple_detector(
         through a chain of overlapping ripples.
 
         The denominator for the fraction (and for `frac_participants`) is the
-        total number of channels in `filtered_lfps`, including any channel that
-        was dropped as degenerate during manual normalization (zero/NaN
-        deviation or NaN baseline). A dead channel therefore lowers
-        `frac_participants` and makes a fractional threshold of 1.0
-        unsatisfiable; drop known-bad channels before calling, or use an
-        absolute (> 1) threshold, if that is a concern.
+        number of channels in `filtered_lfps`.
 
     Returns
     -------
@@ -749,21 +746,8 @@ def Shvartsman_ripple_detector(
             raise ValueError(
                 "Must provide elec_baselines and elec_deviations for manual normalization."
             )
-        if len(elec_baselines) != len(elec_deviations):
-            raise ValueError(
-                "Provided elec_baselines and elec_deviations must be the same length."
-            )
-        if len(elec_baselines) != filtered_lfps.shape[1]:
-            raise ValueError(
-                "Provided elec_baselines/elec_deviations must have one entry per "
-                f"channel (n_channels={filtered_lfps.shape[1]}), got {len(elec_baselines)}."
-            )
-        # elec_deviations must be std-equivalent: if it was computed as a MAD,
-        # multiply by 1.4826 before passing it in.
         filtered_lfps = normalize_signal_manually(
-            filtered_lfps,
-            elec_baselines,
-            elec_deviations,
+            filtered_lfps, elec_baselines, elec_deviations
         )
     else:
         filtered_lfps = normalize_signal(
@@ -2210,6 +2194,13 @@ def Carey_candidate_detector(
     if mean_summed <= 0:
         raise ValueError("multiunit contains no spikes; cannot form a multiunit score.")
     multiunit_score = np.maximum(0.0, (summed - baseline - cap) / mean_summed)
+    if not np.any(multiunit_score > 0):
+        raise ValueError(
+            "The multiunit score never rises above its baseline, so no candidate is "
+            "possible: the population never fires more than spike_cap coincident "
+            "spikes per unit above its slow rate. Check that multiunit holds spikes at "
+            "sampling_frequency, not a rate, and that baseline_cap and spike_cap fit it."
+        )
 
     joint = np.sqrt(ripple_score * multiunit_score)
     zscored = normalize_signal(joint)

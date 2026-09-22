@@ -13,7 +13,7 @@ from scipy.fftpack import next_fast_len
 from scipy.io import loadmat
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import filtfilt, hilbert, remez
-from scipy.stats import median_abs_deviation, zscore
+from scipy.stats import median_abs_deviation
 
 DEFAULT_RIPPLE_BAND = (150.0, 250.0)
 """Default passband in Hz, the most common choice in the replay literature."""
@@ -752,7 +752,13 @@ def _get_normalization_mask(
 
     """
     if normalization_mask is not None:
-        mask = np.asarray(normalization_mask, dtype=bool)
+        mask = np.asarray(normalization_mask)
+        if mask.dtype != bool:
+            raise ValueError(
+                f"normalization_mask must be boolean, got dtype {mask.dtype}. Casting "
+                "would make every nonzero value True; pass a comparison such as "
+                "speed <= speed_threshold."
+            )
         if mask.shape[0] != data_shape[0]:
             raise ValueError(
                 f"normalization_mask length ({mask.shape[0]}) must match "
@@ -778,96 +784,50 @@ def _get_normalization_mask(
         return None
 
 
-def _normalize_zscore(data: NDArray, mask: NDArray | None) -> NDArray:
-    """Apply z-score normalization (mean/std).
+def _normalize(data: NDArray, mask: NDArray | None, method: str) -> NDArray:
+    """Center and scale ``data`` with statistics from ``data[mask]``.
 
     Parameters
     ----------
-    data : ndarray
-        Data to normalize.
-    mask : ndarray or None
-        Boolean mask for subset to compute statistics from, or None for all data.
+    data : ndarray, shape (n_time,) or (n_time, n_channels)
+    mask : ndarray of bool, shape (n_time,), or None
+        Samples the statistics come from; None uses every sample.
+    method : {'zscore', 'median_mad'}
 
-    Returns
-    -------
-    normalized : ndarray
-        Z-score normalized data.
-
-    """
-    if mask is not None:
-        # Compute mean and std from subset, apply to all data
-        if data.ndim == 1:
-            subset = data[mask]
-            mean = np.nanmean(subset)
-            std = np.nanstd(subset, ddof=0)
-            if std == 0 or np.isnan(std):
-                # Avoid division by zero
-                return np.zeros_like(data)
-            normalized = (data - mean) / std
-        else:
-            # Handle multi-channel data (n_time, n_channels)
-            mean = np.nanmean(data[mask], axis=0, keepdims=True)
-            std = np.nanstd(data[mask], axis=0, ddof=0, keepdims=True)
-            std[std == 0] = 1.0  # Avoid division by zero
-            normalized = (data - mean) / std
-    else:
-        # Use scipy's zscore with nan_policy='omit' for consistency
-        normalized = zscore(data, axis=0, nan_policy="omit", ddof=0)
-
-    return normalized
-
-
-def _normalize_median_mad(data: NDArray, mask: NDArray | None) -> NDArray:
-    """Apply median/MAD normalization.
-
-    Parameters
-    ----------
-    data : ndarray
-        Data to normalize.
-    mask : ndarray or None
-        Boolean mask for subset to compute statistics from, or None for all data.
-
-    Returns
-    -------
-    normalized : ndarray
-        Median/MAD normalized data.
+    Raises
+    ------
+    ValueError
+        If the scale of the trace, or of any channel, is zero or undefined
+        over the normalization samples. A constant or all-NaN channel has no
+        scale, and dividing by a substitute would report its raw values as
+        z-scores.
 
     """
-    if mask is not None:
-        # Compute median and MAD from subset, apply to all data
-        if data.ndim == 1:
-            subset = data[mask]
-            median = np.nanmedian(subset)
-            mad = median_abs_deviation(subset, scale="normal", nan_policy="omit")
-            if mad == 0 or np.isnan(mad):
-                # Avoid division by zero
-                return np.zeros_like(data)
-            normalized = (data - median) / mad
+    subset = data if mask is None else data[mask]
+    with warnings.catch_warnings():
+        # an all-NaN column warns before it is reported as degenerate below
+        warnings.simplefilter("ignore", RuntimeWarning)
+        if method == "zscore":
+            center = np.nanmean(subset, axis=0, keepdims=True)
+            scale = np.nanstd(subset, axis=0, ddof=0, keepdims=True)
         else:
-            # Handle multi-channel data (n_time, n_channels)
-            median = np.nanmedian(data[mask], axis=0, keepdims=True)
-            mad = median_abs_deviation(data[mask], axis=0, scale="normal", nan_policy="omit")
-            # Reshape mad for broadcasting
-            mad = mad.reshape(1, -1)
-            mad[mad == 0] = 1.0  # Avoid division by zero
-            normalized = (data - median) / mad
-    else:
-        # Compute from all data
-        if data.ndim == 1:
-            median = np.nanmedian(data)
-            mad = median_abs_deviation(data, scale="normal", nan_policy="omit")
-            if mad == 0 or np.isnan(mad):
-                return np.zeros_like(data)
-            normalized = (data - median) / mad
-        else:
-            # Handle multi-channel data
-            median = np.nanmedian(data, axis=0, keepdims=True)
-            mad = median_abs_deviation(data, axis=0, scale="normal", nan_policy="omit")
-            mad = mad.reshape(1, -1)
-            mad[mad == 0] = 1.0
-            normalized = (data - median) / mad
-
-    return normalized
+            center = np.nanmedian(subset, axis=0, keepdims=True)
+            scale = median_abs_deviation(subset, axis=0, scale="normal", nan_policy="omit")
+    scale = np.reshape(scale, center.shape)
+    degenerate = ~np.isfinite(scale) | (scale <= 0)
+    if np.any(degenerate):
+        scale_name = "standard deviation" if method == "zscore" else "MAD"
+        where = (
+            "the trace"
+            if data.ndim == 1
+            else f"channel(s) {np.flatnonzero(degenerate.ravel()).tolist()}"
+        )
+        raise ValueError(
+            f"Cannot normalize: the {scale_name} of {where} is zero or undefined over "
+            "the normalization samples. A constant or all-NaN channel has no scale; "
+            "drop it before detecting."
+        )
+    return (data - center) / scale
 
 
 def normalize_signal(
@@ -918,8 +878,11 @@ def normalize_signal(
     ------
     ValueError
         If both `normalization_mask` and `normalization_time_range` are specified,
-        if `normalization_time_range` is used without `time`, or if `method` is
-        not recognized.
+        if `normalization_time_range` is used without `time`, if `method` is
+        not recognized, if the mask is not boolean or selects no samples, or if
+        the scale (standard deviation or MAD) of the trace or of any channel is
+        zero or undefined over the normalization samples. A constant or
+        all-NaN channel has no scale; drop it before detecting.
 
     Notes
     -----
@@ -933,7 +896,13 @@ def normalize_signal(
 
     where MAD is the median absolute deviation from the median.
 
-    Both methods use `nan_policy='omit'` to handle NaN values gracefully.
+    Both methods ignore NaN samples when computing the statistics.
+
+    The MAD is the median of the absolute deviations from the median, so it is
+    zero, or nearly so, whenever more than half the samples tie at the median.
+    A sparse trace such as a smoothed spike rate that is zero much of the time
+    therefore gets a tiny MAD and enormous "z-scores". Use ``'zscore'`` for
+    such traces.
 
     Examples
     --------
@@ -954,7 +923,7 @@ def normalize_signal(
     >>> time = np.arange(1000) / 1500  # 1500 Hz sampling
     >>> speed = np.random.rand(1000) * 10  # Speed in cm/s
     >>> lfp = np.random.randn(1000)
-    >>> immobility_mask = speed < 4.0
+    >>> immobility_mask = speed <= 4.0
     >>> normalized = normalize_signal(lfp, normalization_mask=immobility_mask)
 
     Normalize using baseline period:
@@ -985,11 +954,7 @@ def normalize_signal(
         data_arr.shape, time, normalization_mask, normalization_time_range
     )
 
-    # Apply normalization
-    if method == "zscore":
-        return _normalize_zscore(data_arr, mask)
-    else:  # method == "median_mad"
-        return _normalize_median_mad(data_arr, mask)
+    return _normalize(data_arr, mask, method)
 
 
 def normalize_signal_manually(
@@ -997,8 +962,7 @@ def normalize_signal_manually(
     elec_baselines: ArrayLike,
     elec_deviations: ArrayLike,
 ) -> NDArray:
-    """
-    Normalize with supplied baselines and deviations.
+    """Normalize with supplied baselines and deviations.
 
     The statistics come from the arguments rather than from ``data``. This
     matters for sleep sessions. A sleep session holds a higher concentration
@@ -1007,68 +971,53 @@ def normalize_signal_manually(
 
     Parameters
     ----------
-    data: array_like, shape (n_time,) or (n_time, n_channels)
+    data : array_like, shape (n_time,) or (n_time, n_channels)
         Input signal to normalize. Can be 1D or 2D.
-    elec_baselines: array_like, shape (n_channels,)
-        Baseline value for each channel
-    elec_deviations: array_like, shape (n_channels,)
-        Deviation values for each channel
+    elec_baselines : array_like, shape (n_channels,)
+        Baseline (center) value for each channel; a scalar for 1-D data.
+    elec_deviations : array_like, shape (n_channels,)
+        Deviation (scale) value for each channel; a scalar for 1-D data. Must
+        be on the scale of a standard deviation: multiply a MAD by 1.4826
+        first.
 
     Returns
     -------
     normalized_data : ndarray, shape matches input
-        Normalized signal with the same shape as input.
+        ``(data - elec_baselines) / elec_deviations``.
 
-    Notes
-    -----
-    A channel is degenerate when its deviation is zero or NaN, or its
-    baseline is NaN. This function zeroes each degenerate channel so it cannot
-    cross a detection threshold, and warns with the channel numbers. When
-    every channel is degenerate the result would be uniformly zero and carry
-    no signal, so it raises ``ValueError`` instead. A 1-D input counts as one
-    channel. ``normalize_signal`` guards an empty mask the same way.
+    Raises
+    ------
+    ValueError
+        If the two statistics differ in length or do not have one entry per
+        channel, or if any channel's deviation is zero or NaN or its baseline
+        is NaN. Such a channel has no scale; drop it before detecting, as
+        ``normalize_signal`` also requires.
+
     """
-    data = np.asarray(data)
-    elec_baselines = np.asarray(elec_baselines, dtype=float)
-    elec_deviations = np.asarray(elec_deviations, dtype=float)
-
-    # Handle 1-D and multi-channel data uniformly by working in (n_time,
-    # n_channels) shape; reshape the result back to 1-D on return.
-    is_1d = data.ndim == 1
-    data_2d = data.reshape(-1, 1) if is_1d else data
-    baselines = elec_baselines.reshape(1, -1)
-    deviations = elec_deviations.reshape(1, -1)
-
-    # Channels with a zero/NaN deviation or a NaN baseline are degenerate.
-    degenerate = (deviations == 0) | np.isnan(deviations) | np.isnan(baselines)
-    if degenerate.all():
+    data = np.asarray(data, dtype=float)
+    baselines = np.atleast_1d(np.asarray(elec_baselines, dtype=float))
+    deviations = np.atleast_1d(np.asarray(elec_deviations, dtype=float))
+    n_channels = 1 if data.ndim == 1 else data.shape[1]
+    if baselines.shape != deviations.shape:
         raise ValueError(
-            "All channels have a zero/NaN deviation or NaN baseline during manual "
-            "normalization; the normalized signal would be uniformly zero. Check "
-            "the baseline/deviation statistics (e.g. computed over an empty or "
-            "all-NaN window)."
+            f"elec_baselines {baselines.shape} and elec_deviations {deviations.shape} "
+            "must have the same shape."
         )
-
-    # safe_deviations avoids a divide-by-zero RuntimeWarning; the explicit overwrite
-    # below zeros degenerate columns so a dead channel can neither cross threshold nor
-    # NaN-poison the output and silently distort participation counts.
-    safe_deviations = np.where(degenerate, 1.0, deviations)
-    normalized_data = (data_2d - baselines) / safe_deviations
-    normalized_data[:, degenerate[0]] = 0.0
-
-    degenerate_channels = np.flatnonzero(degenerate[0])
-    if degenerate_channels.size > 0:
-        warnings.warn(
-            "Zeroing channel(s) with a zero/NaN deviation or NaN baseline during "
-            f"manual normalization: {degenerate_channels.tolist()}. These channels "
-            "will not participate in detection, but still count toward the total "
-            "channel count used for frac_participants and fractional "
-            "participation thresholds.",
-            UserWarning,
-            stacklevel=2,
+    if baselines.shape != (n_channels,):
+        raise ValueError(
+            "elec_baselines and elec_deviations must have one entry per channel "
+            f"(n_channels={n_channels}), got {baselines.size}."
         )
-
-    return normalized_data.reshape(data.shape) if is_1d else normalized_data
+    degenerate = (deviations == 0) | ~np.isfinite(deviations) | ~np.isfinite(baselines)
+    if np.any(degenerate):
+        raise ValueError(
+            "Cannot normalize: channel(s) "
+            f"{np.flatnonzero(degenerate).tolist()} have a zero or NaN deviation or a "
+            "NaN baseline. Such a channel has no scale; drop it before detecting."
+        )
+    if data.ndim == 1:
+        return (data - baselines[0]) / deviations[0]
+    return (data - baselines) / deviations
 
 
 def threshold_by_zscore(
