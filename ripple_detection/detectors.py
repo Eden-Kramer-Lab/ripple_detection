@@ -1409,7 +1409,7 @@ def _two_threshold_events(
     minimum_inter_ripple_interval: float,
     minimum_duration: float,
     maximum_duration: float | None,
-) -> tuple[NDArray, NDArray]:
+) -> tuple[NDArray, NDArray, NDArray]:
     """Segment a normalized power trace with the FindRipples two-threshold rule.
 
     Follows the segmentation rule of FMAToolbox ``FindRipples``:
@@ -1455,18 +1455,24 @@ def _two_threshold_events(
         ``[start_time, end_time]`` per event.
     peak_times : ndarray, shape (n_events,)
         Time of the maximum of ``zscored`` within each event.
+    clipped : ndarray of bool, shape (n_events, 2)
+        Whether the event lacks its rising or its falling crossing, that is,
+        its run began on the block's first sample or ended on its last. An
+        event whose run began on the second sample has its crossing on the
+        first and is not clipped, although it starts there.
 
     """
     zscored = np.asarray(zscored, dtype=float)
     time = np.asarray(time, dtype=float)
-    empty = (np.empty((0, 2)), np.empty(0))
+    empty = (np.empty((0, 2)), np.empty(0), np.empty((0, 2), dtype=bool))
     runs = _boolean_run_bounds(zscored > low_threshold)
     if len(runs) == 0:
         return empty
     # an event spans from the last sample at or below the low threshold before
     # the run to the run's last sample; a run that begins on the block's first
-    # sample starts there instead
+    # sample starts there instead, and is clipped
     events = np.column_stack([np.maximum(runs[:, 0] - 1, 0), runs[:, 1] - 1])
+    clipped = np.column_stack([runs[:, 0] == 0, runs[:, 1] == len(zscored)])
 
     while len(events) > 1:
         gap = time[events[1:, 0]] - time[events[:-1, 1]]
@@ -1479,23 +1485,19 @@ def _two_threshold_events(
         padded = np.concatenate([[False], to_merge])
         run_starts = np.flatnonzero(~padded[:-1] & padded[1:])
         events[run_starts, 1] = events[run_starts + 1, 1]
+        clipped[run_starts, 1] = clipped[run_starts + 1, 1]
         events = np.delete(events, run_starts + 1, axis=0)
+        clipped = np.delete(clipped, run_starts + 1, axis=0)
 
-    kept = []
-    peaks = []
-    for start, stop in events:
-        segment = zscored[start : stop + 1]
-        if segment.max() > high_threshold:
-            kept.append((start, stop))
-            peaks.append(start + int(np.argmax(segment)))
-    if not kept:
-        return empty
-    events = np.asarray(kept)
-    peaks = np.asarray(peaks)
+    peaks = np.array(
+        [start + int(np.argmax(zscored[start : stop + 1])) for start, stop in events],
+        dtype=int,
+    )
+    keep = zscored[peaks] > high_threshold
     n_samples = events[:, 1] - events[:, 0] + 1
-    keep = sample_count_within(n_samples, time, minimum_duration, maximum_duration)
-    events, peaks = events[keep], peaks[keep]
-    return np.column_stack([time[events[:, 0]], time[events[:, 1]]]), time[peaks]
+    keep &= sample_count_within(n_samples, time, minimum_duration, maximum_duration)
+    events, peaks, clipped = events[keep], peaks[keep], clipped[keep]
+    return np.column_stack([time[events[:, 0]], time[events[:, 1]]]), time[peaks], clipped
 
 
 def Zugaro_ripple_detector(
@@ -1641,10 +1643,11 @@ def Zugaro_ripple_detector(
     n_min = minimum_sample_count(time, minimum_duration)
     event_times = [np.empty((0, 2))]
     peak_times = [np.empty(0)]
+    clipped = [np.empty((0, 2), dtype=bool)]
     for start, stop in blocks:
         if stop - start < n_min:
             continue
-        block_events, block_peaks = _two_threshold_events(
+        block_events, block_peaks, block_clipped = _two_threshold_events(
             normalized[start:stop],
             time[start:stop],
             low_threshold,
@@ -1655,14 +1658,29 @@ def Zugaro_ripple_detector(
         )
         event_times.append(block_events)
         peak_times.append(block_peaks)
+        clipped.append(block_clipped)
     event_times = np.concatenate(event_times)
     peak_times = np.concatenate(peak_times)
+    clipped_flags = np.concatenate(clipped)
 
     keep = _is_immobile_at_endpoints(event_times, speed, time, speed_threshold)
-    event_times, peak_times = event_times[keep], peak_times[keep]
+    event_times, peak_times, clipped_flags = (
+        event_times[keep],
+        peak_times[keep],
+        clipped_flags[keep],
+    )
 
+    # clipped means "lacks a crossing" here, which the segmentation knows and
+    # the event's position alone does not: a run beginning on the block's
+    # second sample starts on its first yet has its crossing there
     events = _get_event_stats(
-        event_times, time, normalized, speed, minimum_duration=minimum_duration, blocks=blocks
+        event_times,
+        time,
+        normalized,
+        speed,
+        minimum_duration=minimum_duration,
+        blocks=blocks,
+        clipped=clipped_flags,
     )
     events["peak_time"] = peak_times
     return events
@@ -2881,6 +2899,7 @@ def _get_event_stats(
     n_participants: ArrayLike | None = None,
     frac_participants: ArrayLike | None = None,
     blocks: list[tuple[int, int]] | None = None,
+    clipped: NDArray | None = None,
 ) -> pd.DataFrame:
     """Compute comprehensive statistics for detected events.
 
@@ -2917,6 +2936,10 @@ def _get_event_stats(
         The valid blocks the events were found in (``_valid_blocks``), for
         the ``clipped_start`` and ``clipped_end`` flags. Default is None,
         one block spanning the whole recording.
+    clipped : ndarray of bool, shape (n_events, 2), optional
+        Flags to report instead of the ones derived from ``blocks``, for a
+        detector whose segmentation knows better whether an event was cut
+        off (Zugaro). Default is None.
 
     Returns
     -------
@@ -3011,13 +3034,16 @@ def _get_event_stats(
     index = pd.Index(np.arange(len(events)) + 1, name="event_number")
     event_stats = pd.DataFrame(dict(zip(columns, values.T, strict=True)), index=index)
 
-    if blocks is None:
-        blocks = [(0, len(time_arr))]
-    block_starts = np.array([start for start, _ in blocks], dtype=int)
-    block_stops = np.array([stop for _, stop in blocks], dtype=int)
-    which = np.clip(np.searchsorted(block_starts, first, side="right") - 1, 0, None)
-    event_stats["clipped_start"] = first == block_starts[which]
-    event_stats["clipped_end"] = last == block_stops[which]
+    if clipped is None:
+        if blocks is None:
+            blocks = [(0, len(time_arr))]
+        block_starts = np.array([start for start, _ in blocks], dtype=int)
+        block_stops = np.array([stop for _, stop in blocks], dtype=int)
+        which = np.clip(np.searchsorted(block_starts, first, side="right") - 1, 0, None)
+        clipped = np.column_stack([first == block_starts[which], last == block_stops[which]])
+    clipped = np.asarray(clipped, dtype=bool).reshape(-1, 2)
+    event_stats["clipped_start"] = clipped[:, 0]
+    event_stats["clipped_end"] = clipped[:, 1]
     if participants is not None:
         event_stats["participants"] = participants
         event_stats["n_participants"] = n_participants

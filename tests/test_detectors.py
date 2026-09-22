@@ -1544,53 +1544,70 @@ class TestTwoThresholdEvents:
 
     def test_start_is_the_sample_before_the_low_crossing_and_end_the_last_above(self):
         z, t = self._trace(500, [(100, 190, 3.0), (140, 160, 6.0)])
-        events, peaks = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        events, peaks, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
         np.testing.assert_allclose(events, [[t[99], t[189]]])
         assert peaks[0] == t[140]  # first sample of the peak plateau
 
     def test_peak_must_exceed_high_threshold(self):
         z, t = self._trace(500, [(100, 200, 3.0)])  # above low, never above high
-        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        events, _, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
         assert len(events) == 0
         z, t = self._trace(500, [(100, 200, 3.0), (150, 151, 5.0)])  # equal to high: strict
-        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        events, _, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
         assert len(events) == 0
 
     def test_close_events_merge_when_the_merged_duration_is_under_the_maximum(self):
         # two 30 ms events 20 ms apart: merged span 80 ms < 100 ms maximum -> one event
         z, t = self._trace(500, [(100, 130, 6.0), (150, 180, 6.0)])
-        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        events, _, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
         assert len(events) == 1
         np.testing.assert_allclose(events, [[t[99], t[179]]])
 
     def test_close_events_do_not_merge_past_the_maximum_duration(self):
         # 60 ms + 20 ms gap + 60 ms = 140 ms > 100 ms maximum -> stay separate
         z, t = self._trace(500, [(100, 160, 6.0), (180, 240, 6.0)])
-        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        events, _, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
         assert len(events) == 2
 
     def test_events_farther_apart_than_the_interval_do_not_merge(self):
         z, t = self._trace(500, [(100, 130, 6.0), (170, 200, 6.0)])  # 40 ms apart
-        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        events, _, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
         assert len(events) == 2
 
     def test_duration_limits_are_strict(self):
         # 20 samples above low: start one before -> 20 ms span; not < 20 ms, kept
         z, t = self._trace(500, [(100, 120, 6.0)])
-        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        events, _, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
         assert len(events) == 1
         z, t = self._trace(500, [(100, 118, 6.0)])  # 18 ms span < 20 ms -> dropped
-        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        events, _, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
         assert len(events) == 0
         z, t = self._trace(500, [(100, 250, 6.0)])  # 150 ms > 100 ms -> dropped
-        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        events, _, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
         assert len(events) == 0
+
+    def test_clipped_means_a_missing_crossing_not_a_position(self):
+        """A run beginning on the block's second sample has its rising crossing
+        on the first, so it is not clipped although the event starts there;
+        a run beginning on the first sample is."""
+        z, t = self._trace(500, [(1, 50, 6.0), (200, 250, 6.0), (470, 500, 6.0)])
+        events, _, clipped = _two_threshold_events(z, t, 2.0, 5.0, 0.0, 0.020, None)
+        np.testing.assert_allclose(events[:, 0], [t[0], t[199], t[469]])
+        assert clipped.tolist() == [[False, False], [False, False], [False, True]]
+        z, t = self._trace(500, [(0, 50, 6.0)])
+        _, _, clipped = _two_threshold_events(z, t, 2.0, 5.0, 0.0, 0.020, None)
+        assert clipped.tolist() == [[True, False]]
+
+    def test_merged_events_carry_the_flags_of_their_ends(self):
+        z, t = self._trace(500, [(0, 40, 6.0), (60, 100, 6.0)])  # 20 ms apart -> merged
+        events, _, clipped = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, None)
+        assert len(events) == 1 and clipped.tolist() == [[True, False]]
 
     def test_event_at_the_block_start_or_end_is_kept(self):
         # FindRipples discards an unpaired first or last run; this package keeps
         # it, starting or ending on the block edge, and flags it downstream
         z, t = self._trace(500, [(0, 50, 6.0), (200, 250, 6.0), (470, 500, 6.0)])
-        events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        events, _, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
         np.testing.assert_allclose(events, [[t[0], t[49]], [t[199], t[249]], [t[469], t[499]]])
 
     def test_duration_limits_are_inclusive_sample_counts(self):
@@ -1598,12 +1615,12 @@ class TestTwoThresholdEvents:
         # 0.0205 s at 1 kHz rounds half up to 21 samples, 0.0305 s to 31
         for run_length, expected in [(19, 0), (20, 1), (30, 1), (31, 0)]:
             z, t = self._trace(500, [(100, 100 + run_length, 6.0)])
-            events, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.0205, 0.0305)
+            events, _, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.0205, 0.0305)
             assert len(events) == expected, (run_length, len(events))
 
     def test_empty(self):
         z, t = self._trace(500, [])
-        events, peaks = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
+        events, peaks, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
         assert events.shape == (0, 2) and peaks.shape == (0,)
 
 
