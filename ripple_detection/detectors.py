@@ -895,10 +895,12 @@ def Shvartsman_ripple_detector(
     merged_candidates = merge_overlapping_ranges_track_participation(candidate_ripple_times)
 
     n_elecs = normalized.shape[1]
+    # round so that 25 channels at 0.28 ask for 7, not the 7.000000000000001 of
+    # floating-point multiplication, which would demand 8
     n_elecs_thresh = (
         minimum_participating_channels
         if minimum_participating_fraction is None
-        else n_elecs * minimum_participating_fraction
+        else round(n_elecs * minimum_participating_fraction, 9)
     )
     participation_mask = (
         np.asarray([len(interval[2]) for interval in merged_candidates]) >= n_elecs_thresh
@@ -916,7 +918,7 @@ def Shvartsman_ripple_detector(
     ripple_times, keep = _exclude_long_events(ripple_times, time, maximum_duration)
     participants = participants[keep]
 
-    n_participants = np.array([len(p) for p in participants])
+    n_participants = np.array([len(p) for p in participants], dtype=int)
     return _get_event_stats(
         ripple_times,
         time,
@@ -1458,9 +1460,6 @@ def _two_threshold_events(
     zscored = np.asarray(zscored, dtype=float)
     time = np.asarray(time, dtype=float)
     empty = (np.empty((0, 2)), np.empty(0))
-    # a run needs both a rising and a falling crossing, so runs that touch
-    # either end of the block are dropped; an event spans from the last sample
-    # below the low threshold before the run to the last sample of the run
     runs = _boolean_run_bounds(zscored > low_threshold)
     if len(runs) == 0:
         return empty
@@ -1886,7 +1885,9 @@ def Long_sharp_wave_ripple_detector(
     bound = int(local_window * sampling_frequency)
     feature_index, sharp_wave_feature, ripple_feature, in_range = [], [], [], []
     for block_start, block_stop in blocks:
-        for w0, w1 in pairwise(np.arange(block_start, block_stop, window)):
+        # arange to block_stop inclusive, so a block that is an exact multiple of
+        # the window keeps its last complete window; a partial window is dropped
+        for w0, w1 in pairwise(np.arange(block_start, block_stop + 1, window)):
             segment = sharp_wave_diff[w0:w1]
             local_arg = int(np.argmax(segment))
             peak = int(w0) + local_arg

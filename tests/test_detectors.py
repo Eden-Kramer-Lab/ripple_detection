@@ -2507,6 +2507,68 @@ class TestShvartsmanParticipationSemantics:
             Shvartsman_ripple_detector(time_3s, filtered_lfps, stationary_speed, 1500)
 
 
+class TestParticipatingFractionRounding:
+    def test_a_fraction_that_multiplies_to_just_over_an_integer_does_not_demand_one_more(
+        self, time_3s, stationary_speed, sampling_frequency
+    ):
+        """25 channels at 0.28 is 7.000000000000001 in floating point; 7
+        participating channels must satisfy it."""
+        rng = np.random.default_rng(0)
+        n_channels = 25
+        lfps = np.column_stack(
+            [
+                simulate_LFP(
+                    time_3s, [1.1], noise_amplitude=1.2, ripple_amplitude=1.5, random_state=s
+                )
+                for s in range(n_channels)
+            ]
+        )
+        filtered = filter_ripple_band(lfps, 1500)
+        env = gaussian_smooth(get_envelope(filtered), 0.004, sampling_frequency)
+        # only 7 channels carry the ripple loudly enough: silence the others' bursts
+        quiet = np.column_stack(
+            [
+                simulate_LFP(time_3s, [], noise_amplitude=1.2, random_state=100 + s)
+                for s in range(n_channels - 7)
+            ]
+        )
+        filtered[:, 7:] = filter_ripple_band(quiet, 1500)
+        del env, rng
+        seven = Shvartsman_ripple_detector(
+            time_3s,
+            filtered,
+            stationary_speed,
+            sampling_frequency,
+            minimum_participating_channels=7,
+        )
+        by_fraction = Shvartsman_ripple_detector(
+            time_3s,
+            filtered,
+            stationary_speed,
+            sampling_frequency,
+            minimum_participating_fraction=0.28,
+        )
+        assert len(seven) >= 1
+        pd.testing.assert_frame_equal(seven, by_fraction)
+
+    def test_an_empty_result_has_integer_participant_counts(
+        self, time_3s, stationary_speed, sampling_frequency
+    ):
+        lfps = filter_ripple_band(
+            np.column_stack(
+                [
+                    simulate_LFP(time_3s, [], noise_amplitude=1.2, random_state=s)
+                    for s in (1, 2)
+                ]
+            ),
+            1500,
+        )
+        events = Shvartsman_ripple_detector(
+            time_3s, lfps, stationary_speed, sampling_frequency, zscore_threshold=50.0
+        )
+        assert events.empty and events.n_participants.dtype == np.int64
+
+
 class TestFindMaxThresh:
     def test_peak_in_a_short_excursion_does_not_hide_a_sustained_run(self):
         # the global peak (12.0) is a single sample; the value sustained for the

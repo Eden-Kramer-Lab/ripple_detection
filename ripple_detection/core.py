@@ -589,9 +589,12 @@ def _find_containing_interval(
         The (start, end) tuple from candidates that contains the target.
 
     """
+    if len(interval_candidates) == 0:
+        raise ValueError(
+            f"No candidate interval exists, so none can contain {tuple(target_interval)}."
+        )
     candidate_start_times = np.asarray(interval_candidates)[:, 0]
-    zero = np.array(0).astype(candidate_start_times.dtype)
-    starts_at_or_before = (candidate_start_times - target_interval[0] <= zero).nonzero()[0]
+    starts_at_or_before = np.flatnonzero(candidate_start_times <= target_interval[0])
     if starts_at_or_before.size == 0:
         raise ValueError(
             f"No candidate interval starts at or before {target_interval[0]}, so "
@@ -716,13 +719,18 @@ def _get_normalization_mask(
     Raises
     ------
     ValueError
-        If the mask is not boolean, its length does not match the data, or it
-        selects no sample.
+        If the mask is not 1-D or not boolean, its length does not match the
+        data, or it selects no sample.
 
     """
     if normalization_mask is None:
         return None
     mask = np.asarray(normalization_mask)
+    if mask.ndim != 1:
+        raise ValueError(
+            f"normalization_mask must be 1-D, shape (n_time,), got shape {mask.shape}. A "
+            "2-D mask would pool the statistics of every channel into one."
+        )
     if mask.dtype != bool:
         raise ValueError(
             f"normalization_mask must be boolean, got dtype {mask.dtype}. Casting "

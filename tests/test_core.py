@@ -732,6 +732,12 @@ class TestNormalizeSignal:
         with pytest.raises(ValueError, match=r"channel\(s\) \[1\]"):
             normalize_signal(data, method=method)
 
+    def test_two_dimensional_mask_raises(self):
+        """A (n_time, n_channels) mask would pool every channel's statistics."""
+        data = np.random.default_rng(0).normal(size=(100, 3)) * [1.0, 10.0, 100.0]
+        with pytest.raises(ValueError, match="1-D"):
+            normalize_signal(data, normalization_mask=np.ones((100, 3), dtype=bool))
+
     def test_non_boolean_mask_raises(self):
         """A forgotten comparison (speed instead of speed <= 4) is caught."""
         data = np.arange(10.0)
@@ -1654,3 +1660,12 @@ class TestMedianMadWithAMask:
         median = np.median(data[:200], axis=0)
         mad = median_abs_deviation(data[:200], axis=0, scale="normal")
         np.testing.assert_allclose(out, (data - median) / mad)
+
+
+class TestExtendThresholdToMeanWithNoContainingRun:
+    def test_raises_a_value_error_not_an_index_error(self):
+        time = np.arange(100) / 1000.0
+        is_above_threshold = np.zeros(100, dtype=bool)
+        is_above_threshold[10:60] = True
+        with pytest.raises(ValueError, match="No candidate interval"):
+            extend_threshold_to_mean(np.zeros(100, dtype=bool), is_above_threshold, time, 0.01)
