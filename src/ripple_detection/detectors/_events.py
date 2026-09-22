@@ -33,8 +33,8 @@ def _exclude_long_events(
     The limit applies to the event as it will be reported, after the bounds
     have been extended past the threshold crossing, because that is the
     duration a published maximum describes. ``minimum_duration`` is the other
-    way round: it applies to the run above threshold, the Frank lab convention
-    the package already follows.
+    way round: it applies to the run above threshold, the Frank lab
+    ``extractevents`` convention.
 
     Duration is a sample count, not elapsed time: an event is kept when it
     holds at most ``minimum_sample_count(time, maximum_duration)`` samples,
@@ -300,8 +300,9 @@ def _get_event_stats(
         - duration: Event duration (end - start), the elapsed time between the
             first and last sample, one sample interval less than n_samples
             spans; the duration limits are sample counts, so an event of
-            exactly the minimum count has duration one interval below
-            minimum_duration
+            exactly the minimum count has a duration below minimum_duration
+            by half to one and a half intervals, as the rounding falls (23
+            samples, 14.67 ms, at 15 ms and 1500 Hz)
         - n_samples: Number of samples in the event, first to last inclusive;
             the quantity the duration limits test
         - max_sustained_zscore: Largest value sustained for minimum_duration

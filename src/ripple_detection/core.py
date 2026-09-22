@@ -1473,8 +1473,7 @@ def require_overlap(
     minimum_overlap : float, optional
         Least total overlap, in the units of the event times, for an event to
         be kept. Default is 0.0, which requires overlap of positive duration:
-        events that merely touch at an endpoint are dropped, the convention
-        the project uses for event-level overlap.
+        events that merely touch at an endpoint are dropped.
 
     Returns
     -------

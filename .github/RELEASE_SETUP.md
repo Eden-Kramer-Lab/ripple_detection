@@ -7,7 +7,7 @@ This document explains how to set up automatic PyPI publishing using the new `re
 The workflow automatically:
 
 1. ✅ Runs quality checks (ruff format, ruff check, mypy)
-2. ✅ Tests on Python 3.10, 3.11, 3.12, 3.13
+2. ✅ Tests on Python 3.10 through 3.14, and at the dependency floors
 3. ✅ Builds distributions (wheel + sdist)
 4. ✅ Tests both distribution formats
 5. 🚀 **Publishes to PyPI when you push a tag** (e.g., `v1.6.0`)
@@ -45,13 +45,9 @@ If you prefer the traditional method:
 6. Update `.github/workflows/release.yml`:
 
    ```yaml
-   # Change this:
+   # Add a `with` block to the pinned publish step:
    - name: Publish to PyPI
-     uses: pypa/gh-action-pypi-publish@release/v1
-
-   # To this:
-   - name: Publish to PyPI
-     uses: pypa/gh-action-pypi-publish@release/v1
+     uses: pypa/gh-action-pypi-publish@<the pinned commit>  # keep the pin
      with:
        user: __token__
        password: ${{ secrets.PYPI_API_TOKEN }}
@@ -106,7 +102,7 @@ Before pushing a release tag:
 - [ ] `CHANGELOG.md` updated with version number and date
 - [ ] Version tag follows semantic versioning (e.g., `v1.6.0`)
 - [ ] All tests pass locally: `pytest tests/`
-- [ ] Quality checks pass: `ruff format --check .`, `ruff check .`, and `mypy src/`
+- [ ] Quality checks pass: `ruff format --check src/ tests/`, `ruff check src/ tests/`, and `mypy src/`
 - [ ] Built and tested locally: `python -m build` works
 
 ## Troubleshooting
@@ -125,7 +121,7 @@ Before pushing a release tag:
 ### Tests fail on Python 3.X
 
 - Check the Actions log for details
-- Reproduce locally: `tox -e py3X` or use that Python version
+- Reproduce locally: `uv run --python 3.X pytest`
 - Fix the issue, commit, and push
 
 ### Quality checks fail

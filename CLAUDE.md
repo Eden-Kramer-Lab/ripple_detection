@@ -142,7 +142,7 @@ Closes #N"
 git push origin vX.Y.Z
 
 # The tag push triggers the automated GitHub Actions release workflow:
-# - Runs tests on Python 3.10, 3.11, 3.12, 3.13
+# - Runs tests on Python 3.10 through 3.14, and at the dependency floors
 # - Builds source distribution and wheels
 # - Publishes to PyPI
 # - Creates GitHub release with auto-generated notes
@@ -248,13 +248,11 @@ All detectors return rich event statistics via `_get_event_stats()`:
 
 ## Testing Strategy
 
-**Test Coverage: 98%** (core 97%, the detectors package 98%; registry, literature and simulate 100%)
-
-The suite has one shared fixture module and eight test modules:
+The suite, with its shared fixtures:
 
 1. **[tests/conftest.py](tests/conftest.py)** - Shared pytest fixtures: 1500 Hz LFP simulations with various ripple patterns, speed data (stationary and moving), multiunit spike trains, edge cases, and the class-aware `time` and `stationary` fixtures
 2. **[tests/test_core.py](tests/test_core.py)** - Core signal processing: segmentation, extension, merging, the duration and gap boundary rules, normalization (including the degenerate-scale errors), filtering at several rates and across NaN gaps, envelope, smoothing, the Yu noise-threshold estimator
-3. **[tests/test_detectors.py](tests/test_detectors.py)** - One test class per detector plus shared classes for error handling, participation, duration and speed conventions, exclusion order, time ordering, and missing samples; a class states `FS` and `N_TIME` and gets `time` and `stationary` fixtures from conftest, and builds inputs with the helpers in [tests/_synthetic.py](tests/_synthetic.py)
+3. **[tests/test_detectors.py](tests/test_detectors.py)** - One test class per detector plus shared classes for error handling, parameter ranges, input contents, participation, duration and speed conventions (unknown speed included), exclusion order, time ordering, the gap rule, and missing samples (short blocks included); a class states `FS` and `N_TIME` and gets `time` and `stationary` fixtures from conftest, and builds inputs with the helpers in [tests/_synthetic.py](tests/_synthetic.py)
 4. **[tests/test_simulate.py](tests/test_simulate.py)** - Noise spectra, embedded ripples, per-ripple ranges, `ripple_snr`, and the inputs that used to give an all-NaN signal
 5. **[tests/test_properties.py](tests/test_properties.py)** - Hypothesis-driven invariants for the signal-processing functions
 6. **[tests/test_snapshots.py](tests/test_snapshots.py)** - Regression snapshots of detector output on fixed simulated data
@@ -263,9 +261,7 @@ The suite has one shared fixture module and eight test modules:
 9. **[tests/test_literature.py](tests/test_literature.py)** - The shipped survey loads with the documented shape and types
 10. **[tests/test_integration.py](tests/test_integration.py)** - Every detector driven by name from the registry on `simulate_session` output and judged against the ground truth: the registry path and the parameter set Spyglass stores, recall with a false-positive budget per detector, event bounds against the ripple windows, the filter-then-detect chain at 1000, 2000 and 30000 Hz, cross-detector agreement on one ripple, the output contract including the empty-result schema, time-offset, scale and channel-order invariance, clipped flags at the recording edges, Long's seeding, and Yu's threshold under shared channel noise
 
-**Test Execution**: about 770 tests in ~20 seconds (`pytest --collect-only -q | tail -1` for the current count)
-
-The package also validates that example notebooks run without errors in CI.
+The whole suite runs in seconds; `pytest` reports coverage of `src/ripple_detection` with the missing lines. The package also validates that example notebooks run without errors in CI.
 
 ## Build System
 
@@ -314,7 +310,7 @@ The package also validates that example notebooks run without errors in CI.
 - Numpy Docstrings for all public functions and classes using numpy docstring best practices
 - Uses f-strings for formatting
 - Modular functions with single responsibility
-- Comprehensive test coverage: 98% overall
+- Tests for every behavior a change touches, including the error paths
 - **Code quality tools**: Ruff (formatting and linting), Mypy (type checking)
 - Continuous integration with GitHub Actions (tests on Python 3.10 through 3.14, and at the minimum dependency pins)
 

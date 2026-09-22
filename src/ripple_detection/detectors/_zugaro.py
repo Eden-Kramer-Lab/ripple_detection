@@ -173,18 +173,23 @@ def Zugaro_ripple_detector(
     maximum, apart from using the envelope rather than the squared signal.
 
     This is a reimplementation from the algorithm, not a transcription. The
-    original is GPL-3. Four departures, each documented per parameter below.
-    The package's endpoint speed rule is applied. The peak is the maximum of
-    the normalized power, not the trough of a single filtered channel.
+    original is GPL-3. It departs from the original in four ways:
+
+    1. The package's endpoint speed rule is applied (``speed_threshold``).
+    2. The peak is the maximum of the normalized power, not the trough of a
+       single filtered channel.
+    3. A run that touches a gap or the record edge lacks one of its two
+       crossings; the original drops it, this package keeps it and flags it
+       in ``clipped_start`` or ``clipped_end``, so
+       ``events[~(events.clipped_start | events.clipped_end)]`` reproduces
+       the original rule.
+    4. The moving average is the original's 11 samples at 1250 Hz scaled to
+       ``sampling_frequency`` (``smoothing_window``).
 
     Missing samples are handled block-wise, as in every detector here, so
     smoothing and segmentation never cross a gap; a NaN in ``speed`` is an
-    unknown speed, which fails the endpoint rule but splits no block. A run that touches a gap or
-    the record edge lacks one of its two crossings; the original drops it,
-    this package keeps it and flags it in ``clipped_start`` or
-    ``clipped_end``, so ``events[~(events.clipped_start | events.clipped_end)]``
-    reproduces the original rule. A block shorter than the smoothing window is
-    treated as missing, with a warning.
+    unknown speed, which fails the endpoint rule but splits no block. A block
+    shorter than the smoothing window is treated as missing, with a warning.
 
     Parameters
     ----------

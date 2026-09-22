@@ -25,17 +25,20 @@ Calls that stop working, and the change to make:
   `normalize_signal(data, method, normalization_mask)`. The `time` argument is
   gone, so `method` and `normalization_mask` move one position earlier.
 - `multiunit_HSE_detector(..., use_speed_threshold_for_zscore=True)` ->
-  `normalization_mask=speed <= speed_threshold`. The two normalization
-  parameters after it move one position earlier.
+  `normalization_mask=speed <= speed_threshold`.
 - Every detector's tunables are keyword-only. A tunable passed by position after
   `sampling_frequency` raises `TypeError`; pass it by name.
-- `exclude_close_events`, `exclude_movement` and `exclude_movement_by_majority`
-  return arrays of shape `(n, 2)`, never a bare list, and accept a detector's
-  DataFrame.
+- `exclude_close_events` and `exclude_movement` return arrays of shape
+  `(n, 2)`, never a bare list, and accept a detector's DataFrame.
+- `pink(N, state=np.random.RandomState(seed))`, and `white` and `brown` the
+  same way -> `pink(N, rng=seed)`. The argument is renamed and takes a seed
+  or a `numpy.random.Generator`.
 
-Pipelines that pass every parameter by keyword and filter the LFP elsewhere need
-no code change; the Kay and Karlsson signatures are unchanged apart from the
-star.
+Apart from these, the Kay, Karlsson, Roumis and HSE signatures change only by
+the star and the new `maximum_duration` (and `minimum_active_units` on HSE),
+so a pipeline that passes every parameter by keyword, does not use
+`normalization_time_range` or `use_speed_threshold_for_zscore`, and filters the
+LFP elsewhere needs no code change unless its inputs now raise (see Fixed).
 
 The output changed:
 
@@ -46,7 +49,9 @@ The output changed:
 - Every result has `n_samples`, `clipped_start` and `clipped_end`. `duration` is
   elapsed time, one sample interval less than `n_samples` spans; the duration
   limits test `n_samples`, so an event of exactly the minimum count has a
-  `duration` one interval below `minimum_duration`.
+  `duration` below `minimum_duration` by half to one and a half intervals (23
+  samples span 14.67 ms at 15 ms and 1500 Hz). `n_samples` is the fourth
+  column, so code that reads columns by position shifts.
 - `exclude_close_events` keeps its 1.x default of 1.0 s; the detectors' own
   `close_ripple_threshold` and `close_event_threshold` default to 0.0.
 
@@ -83,13 +88,18 @@ raises on zero rows; that is hdmf's, not this package's.
   Its signal parameter is `raw_lfps`: **raw** LFP from a pyramidal-layer channel
   and a stratum radiatum channel.
 - `Carey_candidate_detector`, the candidate detector of Carey, Tanaka & van der
-  Meer 2019. It combines a ripple score and a multiunit score.
+  Meer 2019. It combines a ripple score and a multiunit score. `theta_lfp` is
+  filtered over each of its own runs of finite samples, as the original
+  filtered the whole recording, so a dropout in another input does not
+  restart the theta filter.
 - `Shvartsman_ripple_detector`, an unpublished laboratory variant. It keeps an
   event when at least `minimum_participating_channels` channels, or
   `minimum_participating_fraction` of them, detect it, and reports which
   channels took part as a sorted tuple. `normalization_method="manual"` with
   `channel_baselines` and `channel_deviations` normalizes with statistics from
-  elsewhere, such as a whole recording day.
+  elsewhere, such as a whole recording day. It raises when it has fewer
+  channels than `minimum_participating_channels` (2 by default); pass 1 for a
+  single channel.
 - `maximum_duration` on every detector without a ceiling of its own (Zugaro and
   Long have theirs; Zugaro's accepts `None`). It limits the event as the
   detector reports it, not the run above the threshold.
@@ -97,12 +107,16 @@ raises on zero rows; that is hdmf's, not this package's.
   `n_active_units`, the count of units with a spike in the event.
 - `n_samples`, `clipped_start` and `clipped_end` on every detector's result.
 - `band` and `transition_width` on `filter_ripple_band` and
-  `ripple_bandpass_filter`. The default band stays 150-250 Hz; `band=None` means
-  the default on both.
+  `ripple_bandpass_filter`. The default band stays 150-250 Hz; `band=None` and
+  `band=(150, 250)` both mean it, and at 1500 Hz with no `transition_width`
+  both use the shipped kernel. Any other band, rate or width designs a filter.
 - `require_overlap`, which keeps the events of one detector that overlap an
   event of another. Use it to require a ripple and a population burst together.
 - `merge_close_events`, which joins events that are close together.
   `exclude_close_events` keeps the first event and discards the others.
+- `exclude_movement_by_majority`, the movement rule of the Shvartsman
+  detector: an event is kept when at least half of its samples with known
+  speed are immobile.
 - A detector registry for pipelines that hold a detector by name. `DETECTORS`
   maps each name to a `DetectorSpec`; `get_detector(name)` looks one up.
   `spec.inputs` says which signals the detector takes, as the exported
@@ -118,9 +132,9 @@ raises on zero rows; that is hdmf's, not this package's.
   that decode replay content.
 - `ripple_snr`, `random_state` and ranges for `ripple_frequency` and
   `ripple_duration` on `simulate_LFP`. Every draw in the package goes through
-  `numpy.random.default_rng`, so `random_state` is a seed or a Generator on
-  `simulate_LFP`, the noise functions and `Long_sharp_wave_ripple_detector`
-  alike. The same seed gives different noise than 1.x, which used the legacy
+  `numpy.random.default_rng`, so `random_state` on `simulate_LFP` and
+  `Long_sharp_wave_ripple_detector`, and `rng` on the noise functions, is a
+  seed or a Generator alike. The same seed gives different noise than 1.x, which used the legacy
   `RandomState`. The Long detector is seeded with 0 by default, so two runs on
   the same data agree; `None` gives the original's unseeded k-means.
 - The package root exports the helpers the detectors are built from, and
@@ -130,7 +144,9 @@ raises on zero rows; that is hdmf's, not this package's.
   `get_Yu_ripple_consensus_trace`, `exclude_close_events`,
   `merge_close_events`, `require_overlap`, `minimum_sample_count`,
   `sample_count_within`, `DEFAULT_RIPPLE_BAND`, `DEFAULT_TRANSITION_WIDTH`,
-  `simulate_LFP` and `simulate_time`, with the registry names above.
+  `noise_threshold_diagnostics` and its result type
+  `NoiseThresholdDiagnostics`, `simulate_LFP`, `simulate_time`, and the
+  simulators and `SimulatedSession` above, with the registry names above.
 - README: tables for the choice of detector, for published parameter values, and
   for tools that this package does not implement.
 - `py.typed`. The package is type-checked with strict mypy, and downstream
@@ -144,27 +160,11 @@ raises on zero rows; that is hdmf's, not this package's.
 
 ### Changed
 
-- `Shvartsman_ripple_detector` raises when `minimum_participating_channels`
-  exceeds the number of channels given, as with one channel at the default of
-  2, where no event could be kept and an empty result looked like a quiet
-  recording. Pass `minimum_participating_channels=1` for one channel.
 - **Breaking.** `simulate_LFP` defaults to pink (1/f) noise. Brown noise, the
   old default, has almost no ripple-band power, so a ripple of any amplitude
   was tens to hundreds of times the band background and every detector found
   every ripple; on pink noise a ripple of `ripple_snr` 1 to 4 is a real test.
   Pass `noise_type="brown"` for the old signal.
-- `Carey_candidate_detector` filters `theta_lfp` over each run of finite theta
-  samples, as the original filtered the whole recording, rather than within
-  the blocks its other inputs define. A dropout in the LFP or the spikes no
-  longer restarts the theta filter, whose transient reads as high theta for
-  up to 0.4 s and excluded candidates near every such edge; at 30 kHz the
-  first sample of a block read 2.1 SD where the truth was -0.7. The filter
-  runs in second-order sections.
-- `filter_ripple_band` treats `band=(150, 250)` as the default band, so at
-  1500 Hz it uses the shipped kernel as `band=None` does; before, naming the
-  default band designed a different filter whose output differed by up to
-  0.8 SD. `transition_width` now defaults to None, and giving a width at
-  1500 Hz designs a filter with that width instead of raising.
 - `filter_ripple_band` filters any run of present samples at least as long
   as its kernel: 318 samples (212 ms) at 1500 Hz, where it needed 955. It
   passes `filtfilt` a pad of one less than the tap count, which for an FIR
@@ -180,9 +180,10 @@ raises on zero rows; that is hdmf's, not this package's.
 - **Breaking.** Immobility is `speed <= speed_threshold` in all detectors.
 - **Breaking.** A duration ceiling below the minimum raises an error.
 - **Breaking.** `filter_ripple_band` requires `sampling_frequency`. Its default
-  of 1500 Hz applied the shipped kernel to data at any rate, so 1000 Hz data was
-  filtered to 97-170 Hz and gave twice the events, and nothing downstream could
-  tell. It also filters each run of non-NaN samples on its own. Before, it
+  of `None` applied the shipped 1500 Hz kernel to data at any rate without a
+  check, so 1000 Hz data was filtered to 97-170 Hz and gave twice the events,
+  and nothing downstream could tell; a given rate other than 1500 Hz raised
+  below 1200 Hz and otherwise only warned before applying the same kernel. It also filters each run of non-NaN samples on its own. Before, it
   stitched the runs together, and the step between the two sides of a gap rang
   through the filter: on noise with no ripples and a 5 s gap, the Kay detector
   reported a 5 s event with a z-score near 10. A run too short to filter is
@@ -227,18 +228,18 @@ raises on zero rows; that is hdmf's, not this package's.
   detector would still find the event. The old value could fall below
   `zscore_threshold`; on noise every Karlsson event did, down to -0.16.
 - **Breaking.** Every detector's tunables are keyword-only.
-- **Breaking.** `exclude_close_events`, `exclude_movement` and
-  `exclude_movement_by_majority` return arrays of shape `(n, 2)`, and an
-  integer index array, never a bare list. They and `merge_close_events` accept
-  a detector's DataFrame; the two filters return it filtered.
-- `Karlsson_ripple_detector` calculates its per-event z-score statistics on the
-  maximum across channels, not on the mean. The events and their bounds do not
-  change.
+- **Breaking.** `exclude_close_events` and `exclude_movement` return arrays of
+  shape `(n, 2)`, never a bare list. They, `exclude_movement_by_majority` and
+  `merge_close_events` accept a detector's DataFrame; the two filters return
+  it filtered.
+- **Breaking.** `Karlsson_ripple_detector` calculates its per-event z-score
+  statistics on the maximum across channels, not on the mean. The events and
+  their bounds do not change; their statistics do.
 - Per-event statistics are found by bisection on the timestamps. They took
   5.5 s for half an hour of 1500 Hz data with 500 events, and minutes for a
   day; they take 0.03 s. The values do not change.
-- `ripple_detection.detectors` is a package of eight modules rather than one
-  file of 3000 lines: validation, the missing-sample blocks, the shared event
+- `ripple_detection.detectors` is a package of modules rather than one file:
+  validation, the missing-sample blocks, the shared event
   tail and statistics, the envelope-based detectors, and one module each for
   Zugaro, Long, Carey and the HSE detector. Every public name is still
   importable from `ripple_detection.detectors` and from the package root.
@@ -328,13 +329,14 @@ raises on zero rows; that is hdmf's, not this package's.
     noise amplitude that is NaN, a negative `ripple_amplitude`, or a
     `ripple_snr` that is not positive, each of which returned an all-NaN,
     empty, aliased or phase-flipped signal.
-- `Karlsson_ripple_detector` and `multiunit_HSE_detector` give the
+- **Breaking.** `Karlsson_ripple_detector` and `multiunit_HSE_detector` give the
   `minimum_duration` of the caller to the sustained-z-score statistic. Before,
   they used the default of 15 ms.
 - The length guard of `filter_ripple_band` was one sample too permissive, so a
   signal of exactly that length failed inside scipy. An infinite sample is
   missing, as NaN is; before, one `inf` turned its whole run to NaN.
-- `normalization_mask` is restricted to the valid samples, as the data is.
+- **Breaking.** `normalization_mask` is restricted to the valid samples, as the
+  data is, so a mask that selected NaN rows no longer changes the statistics.
 - `get_envelope` and `get_multiunit_population_firing_rate` convert their input,
   as their `array_like` annotation states.
 - Warnings about units name the line of the caller, not a frame inside the

@@ -123,20 +123,26 @@ def Long_sharp_wave_ripple_detector(
     apply. Event bounds are the sharp-wave bounds.
 
     Reimplemented from the algorithm as read. The source states no license.
-    Five departures, each documented below. ``random_state`` seeds the
-    k-means, where MATLAB's is unseeded. A candidate whose local window holds
-    no sample below the boundary threshold is rejected, where the original
-    errors. The package's endpoint speed rule is applied afterwards; a NaN in
-    ``speed`` is an unknown speed, which fails it at an endpoint but splits no
-    block. Missing samples (NaN in ``lfp``, or a gap in ``time``) split the
-    recording into blocks: the
-    filters and candidate windows run within each block, the k-means pools
-    the candidates of every block, and a candidate within ``local_window`` of
-    a block edge is not evaluated, as the original does at the record edges.
-    A block shorter than the sharp-wave low-pass kernel is treated as missing,
-    with a warning. ``clipped_start`` and ``clipped_end`` are therefore False in
-    practice; the one case that can set one is a sharp-wave boundary falling
-    exactly on the edge of the local window.
+    It departs from the original in five ways:
+
+    1. ``random_state`` seeds the k-means, where MATLAB's is unseeded.
+    2. A candidate whose local window holds no sample below the boundary
+       threshold is rejected, where the original errors.
+    3. The package's endpoint speed rule is applied afterwards; a NaN in
+       ``speed`` is an unknown speed, which fails it at an endpoint but
+       splits no block.
+    4. Missing samples (NaN in ``raw_lfps``, or a gap in ``time``) split the
+       recording into blocks: the filters and candidate windows run within
+       each block, the k-means pools the candidates of every block, and a
+       candidate within ``local_window`` of a block edge is not evaluated,
+       as the original does at the record edges. A block shorter than the
+       sharp-wave low-pass kernel is treated as missing, with a warning.
+       ``clipped_start`` and ``clipped_end`` are therefore False in practice;
+       the one case that can set one is a sharp-wave boundary falling
+       exactly on the edge of the local window.
+    5. The duration limits are the package's round-half-up sample counts
+       (``sample_count_within``), where the original floors
+       ``duration * rate``.
 
     Parameters
     ----------

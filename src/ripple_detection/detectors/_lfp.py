@@ -82,7 +82,8 @@ def get_Kay_ripple_consensus_trace(
         Default is 0.004 (4 ms).
     time : array_like, shape (n_time,), optional
         Sample timestamps in seconds, used to split at gaps in the timestamps
-        as well as at missing samples. Keyword only. Default is None, which
+        (a step larger than 1.5 times the median step) as well as at missing
+        samples. Keyword only. Default is None, which
         splits at missing samples only.
 
     Returns
@@ -154,7 +155,7 @@ def get_Yu_ripple_consensus_trace(
         the median of the raw smoothed envelopes.
     time : array_like, shape (n_time,), optional
         Sample timestamps in seconds. When given, a step larger than 1.5
-        sample intervals also ends a block, so disjoint intervals that were
+        times the median step also ends a block, so disjoint intervals that were
         concatenated are not smoothed across. Default is None, which declares
         a regular sample grid.
 
@@ -353,8 +354,9 @@ def Shvartsman_ripple_detector(
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
         ``minimum_sample_count(time, minimum_duration)`` consecutive samples,
-        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms;
-        per Karlsson & Frank 2009); the event is then extended to the surrounding
+        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms).
+        The 15 ms is Karlsson & Frank 2009's; the rounding is the Frank lab
+        ``extractevents`` convention. The event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
@@ -447,7 +449,8 @@ def Shvartsman_ripple_detector(
     Unpublished variant contributed by Gabrielle Shvartsman (2026); it has no
     paper of its own. The participation rule requires
     ``minimum_participating_channels`` channels (default 2) to detect the
-    ripple, so at the default a single-channel input never produces an event.
+    ripple, so at the default a single-channel input raises; pass
+    ``minimum_participating_channels=1`` for one channel.
 
     """
     manual = normalization_method == "manual"
@@ -619,8 +622,9 @@ def Kay_ripple_detector(
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
         ``minimum_sample_count(time, minimum_duration)`` consecutive samples,
-        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms;
-        per Karlsson & Frank 2009); the event is then extended to the surrounding
+        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms).
+        The 15 ms is Karlsson & Frank 2009's; the rounding is the Frank lab
+        ``extractevents`` convention. The event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
@@ -992,8 +996,9 @@ def Karlsson_ripple_detector(
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
         ``minimum_sample_count(time, minimum_duration)`` consecutive samples,
-        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms;
-        per Karlsson & Frank 2009); the event is then extended to the surrounding
+        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms).
+        The 15 ms is Karlsson & Frank 2009's; the rounding is the Frank lab
+        ``extractevents`` convention. The event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
@@ -1145,8 +1150,9 @@ def Roumis_ripple_detector(
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
         ``minimum_sample_count(time, minimum_duration)`` consecutive samples,
-        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms;
-        per Karlsson & Frank 2009); the event is then extended to the surrounding
+        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms).
+        The 15 ms is Karlsson & Frank 2009's; the rounding is the Frank lab
+        ``extractevents`` convention. The event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.

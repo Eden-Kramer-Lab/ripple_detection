@@ -264,7 +264,7 @@ All detectors return a pandas DataFrame with comprehensive event statistics:
 |--------|-------------|
 | `start_time` | Event start time |
 | `end_time` | Event end time |
-| `duration` | Elapsed time from the first to the last sample (seconds). One sample interval less than `n_samples` spans, so an event of exactly the minimum sample count has a `duration` one interval below `minimum_duration` |
+| `duration` | Elapsed time from the first to the last sample (seconds). One sample interval less than `n_samples` spans, so an event of exactly the minimum sample count has a `duration` below `minimum_duration` by half to one and a half intervals, as the rounding falls: at 15 ms and 1500 Hz, 23 samples span 14.67 ms |
 | `n_samples` | Samples in the event, first to last inclusive; the quantity the duration limits test |
 | `max_sustained_zscore` | The largest z-score sustained for `minimum_duration`: for Kay, Karlsson, Roumis, Yu and HSE, the highest threshold at which the detector would still find the event. Descriptive only for Shvartsman (the mean over participating channels), Zugaro and Carey (two-threshold rules) and Long (may be NaN), where it can fall below the threshold. Named `max_thresh` before 2.0 |
 | `mean_zscore` | Mean z-score during event |
@@ -369,7 +369,7 @@ See the [examples](examples/) directory for Jupyter notebooks demonstrating:
 
 ### Common Errors
 
-#### "axis 1 is out of bounds" or "must be a 2D array"
+#### "must be a 2D array"
 
 Your LFP data must be 2D with shape `(n_time, n_channels)`. Even for a single channel, the array must be 2D.
 
@@ -450,10 +450,9 @@ ripples = Kay_ripple_detector(
 | `smoothing_sigma` | 0.004 s on Kay, Karlsson, Roumis, Shvartsman and Yu; 0.010 s on Carey (`ripple_smoothing_sigma`); 0.015 s on `multiunit_HSE_detector`. Zugaro uses a moving average (`smoothing_window`), Long its own low-pass kernels | Width of the Gaussian smoothing kernel | Rarely needs adjustment; increase for noisier data |
 | `percentile` | 99.99 (Yu) | Percentile of the mirrored immobility-noise distribution used as the threshold | Lower for more detections; the threshold is estimated per call, so it adapts to each recording |
 | `close_ripple_threshold` (`close_event_threshold` on the HSE detector) | 0.0 s | The later of two events closer than this is dropped | Raise (e.g. 0.05) to suppress fragments; Zugaro merges instead via `minimum_inter_ripple_interval` |
-| `maximum_duration` | `None` (no limit; `Zugaro` 0.100 s, `Long` 0.500 s for the sharp wave) | Longest allowed event, applied to the event as reported rather than to the run above threshold. A sample count like the minimum, so the ceiling is one sample shorter in elapsed time than the value given | Published limits run from a few hundred milliseconds to a couple of seconds |
+| `maximum_duration` | `None` (no limit; `Zugaro` 0.100 s). Long's ceiling is `maximum_sharp_wave_duration`, 0.500 s | Longest allowed event, applied to the event as reported rather than to the run above threshold. A sample count like the minimum, so the ceiling is one sample shorter in elapsed time than the value given | Published limits run from a few hundred milliseconds to a couple of seconds |
 | `minimum_active_units` | 0 on `multiunit_HSE_detector` (no criterion), 5 on `Carey_candidate_detector` | Units with at least one spike inside the event; every event reports `n_active_units` | Published criteria are most often around five units |
 | `band`, `transition_width` on `filter_ripple_band` | `None`, meaning 150-250 Hz, and `None`, meaning 25 Hz for a designed filter | Passband of the designed filter. `sampling_frequency` is always required; the shipped kernel (10 Hz transitions) is used only at 1500 Hz with the default band, whether `None` or `(150, 250)`, and no `transition_width`. Any other band, rate or width designs a filter | Published bands run from about 80-180 Hz at the lower edge to 200-300 Hz at the upper |
-| `low_threshold`, `high_threshold` | 2.0, 5.0 (Zugaro) | Boundary and peak thresholds of the two-threshold rule | Lower `high_threshold` for more detections; `low_threshold` sets where events start and end |
 
 ### Published parameter values
 
@@ -491,8 +490,8 @@ Three cautions before treating this as a recipe:
 
 - **The defaults are each source's where the source has one, not a consensus.** They
   reproduce the published or lab settings of the algorithm each detector is named for,
-  except the speed rule on Zugaro, Long and Carey and every HSE default, which are the
-  package's (see [Choosing a detector](#choosing-a-detector)); so the same recording
+  except the speed rule on Zugaro, Long and Carey and every HSE default but its 15 ms
+  smoothing (Davidson et al. 2009's), which are the package's (see [Choosing a detector](#choosing-a-detector)); so the same recording
   gives different event counts under different detectors by design.
 - **Our thresholds and minimum duration sit at the permissive end.** A 2 SD threshold
   held for 15 ms admits more than the field's median of 3 SD and 50 ms. Tightening to
@@ -574,7 +573,7 @@ Notes:
   its threshold.
 - The endpoint speed rule at 4 cm/s is the package's on Zugaro and Long, whose originals have no
   speed criterion, and on Carey, whose original uses 10 pixels/s; every default of the HSE detector
-  is the package's.
+  but the 15 ms smoothing, which is Davidson et al. 2009's, is the package's.
 - Two conventions are the package's, not each source's: every duration limit is an inclusive
   round-half-up sample count (`sample_count_within`), and immobility is `speed <= speed_threshold`.
 - "Close events" above says what each detector does by default. `merge_close_events` applies
@@ -673,7 +672,7 @@ git push origin vX.Y.Z
 ```
 
 The automated workflow will:
-- Run tests on Python 3.10, 3.11, 3.12, 3.13
+- Run tests on Python 3.10 through 3.14, and at the dependency floors
 - Build source distribution and wheels
 - Publish to PyPI
 - Create GitHub release
@@ -700,7 +699,7 @@ file to cite instead.
 | `Zugaro_ripple_detector` | FMAToolbox `Analyses/FindRipples.m` (initial algorithm by H. Hirase; implemented by M. Zugaro). The summed-power rule it descends from is described in Csicsvari, J., Hirase, H., Czurkó, A., Mamiya, A., & Buzsáki, G. (1999). *Journal of Neuroscience*, 19(1), 274-287. | [FindRipples.m](https://github.com/michael-zugaro/FMAToolbox/blob/6bbb3662f7ed1ccf09c5ff4b4d233e27e17c71a6/Analyses/FindRipples.m); [10.1523/JNEUROSCI.19-01-00274.1999](https://doi.org/10.1523/JNEUROSCI.19-01-00274.1999) |
 | `Long_sharp_wave_ripple_detector` | J. D. Long II, `bz_DetectSWR.m` (buzcode; converted by A. Navas-Olive; filtering after E. Stark's `detect_hfos`), carried into neurocode as `DetectSWR.m`. No accompanying paper. | [bz_DetectSWR.m](https://github.com/buzsakilab/buzcode/blob/0969ddf7f55ccaca8c71969bee4b21f310840047/analysis/SharpWaveRipples/bz_DetectSWR.m); neurocode [10.5281/zenodo.7819979](https://doi.org/10.5281/zenodo.7819979) |
 | `Carey_candidate_detector` | Carey, A. A., Tanaka, Y., & van der Meer, M. A. A. (2019). Reward revaluation biases hippocampal replay content away from the preferred outcome. *Nature Neuroscience*, 22(9), 1450-1459. | [10.1038/s41593-019-0464-6](https://doi.org/10.1038/s41593-019-0464-6) |
-| `multiunit_HSE_detector` | Thresholds on a smoothed population rate follow Davidson, T. J., Kloosterman, F., & Wilson, M. A. (2009). Hippocampal replay of extended experience. *Neuron*, 63(4), 497-507. The defaults here are this package's, not that paper's. | [10.1016/j.neuron.2009.07.027](https://doi.org/10.1016/j.neuron.2009.07.027) |
+| `multiunit_HSE_detector` | Thresholds on a smoothed population rate follow Davidson, T. J., Kloosterman, F., & Wilson, M. A. (2009). Hippocampal replay of extended experience. *Neuron*, 63(4), 497-507. The 15 ms smoothing is that paper's; the other defaults are this package's. | [10.1016/j.neuron.2009.07.027](https://doi.org/10.1016/j.neuron.2009.07.027) |
 | `normalize_signal(method="median_mad")` | Leys, C., Ley, C., Klein, O., Bernard, P., & Licata, L. (2013). *Journal of Experimental Social Psychology*, 49(4), 764-766. | [10.1016/j.jesp.2013.03.013](https://doi.org/10.1016/j.jesp.2013.03.013) |
 
 Each detector's docstring carries the same reference, and the code it was

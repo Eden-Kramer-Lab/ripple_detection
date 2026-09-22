@@ -155,10 +155,11 @@ def multiunit_HSE_detector(
     unknown speed, not a missing sample: it splits no block, and an event
     whose first or last sample has unknown speed fails the speed criterion.
 
-    The defaults (2 SD, 15 ms smoothing, 15 ms minimum, 4 cm/s) are this
-    package's convention. Published multiunit-burst detectors in the same
-    lineage use their own values (Davidson et al. 2009 among them), so set them
-    explicitly when reproducing a paper.
+    The 15 ms smoothing is Davidson et al.'s; the other defaults (2 SD, a
+    15 ms minimum, 4 cm/s) are this package's convention. Published
+    multiunit-burst detectors in the same lineage use their own values
+    (Davidson et al. 2009 among them), so set them explicitly when
+    reproducing a paper.
 
     References
     ----------
