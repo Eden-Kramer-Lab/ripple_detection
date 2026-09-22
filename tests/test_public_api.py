@@ -32,6 +32,8 @@ HELPERS = [
     "normalize_signal",
     "normalize_signal_manually",
     "estimate_noise_threshold",
+    "noise_threshold_diagnostics",
+    "NoiseThresholdDiagnostics",
     "get_Kay_ripple_consensus_trace",
     "get_Yu_ripple_consensus_trace",
     "get_multiunit_population_firing_rate",

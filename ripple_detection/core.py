@@ -4,6 +4,7 @@ potentials.
 
 import warnings
 from collections.abc import Generator
+from dataclasses import dataclass
 from os.path import abspath, dirname, join
 
 import numpy as np
@@ -1478,13 +1479,58 @@ def _histc(values: NDArray, edges: NDArray) -> NDArray:
     return counts
 
 
+@dataclass(frozen=True)
+class NoiseThresholdDiagnostics:
+    """Everything :func:`estimate_noise_threshold` computed on the way to its answer.
+
+    Attributes
+    ----------
+    threshold : float
+        The estimated threshold, in the units of the input.
+    mode : float
+        The histogram mode the noise distribution was mirrored about.
+    mode_index : int
+        Its bin index in ``histogram_edges``.
+    mean, min : float
+        Mean and minimum of the in-grid samples.
+    flank_ratio : float
+        Left-flank width over mode-to-mean distance, ``(mode - min) / (mean -
+        mode)``; the mirrored distribution can reach past the mean only when
+        this exceeds 1. ``inf`` when the mean does not exceed the mode.
+    histogram_edges, counts, smoothed_counts : ndarray
+        The grid, the raw counts on it, and the counts after the moving
+        average that located the mode.
+    mirrored_positions, mirrored_counts : ndarray
+        The mirrored noise distribution the percentile was read from.
+    out_of_grid_fraction : float
+        Fraction of samples non-finite or outside the grid.
+    n_values, n_in_grid : int
+        Sample counts before and after that exclusion.
+
+    """
+
+    threshold: float
+    mode: float
+    mode_index: int
+    mean: float
+    min: float
+    flank_ratio: float
+    histogram_edges: NDArray
+    counts: NDArray
+    smoothed_counts: NDArray
+    mirrored_positions: NDArray
+    mirrored_counts: NDArray
+    out_of_grid_fraction: float
+    n_values: int
+    n_in_grid: int
+
+
 def estimate_noise_threshold(
     values: ArrayLike,
     percentile: float = 99.99,
     histogram_edges: ArrayLike | None = None,
     mode_smoothing_window: int = YU_MODE_SMOOTHING_WINDOW,
-    return_diagnostics: bool = False,
-) -> float | tuple[float, dict]:
+) -> float:
     """Estimate a detection threshold from the mirrored noise distribution.
 
     The threshold rule of Yu et al. 2017. Histogram the consensus envelope
@@ -1517,17 +1563,13 @@ def estimate_noise_threshold(
         Moving-average window, in bins, applied to the counts before locating
         the mode (MATLAB ``smooth(counts, 11)``). The mode is the first
         maximum of the smoothed counts. Default is 11.
-    return_diagnostics : bool, optional
-        If True, also return a dict with the grid, raw and smoothed counts,
-        mode, mirrored positions and counts, and the fraction of samples
-        outside the grid. Default is False.
 
     Returns
     -------
     threshold : float
         Detection threshold in the units of ``values``.
-    diagnostics : dict
-        Only when ``return_diagnostics`` is True.
+        :func:`noise_threshold_diagnostics` returns the same estimate with
+        everything computed on the way to it.
 
     Raises
     ------
@@ -1553,8 +1595,8 @@ def estimate_noise_threshold(
 
     The threshold therefore lies above the sample mean only when the left
     flank is wider than the distance from the mode to the mean, that is
-    ``(m - min) > (mean - m)``. The diagnostics report this as
-    ``flank_ratio``. Ripples that are large relative to the in-band
+    ``(m - min) > (mean - m)``. :func:`noise_threshold_diagnostics` reports
+    this as ``flank_ratio``. Ripples that are large relative to the in-band
     background inflate the variance and pull the mean above the noise
     ceiling. The ratio then drops below one and ``Yu_ripple_detector`` raises,
     because a threshold below the mean leaves its extension rule undefined.
@@ -1566,6 +1608,26 @@ def estimate_noise_threshold(
        (2017). Distinct hippocampal-cortical memory representations for
        experiences associated with movement versus immobility. eLife, 6,
        e27621. doi:10.7554/eLife.27621
+
+    """
+    return noise_threshold_diagnostics(
+        values, percentile, histogram_edges, mode_smoothing_window
+    ).threshold
+
+
+def noise_threshold_diagnostics(
+    values: ArrayLike,
+    percentile: float = 99.99,
+    histogram_edges: ArrayLike | None = None,
+    mode_smoothing_window: int = YU_MODE_SMOOTHING_WINDOW,
+) -> NoiseThresholdDiagnostics:
+    """:func:`estimate_noise_threshold` with everything it computed.
+
+    Same arguments, same estimate, returned as a
+    :class:`NoiseThresholdDiagnostics` alongside the histogram, its mode, the
+    mirrored distribution and the sample counts, for inspecting why the
+    threshold landed where it did. Raises and warns as
+    :func:`estimate_noise_threshold` does.
 
     """
     values = np.asarray(values, dtype=float).ravel()
@@ -1637,30 +1699,25 @@ def estimate_noise_threshold(
         )
     threshold = float(positions[crossing + 1])
 
-    if not return_diagnostics:
-        return threshold
     in_grid_values = values[in_grid]
     mean = float(in_grid_values.mean())
     minimum = float(in_grid_values.min())
-    diagnostics = {
-        "threshold": threshold,
-        "mode": mode,
-        "mode_index": mode_index,
-        "mean": mean,
-        "min": minimum,
-        # left-flank width over mode-to-mean distance; the mirrored distribution
-        # can only reach past the mean when this exceeds 1
-        "flank_ratio": (mode - minimum) / (mean - mode) if mean > mode else np.inf,
-        "histogram_edges": edges,
-        "counts": counts,
-        "smoothed_counts": smoothed,
-        "mirrored_positions": positions,
-        "mirrored_counts": mirrored_counts,
-        "out_of_grid_fraction": float(out_of_grid_fraction),
-        "n_values": len(values),
-        "n_in_grid": int(in_grid.sum()),
-    }
-    return threshold, diagnostics
+    return NoiseThresholdDiagnostics(
+        threshold=threshold,
+        mode=mode,
+        mode_index=mode_index,
+        mean=mean,
+        min=minimum,
+        flank_ratio=(mode - minimum) / (mean - mode) if mean > mode else np.inf,
+        histogram_edges=edges,
+        counts=counts,
+        smoothed_counts=smoothed,
+        mirrored_positions=positions,
+        mirrored_counts=mirrored_counts,
+        out_of_grid_fraction=float(out_of_grid_fraction),
+        n_values=len(values),
+        n_in_grid=int(in_grid.sum()),
+    )
 
 
 def get_multiunit_population_firing_rate(

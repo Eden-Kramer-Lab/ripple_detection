@@ -26,6 +26,7 @@ from ripple_detection.core import (
     merge_overlapping_ranges_track_participation,
     minimum_sample_count,
     nearest_sample_index,
+    noise_threshold_diagnostics,
     normalize_signal,
     normalize_signal_manually,
     require_overlap,
@@ -946,35 +947,37 @@ class TestEstimateNoiseThreshold:
     def test_diagnostics_expose_grid_mode_and_counts(self):
         rng = np.random.default_rng(2)
         values = rng.normal(-1.0, 0.5, 100_000)
-        threshold, diag = estimate_noise_threshold(values, return_diagnostics=True)
+        diag = noise_threshold_diagnostics(values)
+        threshold = diag.threshold
         _, expected_mode = _matlab_reference_threshold(values)
-        assert diag["mode"] == pytest.approx(expected_mode, abs=1e-9)
-        assert diag["histogram_edges"][0] == pytest.approx(-10.0)
-        assert diag["histogram_edges"][-1] == pytest.approx(50.0)
-        assert len(diag["histogram_edges"]) == 6001
-        assert diag["counts"].sum() == 100_000
-        assert diag["out_of_grid_fraction"] == 0.0
-        assert diag["threshold"] == threshold
-        assert diag["mean"] == pytest.approx(values.mean())
-        assert diag["min"] == pytest.approx(values.min())
+        assert diag.mode == pytest.approx(expected_mode, abs=1e-9)
+        assert diag.histogram_edges[0] == pytest.approx(-10.0)
+        assert diag.histogram_edges[-1] == pytest.approx(50.0)
+        assert len(diag.histogram_edges) == 6001
+        assert diag.counts.sum() == 100_000
+        assert diag.out_of_grid_fraction == 0.0
+        assert diag.threshold == threshold
+        assert diag.mean == pytest.approx(values.mean())
+        assert diag.min == pytest.approx(values.min())
         # flank ratio: left-flank width over mode-to-mean distance; > 1 is the
         # regime in which the mirrored distribution can reach past the mean
         expected_ratio = (
-            (diag["mode"] - values.min()) / (values.mean() - diag["mode"])
-            if values.mean() > diag["mode"]
+            (diag.mode - values.min()) / (values.mean() - diag.mode)
+            if values.mean() > diag.mode
             else np.inf
         )
-        assert diag["flank_ratio"] == pytest.approx(expected_ratio)
+        assert diag.flank_ratio == pytest.approx(expected_ratio)
 
     def test_flank_ratio_is_infinite_when_mean_is_at_or_below_the_mode(self):
         # left-skewed sample: the mode lies above the mean, so the mirrored
         # distribution trivially reaches past the mean
         rng = np.random.default_rng(12)
         values = -rng.gamma(2.0, 0.4, 200_000) - 0.2
-        threshold, diag = estimate_noise_threshold(values, return_diagnostics=True)
-        assert diag["mean"] <= diag["mode"]
-        assert diag["flank_ratio"] == np.inf
-        assert threshold > diag["mean"]
+        diag = noise_threshold_diagnostics(values)
+        threshold = diag.threshold
+        assert diag.mean <= diag.mode
+        assert diag.flank_ratio == np.inf
+        assert threshold > diag.mean
 
     def test_reflection_equals_original_formula_when_mode_nonpositive(self):
         rng = np.random.default_rng(3)
@@ -1008,10 +1011,9 @@ class TestEstimateNoiseThreshold:
         rng = np.random.default_rng(6)
         values = rng.normal(-1.0, 0.5, 500_000)
         edges = np.round(np.arange(-5, 5 + 0.005, 0.01), 6)
-        threshold, diag = estimate_noise_threshold(
-            values, histogram_edges=edges, return_diagnostics=True
-        )
-        assert len(diag["histogram_edges"]) == len(edges)
+        diag = noise_threshold_diagnostics(values, histogram_edges=edges)
+        threshold = diag.threshold
+        assert len(diag.histogram_edges) == len(edges)
         assert abs(threshold - (-1.0 + 0.5 * 3.719016)) <= 0.03
 
     def test_out_of_grid_fraction_above_ceiling_raises(self):
@@ -1025,8 +1027,8 @@ class TestEstimateNoiseThreshold:
         rng = np.random.default_rng(8)
         values = rng.normal(-1.0, 0.5, 100_000)
         values[:10] = np.nan
-        _, diag = estimate_noise_threshold(values, return_diagnostics=True)
-        assert diag["out_of_grid_fraction"] == pytest.approx(10 / 100_000)
+        diag = noise_threshold_diagnostics(values)
+        assert diag.out_of_grid_fraction == pytest.approx(10 / 100_000)
 
     def test_mode_at_grid_edge_raises(self):
         rng = np.random.default_rng(9)
