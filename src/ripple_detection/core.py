@@ -270,9 +270,8 @@ def filter_ripple_band(
     present rows is filtered on its own, so the filter never sees the step
     between the two sides of a gap. Stitching the sides together instead
     produces a transient at the join that a detector then reads as a
-    high-power event spanning the gap. A run shorter than ``filtfilt`` needs,
-    one more than three times the tap count, cannot be filtered and is
-    returned as NaN with a warning.
+    high-power event spanning the gap. A run with fewer samples than the
+    kernel has taps cannot be filtered and is returned as NaN with a warning.
 
     Parameters
     ----------
@@ -341,16 +340,20 @@ def filter_ripple_band(
     is_present = (
         ~np.isnan(data_array).any(axis=-1) if data_array.ndim > 1 else ~np.isnan(data_array)
     )
-    # filtfilt needs strictly more samples than its padlen of 3 x the taps
-    min_required_length = 3 * len(filter_numerator) + 1
+    # filtfilt reflects padlen samples past each end and needs more samples than
+    # that. Its default of 3 x the taps suits IIR filters; an FIR remembers only
+    # taps - 1 samples, so that pad length gives the identical output (to the
+    # last bit, checked) and a run needs only as many samples as the kernel.
+    padlen = len(filter_numerator) - 1
+    min_required_length = len(filter_numerator)
     runs = _boolean_run_bounds(is_present)
     long_enough = (runs[:, 1] - runs[:, 0]) >= min_required_length
     if not np.any(long_enough):
         longest = int((runs[:, 1] - runs[:, 0]).max()) if len(runs) else 0
         msg = (
             f"Signal too short for filtering: the longest run of non-NaN samples holds "
-            f"{longest}, but at least {min_required_length} are needed (one more than "
-            f"3 x filter length {len(filter_numerator)})."
+            f"{longest}, but at least {min_required_length} are needed (the filter's tap "
+            "count)."
         )
         raise ValueError(msg)
     if not np.all(long_enough):
@@ -367,7 +370,7 @@ def filter_ripple_band(
     filtered_data = np.full_like(data_array, np.nan)
     for start, stop in runs[long_enough]:
         filtered_data[start:stop] = filtfilt(
-            filter_numerator, filter_denominator, data_array[start:stop], axis=0
+            filter_numerator, filter_denominator, data_array[start:stop], axis=0, padlen=padlen
         )
     return filtered_data
 

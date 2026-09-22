@@ -128,6 +128,11 @@ raises on zero rows; that is hdmf's, not this package's.
 
 ### Changed
 
+- `filter_ripple_band` filters any run of present samples at least as long
+  as its kernel: 318 samples (212 ms) at 1500 Hz, where it needed 955. It
+  passes `filtfilt` a pad of one less than the tap count, which for an FIR
+  gives the identical output to the default pad of three times the taps.
+  Outputs do not change; fewer short runs are treated as missing.
 - **Breaking.** The minimum-duration test counts samples. It does not compare
   timestamps. At 1500 Hz a 15 ms minimum needs 23 samples, not 24. On 300 s of
   pink noise, filtered to the ripple band, this gives approximately 20 % more

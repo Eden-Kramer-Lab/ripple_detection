@@ -1136,14 +1136,38 @@ class TestRippleBandpassFilterAcrossRates:
 class TestFilterRippleBandLengthGuard:
     def test_shortest_accepted_signal_filters_without_a_scipy_error(self):
         kernel, _ = _get_ripplefilter_kernel()
-        shortest = 3 * len(kernel) + 1
+        shortest = len(kernel)
         filtered = filter_ripple_band(np.random.default_rng(0).normal(size=shortest), 1500)
         assert np.isfinite(filtered).all()
 
     def test_one_sample_shorter_raises_this_package_s_error(self):
         kernel, _ = _get_ripplefilter_kernel()
         with pytest.raises(ValueError, match="samples"):
-            filter_ripple_band(np.random.default_rng(0).normal(size=3 * len(kernel)), 1500)
+            filter_ripple_band(np.random.default_rng(0).normal(size=len(kernel) - 1), 1500)
+
+
+class TestFilterRippleBandPadLength:
+    def test_the_fir_pad_length_gives_filtfilt_s_default_output_exactly(self):
+        """A run only needs as many samples as the kernel has taps because a
+        pad of taps - 1 samples gives bit-identical output to the default pad
+        of 3 x taps; if that ever stopped holding, so would the shorter floor."""
+        from scipy.signal import filtfilt
+
+        x = np.random.default_rng(0).normal(size=5000)
+        for kernel in (_get_ripplefilter_kernel()[0], ripple_bandpass_filter(1000.0)[0]):
+            default_pad = filtfilt(kernel, 1.0, x)
+            fir_pad = filtfilt(kernel, 1.0, x, padlen=len(kernel) - 1)
+            assert np.array_equal(default_pad, fir_pad)
+
+    def test_a_run_as_long_as_the_kernel_is_filtered_and_one_shorter_is_nan(self):
+        kernel, _ = _get_ripplefilter_kernel()
+        x = np.random.default_rng(1).normal(size=3 * len(kernel))
+        x[len(kernel)] = np.nan  # a 318-sample run, a NaN, then a 317-sample run
+        x[2 * len(kernel) :] = np.nan
+        with pytest.warns(UserWarning, match="shorter than the 318 samples"):
+            filtered = filter_ripple_band(x, 1500)
+        assert np.isfinite(filtered[: len(kernel)]).all()
+        assert np.isnan(filtered[len(kernel) + 1 : 2 * len(kernel)]).all()
 
 
 class TestExcludeCloseEventsChaining:

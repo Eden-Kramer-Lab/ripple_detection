@@ -278,7 +278,7 @@ def simulate_LFP(
         set from its own filtered peak, so the ratio holds at the band edges
         and for short bursts, where the filter attenuates. Requires
         ``noise_amplitude > 0`` and enough samples for ``filter_ripple_band``
-        (one more than three times its kernel length). Cannot be combined with
+        (as many samples as its kernel has taps). Cannot be combined with
         ``ripple_amplitude``. Default is None.
     ripple_frequency : float or (float, float), optional
         Ripple oscillation frequency in Hz, or a ``(low, high)`` range drawn
