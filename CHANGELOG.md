@@ -117,6 +117,11 @@ raises on zero rows; that is hdmf's, not this package's.
   `simulate_LFP` and `simulate_time`, with the registry names above.
 - README: tables for the choice of detector, for published parameter values, and
   for tools that this package does not implement.
+- `py.typed`. The package is type-checked with strict mypy, and downstream
+  checkers see its annotations.
+- `CITATION.cff`, so GitHub and Zenodo can cite the package.
+- `uv.lock` and a `dev` dependency group. `uv sync` builds the development
+  environment; CI checks that the lock file is current.
 
 ### Changed
 
@@ -175,6 +180,9 @@ raises on zero rows; that is hdmf's, not this package's.
   Zugaro, Long, Carey and the HSE detector. Every public name is still
   importable from `ripple_detection.detectors` and from the package root.
 - Ruff replaces black as the formatter and is now the only linter.
+- The package lives under `src/`. Imports do not change.
+- The license is declared as an SPDX expression (PEP 639), and the license
+  file is included in the distributions.
 - Documentation. Each reference has a DOI that CrossRef resolved. Each link to
   laboratory code gives a file at a commit, and states its license. Each
   detector states its movement rule and its policy for missing samples, and

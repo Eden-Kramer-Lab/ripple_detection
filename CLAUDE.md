@@ -323,9 +323,9 @@ All code quality tools are configured in [pyproject.toml](pyproject.toml):
 
 **Ruff** (`[tool.ruff]` and `[tool.ruff.lint]`) — the single formatter and linter:
 - Line length: 95
-- Target: Python 3.10
-- Enabled checks: pycodestyle (E/W), pyflakes (F), isort (I), flake8-bugbear (B), comprehensions (C4), pyupgrade (UP), NumPy (NPY), pandas-vet (PD), Ruff-specific (RUF)
-- Ignores E501 (line too long) since `ruff format` handles wrapping
+- Target: inferred from `requires-python` (3.10)
+- Enabled checks: the Scientific Python development guide's rule set; `select` lists each family with a comment. Applied to `src/` and `tests/`; the notebooks are not linted.
+- Ignores E501 (line too long) since `ruff format` handles wrapping, and ISC001, which conflicts with the formatter
 
 **Mypy** (`[tool.mypy]`):
 - `strict = true`, plus `warn_unreachable` and the `ignore-without-code`, `redundant-expr` and `truthy-bool` error codes
@@ -334,7 +334,8 @@ All code quality tools are configured in [pyproject.toml](pyproject.toml):
 - Checks `src/ripple_detection` only; the tests are not type-checked
 
 **Pytest** (`[tool.pytest.ini_options]`):
-- Auto coverage reporting to terminal with missing lines
+- Strict: every warning is an error (`filterwarnings = ["error"]`), `--strict-config --strict-markers`, `xfail_strict`
+- Coverage of `src/ripple_detection` reported to the terminal with missing lines
 - Test path: `tests/`
 
 For testing and development use `uv run` (the environment `uv sync` builds from `uv.lock`) or the `ripple_detection` conda environment if available, so dependency versions are consistent.
