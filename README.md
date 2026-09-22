@@ -473,6 +473,7 @@ Notes:
 # uv: creates .venv from the committed uv.lock with the dev tools installed
 uv sync --extra examples
 uv run pytest                     # any command runs in that environment
+uvx pre-commit install            # optional: run the checks below on each commit
 
 # Or conda
 conda env create -f environment.yml
@@ -521,6 +522,9 @@ mypy src/
 
 # Check formatting without modifying
 ruff format --check src/ tests/
+
+# All of the above plus codespell and the file checks, as pre-commit runs them
+uvx pre-commit run --all-files
 ```
 
 ### Release Process
@@ -559,7 +563,7 @@ The automated workflow will:
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change. Running `uvx pre-commit install` once makes each commit run the same formatting, lint, spelling and type checks as CI.
 
 ## Citation
 

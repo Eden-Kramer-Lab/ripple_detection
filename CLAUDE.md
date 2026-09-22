@@ -15,6 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 uv sync --extra examples
 uv run pytest            # prefix any command with `uv run` to use that environment
 uv lock                  # after changing dependencies in pyproject.toml
+uvx pre-commit install   # once; each commit then runs ruff, codespell, mypy and the file checks
 
 # Or pip into your own environment
 pip install -e .[dev,examples]
@@ -78,6 +79,9 @@ ruff check --fix src/ tests/
 
 # Type check with mypy
 mypy src/
+
+# Everything pre-commit runs, on every file
+uvx pre-commit run --all-files
 ```
 
 ### Building
@@ -337,6 +341,11 @@ All code quality tools are configured in [pyproject.toml](pyproject.toml):
 - Strict: every warning is an error (`filterwarnings = ["error"]`), `--strict-config --strict-markers`, `xfail_strict`
 - Coverage of `src/ripple_detection` reported to the terminal with missing lines
 - Test path: `tests/`
+
+**Pre-commit** (`.pre-commit-config.yaml`):
+- The standard file hooks, `ruff-check --fix` and `ruff-format` on `src/` and `tests/` (the paths CI checks), codespell (configured under `[tool.codespell]`), and mypy through `uv run`
+- `uvx pre-commit install` once; `uvx pre-commit run --all-files` runs everything by hand
+- CI runs the same tools directly, so the hooks are a convenience, not a second source of truth
 
 **Task runner.** There is no `nox` or `tox` file, on purpose. `uv run <command>` against the locked environment is the task runner, and the commands in this file are the whole list. This, and having no documentation site (the README and the docstrings are the documentation), are the deliberate departures from the Scientific Python development guide.
 

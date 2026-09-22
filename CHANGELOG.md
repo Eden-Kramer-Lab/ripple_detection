@@ -122,6 +122,8 @@ raises on zero rows; that is hdmf's, not this package's.
 - `CITATION.cff`, so GitHub and Zenodo can cite the package.
 - `uv.lock` and a `dev` dependency group. `uv sync` builds the development
   environment; CI checks that the lock file is current.
+- A pre-commit configuration with ruff, codespell, mypy and the standard file
+  checks.
 
 ### Changed
 
