@@ -882,7 +882,7 @@ def simulate_session(
     ripple_times: float | list[float],
     *,
     n_channels: int = 4,
-    n_units: int = 20,
+    n_units: int = 50,
     channel_gains: Sequence[float] | FloatArray | None = None,
     shared_noise_fraction: float = 0.5,
     ripple_snr: float | None = 4.0,
@@ -911,13 +911,18 @@ def simulate_session(
     LFP, the sharp wave under it and the population burst with it are the same
     event. Defaults are pink noise, ripples at four times the ripple-band
     background varying in frequency and duration, four channels with
-    half-shared noise, and twenty units.
+    half-shared noise, and fifty units.
 
     Parameters
     ----------
     time : ndarray, shape (n_time,)
     ripple_times : float or list of float
     n_channels, n_units : int, optional
+        Default 4 channels and 50 units. The spike detectors z-score the
+        population rate, so their false-positive rate depends on how many
+        spikes that rate is built from: on 30 s at the default rates, 20
+        units (about 55 spikes/s) gave the HSE detector 22 spurious events
+        and Carey 14, 100 units (about 300 spikes/s) gave 2 and 0.
     channel_gains, shared_noise_fraction, ripple_snr, ripple_amplitude,
     ripple_duration, ripple_frequency, noise_type, noise_amplitude,
     artifact_times, artifact_amplitude, artifact_duration : optional
@@ -943,7 +948,7 @@ def simulate_session(
     >>> time = simulate_time(30000, 1500)
     >>> session = simulate_session(time, [3.0, 9.0, 15.0], random_state=0)
     >>> session.lfps.shape, session.raw_lfp_pair.shape, session.multiunit.shape
-    ((30000, 4), (30000, 2), (30000, 20))
+    ((30000, 4), (30000, 2), (30000, 50))
 
     """
     if ripple_amplitude is not None:
