@@ -725,7 +725,7 @@ def gaussian_smooth(
         Sampling rate in Hz, used to convert sigma from time to samples.
     axis : int, optional
         Axis along which to apply the filter. Default is 0.
-    truncate : int, optional
+    truncate : float, optional
         Number of standard deviations at which to truncate the filter.
         Default is 8 (wider support than scipy's default of 4).
 
@@ -1670,11 +1670,11 @@ def get_multiunit_population_firing_rate(
 
     Parameters
     ----------
-    multiunit : ndarray, shape (n_time, n_signals)
+    multiunit : array_like, shape (n_time, n_signals)
         Spike indicator matrix. Can be binary (0/1) or spike counts per bin.
     sampling_frequency : float
         Number of samples per second.
-    smoothing_sigma : float
+    smoothing_sigma : float, optional
         Standard deviation of the Gaussian smoothing kernel in seconds.
         Default is 0.015.
 

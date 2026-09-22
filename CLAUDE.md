@@ -29,10 +29,15 @@ pip install -e .
 # Run all tests with coverage
 pytest --cov=ripple_detection tests/
 
-# Run specific test module
-pytest tests/test_core.py          # Core signal processing tests
-pytest tests/test_detectors.py     # Detector integration tests
-pytest tests/test_simulate.py      # Simulation module tests
+# Run one module
+pytest tests/test_core.py          # signal processing
+pytest tests/test_detectors.py     # detector behavior and conventions
+pytest tests/test_simulate.py      # synthetic LFP
+pytest tests/test_registry.py      # the detector registry
+pytest tests/test_literature.py    # the published-parameter survey
+pytest tests/test_public_api.py    # what the package exports
+pytest tests/test_properties.py    # property-based (hypothesis)
+pytest tests/test_snapshots.py     # regression snapshots
 
 # Run specific test class or function
 pytest tests/test_core.py::TestGetEnvelope
@@ -178,7 +183,7 @@ The package is organized into five modules:
 
 Kay, Karlsson, Roumis, Shvartsman and the HSE detector share one pipeline; `_detect_from_trace` is its tail:
 
-1. **Preprocessing**: Validate shapes, units and time order; mark samples with NaN in any signal or in speed as missing and split the rest into contiguous blocks (`_valid_blocks`)
+1. **Preprocessing**: Validate shapes, units and time order; mark samples with NaN in any signal or in speed as missing and split the rest into contiguous blocks (`_valid_blocks`), ending a block also wherever the timestamp step exceeds 1.5 times the median step
 2. **Signal Transformation**: Hilbert envelope and Gaussian smoothing within each contiguous block (`_smoothed_envelope`); combine channels (Kay: consensus trace; Karlsson and Shvartsman: per channel; Roumis: mean; HSE: population rate)
 3. **Normalization**: Z-score (or median/MAD) the trace; a zero or undefined scale raises
 4. **Threshold Detection**: Runs at or above the threshold for at least `minimum_sample_count` samples
@@ -187,7 +192,7 @@ Kay, Karlsson, Roumis, Shvartsman and the HSE detector share one pipeline; `_det
 7. **Post-processing**: Drop close events, then over-long events; compute statistics with `_get_event_stats`
 8. **Output**: DataFrame indexed by `event_number` with the columns listed under "Output Format" in the README
 
-Yu, Zugaro, Long and Carey use their own segmentation rules but the same blocks: every step of every detector runs within a block, no event spans a gap, and `_get_event_stats` flags events cut off by a block edge in `clipped_start` and `clipped_end`.
+Yu, Zugaro, Long and Carey use their own segmentation rules but the same blocks: every step of every detector runs within a block, no event spans a gap, and `_get_event_stats` flags events cut off by a block edge in `clipped_start` and `clipped_end` (Zugaro supplies its own flags, meaning a missing crossing). A block too short for a detector's transform is treated as missing with a warning (`_drop_short_blocks`): Zugaro's smoothing window, Long's sharp-wave low-pass kernel, and Carey's theta filter pad length when `theta_lfp` is given.
 
 ### Key Algorithm Differences
 
@@ -210,16 +215,18 @@ The package includes a pre-computed ripple bandpass filter ([ripple_detection/ri
 - 10 Hz sidebands
 - Sampling frequency: 1500 Hz
 
-Alternative: `ripple_bandpass_filter()` can generate filters at arbitrary sampling rates using `scipy.signal.remez`.
+The shipped kernel is used only at 1500 Hz with the default band; for any other rate or band, `filter_ripple_band` designs an equiripple FIR with `ripple_bandpass_filter()` (`scipy.signal.remez`), scaling the tap count with the rate.
 
 ### Event Statistics
 
 All detectors return rich event statistics via `_get_event_stats()`:
 
-- Temporal: start_time, end_time, duration
-- Z-score metrics: mean, median, max, min, max_sustained_zscore (largest z-score sustained for the minimum duration)
+- Temporal: start_time, end_time, duration (elapsed), n_samples (the count the duration limits test)
+- Z-score metrics: mean, median, max, min, max_sustained_zscore (largest z-score sustained for the minimum duration; `max_thresh` before 2.0)
 - Signal metrics: area (integral), total_energy (integral of squared signal)
 - Speed metrics: speed at start/end, max/min/median/mean speed during event
+- Missing data: clipped_start, clipped_end (the event was cut off by a gap or the recording edge)
+- Detector-specific extras: Shvartsman `participants` (sorted tuple), `n_participants`, `frac_participants`; Yu `n_suprathreshold_samples`, `detection_threshold_zscore`; Zugaro and Long `peak_time`; Long sharp-wave and ripple statistics; Carey and HSE `n_active_units`. The README's "Output Format" tables are the reference.
 
 ## Testing Strategy
 
@@ -270,7 +277,7 @@ The package also validates that example notebooks run without errors in CI.
 
 - pytest >= 7.0.0
 - pytest-cov >= 4.0.0
-- ruff >= 0.3.0
+- ruff >= 0.16, < 0.17 (format output is stable within a minor version)
 - mypy >= 1.8.0
 - hypothesis >= 6.0.0 (property-based testing)
 - pytest-snapshot >= 0.9.0 (snapshot testing)

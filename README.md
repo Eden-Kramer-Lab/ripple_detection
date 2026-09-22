@@ -283,6 +283,7 @@ consensus rule; measure it for the detector you use rather than assuming a mappi
 
 See the [examples](examples/) directory for Jupyter notebooks demonstrating:
 
+- [Tutorial](examples/ripple_detection_tutorial.ipynb) - A walk through detection on simulated data
 - [Detection Examples](examples/detection_examples.ipynb) - Using different detectors
 - [Algorithm Components](examples/test_individual_algorithm_components.ipynb) - Testing individual components
 
@@ -314,7 +315,7 @@ print(f"time: {len(time)}, LFPs: {len(lfps)}, speed: {len(speed)}")
 
 Make sure all arrays cover the same time period and sampling rate.
 
-#### "Sampling frequency ... cannot represent the 150-250 Hz ripple band"
+#### "band upper edge ... reaches the Nyquist frequency"
 
 `filter_ripple_band(data, sampling_frequency=...)` uses the pre-computed 1500 Hz
 kernel at 1500 Hz and designs a 150-250 Hz filter for any other rate, so pass the
@@ -360,7 +361,7 @@ ripples = Kay_ripple_detector(
 | `close_ripple_threshold` (`close_event_threshold` on the HSE detector) | 0.0 s | The later of two events closer than this is dropped | Raise (e.g. 0.05) to suppress fragments; Zugaro merges instead via `minimum_inter_ripple_interval` |
 | `maximum_duration` | `None` (no limit; `Zugaro` 0.100 s, `Long` 0.500 s for the sharp wave) | Longest allowed event, applied to the event as reported rather than to the run above threshold. A sample count like the minimum, so the ceiling is one sample shorter in elapsed time than the value given | Published limits run from a few hundred milliseconds to a couple of seconds |
 | `minimum_active_units` | 0 on `multiunit_HSE_detector` (no criterion), 5 on `Carey_candidate_detector` | Units with at least one spike inside the event; every event reports `n_active_units` | Published criteria are most often around five units |
-| `band`, `transition_width` on `filter_ripple_band` | `None`, meaning 150-250 Hz, and 25.0 Hz | Passband of the designed filter. A custom band needs a `sampling_frequency`, since the shipped 1500 Hz kernel is fixed | Published bands run from about 80-180 Hz at the lower edge to 200-300 Hz at the upper |
+| `band`, `transition_width` on `filter_ripple_band` | `None`, meaning 150-250 Hz, and 25.0 Hz | Passband of the designed filter. `sampling_frequency` is always required; the shipped kernel is used only at 1500 Hz with the default band, any other band or rate designs a filter | Published bands run from about 80-180 Hz at the lower edge to 200-300 Hz at the upper |
 | `low_threshold`, `high_threshold` | 2.0, 5.0 (Zugaro) | Boundary and peak thresholds of the two-threshold rule | Lower `high_threshold` for more detections; `low_threshold` sets where events start and end |
 
 ### Published parameter values
@@ -393,7 +394,7 @@ parameters.loc[parameters["Spike sorting"] == "Clusterless", ["First Author", "Y
 | `maximum_duration` | 25 | 400-2000 ms | 600 ms | 500, 2000, 750 | none, except Zugaro 100 ms and Long 500 ms (sharp wave) |
 | merge or drop gap | 14 | 20-100 ms | 50 ms | 50, then 20, 40 and 100 tied | 0 (no exclusion); Zugaro merges within 30 ms, Long drops within 50 ms |
 | `minimum_active_units` | 27 | 3-10 units | 5 units | 5, 4, 3 | 0 on the burst detector, 5 on Carey |
-| channels required | 27 | 13 papers use one, 10 more than one, 4 a small number | one | one | one is enough; Kay, Roumis and Zugaro pool all, Long needs two |
+| channels required | 27 | 13 papers use one, 10 more than one, 4 a small number | one | one | one is enough except Shvartsman (2 by default) and Long (exactly 2); Kay, Roumis, Yu and Zugaro pool all channels |
 
 Three cautions before treating this as a recipe:
 

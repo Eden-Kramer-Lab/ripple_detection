@@ -746,17 +746,12 @@ def Shvartsman_ripple_detector(
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
-        ``round(minimum_duration * sampling_frequency)`` consecutive samples
-        (per Karlsson & Frank 2009); the event is then extended to the surrounding
+        ``minimum_sample_count(time, minimum_duration)`` consecutive samples,
+        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms;
+        per Karlsson & Frank 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
-    maximum_duration : float, optional
-        Longest allowed event duration in **seconds**, applied to the event as
-        it is reported rather than to the run above threshold, because that is
-        what a published maximum describes. Default is None (no upper limit).
-        Published ceilings run from a few hundred milliseconds to a couple of
-        seconds.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
         Default is 3.0 (higher than Kay's 2.0 because per-channel detection
@@ -799,6 +794,12 @@ def Shvartsman_ripple_detector(
         in [0, 1]; 1.0 requires every channel. Give one of the two arguments,
         not both. Default is None.
 
+    maximum_duration : float, optional
+        Longest allowed event duration in **seconds**, applied to the event as
+        it is reported rather than to the run above threshold, because that is
+        what a published maximum describes. Default is None (no upper limit).
+        Published ceilings run from a few hundred milliseconds to a couple of
+        seconds.
     Returns
     -------
     ripple_times : pd.DataFrame
@@ -831,8 +832,8 @@ def Shvartsman_ripple_detector(
 
     References
     ----------
-    Unpublished variant contributed by Gabrielle Shvartsman (2026, pull
-    request #11); it has no paper of its own. The participation rule requires
+    Unpublished variant contributed by Gabrielle Shvartsman (2026); it has no
+    paper of its own. The participation rule requires
     ``minimum_participating_channels`` channels (default 2) to detect the
     ripple, so at the default a single-channel input never produces an event.
 
@@ -959,7 +960,7 @@ def _exclude_long_events(
     the package already follows.
 
     Duration is a sample count, not elapsed time: an event is kept when it
-    holds at most ``round(maximum_duration * sampling_frequency)`` samples,
+    holds at most ``minimum_sample_count(time, maximum_duration)`` samples,
     the same rule ``minimum_duration`` uses. An event whose elapsed time is
     exactly ``maximum_duration`` holds one sample more than that and is
     dropped, so the effective ceiling is one sample short of the number given.
@@ -1105,17 +1106,12 @@ def Kay_ripple_detector(
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
-        ``round(minimum_duration * sampling_frequency)`` consecutive samples
-        (per Karlsson & Frank 2009); the event is then extended to the surrounding
+        ``minimum_sample_count(time, minimum_duration)`` consecutive samples,
+        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms;
+        per Karlsson & Frank 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
-    maximum_duration : float, optional
-        Longest allowed event duration in **seconds**, applied to the event as
-        it is reported rather than to the run above threshold, because that is
-        what a published maximum describes. Default is None (no upper limit).
-        Published ceilings run from a few hundred milliseconds to a couple of
-        seconds.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
         Default is 2.0. Lower values (e.g., 1.5) detect more events but may
@@ -1137,6 +1133,12 @@ def Kay_ripple_detector(
         statistics. For example, use `speed <= speed_threshold` to compute
         statistics only during immobility. Default is None (use all data).
 
+    maximum_duration : float, optional
+        Longest allowed event duration in **seconds**, applied to the event as
+        it is reported rather than to the run above threshold, because that is
+        what a published maximum describes. Default is None (no upper limit).
+        Published ceilings run from a few hundred milliseconds to a couple of
+        seconds.
     Returns
     -------
     ripple_times : pd.DataFrame
@@ -1275,12 +1277,6 @@ def Yu_ripple_detector(
     minimum_duration : float, optional
         Minimum time the consensus must stay at or above the threshold, in
         seconds, applied as a sample count (round-half-up). Default is 0.020.
-    maximum_duration : float, optional
-        Longest allowed event duration in **seconds**, applied to the event as
-        it is reported rather than to the run above threshold, because that is
-        what a published maximum describes. Default is None (no upper limit).
-        Published ceilings run from a few hundred milliseconds to a couple of
-        seconds.
     percentile : float, optional
         Percentile of the mirrored noise distribution used as the threshold.
         Default is 99.99.
@@ -1302,6 +1298,12 @@ def Yu_ripple_detector(
         threshold is estimated on the normalized trace, the reading of the
         published text. Default is True.
 
+    maximum_duration : float, optional
+        Longest allowed event duration in **seconds**, applied to the event as
+        it is reported rather than to the run above threshold, because that is
+        what a published maximum describes. Default is None (no upper limit).
+        Published ceilings run from a few hundred milliseconds to a couple of
+        seconds.
     Returns
     -------
     ripple_times : pd.DataFrame
@@ -1547,7 +1549,7 @@ def Zugaro_ripple_detector(
     maximum, apart from using the envelope rather than the squared signal.
 
     This is a reimplementation from the algorithm, not a transcription. The
-    original is GPL-3. Two departures, each documented per parameter below.
+    original is GPL-3. Four departures, each documented per parameter below.
     The package's endpoint speed rule is applied. The peak is the maximum of
     the normalized power, not the trough of a single filtered channel.
 
@@ -1794,8 +1796,9 @@ def Long_sharp_wave_ripple_detector(
     the candidates of every block, and a candidate within ``local_window`` of
     a block edge is not evaluated, as the original does at the record edges.
     A block shorter than the sharp-wave low-pass kernel is treated as missing,
-    with a warning. ``clipped_start`` and ``clipped_end`` are therefore always
-    False for this detector.
+    with a warning. ``clipped_start`` and ``clipped_end`` are therefore False in
+    practice; the one case that can set one is a sharp-wave boundary falling
+    exactly on the edge of the local window.
 
     Parameters
     ----------
@@ -2200,7 +2203,9 @@ def Carey_candidate_detector(
     spikes, speed or ``theta_lfp``, or a gap in ``time``) split the recording
     into blocks; the scores, the segmentation and the state intervals run
     within each block, so no candidate spans a gap, and a candidate cut off by
-    one is flagged in ``clipped_start`` and ``clipped_end``.
+    one is flagged in ``clipped_start`` and ``clipped_end``. With
+    ``theta_lfp`` given, a block shorter than the theta filter's pad length
+    (16 samples) is treated as missing, with a warning.
 
     Parameters
     ----------
@@ -2225,19 +2230,21 @@ def Carey_candidate_detector(
         Minimum candidate duration in seconds, applied as an inclusive
         round-half-up sample count (``sample_count_within``); the original's
         ``RemoveIV`` compared elapsed time strictly. Default 0.020.
-    maximum_duration : float, optional
-        Longest allowed event duration in **seconds**, applied to the event as
-        it is reported rather than to the run above threshold, because that is
-        what a published maximum describes. Default is None (no upper limit).
-        Published ceilings run from a few hundred milliseconds to a couple of
-        seconds.
     minimum_active_units : int, optional
         Minimum number of units with a spike inside the candidate. Default 5.
-    ripple_smoothing_sigma, spike_kernel_sigma, baseline_sigma : float, optional
-        Gaussian standard deviations in seconds. Defaults 0.010, 0.020, 0.125.
-    spike_cap, baseline_cap : float, optional
-        Per-unit cap in coincident spikes (default 2) and the baseline cap in
-        units' worth (default 4).
+    ripple_smoothing_sigma : float, optional
+        Gaussian standard deviation in seconds of the ripple-score smoothing.
+        Default 0.010.
+    spike_kernel_sigma : float, optional
+        Gaussian standard deviation in seconds of each unit's spike kernel.
+        Default 0.020.
+    spike_cap : float, optional
+        Per-unit cap in coincident spikes. Default 2.
+    baseline_sigma : float, optional
+        Gaussian standard deviation in seconds of the slow baseline. Default
+        0.125.
+    baseline_cap : float, optional
+        Baseline cap in units' worth. Default 4.
     theta_lfp : array_like, shape (n_time,), optional
         Raw LFP of a theta channel; when given, candidates during elevated
         theta are excluded. Default None (no theta exclusion).
@@ -2249,6 +2256,12 @@ def Carey_candidate_detector(
         Interval rules for the low-speed and low-theta periods, in seconds.
         Defaults 0.050 and 0.050 (vandermeerlab ``TSDtoIV`` defaults).
 
+    maximum_duration : float, optional
+        Longest allowed event duration in **seconds**, applied to the event as
+        it is reported rather than to the run above threshold, because that is
+        what a published maximum describes. Default is None (no upper limit).
+        Published ceilings run from a few hundred milliseconds to a couple of
+        seconds.
     Returns
     -------
     candidate_times : pd.DataFrame
@@ -2447,17 +2460,12 @@ def Karlsson_ripple_detector(
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
-        ``round(minimum_duration * sampling_frequency)`` consecutive samples
-        (per Karlsson & Frank 2009); the event is then extended to the surrounding
+        ``minimum_sample_count(time, minimum_duration)`` consecutive samples,
+        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms;
+        per Karlsson & Frank 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
-    maximum_duration : float, optional
-        Longest allowed event duration in **seconds**, applied to the event as
-        it is reported rather than to the run above threshold, because that is
-        what a published maximum describes. Default is None (no upper limit).
-        Published ceilings run from a few hundred milliseconds to a couple of
-        seconds.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
         Default is 3.0 (higher than Kay's 2.0 because per-channel detection
@@ -2479,6 +2487,12 @@ def Karlsson_ripple_detector(
         statistics. For example, use `speed <= speed_threshold` to compute
         statistics only during immobility. Default is None (use all data).
 
+    maximum_duration : float, optional
+        Longest allowed event duration in **seconds**, applied to the event as
+        it is reported rather than to the run above threshold, because that is
+        what a published maximum describes. Default is None (no upper limit).
+        Published ceilings run from a few hundred milliseconds to a couple of
+        seconds.
     Returns
     -------
     ripple_times : pd.DataFrame
@@ -2590,17 +2604,12 @@ def Roumis_ripple_detector(
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
-        ``round(minimum_duration * sampling_frequency)`` consecutive samples
-        (per Karlsson & Frank 2009); the event is then extended to the surrounding
+        ``minimum_sample_count(time, minimum_duration)`` consecutive samples,
+        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms;
+        per Karlsson & Frank 2009); the event is then extended to the surrounding
         mean-crossings, so the reported ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
-    maximum_duration : float, optional
-        Longest allowed event duration in **seconds**, applied to the event as
-        it is reported rather than to the run above threshold, because that is
-        what a published maximum describes. Default is None (no upper limit).
-        Published ceilings run from a few hundred milliseconds to a couple of
-        seconds.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
         Default is 2.0. Lower values (e.g., 1.5) detect more events but may
@@ -2622,6 +2631,12 @@ def Roumis_ripple_detector(
         statistics. For example, use `speed <= speed_threshold` to compute
         statistics only during immobility. Default is None (use all data).
 
+    maximum_duration : float, optional
+        Longest allowed event duration in **seconds**, applied to the event as
+        it is reported rather than to the run above threshold, because that is
+        what a published maximum describes. Default is None (no upper limit).
+        Published ceilings run from a few hundred milliseconds to a couple of
+        seconds.
     Returns
     -------
     ripple_times : pd.DataFrame
@@ -2716,7 +2731,7 @@ def multiunit_HSE_detector(
     Parameters
     ----------
     time : array_like, shape (n_time,)
-        Time values for each sample.
+        Time values for each sample in **seconds**.
     multiunit : array_like, shape (n_time, n_units)
         Spike indicator matrix for each unit at each time point.
         Can be either:
@@ -2726,7 +2741,7 @@ def multiunit_HSE_detector(
         Both formats work, but may produce different sensitivities. For multi-spike
         bins, results are typically more consistent with binary format.
     speed : array_like, shape (n_time,)
-        Animal's running speed at each time point.
+        Animal's running speed at each time point in **cm/s**.
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
@@ -2740,17 +2755,12 @@ def multiunit_HSE_detector(
     minimum_duration : float, optional
         Minimum event duration in **seconds**. Default is 0.015 (15 milliseconds).
         The firing rate must stay at or above ``zscore_threshold`` for at least
-        ``round(minimum_duration * sampling_frequency)`` consecutive samples;
+        ``minimum_sample_count(time, minimum_duration)`` consecutive samples,
+        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms);
         the event is then extended to the surrounding mean-crossings, so the reported
         ``duration`` is typically longer.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
-    maximum_duration : float, optional
-        Longest allowed event duration in **seconds**, applied to the event as
-        it is reported rather than to the run above threshold, because that is
-        what a published maximum describes. Default is None (no upper limit).
-        Published ceilings run from a few hundred milliseconds to a couple of
-        seconds.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
         Default is 2.0. Lower values (e.g., 1.5) detect more events but may
@@ -2763,12 +2773,6 @@ def multiunit_HSE_detector(
         Minimum time in **seconds** between events. Events closer than this
         are excluded -- the later event is dropped, not merged. Default is 0.0
         (no exclusion). Set to 0.05-0.1 s to drop closely-spaced events.
-    minimum_active_units : int, optional
-        Minimum number of units with at least one spike inside an event.
-        Events with fewer are dropped. Default is 0, which imposes no
-        criterion. Published criteria are most often around five units.
-        ``Carey_candidate_detector`` applies the same rule with its original's
-        default of 5.
     normalization_method : {'zscore', 'median_mad'}, optional
         Method for normalizing the firing rate. Default is 'zscore' (mean/std).
         Use 'median_mad' for more robust normalization when data contains outliers.
@@ -2779,6 +2783,18 @@ def multiunit_HSE_detector(
         statistics only during immobility.
         Default is None (use all data).
 
+    maximum_duration : float, optional
+        Longest allowed event duration in **seconds**, applied to the event as
+        it is reported rather than to the run above threshold, because that is
+        what a published maximum describes. Default is None (no upper limit).
+        Published ceilings run from a few hundred milliseconds to a couple of
+        seconds.
+    minimum_active_units : int, optional
+        Minimum number of units with at least one spike inside an event.
+        Events with fewer are dropped. Default is 0, which imposes no
+        criterion. Published criteria are most often around five units.
+        ``Carey_candidate_detector`` applies the same rule with its original's
+        default of 5.
     Returns
     -------
     high_synchrony_events : pd.DataFrame
@@ -2873,7 +2889,11 @@ def _max_sustained_zscore(
     maximum, over every window of ``minimum_sample_count(time, minimum_duration)``
     consecutive samples, of that window's minimum. The sample-count convention
     matches event detection, so an event detected at ``zscore_threshold`` has
-    ``max_sustained_zscore >= zscore_threshold``. This is not the statistic of the Frank
+    ``max_sustained_zscore >= zscore_threshold`` whenever the statistic is
+    computed on the trace that was thresholded (Kay, Roumis, Yu, the HSE
+    detector, and Karlsson through the per-channel maximum).
+    ``Shvartsman_ripple_detector`` averages over the participating channels,
+    so its value can fall below the threshold. This is not the statistic of the Frank
     lab ``extractevents`` routine, which takes a window of the minimum
     duration centered on the peak and reports the lower of its two ends; the
     two differ by a few tenths of a standard deviation on typical events.
