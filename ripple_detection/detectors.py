@@ -264,16 +264,17 @@ def _preprocess_detector_inputs(
 
     # Filter the normalization mask by the same rows so it stays aligned with
     # the cleaned data (otherwise its length no longer matches after NaN removal).
+    mask_clean: NDArray | None = None
     if normalization_mask is not None:
-        normalization_mask = np.asarray(normalization_mask)
-        if len(normalization_mask) != len(not_null):
+        mask = np.asarray(normalization_mask)
+        if len(mask) != len(not_null):
             raise ValueError(
-                f"normalization_mask length ({len(normalization_mask)}) must match "
+                f"normalization_mask length ({len(mask)}) must match "
                 f"the number of time samples ({len(not_null)})."
             )
-        normalization_mask = normalization_mask[not_null]
+        mask_clean = mask[not_null]
 
-    return time[not_null], filtered_lfps[not_null], speed[not_null], normalization_mask
+    return time[not_null], filtered_lfps[not_null], speed[not_null], mask_clean
 
 
 def get_Kay_ripple_consensus_trace(
@@ -1817,7 +1818,7 @@ def Long_sharp_wave_ripple_detector(
     for b0, b1 in pairwise(starts):
         segment = sharp_wave_diff[b0:b1]
         local_arg = int(np.argmax(segment))
-        peak = b0 + local_arg
+        peak = int(b0) + local_arg
         if local_arg in (0, block - 1):
             if peak in (0, n_time - 1):
                 continue
@@ -1997,7 +1998,7 @@ def _contained_in_intervals(event_bounds: NDArray, intervals: NDArray) -> NDArra
     inside = (event_bounds[:, [0]] >= intervals[:, 0]) & (
         event_bounds[:, [1]] <= intervals[:, 1]
     )
-    return inside.any(axis=1)
+    return np.asarray(inside.any(axis=1), dtype=bool)
 
 
 def _count_active_units(multiunit: NDArray, event_bounds: ArrayLike) -> NDArray:
