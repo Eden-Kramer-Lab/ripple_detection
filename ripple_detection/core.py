@@ -454,12 +454,49 @@ def nearest_sample_index(time: ArrayLike, query_times: ArrayLike) -> NDArray:
     return np.where(closer_to_right, right, left)
 
 
+def _event_bounds(events: ArrayLike | pd.DataFrame) -> NDArray:
+    """``[start_time, end_time]`` rows from an array or a detector's DataFrame.
+
+    Every helper that takes an event inventory reads it through this, so a
+    DataFrame returned by a detector is as valid an input as a bare array,
+    and anything else of the wrong shape raises instead of being reshaped
+    into nonsense.
+
+    Parameters
+    ----------
+    events : array_like, shape (n_events, 2), or pd.DataFrame
+        A DataFrame needs ``start_time`` and ``end_time`` columns.
+
+    Returns
+    -------
+    bounds : ndarray, shape (n_events, 2)
+        Float; shape ``(0, 2)`` for no events.
+
+    Raises
+    ------
+    ValueError
+        If an array is not ``(n_events, 2)``.
+
+    """
+    if isinstance(events, pd.DataFrame):
+        return events[["start_time", "end_time"]].to_numpy(dtype=float).reshape(-1, 2)
+    bounds = np.asarray(events, dtype=float)
+    if bounds.size == 0:
+        return np.empty((0, 2))
+    if bounds.ndim != 2 or bounds.shape[1] != 2:
+        raise ValueError(
+            f"Events must be an array of shape (n_events, 2), [start_time, end_time] per "
+            f"row, or a detector's DataFrame; got shape {bounds.shape}."
+        )
+    return bounds
+
+
 def _is_immobile_at_endpoints(
     event_times: NDArray, speed: ArrayLike, time: ArrayLike, speed_threshold: float
 ) -> NDArray:
     """The package's endpoint speed rule: speed at the event's first and last
     sample is at or below ``speed_threshold``. Returns a bool mask over events."""
-    events = np.asarray(event_times, dtype=float).reshape(-1, 2)
+    events = _event_bounds(event_times)
     if len(events) == 0:
         return np.zeros(0, dtype=bool)
     speed = np.asarray(speed, dtype=float)
@@ -469,11 +506,11 @@ def _is_immobile_at_endpoints(
 
 
 def exclude_movement(
-    candidate_ripple_times: ArrayLike,
+    candidate_ripple_times: ArrayLike | pd.DataFrame,
     speed: ArrayLike,
     time: ArrayLike,
     speed_threshold: float = 4.0,
-) -> NDArray:
+) -> NDArray | pd.DataFrame:
     """Filter out candidate ripples that occur during animal movement.
 
     Removes events where the animal's speed at either the start or end of the
@@ -482,8 +519,9 @@ def exclude_movement(
 
     Parameters
     ----------
-    candidate_ripple_times : array_like, shape (n_ripples, 2)
-        Array of candidate event times with columns [start_time, end_time].
+    candidate_ripple_times : array_like, shape (n_ripples, 2), or pd.DataFrame
+        Candidate event times with columns [start_time, end_time], or a
+        detector's DataFrame, which is returned filtered with every column.
     speed : array_like, shape (n_time,)
         Animal's speed at each time point.
     time : array_like, shape (n_time,)
@@ -495,17 +533,20 @@ def exclude_movement(
 
     Returns
     -------
-    ripple_times : ndarray, shape (n_stationary_ripples, 2)
-        Event times where animal speed is at or below the threshold at both
-        ends. Shape ``(0, 2)`` when none remain.
+    ripple_times : ndarray, shape (n_stationary_ripples, 2), or pd.DataFrame
+        Events where animal speed is at or below the threshold at both ends,
+        in the input's type. Shape ``(0, 2)`` when none remain.
 
     """
-    events = np.asarray(candidate_ripple_times, dtype=float).reshape(-1, 2)
-    return events[_is_immobile_at_endpoints(events, speed, time, speed_threshold)]
+    events = _event_bounds(candidate_ripple_times)
+    keep = _is_immobile_at_endpoints(events, speed, time, speed_threshold)
+    if isinstance(candidate_ripple_times, pd.DataFrame):
+        return candidate_ripple_times.iloc[np.flatnonzero(keep)].copy()
+    return events[keep]
 
 
 def exclude_movement_by_majority(
-    candidate_ripple_times: ArrayLike,
+    candidate_ripple_times: ArrayLike | pd.DataFrame,
     speed: ArrayLike,
     time: ArrayLike,
     speed_threshold: float = 4.0,
@@ -519,8 +560,9 @@ def exclude_movement_by_majority(
 
     Parameters
     ----------
-    candidate_ripple_times : array_like, shape (n_ripples, 2)
-        Array of candidate event times with columns [start_time, end_time].
+    candidate_ripple_times : array_like, shape (n_ripples, 2), or pd.DataFrame
+        Candidate event times with columns [start_time, end_time], or a
+        detector's DataFrame (its ``start_time`` and ``end_time`` are read).
     speed : array_like, shape (n_time,)
         Animal's speed at each time point.
     time : array_like, shape (n_time,)
@@ -541,7 +583,7 @@ def exclude_movement_by_majority(
         for filtering associated data arrays.
 
     """
-    candidate_ripple_times = np.asarray(candidate_ripple_times, dtype=float).reshape(-1, 2)
+    candidate_ripple_times = _event_bounds(candidate_ripple_times)
 
     speed_df = pd.DataFrame({"speed": speed}, index=time)
 
@@ -1147,10 +1189,10 @@ def _is_gap_below(gap: NDArray | float, close_event_threshold: float) -> NDArray
 
 
 def exclude_close_events(
-    candidate_event_times: ArrayLike,
+    candidate_event_times: ArrayLike | pd.DataFrame,
     close_event_threshold: float = 1.0,
     included_ripple_inds: ArrayLike | None = None,
-) -> NDArray | tuple[NDArray, NDArray]:
+) -> NDArray | pd.DataFrame | tuple[NDArray, NDArray]:
     """Remove events that occur too close together in time.
 
     Filters out successive events that start within `close_event_threshold`
@@ -1164,9 +1206,10 @@ def exclude_close_events(
 
     Parameters
     ----------
-    candidate_event_times : array_like, shape (n_events, 2)
-        Array of event times with columns [start_time, end_time].
-        Must be sorted by start time.
+    candidate_event_times : array_like, shape (n_events, 2), or pd.DataFrame
+        Event times with columns [start_time, end_time], sorted by start
+        time, or a detector's DataFrame, which is returned filtered with every
+        column.
     close_event_threshold : float, optional
         Minimum time between events. Events starting within this time after
         a previous event ends are excluded. Default is 1.0 (seconds).
@@ -1177,9 +1220,10 @@ def exclude_close_events(
 
     Returns
     -------
-    filtered_event_times : ndarray, shape (n_filtered_events, 2)
-        The retained events; shape ``(0, 2)`` when none remain. Returned
-        alone when `included_ripple_inds` is None (the default).
+    filtered_event_times : ndarray, shape (n_filtered_events, 2), or pd.DataFrame
+        The retained events, in the input's type; shape ``(0, 2)`` when none
+        remain. Returned alone when `included_ripple_inds` is None (the
+        default).
     included_ripple_inds : ndarray, shape (n_filtered_events,)
         Only when `included_ripple_inds` was given: its retained entries, in
         the tuple ``(filtered_event_times, included_ripple_inds)``.
@@ -1190,7 +1234,7 @@ def exclude_close_events(
     is not sorted, results may be incorrect.
 
     """
-    events = np.asarray(candidate_event_times, dtype=float).reshape(-1, 2)
+    events = _event_bounds(candidate_event_times)
     # Each event is compared with the last *retained* event, so a cluster is
     # reduced to its first event. Comparing with the immediately preceding
     # candidate instead would let a dropped event go on excluding its
@@ -1203,13 +1247,15 @@ def exclude_close_events(
             if not _is_gap_below(events[event, 0] - last_retained_end, close_event_threshold):
                 keep[event] = True
                 last_retained_end = events[event, 1]
-    if included_ripple_inds is None:
-        return events[keep]
-    return events[keep], np.asarray(included_ripple_inds)[keep]
+    if included_ripple_inds is not None:
+        return events[keep], np.asarray(included_ripple_inds)[keep]
+    if isinstance(candidate_event_times, pd.DataFrame):
+        return candidate_event_times.iloc[np.flatnonzero(keep)].copy()
+    return events[keep]
 
 
 def merge_close_events(
-    event_times: ArrayLike,
+    event_times: ArrayLike | pd.DataFrame,
     close_event_threshold: float = 0.0,
     maximum_duration: float | None = None,
 ) -> NDArray:
@@ -1229,8 +1275,11 @@ def merge_close_events(
 
     Parameters
     ----------
-    event_times : array_like, shape (n_events, 2)
-        ``[start_time, end_time]`` per event, sorted by start time.
+    event_times : array_like, shape (n_events, 2), or pd.DataFrame
+        ``[start_time, end_time]`` per event, sorted by start time, or a
+        detector's DataFrame, whose ``start_time`` and ``end_time`` are read.
+        Merging changes the bounds, so the result is always an array; the
+        other columns of a merged event have no single value.
     close_event_threshold : float, optional
         Events separated by strictly less than this gap are merged. A gap equal
         to the threshold does not merge, within floating-point tolerance.
@@ -1264,12 +1313,9 @@ def merge_close_events(
             f"close_event_threshold must be non-negative, got {close_event_threshold}. "
             "It is a gap between events, in the units of event_times."
         )
-    events = np.asarray(event_times, dtype=float)
+    events = _event_bounds(event_times).copy()
     if events.size == 0:
         return np.empty((0, 2))
-    # reshape rather than atleast_2d, so a flat array of the wrong length raises
-    # instead of becoming one very wide row that is returned unmerged
-    events = events.reshape(-1, 2).copy()
     if np.any(np.diff(events[:, 0]) < 0):
         raise ValueError(
             "event_times must be sorted by start time. Sort the events before merging: "
@@ -1360,14 +1406,8 @@ def require_overlap(
         )
 
     is_frame = isinstance(event_times, pd.DataFrame)
-    if is_frame:
-        events = event_times[["start_time", "end_time"]].to_numpy(dtype=float)
-    else:
-        events = np.asarray(event_times, dtype=float).reshape(-1, 2)
-    if isinstance(reference_event_times, pd.DataFrame):
-        reference = reference_event_times[["start_time", "end_time"]].to_numpy(dtype=float)
-    else:
-        reference = np.asarray(reference_event_times, dtype=float).reshape(-1, 2)
+    events = _event_bounds(event_times)
+    reference = _event_bounds(reference_event_times)
 
     keep = np.zeros(len(events), dtype=bool)
     if len(events) and len(reference):

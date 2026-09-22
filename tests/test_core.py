@@ -1669,3 +1669,50 @@ class TestExtendThresholdToMeanWithNoContainingRun:
         is_above_threshold[10:60] = True
         with pytest.raises(ValueError, match="No candidate interval"):
             extend_threshold_to_mean(np.zeros(100, dtype=bool), is_above_threshold, time, 0.01)
+
+
+class TestEventHelpersAcceptADetectorDataFrame:
+    """The README says merge and exclude apply to any inventory afterwards, so
+    a detector's DataFrame must work, and an array of the wrong shape must
+    raise rather than be reshaped into pairs."""
+
+    @pytest.fixture
+    def events(self):
+        frame = pd.DataFrame(
+            {
+                "start_time": [0.0, 1.0, 1.05, 3.0],
+                "end_time": [0.1, 1.1, 1.2, 3.1],
+                "max_zscore": [3.0, 4.0, 5.0, 6.0],
+                "clipped_start": [False, False, False, True],
+            },
+            index=pd.Index([1, 2, 3, 4], name="event_number"),
+        )
+        return frame
+
+    def test_exclude_close_events_filters_the_frame(self, events):
+        kept = exclude_close_events(events, 0.5)
+        assert isinstance(kept, pd.DataFrame)
+        assert kept.index.tolist() == [1, 2, 4]
+        assert list(kept.columns) == list(events.columns)
+
+    def test_exclude_movement_filters_the_frame(self, events):
+        time = np.arange(0, 4, 0.01)
+        speed = np.full(len(time), 1.0)
+        speed[(time >= 0.95) & (time <= 1.25)] = 10.0
+        kept = exclude_movement(events, speed, time, 4.0)
+        assert isinstance(kept, pd.DataFrame)
+        assert kept.index.tolist() == [1, 4]
+
+    def test_merge_close_events_reads_the_frame_and_returns_bounds(self, events):
+        merged = merge_close_events(events, 0.5)
+        np.testing.assert_allclose(merged, [[0.0, 0.1], [1.0, 1.2], [3.0, 3.1]])
+
+    def test_majority_rule_reads_the_frame(self, events):
+        time = np.arange(0, 4, 0.01)
+        kept, inds = exclude_movement_by_majority(events, np.full(len(time), 1.0), time, 4.0)
+        assert kept.shape == (4, 2) and inds.tolist() == [0, 1, 2, 3]
+
+    @pytest.mark.parametrize("helper", [exclude_close_events, merge_close_events])
+    def test_a_wide_array_raises_instead_of_being_paired_up(self, events, helper):
+        with pytest.raises(ValueError, match=r"shape \(n_events, 2\)"):
+            helper(events.to_numpy(dtype=float))
