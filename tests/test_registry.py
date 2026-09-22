@@ -3,6 +3,7 @@
 import dataclasses
 import inspect
 
+import numpy as np
 import pytest
 
 import ripple_detection
@@ -11,8 +12,10 @@ from ripple_detection import (
     MULTIUNIT,
     RAW_LFP_PAIR,
     RIPPLE_BAND_LFP,
+    filter_ripple_band,
     get_detector,
 )
+from ripple_detection.simulate import brown
 
 
 def _exported_detectors():
@@ -113,3 +116,56 @@ def test_registry_is_read_only():
 def test_spec_is_immutable():
     with pytest.raises(dataclasses.FrozenInstanceError):
         get_detector("Kay_ripple_detector").inputs = ("multiunit",)
+
+
+class TestCheckInputs:
+    """The spec can tell whether what a caller has is what the detector takes:
+    the two silent mismatches, raw for filtered and filtered for raw, raise."""
+
+    FS = 1500
+
+    @pytest.fixture
+    def raw(self):
+        state = np.random.RandomState(0)
+        return np.column_stack([brown(6000, state), brown(6000, state)])
+
+    @pytest.fixture
+    def filtered(self, raw):
+        return filter_ripple_band(raw, self.FS)
+
+    def test_ripple_band_detectors_accept_filtered_and_reject_raw(self, raw, filtered):
+        spec = get_detector("Kay_ripple_detector")
+        spec.check_inputs(filtered, sampling_frequency=self.FS)
+        with pytest.raises(ValueError, match="looks unfiltered"):
+            spec.check_inputs(raw, sampling_frequency=self.FS)
+
+    def test_raw_pair_detector_accepts_raw_and_rejects_filtered(self, raw, filtered):
+        spec = get_detector("Long_sharp_wave_ripple_detector")
+        spec.check_inputs(raw, sampling_frequency=self.FS)
+        with pytest.raises(ValueError, match="looks band-pass filtered"):
+            spec.check_inputs(filtered, sampling_frequency=self.FS)
+        with pytest.raises(ValueError, match="two channels"):
+            spec.check_inputs(raw[:, :1], sampling_frequency=self.FS)
+
+    def test_spike_counts_must_be_non_negative_whole_numbers(self):
+        spec = get_detector("multiunit_HSE_detector")
+        counts = np.random.RandomState(0).poisson(0.1, (6000, 4)).astype(float)
+        counts[10, 0] = np.nan  # missing is allowed
+        spec.check_inputs(counts, sampling_frequency=self.FS)
+        with pytest.raises(ValueError, match="whole numbers"):
+            spec.check_inputs(counts * 0.5, sampling_frequency=self.FS)
+        with pytest.raises(ValueError, match="whole numbers"):
+            spec.check_inputs(-counts, sampling_frequency=self.FS)
+
+    def test_signal_count_and_dimensions(self, filtered):
+        spec = get_detector("Carey_candidate_detector")
+        counts = np.zeros((6000, 4))
+        spec.check_inputs(filtered, counts, sampling_frequency=self.FS)
+        with pytest.raises(ValueError, match="takes 2 signal"):
+            spec.check_inputs(filtered, sampling_frequency=self.FS)
+        with pytest.raises(ValueError, match="2-D"):
+            spec.check_inputs(filtered[:, 0], counts, sampling_frequency=self.FS)
+
+    def test_missing_samples_are_left_out_of_the_judgement(self, filtered):
+        filtered[1000:1500] = np.nan
+        get_detector("Kay_ripple_detector").check_inputs(filtered, sampling_frequency=self.FS)

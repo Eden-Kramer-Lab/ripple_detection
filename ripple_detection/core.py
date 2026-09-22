@@ -1616,6 +1616,45 @@ def estimate_noise_threshold(
     return threshold, diagnostics
 
 
+def low_frequency_variance_fraction(
+    signal: ArrayLike, sampling_frequency: float, cutoff: float = 100.0
+) -> NDArray:
+    """Fraction of each channel's variance that lies below ``cutoff`` Hz.
+
+    Raw LFP is dominated by slow activity, so nearly all of its variance lies
+    below 100 Hz; a signal filtered to the ripple band has almost none there.
+    The fraction therefore tells raw from ripple-band input, which is what
+    :meth:`~ripple_detection.registry.DetectorSpec.check_inputs` and
+    ``Long_sharp_wave_ripple_detector`` use it for.
+
+    Parameters
+    ----------
+    signal : array_like, shape (n_time,) or (n_time, n_channels)
+        Samples with NaN in any channel are left out.
+    sampling_frequency : float
+        Sampling rate in Hz.
+    cutoff : float, optional
+        Frequency in Hz below which variance is counted. Default is 100.0.
+
+    Returns
+    -------
+    fraction : ndarray, shape (n_channels,)
+        In [0, 1]; NaN for a channel with no variance.
+
+    """
+    x = np.asarray(signal, dtype=float)
+    x = x.reshape(len(x), -1)
+    x = x[np.isfinite(x).all(axis=1)]
+    if len(x) < 2:
+        return np.full(x.shape[1], np.nan)
+    x = x - x.mean(axis=0)
+    power = np.abs(np.fft.rfft(x, axis=0)) ** 2
+    frequencies = np.fft.rfftfreq(len(x), 1.0 / sampling_frequency)
+    total = power.sum(axis=0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(total > 0, power[frequencies < cutoff].sum(axis=0) / total, np.nan)
+
+
 def get_multiunit_population_firing_rate(
     multiunit: ArrayLike, sampling_frequency: float, smoothing_sigma: float = 0.015
 ) -> NDArray:

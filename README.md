@@ -172,9 +172,17 @@ and two of the mismatches are silent rather than loud:
 | `("multiunit",)` | `multiunit_HSE_detector` | `(n_time, n_units)` spike counts or indicators |
 
 `Long_sharp_wave_ripple_detector` takes raw LFP through a signature identical to
-the ripple-band detectors', so handing it filtered data raises nothing and
-returns plausible nonsense. `multiunit_HSE_detector` has the same shape of
-hazard. Carey's extra argument at least fails loudly.
+the ripple-band detectors', so handing it filtered data would return plausible
+nonsense, and `multiunit_HSE_detector` has the same shape of hazard. The spec
+checks for you: raw LFP holds nearly all of its variance below 100 Hz and
+ripple-band LFP almost none, and spike counts are non-negative whole numbers.
+
+```python
+spec = get_detector("Long_sharp_wave_ripple_detector")
+spec.check_inputs(filtered_lfps, sampling_frequency=sampling_frequency)
+# ValueError: Long_sharp_wave_ripple_detector takes raw_lfp_pair as signal 1,
+# unfiltered LFP, but channel(s) hold only 0%, 0% ... looks band-pass filtered.
+```
 
 ## Output Format
 
