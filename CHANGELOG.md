@@ -304,6 +304,15 @@ raises on zero rows; that is hdmf's, not this package's.
   - a series holding NaN, or a negative threshold, in `segment_boolean_series`
     and `threshold_by_zscore`;
   - `multiunit` data of the wrong shape, which raised an `AxisError` before;
+  - a tunable that is NaN, negative, reversed or in the wrong unit, in every
+    detector: a NaN threshold or speed limit, a negative or NaN duration, gap
+    or speed limit, a non-positive or NaN `sampling_frequency`, a smoothing
+    width of zero or of a second or more (milliseconds given as seconds), a
+    bounds threshold above the peak threshold (Zugaro, Carey, Long), a band
+    that is reversed or reaches Nyquist (Long, Carey's theta), a
+    non-integer channel, unit or window count, and a `minimum_active_units`
+    above the number of units. Each disabled a criterion or emptied the
+    result without an error; `minimum_duration=0` still means no minimum;
   - in `simulate_LFP`, a ripple time outside `time`, a non-positive or NaN
     duration, a frequency outside the Nyquist range or NaN, a ripple size or
     noise amplitude that is NaN, a negative `ripple_amplitude`, or a

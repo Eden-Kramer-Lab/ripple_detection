@@ -2114,12 +2114,12 @@ class TestCareyCandidateDetector:
         many = Carey_candidate_detector(
             time, lfps, multiunit, stationary, self.FS, minimum_active_units=5
         )
-        too_many = Carey_candidate_detector(
-            time, lfps, multiunit, stationary, self.FS, minimum_active_units=9
-        )
         assert len(many) >= 1
-        assert len(too_many) == 0  # only 8 units exist
         assert np.all(many.n_active_units >= 5)
+        with pytest.raises(ValueError, match="multiunit has 8 unit"):
+            Carey_candidate_detector(
+                time, lfps, multiunit, stationary, self.FS, minimum_active_units=9
+            )
 
     def test_event_during_movement_is_excluded(self, time, stationary):
         lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
@@ -3865,6 +3865,138 @@ class TestBlocksTooShortForAnEvent:
         with pytest.warns(UserWarning, match="minimum_duration") as record:
             self._run(Kay_ripple_detector, time, nan_rows)
         assert record[0].filename == __file__
+
+
+class TestParameterRanges:
+    """A tunable that is NaN, negative, reversed or in the wrong unit raises
+    rather than quietly disabling a criterion or emptying the result."""
+
+    FS = 1000
+    N_TIME = 5_000
+
+    def _call(self, detector, **kwargs):
+        time = np.arange(self.N_TIME) / self.FS
+        speed = np.full(self.N_TIME, 2.0)
+        fs = kwargs.pop("sampling_frequency", self.FS)
+        if detector is Long_sharp_wave_ripple_detector:
+            lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, (2500,))
+            return detector(time, lfp, speed, fs, **kwargs)
+        if detector in (multiunit_HSE_detector, Carey_candidate_detector):
+            lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, (2500,))
+            if detector is multiunit_HSE_detector:
+                return detector(time, multiunit, speed, fs, **kwargs)
+            return detector(time, lfps, multiunit, speed, fs, **kwargs)
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2500, 2560, 20.0)])
+        return detector(time, lfps, speed, fs, **kwargs)
+
+    @pytest.mark.parametrize(
+        "detector",
+        [
+            Kay_ripple_detector,
+            Karlsson_ripple_detector,
+            Roumis_ripple_detector,
+            Shvartsman_ripple_detector,
+            Yu_ripple_detector,
+            Zugaro_ripple_detector,
+            multiunit_HSE_detector,
+            Carey_candidate_detector,
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [
+            ({"minimum_duration": -0.01}, "minimum_duration"),
+            ({"minimum_duration": np.nan}, "minimum_duration"),
+            ({"maximum_duration": 0.0}, "maximum_duration"),
+            ({"speed_threshold": np.nan}, "speed_threshold"),
+            ({"speed_threshold": -1.0}, "speed_threshold"),
+            ({"sampling_frequency": 0.0}, "sampling_frequency"),
+            ({"sampling_frequency": np.nan}, "sampling_frequency"),
+        ],
+    )
+    def test_shared_tunables(self, detector, kwargs, match):
+        with pytest.raises(ValueError, match=match):
+            self._call(detector, **kwargs)
+
+    @pytest.mark.parametrize(
+        "detector",
+        [
+            Kay_ripple_detector,
+            Karlsson_ripple_detector,
+            Roumis_ripple_detector,
+            Shvartsman_ripple_detector,
+            multiunit_HSE_detector,
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [
+            ({"zscore_threshold": np.nan}, "zscore_threshold"),
+            ({"zscore_threshold": np.inf}, "zscore_threshold"),
+            ({"smoothing_sigma": 0.0}, "smoothing_sigma"),
+            ({"smoothing_sigma": 4.0}, "is in seconds"),
+        ],
+    )
+    def test_single_threshold_detectors(self, detector, kwargs, match):
+        with pytest.raises(ValueError, match=match):
+            self._call(detector, **kwargs)
+
+    @pytest.mark.parametrize(
+        ("detector", "kwargs", "match"),
+        [
+            (Kay_ripple_detector, {"close_ripple_threshold": -1.0}, "close_ripple_threshold"),
+            (Yu_ripple_detector, {"close_ripple_threshold": np.nan}, "close_ripple_threshold"),
+            (Yu_ripple_detector, {"smoothing_sigma": -0.004}, "smoothing_sigma"),
+            (multiunit_HSE_detector, {"close_event_threshold": -1.0}, "close_event_threshold"),
+            (multiunit_HSE_detector, {"minimum_active_units": 100}, "unit"),
+            (multiunit_HSE_detector, {"minimum_active_units": 1.5}, "whole number"),
+            (
+                Shvartsman_ripple_detector,
+                {"minimum_participating_channels": 0.5},
+                "whole number",
+            ),
+            (Zugaro_ripple_detector, {"low_threshold": 5.0, "high_threshold": 2.0}, "above"),
+            (Zugaro_ripple_detector, {"low_threshold": -1.0}, "low_threshold"),
+            (Zugaro_ripple_detector, {"high_threshold": np.nan}, "high_threshold"),
+            (Zugaro_ripple_detector, {"smoothing_window": 3.9}, "whole number"),
+            (
+                Zugaro_ripple_detector,
+                {"minimum_inter_ripple_interval": -0.01},
+                "minimum_inter_ripple_interval",
+            ),
+            (Carey_candidate_detector, {"low_threshold": 3.0, "high_threshold": 1.0}, "above"),
+            (Carey_candidate_detector, {"minimum_active_units": 100}, "unit"),
+            (Carey_candidate_detector, {"spike_cap": 0.0}, "spike_cap"),
+            (Carey_candidate_detector, {"state_merge_gap": -1.0}, "state_merge_gap"),
+            (Carey_candidate_detector, {"theta_threshold": np.nan}, "theta_threshold"),
+            (
+                Carey_candidate_detector,
+                {"theta_lfp": np.zeros(N_TIME), "theta_band": (6.0, 600.0)},
+                "Nyquist",
+            ),
+            (Long_sharp_wave_ripple_detector, {"ripple_band": (250.0, 80.0)}, "ripple_band"),
+            (Long_sharp_wave_ripple_detector, {"ripple_band": (80.0, 600.0)}, "Nyquist"),
+            (
+                Long_sharp_wave_ripple_detector,
+                {"sharp_wave_thresholds": (2.5, 0.5)},
+                "above",
+            ),
+            (
+                Long_sharp_wave_ripple_detector,
+                {"ripple_power_percentile": 0.0},
+                "ripple_power_percentile",
+            ),
+            (Long_sharp_wave_ripple_detector, {"window_size": 0.0}, "window_size"),
+            (
+                Long_sharp_wave_ripple_detector,
+                {"minimum_sharp_wave_duration": np.nan},
+                "minimum_duration",
+            ),
+        ],
+    )
+    def test_detector_specific_tunables(self, detector, kwargs, match):
+        with pytest.raises(ValueError, match=match):
+            self._call(detector, **kwargs)
 
 
 class TestGapRuleUsesTheObservedStep:

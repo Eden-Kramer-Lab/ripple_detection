@@ -18,6 +18,10 @@ from ripple_detection.detectors._events import (
     _detect_from_trace,
 )
 from ripple_detection.detectors._validation import (
+    _check_finite_non_negative,
+    _check_minimum_active_units,
+    _check_non_negative,
+    _check_smoothing_sigma,
     _validate_detector_inputs,
     _validate_duration_limits,
 )
@@ -164,13 +168,10 @@ def multiunit_HSE_detector(
        doi:10.1016/j.neuron.2009.07.027
 
     """
-    if minimum_active_units < 0:
-        msg = (
-            f"minimum_active_units must be non-negative, got {minimum_active_units}. "
-            "It counts units with at least one spike inside an event; 0 imposes no criterion."
-        )
-        raise ValueError(msg)
     _validate_duration_limits(minimum_duration, maximum_duration)
+    _check_finite_non_negative(zscore_threshold=zscore_threshold)
+    _check_non_negative(close_event_threshold=close_event_threshold)
+    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
     multiunit = np.asarray(multiunit, dtype=float)
     if multiunit.ndim != 2:
         msg = (
@@ -178,6 +179,7 @@ def multiunit_HSE_detector(
             f"{multiunit.shape}. For a single unit, pass multiunit[:, np.newaxis]."
         )
         raise ValueError(msg)
+    _check_minimum_active_units(minimum_active_units, multiunit.shape[1])
     time, multiunit, speed = _validate_detector_inputs(
         time, multiunit, speed, sampling_frequency, speed_threshold
     )

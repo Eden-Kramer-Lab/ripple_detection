@@ -1718,6 +1718,13 @@ class TestEndpointSpeedRule:
         assert len(exclude_movement(event, speed, time, np.inf)) == 1
 
 
+class TestCloseEventGap:
+    @pytest.mark.parametrize("gap", [-1.0, np.nan])
+    def test_exclude_close_events_rejects_a_negative_or_nan_gap(self, gap):
+        with pytest.raises(ValueError, match="close_event_threshold"):
+            exclude_close_events(np.array([[0.0, 0.1], [0.2, 0.3]]), gap)
+
+
 class TestMinimumSampleCountUsesTheMedianStep:
     def test_a_hole_in_the_timestamps_does_not_shrink_the_count(self):
         fs = 1500

@@ -1274,6 +1274,16 @@ def _is_gap_below(
     )
 
 
+def _check_gap(close_event_threshold: float) -> None:
+    """A gap between events: non-negative, not NaN (infinity keeps only the first)."""
+    if not close_event_threshold >= 0:
+        msg = (
+            f"close_event_threshold must be non-negative, got {close_event_threshold}. "
+            "It is a gap between events, in the units of event_times."
+        )
+        raise ValueError(msg)
+
+
 def exclude_close_events(
     candidate_event_times: ArrayLike | pd.DataFrame,
     close_event_threshold: float = 1.0,
@@ -1298,7 +1308,8 @@ def exclude_close_events(
         column.
     close_event_threshold : float, optional
         Minimum time between events. Events starting within this time after
-        a previous event ends are excluded. Default is 1.0 (seconds).
+        a previous event ends are excluded. Non-negative. Default is 1.0
+        (seconds).
     included_ripple_inds : array_like, shape (n_events,), optional
         Values that run alongside the events, such as their indices in an
         earlier candidate list. Returned filtered the same way, so data
@@ -1320,6 +1331,7 @@ def exclude_close_events(
     is not sorted, results may be incorrect.
 
     """
+    _check_gap(close_event_threshold)
     events = _event_bounds(candidate_event_times)
     # Each event is compared with the last *retained* event, so a cluster is
     # reduced to its first event. Comparing with the immediately preceding
@@ -1394,12 +1406,7 @@ def merge_close_events(
     array([[0. , 0.2]])
 
     """
-    if close_event_threshold < 0:
-        msg = (
-            f"close_event_threshold must be non-negative, got {close_event_threshold}. "
-            "It is a gap between events, in the units of event_times."
-        )
-        raise ValueError(msg)
+    _check_gap(close_event_threshold)
     events = _event_bounds(event_times).copy()
     if events.size == 0:
         return np.empty((0, 2))

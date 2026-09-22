@@ -23,6 +23,10 @@ from ripple_detection.detectors._events import (
     _get_event_stats,
 )
 from ripple_detection.detectors._validation import (
+    _check_band,
+    _check_finite_non_negative,
+    _check_positive,
+    _check_thresholds,
     _validate_detector_inputs,
     _validate_duration_limits,
 )
@@ -220,6 +224,31 @@ def Long_sharp_wave_ripple_detector(
         raise ValueError(msg)
     time, lfp, speed = _validate_detector_inputs(
         time, lfp, speed, sampling_frequency, speed_threshold
+    )
+    _check_band("sharp_wave_band", sharp_wave_band, sampling_frequency)
+    _check_band("ripple_band", ripple_band, sampling_frequency)
+    _check_thresholds(
+        "sharp_wave_thresholds[0]",
+        sharp_wave_thresholds[0],
+        "sharp_wave_thresholds[1]",
+        sharp_wave_thresholds[1],
+    )
+    _check_thresholds(
+        "ripple_thresholds[0]",
+        ripple_thresholds[0],
+        "ripple_thresholds[1]",
+        ripple_thresholds[1],
+    )
+    for name, percentile in (
+        ("sharp_wave_percentile", sharp_wave_percentile),
+        ("ripple_power_percentile", ripple_power_percentile),
+    ):
+        if not 0 < percentile < 100:
+            msg = f"{name} must lie in (0, 100), got {percentile}."
+            raise ValueError(msg)
+    _check_positive(window_size=window_size, local_window=local_window)
+    _check_finite_non_negative(
+        minimum_separation=minimum_separation, minimum_ripple_duration=minimum_ripple_duration
     )
     n_time = len(time)
     is_valid, blocks = _valid_blocks(time, lfp)

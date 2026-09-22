@@ -39,6 +39,10 @@ from ripple_detection.detectors._events import (
     _get_event_stats,
 )
 from ripple_detection.detectors._validation import (
+    _check_finite_non_negative,
+    _check_non_negative,
+    _check_smoothing_sigma,
+    _check_whole_number,
     _validate_detector_inputs,
     _validate_duration_limits,
     _validate_lfp_dimensions,
@@ -473,9 +477,10 @@ def Shvartsman_ripple_detector(
             "Give minimum_participating_channels or minimum_participating_fraction, not both."
         )
         raise ValueError(msg)
-    if minimum_participating_channels is not None and minimum_participating_channels < 0:
-        msg = "minimum_participating_channels must be non-negative."
-        raise ValueError(msg)
+    if minimum_participating_channels is not None:
+        _check_whole_number(
+            "minimum_participating_channels", minimum_participating_channels, 0
+        )
     if minimum_participating_fraction is not None and not (
         0.0 <= minimum_participating_fraction <= 1.0
     ):
@@ -485,6 +490,9 @@ def Shvartsman_ripple_detector(
         )
         raise ValueError(msg)
     _validate_duration_limits(minimum_duration, maximum_duration)
+    _check_finite_non_negative(zscore_threshold=zscore_threshold)
+    _check_non_negative(close_ripple_threshold=close_ripple_threshold)
+    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
@@ -707,6 +715,9 @@ def Kay_ripple_detector(
 
     """
     _validate_duration_limits(minimum_duration, maximum_duration)
+    _check_finite_non_negative(zscore_threshold=zscore_threshold)
+    _check_non_negative(close_ripple_threshold=close_ripple_threshold)
+    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
@@ -850,6 +861,8 @@ def Yu_ripple_detector(
 
     """
     _validate_duration_limits(minimum_duration, maximum_duration)
+    _check_non_negative(close_ripple_threshold=close_ripple_threshold)
+    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
@@ -1043,6 +1056,9 @@ def Karlsson_ripple_detector(
 
     """
     _validate_duration_limits(minimum_duration, maximum_duration)
+    _check_finite_non_negative(zscore_threshold=zscore_threshold)
+    _check_non_negative(close_ripple_threshold=close_ripple_threshold)
+    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
@@ -1190,6 +1206,9 @@ def Roumis_ripple_detector(
 
     """
     _validate_duration_limits(minimum_duration, maximum_duration)
+    _check_finite_non_negative(zscore_threshold=zscore_threshold)
+    _check_non_negative(close_ripple_threshold=close_ripple_threshold)
+    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )

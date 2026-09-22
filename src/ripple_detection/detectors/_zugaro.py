@@ -21,6 +21,9 @@ from ripple_detection.detectors._events import (
     _get_event_stats,
 )
 from ripple_detection.detectors._validation import (
+    _check_non_negative,
+    _check_thresholds,
+    _check_whole_number,
     _validate_detector_inputs,
     _validate_duration_limits,
 )
@@ -252,6 +255,10 @@ def Zugaro_ripple_detector(
 
     """
     _validate_duration_limits(minimum_duration, maximum_duration)
+    _check_thresholds("low_threshold", low_threshold, "high_threshold", high_threshold)
+    _check_non_negative(minimum_inter_ripple_interval=minimum_inter_ripple_interval)
+    if smoothing_window is not None:
+        _check_whole_number("smoothing_window", smoothing_window, 1)
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )

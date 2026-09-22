@@ -219,11 +219,14 @@ def _validate_detector_inputs(
     Raises
     ------
     ValueError
-        If the signal is not 2-D, the lengths differ, time is not increasing
-        or appears to be in samples, or speed is NaN everywhere while the
-        movement criterion is on.
+        If ``sampling_frequency`` is not positive and finite,
+        ``speed_threshold`` is negative or NaN, the signal is not 2-D, the
+        lengths differ, time is not increasing or appears to be in samples, or
+        speed is NaN everywhere while the movement criterion is on.
 
     """
+    _check_positive(sampling_frequency=sampling_frequency)
+    _check_non_negative(speed_threshold=speed_threshold)
     signal = np.asarray(signal, dtype=float)
     speed = np.asarray(speed, dtype=float)
     time = np.asarray(time, dtype=float)
@@ -240,8 +243,98 @@ def _validate_detector_inputs(
     return time, signal, speed
 
 
+def _check_non_negative(**values: float) -> None:
+    """Raise for a value that is NaN or negative. Infinity passes: it is how a
+    caller turns a speed or proximity criterion off."""
+    for name, value in values.items():
+        if not value >= 0:
+            msg = f"{name} must be non-negative, got {value}."
+            raise ValueError(msg)
+
+
+def _check_finite_non_negative(**values: float) -> None:
+    """Raise for a value that is NaN, infinite or negative."""
+    for name, value in values.items():
+        if not 0 <= value < np.inf:
+            msg = f"{name} must be finite and non-negative, got {value}."
+            raise ValueError(msg)
+
+
+def _check_positive(**values: float) -> None:
+    """Raise for a value that is not a positive finite number."""
+    for name, value in values.items():
+        if not 0 < value < np.inf:
+            msg = f"{name} must be positive and finite, got {value}."
+            raise ValueError(msg)
+
+
+def _check_smoothing_sigma(**values: float) -> None:
+    """A Gaussian standard deviation in seconds: positive, finite, and under a
+    second, since a longer kernel smooths every ripple away and usually means
+    milliseconds were given."""
+    _check_positive(**values)
+    for name, value in values.items():
+        if value >= 1.0:
+            msg = (
+                f"{name} is in seconds; {value} s would smooth every ripple away. "
+                f"For {value} ms pass {value / 1000}."
+            )
+            raise ValueError(msg)
+
+
+def _check_thresholds(
+    low_name: str, low: float, high_name: str, high: float, minimum: float = 0.0
+) -> None:
+    """Two thresholds, each finite and at or above ``minimum``, the first not
+    above the second (a bounds threshold above the peak threshold disables
+    the peak test)."""
+    for name, value in ((low_name, low), (high_name, high)):
+        if not minimum <= value < np.inf:
+            msg = f"{name} must be finite and at least {minimum}, got {value}."
+            raise ValueError(msg)
+    if low > high:
+        msg = f"{low_name} ({low}) is above {high_name} ({high}); it must not be."
+        raise ValueError(msg)
+
+
+def _check_whole_number(name: str, value: float, minimum: int) -> None:
+    """Raise unless ``value`` is a whole number at or above ``minimum``."""
+    if not (np.isfinite(value) and value == int(value) and value >= minimum):
+        msg = f"{name} must be a whole number of at least {minimum}, got {value}."
+        raise ValueError(msg)
+
+
+def _check_band(name: str, band: tuple[float, float], sampling_frequency: float) -> None:
+    """A frequency band in Hz: two increasing edges between zero and Nyquist."""
+    low, high = band
+    nyquist = sampling_frequency / 2
+    if not 0 < low < high < nyquist:
+        msg = (
+            f"{name} must be (low, high) with 0 < low < high < {nyquist:g} Hz, the "
+            f"Nyquist frequency; got {band}."
+        )
+        raise ValueError(msg)
+
+
+def _check_minimum_active_units(minimum_active_units: int, n_units: int) -> None:
+    """A whole number of units, no more than there are."""
+    _check_whole_number("minimum_active_units", minimum_active_units, 0)
+    if minimum_active_units > n_units:
+        msg = (
+            f"minimum_active_units is {minimum_active_units} but multiunit has {n_units} "
+            "unit(s), so no event could be kept."
+        )
+        raise ValueError(msg)
+
+
 def _validate_duration_limits(minimum_duration: float, maximum_duration: float | None) -> None:
-    """Reject duration limits that leave no admissible event."""
+    """Reject duration limits that are not durations or leave no admissible event."""
+    if not 0 <= minimum_duration < np.inf:
+        msg = f"minimum_duration must be finite and non-negative, got {minimum_duration}."
+        raise ValueError(msg)
+    if maximum_duration is not None and not maximum_duration > 0:
+        msg = f"maximum_duration must be positive or None, got {maximum_duration}."
+        raise ValueError(msg)
     if maximum_duration is not None and maximum_duration < minimum_duration:
         msg = (
             f"maximum_duration ({maximum_duration}) is below minimum_duration "

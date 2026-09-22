@@ -29,6 +29,12 @@ from ripple_detection.detectors._events import (
     _get_event_stats,
 )
 from ripple_detection.detectors._validation import (
+    _check_band,
+    _check_minimum_active_units,
+    _check_non_negative,
+    _check_positive,
+    _check_smoothing_sigma,
+    _check_thresholds,
     _validate_detector_inputs,
     _validate_duration_limits,
 )
@@ -257,13 +263,29 @@ def Carey_candidate_detector(
 
     """
     _validate_duration_limits(minimum_duration, maximum_duration)
+    _check_thresholds("low_threshold", low_threshold, "high_threshold", high_threshold)
+    _check_smoothing_sigma(
+        ripple_smoothing_sigma=ripple_smoothing_sigma,
+        spike_kernel_sigma=spike_kernel_sigma,
+        baseline_sigma=baseline_sigma,
+    )
+    _check_positive(spike_cap=spike_cap, baseline_cap=baseline_cap)
+    _check_non_negative(
+        state_merge_gap=state_merge_gap, state_minimum_length=state_minimum_length
+    )
+    if not np.isfinite(theta_threshold):
+        msg = f"theta_threshold must be finite, got {theta_threshold}."
+        raise ValueError(msg)
     multiunit = np.asarray(multiunit, dtype=float)
     if multiunit.ndim != 2:
         msg = f"multiunit must be a 2D array of shape (n_time, n_units), got shape {multiunit.shape}."
         raise ValueError(msg)
+    _check_minimum_active_units(minimum_active_units, multiunit.shape[1])
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
+    if theta_lfp is not None:
+        _check_band("theta_band", theta_band, sampling_frequency)
     n_time = len(time)
     if multiunit.shape[0] != n_time:
         msg = f"Array length mismatch: multiunit has {multiunit.shape[0]} samples but time has {n_time}."
