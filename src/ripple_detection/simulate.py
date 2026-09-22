@@ -208,32 +208,38 @@ NOISE_FUNCTION = {
 
 
 def _draw_per_ripple(
-    value: float | Sequence[float] | FloatArray, n_ripples: int, rng: np.random.Generator
+    value: float | tuple[float, float] | Sequence[float] | FloatArray,
+    n_ripples: int,
+    rng: np.random.Generator,
 ) -> FloatArray:
     """A scalar repeated per ripple, one uniform draw per ripple from a range,
     or an explicit value per ripple.
 
-    A scalar consumes no randomness; a two-element ``(low, high)`` sequence
-    draws ``n_ripples`` values from ``rng``; an array of ``n_ripples`` values
-    (when that is not two) is used as given, so one draw can be shared between
-    the functions of this module.
+    A scalar consumes no randomness. A ``tuple`` is a ``(low, high)`` range
+    and draws ``n_ripples`` values from ``rng``. A list or array holds one
+    value per ripple and is used as given, so one draw can be shared between
+    the functions of this module. The type, not the length, decides, so two
+    values for two ripples are never mistaken for a range.
     """
+    if isinstance(value, tuple):
+        if len(value) != 2:
+            msg = f"A range must be a (low, high) tuple, got {value}."
+            raise ValueError(msg)
+        low, high = (float(bound) for bound in value)
+        if not low <= high:
+            msg = f"Range must be (low, high) with low <= high, got {value}."
+            raise ValueError(msg)
+        return rng.uniform(low, high, size=n_ripples)
     values = np.asarray(value, dtype=float)
     if values.ndim == 0:
         return np.full(n_ripples, float(values))
-    if values.shape == (n_ripples,) and n_ripples != 2:
-        return values
-    if values.shape != (2,):
+    if values.shape != (n_ripples,):
         msg = (
-            f"Give a scalar, a two-element (low, high) range, or one value per ripple "
-            f"({n_ripples}), got {value}."
+            f"Give a scalar, a (low, high) tuple, or a list or array of one value per "
+            f"ripple ({n_ripples}), got {value}."
         )
         raise ValueError(msg)
-    low, high = values
-    if not low <= high:
-        msg = f"Range must be (low, high) with low <= high, got {value}."
-        raise ValueError(msg)
-    return rng.uniform(low, high, size=n_ripples)
+    return values
 
 
 def simulate_LFP(
@@ -267,7 +273,7 @@ def simulate_LFP(
         given. Cannot be combined with ``ripple_snr``.
     ripple_duration : float or (float, float), optional
         Approximate duration in **seconds** of a ripple event, defined as 6
-        standard deviations of its Gaussian envelope. A ``(low, high)`` pair
+        standard deviations of its Gaussian envelope. A ``(low, high)`` tuple
         draws one duration per ripple uniformly from that range. Default is
         0.100 (100 ms).
     noise_type : {'white', 'pink', 'brown'}, optional
@@ -298,7 +304,7 @@ def simulate_LFP(
         (as many samples as its kernel has taps). Cannot be combined with
         ``ripple_amplitude``. Default is None.
     ripple_frequency : float or (float, float), optional
-        Ripple oscillation frequency in Hz, or a ``(low, high)`` range drawn
+        Ripple oscillation frequency in Hz, or a ``(low, high)`` tuple drawn
         uniformly per ripple. Default is 200.
     sampling_frequency : float, optional
         Sampling rate in Hz, used only with ``ripple_snr`` to filter the noise.
@@ -314,10 +320,12 @@ def simulate_LFP(
     ValueError
         If both ``ripple_amplitude`` and ``ripple_snr`` are given, if
         ``ripple_snr`` is given with ``noise_amplitude = 0``, if a range is
-        not a two-element ordered sequence, if a ripple time lies outside
-        ``time``, if a duration is not positive, or if a frequency is not
-        between zero and the Nyquist frequency. Each of these would otherwise
-        give an all-NaN, empty, or aliased ripple with no error.
+        not a ``(low, high)`` tuple with ``low <= high``, if a ripple time lies
+        outside ``time``, if a duration is not positive, if a frequency is not
+        between zero and the Nyquist frequency, if ``ripple_snr`` is not
+        positive, or if ``ripple_amplitude`` or ``noise_amplitude`` is negative
+        or NaN. Each of these would otherwise give an all-NaN, empty, or
+        aliased ripple with no error.
 
     Notes
     -----
@@ -347,9 +355,7 @@ def simulate_LFP(
     ... )
 
     """
-    if ripple_amplitude is not None and ripple_snr is not None:
-        msg = "Give either ripple_amplitude or ripple_snr, not both."
-        raise ValueError(msg)
+    _validate_sizes(ripple_amplitude, ripple_snr, noise_amplitude)
     rng = np.random.default_rng(random_state)
     noise = (noise_amplitude / 2) * NOISE_FUNCTION[noise_type](time.size, rng=rng)
 
@@ -393,6 +399,25 @@ def _sampling_rate(time: FloatArray, sampling_frequency: float | None) -> float:
     )
 
 
+def _validate_sizes(
+    ripple_amplitude: float | None, ripple_snr: float | None, noise_amplitude: float
+) -> None:
+    """Raise for ripple and noise sizes that would put NaN in the signal or flip
+    the ripple, which the detectors would then read as missing samples."""
+    if ripple_amplitude is not None and ripple_snr is not None:
+        msg = "Give either ripple_amplitude or ripple_snr, not both."
+        raise ValueError(msg)
+    if ripple_snr is not None and not ripple_snr > 0:
+        msg = f"ripple_snr must be positive, got {ripple_snr}."
+        raise ValueError(msg)
+    if ripple_amplitude is not None and not ripple_amplitude >= 0:
+        msg = f"ripple_amplitude must be non-negative, got {ripple_amplitude}."
+        raise ValueError(msg)
+    if not noise_amplitude >= 0:
+        msg = f"noise_amplitude must be non-negative, got {noise_amplitude}."
+        raise ValueError(msg)
+
+
 def _validate_ripples(
     time: FloatArray,
     ripple_times: Sequence[float],
@@ -410,10 +435,10 @@ def _validate_ripples(
             f"[{time.min()}, {time.max()}]; the ripple would have no samples."
         )
         raise ValueError(msg)
-    if np.any(durations <= 0):
+    if not np.all(durations > 0):
         msg = f"ripple_duration must be positive, got {durations}."
         raise ValueError(msg)
-    if np.any(frequencies <= 0) or np.any(frequencies >= nyquist):
+    if not np.all((frequencies > 0) & (frequencies < nyquist)):
         msg = (
             f"ripple_frequency must lie in (0, {nyquist:.1f}) Hz, the Nyquist range of "
             f"time's sampling rate, got {frequencies}."
@@ -560,8 +585,9 @@ def simulate_multichannel_LFP(
         the correlation between two channels' noise. Default 0.5.
     ripple_amplitude, ripple_snr, ripple_duration, ripple_frequency : optional
         As in ``simulate_LFP``, for a channel of gain 1. ``ripple_duration``
-        and ``ripple_frequency`` also accept one value per ripple, so the same
-        draw can be given to ``simulate_multiunit``.
+        and ``ripple_frequency`` also accept a list or array of one value per
+        ripple, so the same draw can be given to ``simulate_multiunit``; a
+        ``tuple`` is always a ``(low, high)`` range.
     noise_type : {'white', 'pink', 'brown'}, optional
         Default 'pink'.
     noise_amplitude : float, optional
@@ -602,9 +628,7 @@ def simulate_multichannel_LFP(
     (15000, 4)
 
     """
-    if ripple_amplitude is not None and ripple_snr is not None:
-        msg = "Give either ripple_amplitude or ripple_snr, not both."
-        raise ValueError(msg)
+    _validate_sizes(ripple_amplitude, ripple_snr, noise_amplitude)
     if n_channels < 1:
         msg = f"n_channels must be at least 1, got {n_channels}."
         raise ValueError(msg)
@@ -783,8 +807,9 @@ def simulate_multiunit(
     ripple_times : float or list of float
     n_units : int
     baseline_rate : float, (low, high) or array of shape (n_units,), optional
-        Baseline rate in spikes per second: one value for every unit, a range
-        to draw each unit's from, or one per unit. Default (0.5, 5.0).
+        Baseline rate in spikes per second: one value for every unit, a
+        ``(low, high)`` tuple to draw each unit's from, or a list or array of
+        one per unit. Default (0.5, 5.0).
     ripple_rate_gain : float, optional
         Peak rate during a ripple relative to baseline. Default 8.0.
     participation : float, optional
@@ -815,11 +840,11 @@ def simulate_multiunit(
         ripple_times = [ripple_times]
     n_ripples = len(ripple_times)
     rates = _draw_per_ripple(baseline_rate, n_units, rng)
-    if np.any(rates < 0):
+    if not np.all(rates >= 0):
         msg = f"baseline_rate must be non-negative, got {rates}."
         raise ValueError(msg)
     durations = _draw_per_ripple(ripple_duration, n_ripples, rng)
-    if np.any(durations <= 0):
+    if not np.all(durations > 0):
         msg = f"ripple_duration must be positive, got {durations}."
         raise ValueError(msg)
     participates = rng.random((n_ripples, n_units)) < participation

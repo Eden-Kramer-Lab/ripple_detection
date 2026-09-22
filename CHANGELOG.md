@@ -68,8 +68,10 @@ raises on zero rows; that is hdmf's, not this package's.
   `simulate_sharp_wave_ripple_pair` (the raw two-channel input of the Long
   detector), `simulate_multiunit` (units that burst with the ripples), and
   `simulate_session`, which returns all of them with the ground truth as a
-  `SimulatedSession`. `ripple_duration` and `ripple_frequency` accept one
-  value per ripple so a draw can be shared between them.
+  `SimulatedSession`. `ripple_duration` and `ripple_frequency` take a
+  `(low, high)` tuple to draw one value per ripple, or a list or array of one
+  value per ripple so a draw can be shared between them; the type decides, so
+  two values for two ripples are never read as a range.
 - `Yu_ripple_detector`, the detector of Yu et al. 2017. It estimates the
   threshold at each call, from the noise distribution during immobility.
 - `Zugaro_ripple_detector`, the `FindRipples` algorithm of FMAToolbox. The
@@ -284,9 +286,11 @@ raises on zero rows; that is hdmf's, not this package's.
   - a series holding NaN, or a negative threshold, in `segment_boolean_series`
     and `threshold_by_zscore`;
   - `multiunit` data of the wrong shape, which raised an `AxisError` before;
-  - in `simulate_LFP`, a ripple time outside `time`, a non-positive duration,
-    or a frequency outside the Nyquist range, each of which returned an
-    all-NaN, empty or aliased signal.
+  - in `simulate_LFP`, a ripple time outside `time`, a non-positive or NaN
+    duration, a frequency outside the Nyquist range or NaN, a ripple size or
+    noise amplitude that is NaN, a negative `ripple_amplitude`, or a
+    `ripple_snr` that is not positive, each of which returned an all-NaN,
+    empty, aliased or phase-flipped signal.
 - `Karlsson_ripple_detector` and `multiunit_HSE_detector` give the
   `minimum_duration` of the caller to the sustained-z-score statistic. Before,
   they used the default of 15 ms.

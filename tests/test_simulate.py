@@ -561,17 +561,34 @@ class TestSimulateLFPRealism:
         with pytest.raises(ValueError, match="noise_amplitude"):
             simulate_LFP(t, [2.0], ripple_snr=5.0, noise_amplitude=0.0, random_state=0)
 
-    def test_ranges_accept_any_two_element_sequence(self):
+    def test_a_tuple_is_a_range_and_a_list_is_one_value_per_ripple(self):
         t = simulate_time(self.FS * 4, self.FS)
-        base = simulate_LFP(t, [1.0, 3.0], ripple_frequency=(150.0, 250.0), random_state=3)
         as_list = simulate_LFP(t, [1.0, 3.0], ripple_frequency=[150.0, 250.0], random_state=3)
         as_array = simulate_LFP(
             t, [1.0, 3.0], ripple_frequency=np.array([150.0, 250.0]), random_state=3
         )
-        np.testing.assert_array_equal(base, as_list)
-        np.testing.assert_array_equal(base, as_array)
-        with pytest.raises(ValueError, match="two"):
+        as_range = simulate_LFP(t, [1.0, 3.0], ripple_frequency=(150.0, 250.0), random_state=3)
+        np.testing.assert_array_equal(as_list, as_array)
+        assert not np.array_equal(as_list, as_range)
+        with pytest.raises(ValueError, match="tuple"):
             simulate_LFP(t, [1.0], ripple_frequency=(150.0, 200.0, 250.0), random_state=3)
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"ripple_frequency": np.nan},
+            {"ripple_duration": np.nan},
+            {"ripple_snr": np.nan},
+            {"ripple_snr": -3.0},
+            {"ripple_amplitude": np.nan},
+            {"ripple_amplitude": -1.0},
+            {"noise_amplitude": np.nan},
+        ],
+    )
+    def test_a_nan_or_negative_size_raises(self, kwargs):
+        t = simulate_time(self.FS * 4, self.FS)
+        with pytest.raises(ValueError, match=r"must (be|lie)"):
+            simulate_LFP(t, [2.0], random_state=0, **kwargs)
 
     def test_ripple_snr_and_amplitude_are_mutually_exclusive(self):
         t = simulate_time(4500, self.FS)
@@ -685,8 +702,12 @@ class TestDrawPerRipple:
         values = np.array([0.05, 0.10, 0.15])
         np.testing.assert_array_equal(_draw_per_ripple(values, 3, rng), values)
 
-    def test_two_values_for_two_ripples_are_a_range(self):
-        """The documented ambiguity: a two-element sequence is always a range."""
+    def test_two_values_for_two_ripples_are_used_as_given(self):
+        rng = np.random.default_rng(0)
+        for values in ([0.10, 0.05], np.array([0.10, 0.05])):
+            np.testing.assert_array_equal(_draw_per_ripple(values, 2, rng), [0.10, 0.05])
+
+    def test_a_tuple_draws_one_value_per_ripple_from_the_range(self):
         rng = np.random.default_rng(0)
         drawn = _draw_per_ripple((0.05, 0.10), 2, rng)
         assert drawn.shape == (2,)
@@ -694,8 +715,12 @@ class TestDrawPerRipple:
         assert not np.array_equal(drawn, [0.05, 0.10])
 
     def test_the_wrong_number_of_values_raises(self):
-        with pytest.raises(ValueError, match="one value per ripple"):
+        with pytest.raises(ValueError, match="one value per"):
             _draw_per_ripple([0.05, 0.10, 0.15], 4, np.random.default_rng(0))
+
+    def test_a_reversed_range_raises(self):
+        with pytest.raises(ValueError, match="low <= high"):
+            _draw_per_ripple((0.10, 0.05), 3, np.random.default_rng(0))
 
 
 class TestSimulateMultichannelLFP:
@@ -887,6 +912,34 @@ class TestSimulateSession:
         np.testing.assert_allclose(windows.mean(axis=1), session.ripple_times)
         assert session.sampling_frequency == pytest.approx(self.FS)
         assert session.artifact_times.shape == (0,)
+
+    @pytest.mark.parametrize("seed", range(4))
+    def test_two_ripples_embed_the_durations_and_frequencies_reported(self, seed):
+        """Two drawn values for two ripples are values, not a range to redraw from."""
+        t = simulate_time(self.FS * 10, self.FS)
+        session = simulate_session(
+            t,
+            [3.0, 7.0],
+            ripple_amplitude=2.0,
+            noise_amplitude=0.0,
+            sharp_wave_leak=0.0,
+            random_state=seed,
+        )
+        step = 1 / self.FS
+        for center, duration, frequency in zip(
+            session.ripple_times,
+            session.ripple_durations,
+            session.ripple_frequencies,
+            strict=True,
+        ):
+            burst = session.lfps[np.abs(t - center) < 0.5, 0]
+            # a unit-amplitude sine under a Gaussian of sd sigma has energy
+            # sigma * sqrt(pi) / 2
+            sigma = 2 * np.sum(burst**2) * step / np.sqrt(np.pi)
+            np.testing.assert_allclose(sigma, duration / 6, rtol=0.02)
+            spectrum = np.abs(np.fft.rfft(burst, n=2**16))
+            peak = np.fft.rfftfreq(2**16, step)[np.argmax(spectrum)]
+            np.testing.assert_allclose(peak, frequency, atol=1.0)
 
     def test_the_ripple_channel_is_shared_by_the_lfps_and_the_pair(self):
         t = simulate_time(3000, self.FS)
