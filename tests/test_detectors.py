@@ -1,5 +1,6 @@
 """Integration tests for ripple detection algorithms."""
 
+import contextlib
 import warnings
 from unittest.mock import patch
 
@@ -515,7 +516,7 @@ class TestShvartsmanRippleDetector:
     ):
         """Test Shvartsman detector with manual normalization indicated but no baseline values passed in."""
         filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples, 1500)
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="needs channel_baselines"):
             Shvartsman_ripple_detector(
                 time_3s,
                 filtered_lfps,
@@ -529,7 +530,7 @@ class TestShvartsmanRippleDetector:
     ):
         """Test Shvartsman detector with manual normalization indicated but mismatched channel_baselines and channel_deviations lengths."""
         filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples, 1500)
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="same shape"):
             Shvartsman_ripple_detector(
                 time_3s,
                 filtered_lfps,
@@ -545,7 +546,7 @@ class TestShvartsmanRippleDetector:
     ):
         """Test Shvartsman detector with manual normalization indicated but mismatched channel_baselines and filtered_lfp lengths."""
         filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples, 1500)
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="one entry per channel"):
             Shvartsman_ripple_detector(
                 time_3s,
                 filtered_lfps,
@@ -1352,7 +1353,8 @@ class TestYuRippleDetector:
         ):
             assert column in events.columns
         assert events.index.name == "event_number"
-        assert not events.clipped_start.iloc[0] and not events.clipped_end.iloc[0]
+        assert not events.clipped_start.iloc[0]
+        assert not events.clipped_end.iloc[0]
         assert events.n_suprathreshold_samples.iloc[0] >= 20
         assert np.isfinite(events.detection_threshold_zscore.iloc[0])
 
@@ -1440,7 +1442,7 @@ class TestYuRippleDetector:
 
     def test_no_immobility_raises(self, time):
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [])
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="selects no sample"):
             Yu_ripple_detector(time, lfps, np.full(self.N_TIME, 10.0), self.FS)
 
     @pytest.mark.parametrize("zscore_per_channel", [True, False])
@@ -1604,7 +1606,8 @@ class TestTwoThresholdEvents:
     def test_merged_events_carry_the_flags_of_their_ends(self):
         z, t = self._trace(500, [(0, 40, 6.0), (60, 100, 6.0)])  # 20 ms apart -> merged
         events, _, clipped = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, None)
-        assert len(events) == 1 and clipped.tolist() == [[True, False]]
+        assert len(events) == 1
+        assert clipped.tolist() == [[True, False]]
 
     def test_event_at_the_block_start_or_end_is_kept(self):
         # FindRipples discards an unpaired first or last run; this package keeps
@@ -1624,7 +1627,8 @@ class TestTwoThresholdEvents:
     def test_empty(self):
         z, t = self._trace(500, [])
         events, peaks, _ = _two_threshold_events(z, t, 2.0, 5.0, 0.030, 0.020, 0.100)
-        assert events.shape == (0, 2) and peaks.shape == (0,)
+        assert events.shape == (0, 2)
+        assert peaks.shape == (0,)
 
 
 class TestZugaroSmoothingWindow:
@@ -1698,9 +1702,11 @@ class TestZugaroRippleDetector:
         assert len(events) == 2
         assert time[6990] <= events.start_time.iloc[0] <= time[7010]
         assert events.end_time.iloc[0] <= time[7060]
-        assert not events.clipped_start.iloc[0] and not events.clipped_end.iloc[0]
+        assert not events.clipped_start.iloc[0]
+        assert not events.clipped_end.iloc[0]
         assert events.end_time.iloc[1] == time[8029]
-        assert events.clipped_end.iloc[1] and not events.clipped_start.iloc[1]
+        assert events.clipped_end.iloc[1]
+        assert not events.clipped_start.iloc[1]
 
     def test_no_finite_sample_raises(self, time, stationary):
         lfps = np.full((self.N_TIME, 2), np.nan)
@@ -1754,7 +1760,8 @@ class TestZugaroRippleDetector:
     ):
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
         events = Zugaro_ripple_detector(time, lfps, stationary, self.FS, high_threshold=50.0)
-        assert events.empty and "peak_time" in events.columns
+        assert events.empty
+        assert "peak_time" in events.columns
 
     def test_close_events_merge_when_there_is_no_ceiling(self, time, stationary):
         """Two bursts 20 ms apart, under the 30 ms merge interval, become one
@@ -1774,7 +1781,8 @@ class TestZugaroRippleDetector:
         uncapped = Zugaro_ripple_detector(
             time, lfps, stationary, self.FS, maximum_duration=None
         )
-        assert len(capped) == 0 and len(uncapped) == 1
+        assert len(capped) == 0
+        assert len(uncapped) == 1
 
     def test_a_block_shorter_than_the_smoothing_window_is_treated_as_missing(
         self, time, stationary
@@ -1950,7 +1958,8 @@ class TestLongSharpWaveRippleDetector:
             random_state=0,
         )
         assert events.empty
-        assert "start_time" in events.columns and "sharp_wave_duration" in events.columns
+        assert "start_time" in events.columns
+        assert "sharp_wave_duration" in events.columns
 
     def test_requires_exactly_two_channels(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
@@ -1971,7 +1980,8 @@ class TestLongSharpWaveRippleDetector:
                 time, lfp, stationary, self.FS, random_state=0
             )
         assert len(events) == len(clean) >= 1
-        assert not events.clipped_start.any() and not events.clipped_end.any()
+        assert not events.clipped_start.any()
+        assert not events.clipped_end.any()
 
     def test_exported_from_package_root(self):
         import ripple_detection
@@ -2020,7 +2030,8 @@ class TestCareyStateHelpers:
         result = _contained_in_intervals(
             np.array([[2, 5], [7, 9]]), np.empty((0, 2), dtype=int)
         )
-        assert result.shape == (2,) and not result.any()
+        assert result.shape == (2,)
+        assert not result.any()
 
 
 class TestCareyCandidateDetector:
@@ -2092,7 +2103,8 @@ class TestCareyCandidateDetector:
         speed[2800:3200] = 10.0
         events = Carey_candidate_detector(time, lfps, multiunit, speed, self.FS)
         hits = self._hits(events, time, self.EVENTS)
-        assert not hits[0] and all(hits[1:])
+        assert not hits[0]
+        assert all(hits[1:])
 
     def test_theta_exclusion_removes_event_with_strong_theta(self, time, stationary):
         lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
@@ -2232,9 +2244,12 @@ class TestDetectorErrorHandling:
 
         before = ripples[ripples.end_time == time_3s[1639]]
         after = ripples[ripples.start_time == time_3s[1660]]
-        assert len(before) == 1 and len(after) == 1
-        assert before.clipped_end.item() and not before.clipped_start.item()
-        assert after.clipped_start.item() and not after.clipped_end.item()
+        assert len(before) == 1
+        assert len(after) == 1
+        assert before.clipped_end.item()
+        assert not before.clipped_start.item()
+        assert after.clipped_start.item()
+        assert not after.clipped_end.item()
         assert not ripples[(ripples.start_time < 1.1) & (ripples.end_time > 1.1)].shape[0]
 
         filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
@@ -2614,7 +2629,8 @@ class TestParticipatingFractionRounding:
         events = Shvartsman_ripple_detector(
             time_3s, lfps, stationary_speed, sampling_frequency, zscore_threshold=50.0
         )
-        assert events.empty and events.n_participants.dtype == np.int64
+        assert events.empty
+        assert events.n_participants.dtype == np.int64
 
 
 class TestFindMaxThresh:
@@ -2764,7 +2780,8 @@ class TestMaxThreshMinimumDuration:
         assert len(ripples) > 0
         # max_sustained_zscore must be computed with the caller's 0.005, not the 0.015 default
         # (this fails if the minimum_duration argument is dropped from the call).
-        assert seen and all(md == 0.005 for md in seen)
+        assert seen
+        assert all(md == 0.005 for md in seen)
 
     def test_hse_forwards_minimum_duration_to_max_sustained_zscore(
         self, time_3s, sampling_frequency
@@ -2779,7 +2796,8 @@ class TestMaxThreshMinimumDuration:
                 time_3s, multiunit, speed, sampling_frequency, minimum_duration=0.005
             )
         assert len(hse) > 0
-        assert seen and all(md == 0.005 for md in seen)
+        assert seen
+        assert all(md == 0.005 for md in seen)
 
     def test_hse_tiny_minimum_duration_is_bounds_safe(self, time_3s, sampling_frequency):
         # A sharp, few-sample synchrony burst detected with a 1 ms minimum used to
@@ -2849,10 +2867,8 @@ class TestWarningsPointAtTheCaller:
         }[detector]
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            try:
+            with contextlib.suppress(ValueError):
                 call()
-            except ValueError:
-                pass
         unit_warnings = [w for w in caught if "Time array step" in str(w.message)]
         assert unit_warnings, [str(w.message) for w in caught]
         assert unit_warnings[0].filename == __file__
@@ -3132,7 +3148,8 @@ class TestMaximumDuration:
             time, lfps, stationary, self.FS, maximum_duration=0.2
         )
 
-        assert len(without) == 2 and len(with_ceiling) == 1
+        assert len(without) == 2
+        assert len(with_ceiling) == 1
         assert (
             with_ceiling.iloc[0].n_suprathreshold_samples
             == without.iloc[1].n_suprathreshold_samples
@@ -3157,7 +3174,8 @@ class TestMaximumDuration:
             time, lfps, stationary, self.FS, maximum_duration=0.2
         )
 
-        assert len(without) == 2 and len(with_ceiling) == 1
+        assert len(without) == 2
+        assert len(with_ceiling) == 1
         assert without.iloc[0].n_participants != without.iloc[1].n_participants
         assert with_ceiling.iloc[0].n_participants == without.iloc[1].n_participants
         assert with_ceiling.iloc[0].mean_zscore == pytest.approx(without.iloc[1].mean_zscore)
@@ -3303,7 +3321,8 @@ class TestMultiunitActiveUnits:
         multiunit[self.N_TIME - 60 :, :4] = 3.0
 
         events = multiunit_HSE_detector(time, multiunit, stationary, self.FS)
-        assert len(events) == 1 and events.iloc[0].end_time == time[-1]
+        assert len(events) == 1
+        assert events.iloc[0].end_time == time[-1]
 
         with_late_unit = multiunit.copy()
         with_late_unit[-1, 7] = 1.0
@@ -3488,9 +3507,12 @@ class TestNoEventSpansAGap:
         ), "an event spans the gap"
         before = events[events.end_time == time[gap_start - 1]]
         after = events[events.start_time == time[gap_stop]]
-        assert len(before) == 1 and len(after) == 1
-        assert before.clipped_end.item() and after.clipped_start.item()
-        assert not before.clipped_start.item() and not after.clipped_end.item()
+        assert len(before) == 1
+        assert len(after) == 1
+        assert before.clipped_end.item()
+        assert after.clipped_start.item()
+        assert not before.clipped_start.item()
+        assert not after.clipped_end.item()
         assert np.isfinite(events.select_dtypes(float).to_numpy()).all()
 
     @staticmethod
@@ -3590,7 +3612,8 @@ class TestNoEventSpansAGap:
             time, lfp, np.full(self.N_TIME, 2.0), self.FS, random_state=0
         )
         assert not any((events.start_time < time[7000]) & (events.end_time > time[7001]))
-        assert not events.clipped_start.any() and not events.clipped_end.any()
+        assert not events.clipped_start.any()
+        assert not events.clipped_end.any()
 
 
 class TestGapRuleUsesTheObservedStep:

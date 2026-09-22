@@ -208,15 +208,16 @@ def Long_sharp_wave_ripple_detector(
     _validate_duration_limits(minimum_sharp_wave_duration, maximum_sharp_wave_duration)
     lfp = np.asarray(raw_lfps, dtype=float)
     if lfp.ndim != 2 or lfp.shape[1] != 2:
-        raise ValueError(
+        msg = (
             "raw_lfps must have exactly two channels, shape (n_time, 2): the ripple "
             f"channel first and the sharp-wave channel second; got shape {lfp.shape}."
         )
+        raise ValueError(msg)
     time, lfp, speed = _validate_detector_inputs(
         time, lfp, speed, sampling_frequency, speed_threshold
     )
     n_time = len(time)
-    is_valid, blocks = _valid_blocks(time, sampling_frequency, lfp, speed)
+    is_valid, blocks = _valid_blocks(time, lfp, speed)
     slowest_kernel = len(_gaussian_lowpass_fir(sharp_wave_band[0], sampling_frequency))
     blocks = _drop_short_blocks(
         blocks,
@@ -272,13 +273,15 @@ def Long_sharp_wave_ripple_detector(
     ripple_feature = np.asarray(ripple_feature)
     in_range = np.asarray(in_range, dtype=bool)
     if len(feature_index) < 2:
-        raise ValueError("Too few candidate windows to cluster; the recording is too short.")
+        msg = "Too few candidate windows to cluster; the recording is too short."
+        raise ValueError(msg)
 
     features = np.column_stack([sharp_wave_feature, ripple_feature])
     _, labels = kmeans2(features, 2, iter=100, minit="++", seed=rng)
     is_swr_cluster = labels == (0 if np.sum(labels == 0) <= np.sum(labels == 1) else 1)
     if not np.any(is_swr_cluster) or np.all(is_swr_cluster):
-        raise ValueError("k-means did not separate the candidate features into two clusters.")
+        msg = "k-means did not separate the candidate features into two clusters."
+        raise ValueError(msg)
     sharp_wave_cut = _matlab_percentile(
         sharp_wave_feature[is_swr_cluster], sharp_wave_percentile
     )

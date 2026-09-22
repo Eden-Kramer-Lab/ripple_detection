@@ -156,16 +156,16 @@ def multi_lfp_sparse_ripples(time_3s):
         )
     )
     # Add 11 channels without ripples
-    for i in range(11):
-        lfps.append(
-            simulate_LFP(
-                time_3s,
-                ripple_times=[],
-                noise_amplitude=1.2,
-                ripple_amplitude=1.5,
-                random_state=100 + i,
-            )
+    lfps.extend(
+        simulate_LFP(
+            time_3s,
+            ripple_times=[],
+            noise_amplitude=1.2,
+            ripple_amplitude=1.5,
+            random_state=100 + i,
         )
+        for i in range(11)
+    )
     return np.column_stack(lfps)
 
 
@@ -192,16 +192,15 @@ def multi_lfp_sparse_cooccur_ripples(time_3s):
         )
     )
     # Add 11 channels without ripples
-    for i in range(11):
-        lfps.append(
-            simulate_LFP(
-                time_3s,
-                ripple_times=[],
-                noise_amplitude=1.2,
-                ripple_amplitude=1.5,
-                random_state=200 + i,
-            )
+    lfps.extend(
+        simulate_LFP(
+            time_3s,
+            ripple_times=[],
+            noise_amplitude=1.2,
+            random_state=200 + i,
         )
+        for i in range(11)
+    )
     return np.column_stack(lfps)
 
 
@@ -272,8 +271,7 @@ def speed_with_movement(time_3s):
 @pytest.fixture
 def speed_with_all_movement(time_3s):
     """Generate speed data where animal is always moving."""
-    speed = np.ones_like(time_3s) * 5  # Above typical threshold of 4
-    return speed
+    return np.ones_like(time_3s) * 5  # Above typical threshold of 4
 
 
 @pytest.fixture

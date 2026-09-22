@@ -38,7 +38,7 @@ from ripple_detection.core import (
 
 
 @pytest.mark.parametrize(
-    "series, expected_segments",
+    ("series", "expected_segments"),
     [
         (
             pd.Series([False, True, True, True, False], index=np.linspace(0, 0.020, 5)),
@@ -114,7 +114,7 @@ class TestSegmentDurationCountsSamples:
 
 
 @pytest.mark.parametrize(
-    "interval_candidates, target_interval, expected_interval",
+    ("interval_candidates", "target_interval", "expected_interval"),
     [
         ([(1, 2), (5, 7)], (6, 7), (5, 7)),
         ([(1, 2), (5, 7)], (1, 2), (1, 2)),
@@ -128,7 +128,7 @@ def test_find_containing_interval(interval_candidates, target_interval, expected
 
 
 @pytest.mark.parametrize(
-    "interval_candidates, target_intervals, expected_intervals",
+    ("interval_candidates", "target_intervals", "expected_intervals"),
     [
         ([(1, 2), (5, 7)], [(6, 7)], [(5, 7)]),
         ([(1, 2), (5, 7)], [(1, 2)], [(1, 2)]),
@@ -143,7 +143,7 @@ def test__extend_segment(interval_candidates, target_intervals, expected_interva
 
 
 @pytest.mark.parametrize(
-    "ranges, expected_ranges",
+    ("ranges", "expected_ranges"),
     [
         ([(5, 7), (3, 5), (-1, 3)], [(-1, 7)]),
         ([(5, 6), (3, 4), (1, 2)], [(1, 2), (3, 4), (5, 6)]),
@@ -155,7 +155,7 @@ def test_merge_overlapping_ranges(ranges, expected_ranges):
 
 
 @pytest.mark.parametrize(
-    "channel_ranges, expected",
+    ("channel_ranges", "expected"),
     [
         # A-B and B-C overlap preserves all three participants.
         (
@@ -211,7 +211,8 @@ class TestRippleBandpassFilter:
         """The tap count is odd and grows with the sampling rate."""
         low_rate, _ = ripple_bandpass_filter(1500)
         high_rate, filter_denominator = ripple_bandpass_filter(30000)
-        assert len(low_rate) % 2 == 1 and len(high_rate) % 2 == 1
+        assert len(low_rate) % 2 == 1
+        assert len(high_rate) % 2 == 1
         assert len(low_rate) >= 101
         assert len(high_rate) > len(low_rate)
         assert filter_denominator == 1.0
@@ -327,7 +328,8 @@ class TestFilterRippleBandSamplingRate:
         with pytest.warns(UserWarning, match="shorter than"):
             y = filter_ripple_band(x, sampling_frequency=1500)
         assert np.all(np.isnan(y[2000:2110]))
-        assert np.all(np.isfinite(y[:2000])) and np.all(np.isfinite(y[2110:]))
+        assert np.all(np.isfinite(y[:2000]))
+        assert np.all(np.isfinite(y[2110:]))
 
 
 class TestGetEnvelope:
@@ -1578,7 +1580,7 @@ class TestHelperBoundaries:
 
 def test_merge_close_events_rejects_a_flat_array_of_the_wrong_length():
     """A 1-D input has to be pairs of bounds."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"shape \(n_events, 2\)"):
         merge_close_events(np.array([0.0, 1.0, 2.0]), 0.05)
 
 
@@ -1635,12 +1637,14 @@ class TestEndpointSpeedRule:
         kept, inds = exclude_movement_by_majority(
             np.array([[time[10], time[19]]]), speed, time, 4.0
         )
-        assert len(kept) == 1 and inds.tolist() == [0]
+        assert len(kept) == 1
+        assert inds.tolist() == [0]
         speed[14] = 10.0
         kept, inds = exclude_movement_by_majority(
             np.array([[time[10], time[19]]]), speed, time, 4.0
         )
-        assert kept.shape == (0, 2) and inds.shape == (0,)
+        assert kept.shape == (0, 2)
+        assert inds.shape == (0,)
 
 
 class TestMinimumSampleCountUsesTheMedianStep:
@@ -1684,7 +1688,7 @@ class TestEventHelpersAcceptADetectorDataFrame:
 
     @pytest.fixture
     def events(self):
-        frame = pd.DataFrame(
+        return pd.DataFrame(
             {
                 "start_time": [0.0, 1.0, 1.05, 3.0],
                 "end_time": [0.1, 1.1, 1.2, 3.1],
@@ -1693,7 +1697,6 @@ class TestEventHelpersAcceptADetectorDataFrame:
             },
             index=pd.Index([1, 2, 3, 4], name="event_number"),
         )
-        return frame
 
     def test_exclude_close_events_filters_the_frame(self, events):
         kept = exclude_close_events(events, 0.5)
@@ -1716,7 +1719,8 @@ class TestEventHelpersAcceptADetectorDataFrame:
     def test_majority_rule_reads_the_frame(self, events):
         time = np.arange(0, 4, 0.01)
         kept, inds = exclude_movement_by_majority(events, np.full(len(time), 1.0), time, 4.0)
-        assert kept.shape == (4, 2) and inds.tolist() == [0, 1, 2, 3]
+        assert kept.shape == (4, 2)
+        assert inds.tolist() == [0, 1, 2, 3]
 
     @pytest.mark.parametrize("helper", [exclude_close_events, merge_close_events])
     def test_a_wide_array_raises_instead_of_being_paired_up(self, events, helper):

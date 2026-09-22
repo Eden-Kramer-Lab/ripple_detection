@@ -5,7 +5,7 @@ potentials.
 import warnings
 from collections.abc import Generator
 from dataclasses import dataclass
-from os.path import abspath, dirname, join
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -71,19 +71,23 @@ def ripple_bandpass_filter(
     low, high = (float(edge) for edge in (DEFAULT_RIPPLE_BAND if band is None else band))
     nyquist = 0.5 * sampling_frequency
     if transition_width <= 0:
-        raise ValueError(f"transition_width must be positive, got {transition_width} Hz.")
+        msg = f"transition_width must be positive, got {transition_width} Hz."
+        raise ValueError(msg)
     if low >= high:
-        raise ValueError(f"band must be (low, high) with low < high, got {band} Hz.")
+        msg = f"band must be (low, high) with low < high, got {band} Hz."
+        raise ValueError(msg)
     if low - transition_width <= 0:
-        raise ValueError(
+        msg = (
             f"band lower edge {low} Hz leaves no room for a {transition_width} Hz "
             "transition above 0 Hz. Raise the edge or narrow the transition."
         )
+        raise ValueError(msg)
     if high + transition_width >= nyquist:
-        raise ValueError(
+        msg = (
             f"band upper edge {high} Hz plus a {transition_width} Hz transition reaches "
             f"the Nyquist frequency {nyquist} Hz of a {sampling_frequency} Hz signal."
         )
+        raise ValueError(msg)
 
     # Kaiser's estimate: the tap count needed for a given attenuation grows as
     # the transition band narrows relative to the sampling rate. A fixed count
@@ -138,10 +142,11 @@ def minimum_sample_count(time: ArrayLike, minimum_duration: float) -> int:
         return 1
     sample_interval = np.median(np.diff(time))
     if not np.isfinite(sample_interval) or sample_interval <= 0:
-        raise ValueError(
+        msg = (
             f"The median timestamp step is {sample_interval}, so no duration can be "
             "converted to a sample count. Check that time is increasing and in seconds."
         )
+        raise ValueError(msg)
     # small tolerance so an exact half-sample product is not lost to round-off
     return max(1, int(np.floor(minimum_duration / sample_interval + 0.5 + 1e-6)))
 
@@ -223,10 +228,11 @@ def segment_boolean_series(
 
     """
     if series.isna().any():
-        raise ValueError(
+        msg = (
             "series contains missing values, which cast to True. Fill or drop "
             "them before segmenting."
         )
+        raise ValueError(msg)
     values = series.to_numpy(dtype=bool)
     index = np.asarray(series.index)
     n_min = minimum_sample_count(index, minimum_duration)
@@ -309,11 +315,12 @@ def filter_ripple_band(
 
     if band is None and np.isclose(sampling_frequency, SHIPPED_KERNEL_SAMPLING_FREQUENCY):
         if transition_width != DEFAULT_TRANSITION_WIDTH:
-            raise ValueError(
+            msg = (
                 f"transition_width={transition_width} cannot apply here: with the default "
                 "band and 1500 Hz data the shipped kernel is used, and it is a fixed "
                 "design. Pass `band` to design a filter instead."
             )
+            raise ValueError(msg)
         filter_numerator, filter_denominator = _get_ripplefilter_kernel()
     else:
         filter_numerator, filter_denominator = ripple_bandpass_filter(
@@ -330,11 +337,12 @@ def filter_ripple_band(
     long_enough = (runs[:, 1] - runs[:, 0]) >= min_required_length
     if not np.any(long_enough):
         longest = int((runs[:, 1] - runs[:, 0]).max()) if len(runs) else 0
-        raise ValueError(
+        msg = (
             f"Signal too short for filtering: the longest run of non-NaN samples holds "
             f"{longest}, but at least {min_required_length} are needed (one more than "
             f"3 x filter length {len(filter_numerator)})."
         )
+        raise ValueError(msg)
     if not np.all(long_enough):
         short = runs[~long_enough]
         warnings.warn(
@@ -368,8 +376,8 @@ def _get_ripplefilter_kernel() -> tuple[NDArray, int]:
         Denominator coefficient (always 1 for FIR filters).
 
     """
-    filter_file = join(abspath(dirname(__file__)), "ripplefilter.mat")
-    ripplefilter = loadmat(filter_file)
+    filter_file = Path(__file__).resolve().parent / "ripplefilter.mat"
+    ripplefilter = loadmat(str(filter_file))
     return ripplefilter["ripplefilter"]["kernel"][0][0].flatten(), 1
 
 
@@ -444,7 +452,8 @@ def nearest_sample_index(time: ArrayLike, query_times: ArrayLike) -> NDArray:
     time = np.asarray(time, dtype=float)
     query_times = np.asarray(query_times, dtype=float)
     if time.size == 0:
-        raise ValueError("time is empty, so no sample can be looked up.")
+        msg = "time is empty, so no sample can be looked up."
+        raise ValueError(msg)
     if time.size == 1:
         return np.zeros(query_times.shape, dtype=int)
     right = np.searchsorted(time, query_times)
@@ -484,10 +493,11 @@ def _event_bounds(events: ArrayLike | pd.DataFrame) -> NDArray:
     if bounds.size == 0:
         return np.empty((0, 2))
     if bounds.ndim != 2 or bounds.shape[1] != 2:
-        raise ValueError(
+        msg = (
             f"Events must be an array of shape (n_events, 2), [start_time, end_time] per "
             f"row, or a detector's DataFrame; got shape {bounds.shape}."
         )
+        raise ValueError(msg)
     return bounds
 
 
@@ -593,10 +603,11 @@ def exclude_movement_by_majority(
     n_total = last - first
     if np.any(n_total == 0):
         start_time, end_time = events[np.flatnonzero(n_total == 0)[0]]
-        raise ValueError(
+        msg = (
             f"No speed samples fall within event [{start_time}, {end_time}]; "
             "speed and time do not cover the candidate event."
         )
+        raise ValueError(msg)
     immobile = np.concatenate([[0], np.cumsum(speed <= speed_threshold)])
     n_below_threshold = immobile[last] - immobile[first]
     keep = n_below_threshold / n_total >= majority_threshold
@@ -627,22 +638,23 @@ def _find_containing_interval(
 
     """
     if len(interval_candidates) == 0:
-        raise ValueError(
-            f"No candidate interval exists, so none can contain {tuple(target_interval)}."
-        )
+        msg = f"No candidate interval exists, so none can contain {tuple(target_interval)}."
+        raise ValueError(msg)
     candidate_start_times = np.asarray(interval_candidates)[:, 0]
     starts_at_or_before = np.flatnonzero(candidate_start_times <= target_interval[0])
     if starts_at_or_before.size == 0:
-        raise ValueError(
+        msg = (
             f"No candidate interval starts at or before {target_interval[0]}, so "
             "none can contain the target interval."
         )
+        raise ValueError(msg)
     containing = interval_candidates[int(np.max(starts_at_or_before))]
     if containing[1] < target_interval[1]:
-        raise ValueError(
+        msg = (
             f"The nearest preceding interval {containing} does not contain the "
             f"target interval {tuple(target_interval)}."
         )
+        raise ValueError(msg)
     return containing
 
 
@@ -764,25 +776,27 @@ def _get_normalization_mask(
         return None
     mask = np.asarray(normalization_mask)
     if mask.ndim != 1:
-        raise ValueError(
+        msg = (
             f"normalization_mask must be 1-D, shape (n_time,), got shape {mask.shape}. A "
             "2-D mask would pool the statistics of every channel into one."
         )
+        raise ValueError(msg)
     if mask.dtype != bool:
-        raise ValueError(
+        msg = (
             f"normalization_mask must be boolean, got dtype {mask.dtype}. Casting "
             "would make every nonzero value True; pass a comparison such as "
             "speed <= speed_threshold."
         )
+        raise ValueError(msg)
     if mask.shape[0] != data_shape[0]:
-        raise ValueError(
+        msg = (
             f"normalization_mask length ({mask.shape[0]}) must match "
             f"data length ({data_shape[0]})."
         )
+        raise ValueError(msg)
     if not np.any(mask):
-        raise ValueError(
-            "normalization_mask selects no samples; cannot compute normalization statistics."
-        )
+        msg = "normalization_mask selects no samples; cannot compute normalization statistics."
+        raise ValueError(msg)
     return mask
 
 
@@ -824,11 +838,12 @@ def _normalize(data: NDArray, mask: NDArray | None, method: str) -> NDArray:
             if data.ndim == 1
             else f"channel(s) {np.flatnonzero(degenerate.ravel()).tolist()}"
         )
-        raise ValueError(
+        msg = (
             f"Cannot normalize: the {scale_name} of {where} is zero or undefined over "
             "the normalization samples. A constant or all-NaN channel has no scale; "
             "drop it before detecting."
         )
+        raise ValueError(msg)
     return (data - center) / scale
 
 
@@ -940,10 +955,11 @@ def normalize_signal(
 
     """
     if method not in ("zscore", "median_mad"):
-        raise ValueError(
+        msg = (
             f"Invalid normalization method: '{method}'. "
             "Must be either 'zscore' or 'median_mad'."
         )
+        raise ValueError(msg)
     data_arr = np.asarray(data, dtype=float)
     mask = _get_normalization_mask(data_arr.shape, normalization_mask)
     return _normalize(data_arr, mask, method)
@@ -991,22 +1007,25 @@ def normalize_signal_manually(
     deviations = np.atleast_1d(np.asarray(channel_deviations, dtype=float))
     n_channels = 1 if data.ndim == 1 else data.shape[1]
     if baselines.shape != deviations.shape:
-        raise ValueError(
+        msg = (
             f"channel_baselines {baselines.shape} and channel_deviations {deviations.shape} "
             "must have the same shape."
         )
+        raise ValueError(msg)
     if baselines.shape != (n_channels,):
-        raise ValueError(
+        msg = (
             "channel_baselines and channel_deviations must have one entry per channel "
             f"(n_channels={n_channels}), got {baselines.size}."
         )
+        raise ValueError(msg)
     degenerate = (deviations == 0) | ~np.isfinite(deviations) | ~np.isfinite(baselines)
     if np.any(degenerate):
-        raise ValueError(
+        msg = (
             "Cannot normalize: channel(s) "
             f"{np.flatnonzero(degenerate).tolist()} have a zero or NaN deviation or a "
             "NaN baseline. Such a channel has no scale; drop it before detecting."
         )
+        raise ValueError(msg)
     if data.ndim == 1:
         return (data - baselines[0]) / deviations[0]
     return (data - baselines) / deviations
@@ -1044,11 +1063,12 @@ def threshold_by_zscore(
 
     """
     if zscore_threshold < 0:
-        raise ValueError(
+        msg = (
             f"zscore_threshold must be non-negative, got {zscore_threshold}. The "
             "extension to the crossing point assumes every threshold crossing "
             "lies inside a run above the normalization center."
         )
+        raise ValueError(msg)
     is_above_mean = zscored_data >= 0
     is_above_threshold = zscored_data >= zscore_threshold
 
@@ -1304,18 +1324,20 @@ def merge_close_events(
 
     """
     if close_event_threshold < 0:
-        raise ValueError(
+        msg = (
             f"close_event_threshold must be non-negative, got {close_event_threshold}. "
             "It is a gap between events, in the units of event_times."
         )
+        raise ValueError(msg)
     events = _event_bounds(event_times).copy()
     if events.size == 0:
         return np.empty((0, 2))
     if np.any(np.diff(events[:, 0]) < 0):
-        raise ValueError(
+        msg = (
             "event_times must be sorted by start time. Sort the events before merging: "
             "event_times[np.argsort(event_times[:, 0])]."
         )
+        raise ValueError(msg)
 
     while len(events) > 1:
         gap = events[1:, 0] - events[:-1, 1]
@@ -1395,10 +1417,11 @@ def require_overlap(
 
     """
     if minimum_overlap < 0:
-        raise ValueError(
+        msg = (
             f"minimum_overlap must be non-negative, got {minimum_overlap}. "
             "It is a duration in the units of the event times."
         )
+        raise ValueError(msg)
 
     is_frame = isinstance(event_times, pd.DataFrame)
     events = _event_bounds(event_times)
@@ -1632,29 +1655,34 @@ def noise_threshold_diagnostics(
         else np.asarray(histogram_edges, dtype=float).ravel()
     )
     if edges.ndim != 1 or len(edges) < 3 or np.any(np.diff(edges) <= 0):
-        raise ValueError("histogram_edges must be a strictly increasing 1-D array.")
+        msg = "histogram_edges must be a strictly increasing 1-D array."
+        raise ValueError(msg)
     if not 0.0 < percentile < 100.0:
-        raise ValueError(f"percentile must be in (0, 100), got {percentile}.")
+        msg = f"percentile must be in (0, 100), got {percentile}."
+        raise ValueError(msg)
     if len(values) == 0:
-        raise ValueError("values is empty; cannot estimate a noise threshold.")
+        msg = "values is empty; cannot estimate a noise threshold."
+        raise ValueError(msg)
 
     in_grid = np.isfinite(values) & (values >= edges[0]) & (values <= edges[-1])
     out_of_grid_fraction = 1.0 - in_grid.sum() / len(values)
     if out_of_grid_fraction > _OUT_OF_GRID_CEILING:
-        raise ValueError(
+        msg = (
             f"{out_of_grid_fraction:.3%} of samples are non-finite or outside the "
             f"histogram grid [{edges[0]}, {edges[-1]}]; the trace is not in the "
             "units the grid assumes."
         )
+        raise ValueError(msg)
 
     counts = _histc(values[in_grid], edges)
     smoothed = _matlab_smooth(counts, mode_smoothing_window)
     mode_index = int(np.argmax(smoothed))  # first maximum, as MATLAB find(..., 1)
     if mode_index in (0, len(edges) - 1):
-        raise ValueError(
+        msg = (
             "Histogram mode lies on the first or last bin of the grid; the "
             "mirrored distribution is degenerate."
         )
+        raise ValueError(msg)
     mode = float(edges[mode_index])
     # The two reflections agree whenever every left-flank bin is non-positive,
     # so the warning is raised only when a bin above zero can contribute.
@@ -1680,18 +1708,20 @@ def noise_threshold_diagnostics(
     total = mirrored_counts.sum()
     limit = 1.0 - percentile / 100.0
     if total * limit < 1.0:
-        raise ValueError(
+        msg = (
             f"Too few samples ({int(in_grid.sum())} in grid, {int(total)} in the "
             f"mirrored histogram) to resolve the {percentile} percentile; need at "
             f"least {int(np.ceil(1.0 / limit))} mirrored counts."
         )
+        raise ValueError(msg)
     cdf = np.cumsum(mirrored_counts) / total
     crossing = int(np.argmax(cdf >= percentile / 100.0))
     if crossing + 1 >= len(positions):
-        raise ValueError(
+        msg = (
             "The CDF crossing lands on the last mirrored bin, so the threshold "
             "(one bin past the crossing) is undefined."
         )
+        raise ValueError(msg)
     threshold = float(positions[crossing + 1])
 
     in_grid_values = values[in_grid]

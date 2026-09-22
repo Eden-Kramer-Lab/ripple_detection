@@ -178,13 +178,13 @@ def get_Yu_ripple_consensus_trace(
     if time is not None:
         time = np.asarray(time, dtype=float)
         if time.shape != (n_time,):
-            raise ValueError(
-                f"time has shape {time.shape} but filtered_lfps has {n_time} samples."
-            )
+            msg = f"time has shape {time.shape} but filtered_lfps has {n_time} samples."
+            raise ValueError(msg)
 
     is_valid = np.all(np.isfinite(ripple_filtered_lfps), axis=1)
     if not np.any(is_valid):
-        raise ValueError("No sample has finite values in every channel.")
+        msg = "No sample has finite values in every channel."
+        raise ValueError(msg)
 
     smoothed = np.full_like(ripple_filtered_lfps, np.nan)
     for start, stop in _contiguous_valid_blocks(is_valid, time):
@@ -201,10 +201,11 @@ def get_Yu_ripple_consensus_trace(
         )
         bad = ~np.isfinite(std) | (std <= 0)
         if np.any(bad):
-            raise ValueError(
+            msg = (
                 "Cannot z-score channels with zero or undefined standard deviation "
                 f"over the valid samples: channel indices {np.flatnonzero(bad).tolist()}."
             )
+            raise ValueError(msg)
         smoothed = (smoothed - mean) / std
 
     consensus_trace = np.full(n_time, np.nan)
@@ -259,9 +260,8 @@ def _extract_Yu_ripple_events(
 
     """
     if not np.isfinite(threshold) or threshold <= 0:
-        raise ValueError(
-            f"threshold must be finite and strictly above the zero mean, got {threshold}."
-        )
+        msg = f"threshold must be finite and strictly above the zero mean, got {threshold}."
+        raise ValueError(msg)
     trace = np.asarray(trace, dtype=float)
     time = np.asarray(time, dtype=float)
     n_min = minimum_sample_count(time, minimum_duration)
@@ -438,43 +438,49 @@ def Shvartsman_ripple_detector(
     manual = normalization_method == "manual"
     if manual:
         if channel_baselines is None or channel_deviations is None:
-            raise ValueError(
+            msg = (
                 "normalization_method='manual' needs channel_baselines and "
                 "channel_deviations, one entry per channel."
             )
+            raise ValueError(msg)
         if normalization_mask is not None:
-            raise ValueError(
+            msg = (
                 "normalization_mask has no meaning with normalization_method='manual': "
                 "the statistics are the ones supplied. Drop one or the other."
             )
+            raise ValueError(msg)
     elif channel_baselines is not None or channel_deviations is not None:
-        raise ValueError(
+        msg = (
             "channel_baselines and channel_deviations apply only with "
             f"normalization_method='manual', not {normalization_method!r}."
         )
+        raise ValueError(msg)
     if (
         minimum_participating_channels is not None
         and minimum_participating_fraction is not None
     ):
-        raise ValueError(
+        msg = (
             "Give minimum_participating_channels or minimum_participating_fraction, not both."
         )
+        raise ValueError(msg)
     if minimum_participating_channels is None and minimum_participating_fraction is None:
         minimum_participating_channels = 2
     if minimum_participating_channels is not None and minimum_participating_channels < 0:
-        raise ValueError("minimum_participating_channels must be non-negative.")
+        msg = "minimum_participating_channels must be non-negative."
+        raise ValueError(msg)
     if minimum_participating_fraction is not None and not (
         0.0 <= minimum_participating_fraction <= 1.0
     ):
-        raise ValueError(
+        msg = (
             f"minimum_participating_fraction must lie in [0, 1], got "
             f"{minimum_participating_fraction}."
         )
+        raise ValueError(msg)
     _validate_duration_limits(minimum_duration, maximum_duration)
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
-    is_valid, blocks = _valid_blocks(time, sampling_frequency, filtered_lfps, speed)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps, speed)
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     if manual:
@@ -677,7 +683,7 @@ def Kay_ripple_detector(
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
-    is_valid, blocks = _valid_blocks(time, sampling_frequency, filtered_lfps, speed)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps, speed)
 
     consensus = get_Kay_ripple_consensus_trace(
         _mask_invalid(filtered_lfps, is_valid),
@@ -818,7 +824,7 @@ def Yu_ripple_detector(
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
-    is_valid, blocks = _valid_blocks(time, sampling_frequency, filtered_lfps, speed)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps, speed)
 
     consensus = get_Yu_ripple_consensus_trace(
         _mask_invalid(filtered_lfps, is_valid),
@@ -848,10 +854,11 @@ def Yu_ripple_detector(
             normalized[noise_mask], percentile=percentile
         )
     if not np.isfinite(threshold_zscore) or threshold_zscore <= 0:
-        raise ValueError(
+        msg = (
             f"Estimated threshold ({threshold_zscore:.4f} SD) does not lie above the "
             "immobility mean; the detection rule is undefined."
         )
+        raise ValueError(msg)
 
     n_min = minimum_sample_count(time, minimum_duration)
     event_times = [np.empty((0, 2))]
@@ -1001,7 +1008,7 @@ def Karlsson_ripple_detector(
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
-    is_valid, blocks = _valid_blocks(time, sampling_frequency, filtered_lfps, speed)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps, speed)
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
@@ -1142,7 +1149,7 @@ def Roumis_ripple_detector(
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
-    is_valid, blocks = _valid_blocks(time, sampling_frequency, filtered_lfps, speed)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps, speed)
 
     smoothed_power = _smoothed_envelope(
         filtered_lfps, blocks, sampling_frequency, smoothing_sigma, square=True

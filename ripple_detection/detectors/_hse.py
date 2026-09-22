@@ -157,21 +157,23 @@ def multiunit_HSE_detector(
 
     """
     if minimum_active_units < 0:
-        raise ValueError(
+        msg = (
             f"minimum_active_units must be non-negative, got {minimum_active_units}. "
             "It counts units with at least one spike inside an event; 0 imposes no criterion."
         )
+        raise ValueError(msg)
     _validate_duration_limits(minimum_duration, maximum_duration)
     multiunit = np.asarray(multiunit, dtype=float)
     if multiunit.ndim != 2:
-        raise ValueError(
+        msg = (
             f"multiunit must be a 2D array of shape (n_time, n_units), got shape "
             f"{multiunit.shape}. For a single unit, pass multiunit[:, np.newaxis]."
         )
+        raise ValueError(msg)
     time, multiunit, speed = _validate_detector_inputs(
         time, multiunit, speed, sampling_frequency, speed_threshold
     )
-    is_valid, blocks = _valid_blocks(time, sampling_frequency, multiunit, speed)
+    is_valid, blocks = _valid_blocks(time, multiunit, speed)
 
     firing_rate = np.full(len(time), np.nan)
     for start, stop in blocks:

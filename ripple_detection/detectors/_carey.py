@@ -209,28 +209,27 @@ def Carey_candidate_detector(
     _validate_duration_limits(minimum_duration, maximum_duration)
     multiunit = np.asarray(multiunit, dtype=float)
     if multiunit.ndim != 2:
-        raise ValueError(
-            f"multiunit must be a 2D array of shape (n_time, n_units), got shape {multiunit.shape}."
-        )
+        msg = f"multiunit must be a 2D array of shape (n_time, n_units), got shape {multiunit.shape}."
+        raise ValueError(msg)
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
     n_time = len(time)
     if multiunit.shape[0] != n_time:
-        raise ValueError(
-            f"Array length mismatch: multiunit has {multiunit.shape[0]} samples but time has {n_time}."
-        )
+        msg = f"Array length mismatch: multiunit has {multiunit.shape[0]} samples but time has {n_time}."
+        raise ValueError(msg)
     signals = [filtered_lfps, multiunit, speed]
     theta_filter = None
     if theta_lfp is not None:
         theta_lfp = np.asarray(theta_lfp, dtype=float)
         if theta_lfp.shape != (n_time,):
-            raise ValueError(f"theta_lfp must have shape ({n_time},), got {theta_lfp.shape}.")
+            msg = f"theta_lfp must have shape ({n_time},), got {theta_lfp.shape}."
+            raise ValueError(msg)
         signals.append(theta_lfp)
         theta_filter = butter(
             2, np.asarray(theta_band) / (0.5 * sampling_frequency), btype="bandpass"
         )
-    is_valid, blocks = _valid_blocks(time, sampling_frequency, *signals)
+    is_valid, blocks = _valid_blocks(time, *signals)
     if theta_filter is not None:
         # filtfilt needs strictly more samples than its default pad length
         padlen = 3 * max(len(theta_filter[0]), len(theta_filter[1]))
@@ -267,15 +266,17 @@ def Carey_candidate_detector(
         )
     mean_summed = np.nanmean(summed)
     if mean_summed <= 0:
-        raise ValueError("multiunit contains no spikes; cannot form a multiunit score.")
+        msg = "multiunit contains no spikes; cannot form a multiunit score."
+        raise ValueError(msg)
     multiunit_score = np.maximum(0.0, (summed - baseline - cap) / mean_summed)
     if not np.any(multiunit_score > 0):
-        raise ValueError(
+        msg = (
             "The multiunit score never rises above its baseline, so no candidate is "
             "possible: the population never fires more than spike_cap coincident "
             "spikes per unit above its slow rate. Check that multiunit holds spikes at "
             "sampling_frequency, not a rate, and that baseline_cap and spike_cap fit it."
         )
+        raise ValueError(msg)
 
     joint = np.sqrt(ripple_score * multiunit_score)
     zscored = normalize_signal(joint)

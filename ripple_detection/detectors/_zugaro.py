@@ -259,8 +259,9 @@ def Zugaro_ripple_detector(
         else int(smoothing_window)
     )
     if window < 1 or window % 2 == 0:
-        raise ValueError(f"smoothing_window must be a positive odd integer, got {window}.")
-    is_valid, blocks = _valid_blocks(time, sampling_frequency, filtered_lfps, speed)
+        msg = f"smoothing_window must be a positive odd integer, got {window}."
+        raise ValueError(msg)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps, speed)
     blocks = _drop_short_blocks(blocks, is_valid, window, "the smoothing window")
 
     kernel = np.ones(window) / window

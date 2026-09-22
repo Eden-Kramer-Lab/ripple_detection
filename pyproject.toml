@@ -132,7 +132,6 @@ disable_error_code = [
 
 [tool.ruff]
 line-length = 95
-target-version = "py310"
 exclude = [
     ".eggs",
     ".git",
@@ -148,23 +147,42 @@ exclude = [
 
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "UP",  # pyupgrade
-    "NPY", # numpy-specific rules
-    "PD",  # pandas-vet
-    "RUF", # ruff-specific rules
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "NPY",  # numpy-specific rules
+    "PD",   # pandas-vet
+    "RUF",  # ruff-specific rules
+    "ARG",  # unused arguments
+    "EM",   # exception messages assigned before the raise
+    "EXE",  # shebangs
+    "FURB", # refurb modernizations
+    "G",    # logging format
+    "ICN",  # import conventions
+    "ISC",  # implicit string concatenation
+    "PERF", # performance anti-patterns
+    "PGH",  # pygrep hooks (blanket noqa, type: ignore without code)
+    "PIE",  # misc lints
+    "PT",   # pytest style
+    "PTH",  # pathlib over os.path
+    "RET",  # return statements
+    "SIM",  # simplifications
+    "T20",  # print statements
+    "YTT",  # sys.version misuse
 ]
 ignore = [
-    "E501", # line too long (handled by ruff format)
+    "E501",    # line too long (handled by ruff format)
+    "ISC001",  # conflicts with the formatter
 ]
+
 
 # Per-file ignores for notebooks
 [tool.ruff.lint.per-file-ignores]
 "*.ipynb" = [
     "NPY002",  # Allow legacy np.random in notebooks for pedagogical simplicity
 ]
+"tests/*" = ["ARG"]  # pytest fixtures are used by name, not by value

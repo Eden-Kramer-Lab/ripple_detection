@@ -19,10 +19,7 @@ from ripple_detection.detectors._blocks import (
 )
 
 # NumPy 2.x renamed trapz to trapezoid
-if hasattr(np, "trapezoid"):
-    trapezoid = np.trapezoid
-else:
-    trapezoid = np.trapz  # type: ignore[attr-defined]  # noqa: NPY201
+trapezoid = np.trapezoid if hasattr(np, "trapezoid") else np.trapz  # type: ignore[attr-defined]  # noqa: NPY201
 
 
 def _exclude_long_events(
@@ -301,16 +298,18 @@ def _get_event_stats(
     metric = np.asarray(zscore_metric, dtype=float)
     speed_arr = np.asarray(speed, dtype=float)
     if participants is None and metric.ndim != 1:
-        raise ValueError(
+        msg = (
             f"Without participants, zscore_metric must have shape (n_time,). Got shape "
             f"{metric.shape}."
         )
+        raise ValueError(msg)
     if participants is not None and metric.ndim != 2:
-        raise ValueError(
+        msg = (
             "With participants, zscore_metric must have shape (n_time, n_channels), so "
             f"each event's metrics can come from its participating channels. Got shape "
             f"{metric.shape}."
         )
+        raise ValueError(msg)
 
     first = np.searchsorted(time_arr, events[:, 0], side="left")
     last = np.searchsorted(time_arr, events[:, 1], side="right")

@@ -22,24 +22,27 @@ def _validate_lfp_dimensions(filtered_lfps: NDArray) -> None:
 
     """
     if filtered_lfps.ndim == 0:
-        raise ValueError(
+        msg = (
             "filtered_lfps must be a 2D array with shape (n_time, n_channels).\n"
             "Received a scalar value.\n"
             "Expected: A 2D array where each row is a time point and each column is a channel."
         )
-    elif filtered_lfps.ndim == 1:
-        raise ValueError(
+        raise ValueError(msg)
+    if filtered_lfps.ndim == 1:
+        msg = (
             "filtered_lfps must be a 2D array with shape (n_time, n_channels).\n"
             f"Received a 1D array with shape {filtered_lfps.shape}.\n"
             "If you have a single channel, reshape your data using:\n"
             "  filtered_lfps = filtered_lfps.reshape(-1, 1)"
         )
-    elif filtered_lfps.ndim > 2:
-        raise ValueError(
+        raise ValueError(msg)
+    if filtered_lfps.ndim > 2:
+        msg = (
             "filtered_lfps must be a 2D array with shape (n_time, n_channels).\n"
             f"Received a {filtered_lfps.ndim}D array with shape {filtered_lfps.shape}.\n"
             "Expected: 2D array with rows as time points and columns as channels."
         )
+        raise ValueError(msg)
 
 
 def _validate_array_lengths(time: NDArray, filtered_lfps: NDArray, speed: NDArray) -> None:
@@ -65,13 +68,14 @@ def _validate_array_lengths(time: NDArray, filtered_lfps: NDArray, speed: NDArra
     n_speed_samples = len(speed)
 
     if not (n_time_samples == n_lfp_samples == n_speed_samples):
-        raise ValueError(
+        msg = (
             "Array length mismatch detected. All inputs must have the same length.\n"
             f"  time:         {n_time_samples} samples\n"
             f"  filtered_lfps: {n_lfp_samples} samples\n"
             f"  speed:        {n_speed_samples} samples\n"
             "Ensure your time, LFP, and speed arrays are aligned and have matching lengths."
         )
+        raise ValueError(msg)
 
 
 def _validate_time_units(
@@ -104,29 +108,32 @@ def _validate_time_units(
     if len(time) > 1:
         steps = np.diff(time)
         if np.any(steps < 0):
-            raise ValueError(
+            msg = (
                 "time must be increasing. Sort time, and the signals with it, before "
                 "detecting: the event and speed lookups assume time order."
             )
+            raise ValueError(msg)
         median_dt = np.median(steps)
         expected_dt = 1.0 / sampling_frequency
         if not median_dt > 0:
-            raise ValueError(
+            msg = (
                 f"The median time step is {median_dt}: most timestamps repeat, so no "
                 "duration can be measured in samples. Check the time array."
             )
+            raise ValueError(msg)
 
         # Check if time appears to be in samples instead of seconds
         if median_dt > 10 * expected_dt:
-            raise ValueError(
+            msg = (
                 f"Time array appears to be in samples, not seconds.\n"
                 f"Median time step: {median_dt:.6f} (expected ~{expected_dt:.6f} for {sampling_frequency} Hz)\n"
                 f"\n"
                 f"Solution: Convert sample indices to seconds:\n"
                 f"  time_seconds = time_samples / {sampling_frequency}"
             )
+            raise ValueError(msg)
         # Check if time step is suspiciously different from sampling frequency
-        elif not np.isclose(median_dt, expected_dt, rtol=0.2):
+        if not np.isclose(median_dt, expected_dt, rtol=0.2):
             warnings.warn(
                 f"Time array step ({median_dt:.6f} s) differs from expected sampling interval "
                 f"({expected_dt:.6f} s at {sampling_frequency} Hz).\n"
@@ -219,7 +226,8 @@ def _validate_detector_inputs(
 def _validate_duration_limits(minimum_duration: float, maximum_duration: float | None) -> None:
     """Reject duration limits that leave no admissible event."""
     if maximum_duration is not None and maximum_duration < minimum_duration:
-        raise ValueError(
+        msg = (
             f"maximum_duration ({maximum_duration}) is below minimum_duration "
             f"({minimum_duration}); no event could satisfy both. Both are in seconds."
         )
+        raise ValueError(msg)

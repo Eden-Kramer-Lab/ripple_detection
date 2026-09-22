@@ -129,10 +129,11 @@ class DetectorSpec:
         """
         unknown = sorted(set(parameters) - set(self.parameters))
         if unknown:
-            raise ValueError(
+            msg = (
                 f"{self.name} does not take {', '.join(unknown)}; its parameters are "
                 f"{', '.join(self.parameters)}."
             )
+            raise ValueError(msg)
 
     def check_inputs(self, *signals: ArrayLike) -> None:
         """Raise if the signals do not have the shape this detector takes.
@@ -170,29 +171,31 @@ class DetectorSpec:
 
         """
         if len(signals) != len(self.inputs):
-            raise ValueError(
+            msg = (
                 f"{self.name} takes {len(self.inputs)} signal(s), {self.inputs}, "
                 f"got {len(signals)}."
             )
+            raise ValueError(msg)
         for position, (kind, signal) in enumerate(zip(self.inputs, signals, strict=True)):
             array = np.asarray(signal, dtype=float)
             what = f"{self.name} takes {kind} as signal {position + 1}"
             if array.ndim != 2:
-                raise ValueError(
-                    f"{what}, a 2-D array (n_time, n_channels), got shape {array.shape}."
-                )
+                msg = f"{what}, a 2-D array (n_time, n_channels), got shape {array.shape}."
+                raise ValueError(msg)
             if kind == RAW_LFP_PAIR and array.shape[1] != 2:
-                raise ValueError(
+                msg = (
                     f"{what}: two channels, the ripple channel then the sharp-wave "
                     f"channel, got {array.shape[1]}."
                 )
+                raise ValueError(msg)
             if kind == MULTIUNIT:
                 finite = array[np.isfinite(array)]
                 if np.any(finite < 0) or np.any(finite != np.round(finite)):
-                    raise ValueError(
+                    msg = (
                         f"{what}: spike counts or indicators, non-negative whole numbers, "
                         "but the array holds other values."
                     )
+                    raise ValueError(msg)
 
 
 def _spec(detector: Callable[..., pd.DataFrame], *inputs: SignalKind) -> DetectorSpec:
@@ -250,4 +253,5 @@ def get_detector(name: str) -> DetectorSpec:
         return DETECTORS[name]
     except KeyError:
         known = "\n  ".join(sorted(DETECTORS))
-        raise KeyError(f"No detector named {name!r}. This package has:\n  {known}") from None
+        msg = f"No detector named {name!r}. This package has:\n  {known}"
+        raise KeyError(msg) from None

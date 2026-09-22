@@ -158,7 +158,8 @@ class TestParameters:
         spec = get_detector("Kay_ripple_detector")
         assert spec.parameters["zscore_threshold"] == 2.0
         assert spec.parameters["speed_threshold"] == 4.0
-        assert "time" not in spec.parameters and "sampling_frequency" not in spec.parameters
+        assert "time" not in spec.parameters
+        assert "sampling_frequency" not in spec.parameters
 
     def test_every_detector_runs_with_its_default_parameters_spelled_out(self):
         """The mapping is exactly what **parameters needs."""

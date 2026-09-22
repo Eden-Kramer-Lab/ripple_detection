@@ -209,10 +209,12 @@ def _draw_per_ripple(
     if values.ndim == 0:
         return np.full(n_ripples, float(values))
     if values.shape != (2,):
-        raise ValueError(f"A range must have exactly two elements (low, high), got {value}.")
+        msg = f"A range must have exactly two elements (low, high), got {value}."
+        raise ValueError(msg)
     low, high = values
     if not low <= high:
-        raise ValueError(f"Range must be (low, high) with low <= high, got {value}.")
+        msg = f"Range must be (low, high) with low <= high, got {value}."
+        raise ValueError(msg)
     return rng.uniform(low, high, size=n_ripples)
 
 
@@ -327,7 +329,8 @@ def simulate_LFP(
 
     """
     if ripple_amplitude is not None and ripple_snr is not None:
-        raise ValueError("Give either ripple_amplitude or ripple_snr, not both.")
+        msg = "Give either ripple_amplitude or ripple_snr, not both."
+        raise ValueError(msg)
     rng = np.random.default_rng(random_state)
     noise = (noise_amplitude / 2) * NOISE_FUNCTION[noise_type](time.size, rng=rng)
 
@@ -337,7 +340,8 @@ def simulate_LFP(
 
     if ripple_snr is not None:
         if noise_amplitude <= 0:
-            raise ValueError("ripple_snr needs a background: noise_amplitude must be > 0.")
+            msg = "ripple_snr needs a background: noise_amplitude must be > 0."
+            raise ValueError(msg)
         from ripple_detection.core import filter_ripple_band
 
         if sampling_frequency is None:
@@ -352,17 +356,20 @@ def simulate_LFP(
         nyquist = 0.5 / np.median(np.diff(time))
         outside = [t for t in ripple_times if not time.min() <= t <= time.max()]
         if outside:
-            raise ValueError(
+            msg = (
                 f"ripple_times {outside} lie outside time "
                 f"[{time.min()}, {time.max()}]; the ripple would have no samples."
             )
+            raise ValueError(msg)
         if np.any(durations <= 0):
-            raise ValueError(f"ripple_duration must be positive, got {ripple_duration}.")
+            msg = f"ripple_duration must be positive, got {ripple_duration}."
+            raise ValueError(msg)
         if np.any(frequencies <= 0) or np.any(frequencies >= nyquist):
-            raise ValueError(
+            msg = (
                 f"ripple_frequency must lie in (0, {nyquist:.1f}) Hz, the Nyquist range of "
                 f"time's sampling rate, got {ripple_frequency}."
             )
+            raise ValueError(msg)
 
     signal = []
     for ripple_time, frequency, duration in zip(

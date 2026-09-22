@@ -16,9 +16,7 @@ from ripple_detection.core import (
 )
 
 
-def _valid_blocks(
-    time: NDArray, sampling_frequency: float, *signals: NDArray
-) -> tuple[NDArray, list[tuple[int, int]]]:
+def _valid_blocks(time: NDArray, *signals: NDArray) -> tuple[NDArray, list[tuple[int, int]]]:
     """The samples every detector may use, and their contiguous blocks.
 
     A sample is valid when every channel of every signal is finite. Valid
@@ -30,7 +28,6 @@ def _valid_blocks(
     Parameters
     ----------
     time : ndarray, shape (n_time,)
-    sampling_frequency : float
     *signals : ndarray, shape (n_time,) or (n_time, n_channels)
         The LFP, spikes and speed the detector reads.
 
@@ -51,10 +48,11 @@ def _valid_blocks(
         finite = np.isfinite(signal)
         is_valid &= finite.all(axis=1) if finite.ndim == 2 else finite
     if not np.any(is_valid):
-        raise ValueError(
+        msg = (
             "Every sample has a NaN in a signal or in speed, so there is nothing to "
             "detect on. Check the alignment of the inputs."
         )
+        raise ValueError(msg)
     return is_valid, _contiguous_valid_blocks(is_valid, time)
 
 
@@ -77,10 +75,11 @@ def _drop_short_blocks(
         is_valid[start:stop] = False
     kept = [(start, stop) for start, stop in blocks if stop - start >= minimum_length]
     if not kept:
-        raise ValueError(
+        msg = (
             f"No block of finite samples is as long as the {minimum_length} samples that "
             f"{reason} needs."
         )
+        raise ValueError(msg)
     warnings.warn(
         f"{len(short)} block(s) of finite samples shorter than the {minimum_length} samples "
         f"that {reason} needs are treated as missing (sample ranges "
@@ -107,10 +106,11 @@ def _normalization_mask_over_valid(
     mask = _get_normalization_mask((n_time,), normalization_mask)
     mask = is_valid if mask is None else mask & is_valid
     if not np.any(mask):
-        raise ValueError(
+        msg = (
             "The normalization mask selects no sample that is finite in every signal; "
             "cannot compute normalization statistics."
         )
+        raise ValueError(msg)
     return mask
 
 

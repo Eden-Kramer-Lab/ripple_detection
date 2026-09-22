@@ -364,10 +364,7 @@ class TestSimulationProperties:
         time = np.arange(0, duration, 1 / 1500)
 
         # Generate ripple times that don't overlap
-        if n_ripples > 0:
-            ripple_times = np.linspace(0.5, duration - 0.5, n_ripples)
-        else:
-            ripple_times = []
+        ripple_times = np.linspace(0.5, duration - 0.5, n_ripples) if n_ripples > 0 else []
 
         lfp = simulate_LFP(time, ripple_times=ripple_times)
 
