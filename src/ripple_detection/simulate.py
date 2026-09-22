@@ -375,19 +375,33 @@ def simulate_LFP(
             )
             raise ValueError(msg)
 
-    signal = []
+    # Each burst is added in place over the samples where its envelope is above
+    # 1e-14 of the peak (8 sigma), so memory does not grow with the ripple count.
+    signal = np.asarray(noise, dtype=float)
     for ripple_time, frequency, duration in zip(
         ripple_times, frequencies, durations, strict=True
     ):
-        carrier = norm(loc=ripple_time, scale=duration / 6).pdf(time)
+        sigma = duration / 6
+        first, last = np.searchsorted(time, [ripple_time - 8 * sigma, ripple_time + 8 * sigma])
+        if last <= first:  # a burst narrower than a sample step: the nearest sample
+            last = min(first + 1, time.size)
+            first = last - 1
+        window_time = time[first:last]
+        carrier = norm(loc=ripple_time, scale=sigma).pdf(window_time)
         carrier /= carrier.max()
-        burst = np.sin(2 * np.pi * time * frequency) * carrier  # unit peak
+        burst = np.sin(2 * np.pi * window_time * frequency) * carrier  # unit peak
         if ripple_snr is not None:
             # scale so that this burst's peak *after the filter* is ripple_snr
-            # background SDs; the filter's gain depends on frequency and duration
-            filtered_peak = np.abs(filter_ripple_band(burst, sampling_frequency=rate)).max()
-            signal.append(ripple_snr * band_noise_sd / filtered_peak * burst)
+            # background SDs; the filter's gain depends on frequency and duration.
+            # A second of zeros each side makes the run long enough for the kernel
+            # at any rate, and is what the burst is surrounded by in the record.
+            n_pad = int(np.ceil(rate))
+            padded = np.zeros(burst.size + 2 * n_pad)
+            padded[n_pad : n_pad + burst.size] = burst
+            filtered_peak = np.abs(filter_ripple_band(padded, sampling_frequency=rate)).max()
+            scale = ripple_snr * band_noise_sd / filtered_peak
         else:
-            signal.append((amplitude / 2) * burst)
+            scale = amplitude / 2
+        signal[first:last] += scale * burst
 
-    return np.asarray(np.sum(signal, axis=0) + noise, dtype=float)
+    return signal

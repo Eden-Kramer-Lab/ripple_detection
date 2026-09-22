@@ -214,6 +214,10 @@ raises on zero rows; that is hdmf's, not this package's.
 
 ### Fixed
 
+- `simulate_LFP` adds each ripple over its own window instead of holding one
+  full-length array per ripple. Ten minutes at 1500 Hz with 100 ripples
+  peaked at 1.5 GB and now stays near the size of the output; the values are
+  unchanged to ten decimals.
 - The sampling-rate check warns when `sampling_frequency` and the timestamps
   disagree by 2 percent, not 20. The nominal rate sets the smoothing widths
   and the Zugaro, Long and Carey windows while the timestamps set the sample

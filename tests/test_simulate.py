@@ -485,6 +485,30 @@ class TestSimulateLFPRealism:
         )
         assert _digest(y) == "fb97eb68f45ea538"
 
+    def test_memory_does_not_grow_with_the_ripple_count(self):
+        """Ten minutes at 1500 Hz with 100 ripples peaked at 1.5 GB when every
+        burst was a full-length array; each is now added over its own window."""
+        import tracemalloc
+
+        t = simulate_time(self.FS * 60, self.FS)
+
+        def peak_bytes(n_ripples):
+            tracemalloc.start()
+            simulate_LFP(t, list(np.linspace(1.0, 59.0, n_ripples)), random_state=0)
+            _, peak = tracemalloc.get_traced_memory()
+            tracemalloc.stop()
+            return peak
+
+        assert peak_bytes(200) < 2 * peak_bytes(10)
+
+    def test_windowed_bursts_match_whole_record_bursts(self):
+        """The 8-sigma window drops less than 1e-13 of a burst's peak."""
+        t = simulate_time(self.FS * 4, self.FS)
+        y = simulate_LFP(t, [1.0, 2.5], noise_amplitude=0.0, ripple_amplitude=2.0)
+        carrier = sum(np.exp(-((t - m) ** 2) / (2 * (0.1 / 6) ** 2)) for m in (1.0, 2.5))
+        whole = np.sin(2 * np.pi * t * 200.0) * carrier  # unit peak per burst
+        assert np.allclose(y, whole, atol=1e-12, rtol=0.0)
+
     def test_ripple_snr_sets_peak_relative_to_in_band_background(self):
         t = simulate_time(self.FS * 20, self.FS)
         ripples = [2.0, 5.0, 8.0, 11.0, 14.0, 17.0]
