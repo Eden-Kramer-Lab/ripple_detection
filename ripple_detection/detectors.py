@@ -517,7 +517,7 @@ def get_Yu_ripple_consensus_trace(
     ripple_filtered_lfps: ArrayLike,
     sampling_frequency: float,
     smoothing_sigma: float = 0.004,
-    zscore_per_tetrode: bool = True,
+    zscore_per_channel: bool = True,
     *,
     time: ArrayLike | None = None,
 ) -> NDArray:
@@ -542,7 +542,7 @@ def get_Yu_ripple_consensus_trace(
     smoothing_sigma : float, optional
         Standard deviation of the Gaussian smoothing kernel in seconds, applied
         per channel before aggregation. Default is 0.004 (4 ms).
-    zscore_per_tetrode : bool, optional
+    zscore_per_channel : bool, optional
         If True (default), z-score each channel's smoothed envelope (sample
         standard deviation, ``ddof=1``) over all valid samples before taking
         the median, as the original lab implementation does. If False, take
@@ -594,7 +594,7 @@ def get_Yu_ripple_consensus_trace(
         envelope = get_envelope(ripple_filtered_lfps[start:stop])
         smoothed[start:stop] = gaussian_smooth(envelope, smoothing_sigma, sampling_frequency)
 
-    if zscore_per_tetrode:
+    if zscore_per_channel:
         valid_rows = smoothed[is_valid]
         mean = valid_rows.mean(axis=0, keepdims=True)
         std = (
@@ -701,9 +701,8 @@ def Shvartsman_ripple_detector(
     close_ripple_threshold: float = 0.0,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
-    manual_normalization: bool = False,
-    elec_baselines: ArrayLike | None = None,
-    elec_deviations: ArrayLike | None = None,
+    channel_baselines: ArrayLike | None = None,
+    channel_deviations: ArrayLike | None = None,
     minimum_participating_channels: int | None = None,
     minimum_participating_fraction: float | None = None,
     maximum_duration: float | None = None,
@@ -718,8 +717,9 @@ def Shvartsman_ripple_detector(
     Requiring several channels makes it less sensitive than Karlsson to noise
     on one channel.
 
-    It also accepts a baseline and a deviation per electrode through
-    ``manual_normalization``, in place of statistics computed from the data.
+    It also accepts a baseline and a deviation per channel, through
+    ``normalization_method="manual"`` with ``channel_baselines`` and
+    ``channel_deviations``, in place of statistics computed from the data.
     Statistics from a whole recording day rather than one epoch matter for
     sleep sessions; see ``normalize_signal_manually``.
 
@@ -769,30 +769,25 @@ def Shvartsman_ripple_detector(
         Minimum time in **seconds** between ripples. Events closer than this
         are excluded -- the later event is dropped, not merged. Default is 0.0
         (no exclusion). Set to 0.05-0.1 s to drop closely-spaced events.
-    normalization_method : {'zscore', 'median_mad'}, optional
+    normalization_method : {'zscore', 'median_mad', 'manual'}, optional
         Method for normalizing each channel. Default is 'zscore' (mean/std).
-        Use 'median_mad' for more robust normalization when data contains outliers.
-        Only used when ``manual_normalization=False``; supplying it with
-        ``manual_normalization=True`` raises ValueError.
+        Use 'median_mad' for more robust normalization when data contains
+        outliers. 'manual' normalizes each channel with the supplied
+        `channel_baselines` and `channel_deviations` instead of statistics
+        computed from the data (``normalize_signal_manually``).
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask selecting samples used to compute normalization statistics.
         For example, use `speed <= speed_threshold` to compute statistics only
-        during immobility. Only
-        used when ``manual_normalization=False``. Default is None (use all data).
-    manual_normalization : bool, optional
-        If True, normalize each channel with the supplied `elec_baselines` and
-        `elec_deviations` instead of computing statistics from the data. The
-        `normalization_*` parameters above must then be left at their defaults;
-        supplying one raises ValueError rather than being ignored. Requires both
-        `elec_baselines` and `elec_deviations`. Default is False.
-    elec_baselines : array_like, shape (n_channels,), optional
-        Baseline (center) value per channel. Required when
-        ``manual_normalization=True``.
-    elec_deviations : array_like, shape (n_channels,), optional
+        during immobility. Default is None (use all data). Has no meaning with
+        ``normalization_method='manual'`` and raises if given with it.
+    channel_baselines : array_like, shape (n_channels,), optional
+        Baseline (center) value per channel. Required with, and only allowed
+        with, ``normalization_method='manual'``.
+    channel_deviations : array_like, shape (n_channels,), optional
         Deviation (scale) value per channel, on the scale of a standard
-        deviation (multiply a MAD by 1.4826 first). Required when
-        ``manual_normalization=True``. A zero or NaN entry raises; drop that
-        channel before detecting.
+        deviation (multiply a MAD by 1.4826 first). Required with, and only
+        allowed with, ``normalization_method='manual'``. A zero or NaN entry
+        raises; drop that channel before detecting.
     minimum_participating_channels : int, optional
         Number of channels that must detect a ripple in the merged event for
         it to be kept. Default is 2 when neither participation argument is
@@ -809,7 +804,7 @@ def Shvartsman_ripple_detector(
     ripple_times : pd.DataFrame
         DataFrame with detected ripples and comprehensive statistics (see
         Kay_ripple_detector for the shared columns). This detector additionally
-        returns ``participants`` (set of every channel whose ripple appears
+        returns ``participants`` (sorted tuple of every channel whose ripple appears
         anywhere in the event), ``n_participants`` (``len(participants)``), and
         ``frac_participants`` (``n_participants`` / total channels). Participation
         is measured on each channel's full zero-crossing-extended ripple (the same
@@ -842,13 +837,22 @@ def Shvartsman_ripple_detector(
     ripple, so at the default a single-channel input never produces an event.
 
     """
-    if manual_normalization and (
-        normalization_mask is not None or normalization_method != "zscore"
-    ):
+    manual = normalization_method == "manual"
+    if manual:
+        if channel_baselines is None or channel_deviations is None:
+            raise ValueError(
+                "normalization_method='manual' needs channel_baselines and "
+                "channel_deviations, one entry per channel."
+            )
+        if normalization_mask is not None:
+            raise ValueError(
+                "normalization_mask has no meaning with normalization_method='manual': "
+                "the statistics are the ones supplied. Drop one or the other."
+            )
+    elif channel_baselines is not None or channel_deviations is not None:
         raise ValueError(
-            "manual_normalization=True uses elec_baselines and elec_deviations, so "
-            "normalization_method and normalization_mask must be left at their "
-            "defaults. Drop them, or set manual_normalization=False."
+            "channel_baselines and channel_deviations apply only with "
+            f"normalization_method='manual', not {normalization_method!r}."
         )
     if (
         minimum_participating_channels is not None
@@ -875,12 +879,8 @@ def Shvartsman_ripple_detector(
     is_valid, blocks = _valid_blocks(time, sampling_frequency, filtered_lfps, speed)
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
-    if manual_normalization:
-        if elec_baselines is None or elec_deviations is None:
-            raise ValueError(
-                "Must provide elec_baselines and elec_deviations for manual normalization."
-            )
-        normalized = normalize_signal_manually(smoothed, elec_baselines, elec_deviations)
+    if manual:
+        normalized = normalize_signal_manually(smoothed, channel_baselines, channel_deviations)
     else:
         mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
         normalized = normalize_signal(
@@ -915,9 +915,14 @@ def Shvartsman_ripple_detector(
         candidate_ripple_times, close_ripple_threshold, included_ripple_inds
     )
     # Keep participant metadata aligned through movement and proximity exclusion.
-    participants = merged_candidates[participation_mask, 2][included_ripple_inds]
+    participant_sets = merged_candidates[participation_mask, 2][included_ripple_inds]
     ripple_times, keep = _exclude_long_events(ripple_times, time, maximum_duration)
-    participants = participants[keep]
+    participant_sets = participant_sets[keep]
+    # sorted tuples rather than sets: deterministic, hashable, and they survive
+    # JSON, CSV and a DynamicTable
+    participants = np.empty(len(participant_sets), dtype=object)
+    for index, channels in enumerate(participant_sets):
+        participants[index] = tuple(sorted(channels))
 
     n_participants = np.array([len(p) for p in participants], dtype=int)
     return _get_event_stats(
@@ -1229,7 +1234,7 @@ def Yu_ripple_detector(
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
     normalization_mask: ArrayLike | None = None,
-    zscore_per_tetrode: bool = True,
+    zscore_per_channel: bool = True,
     maximum_duration: float | None = None,
 ) -> pd.DataFrame:
     """Detect sharp-wave ripples with a data-driven noise threshold (Yu et al. 2017).
@@ -1287,7 +1292,7 @@ def Yu_ripple_detector(
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask selecting the noise sample instead of ``speed <=
         speed_threshold``.
-    zscore_per_tetrode : bool, optional
+    zscore_per_channel : bool, optional
         Z-score each tetrode's smoothed envelope before the median, as the
         original implementation does; the threshold is then estimated on that
         trace and converted to immobility-normalized units. If False, the
@@ -1336,7 +1341,7 @@ def Yu_ripple_detector(
         _mask_invalid(filtered_lfps, is_valid),
         sampling_frequency,
         smoothing_sigma=smoothing_sigma,
-        zscore_per_tetrode=zscore_per_tetrode,
+        zscore_per_channel=zscore_per_channel,
         time=time,
     )
 
@@ -1347,7 +1352,7 @@ def Yu_ripple_detector(
     baseline = np.mean(noise_values)
     scale = np.std(noise_values, ddof=0)  # the ddof normalize_signal uses
     normalized = normalize_signal(consensus, normalization_mask=noise_mask)
-    if zscore_per_tetrode:
+    if zscore_per_channel:
         # The original estimates on the median of per-tetrode z-scores, whose
         # units the histogram grid assumes; convert the result to the
         # immobility-normalized units the events are extracted in.
@@ -2132,8 +2137,8 @@ def Carey_candidate_detector(
     sampling_frequency: float,
     *,
     speed_threshold: float = 4.0,
-    edge_threshold: float = 1.0,
-    peak_threshold: float = 3.0,
+    low_threshold: float = 1.0,
+    high_threshold: float = 3.0,
     minimum_duration: float = 0.020,
     minimum_active_units: int = 5,
     ripple_smoothing_sigma: float = 0.010,
@@ -2175,7 +2180,7 @@ def Carey_candidate_detector(
       never zero, so a burst without a ripple can be. The joint score is
       therefore closer to "burst, weighted by ripple power" than to a
       symmetric conjunction. A candidate is a run strictly above
-      ``edge_threshold`` whose maximum is strictly above ``peak_threshold``.
+      ``low_threshold`` whose maximum is strictly above ``high_threshold``.
       Its sample count must meet ``minimum_duration`` under the package's
       duration rule.
     - **State**: a candidate is kept only if it lies entirely inside a
@@ -2210,9 +2215,10 @@ def Carey_candidate_detector(
         Sampling rate in Hz.
     speed_threshold : float, optional
         Speed at or below which the animal is considered stopped. Default is 4.0.
-    edge_threshold, peak_threshold : float, optional
-        Boundary and peak thresholds on the z-scored joint score. Defaults 1
-        and 3 (the original's ``DetectorThreshold`` and ``DetectorThreshold2``).
+    low_threshold, high_threshold : float, optional
+        Boundary and peak thresholds on the z-scored joint score, the same
+        two-threshold rule as ``Zugaro_ripple_detector``. Defaults 1 and 3
+        (the original's ``DetectorThreshold`` and ``DetectorThreshold2``).
     minimum_duration : float, optional
         Minimum candidate duration in seconds, applied as an inclusive
         round-half-up sample count (``sample_count_within``); the original's
@@ -2338,8 +2344,8 @@ def Carey_candidate_detector(
     candidates = []
     for start, stop in blocks:
         block_z = zscored[start:stop]
-        for run_start, run_stop in _boolean_run_bounds(block_z > edge_threshold):
-            if block_z[run_start:run_stop].max() > peak_threshold:
+        for run_start, run_stop in _boolean_run_bounds(block_z > low_threshold):
+            if block_z[run_start:run_stop].max() > high_threshold:
                 candidates.append((start + run_start, start + run_stop - 1))
     candidates = np.asarray(candidates, dtype=int).reshape(-1, 2)
     if len(candidates):
@@ -2934,8 +2940,8 @@ def _get_event_stats(
         Animal's speed at each time point.
     minimum_duration : float, optional
         Minimum duration for max_thresh calculation. Default is 0.015 (15 ms).
-    participants : array_like of set, shape (n_events,), optional
-        Set of channels that participate in each event; z-score metrics are
+    participants : array_like of tuple, shape (n_events,), optional
+        Channels that participate in each event; z-score metrics are
         averaged over these channels. Used by Shvartsman_ripple_detector.
     n_participants : array_like, shape (n_events,), optional
         Number of distinct participating channels per event.

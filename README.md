@@ -218,7 +218,7 @@ The index is `event_number`. Some detectors add columns:
 
 | Detector | Additional columns |
 |---|---|
-| `Shvartsman_ripple_detector` | `participants` (channel indices), `n_participants`, `frac_participants` |
+| `Shvartsman_ripple_detector` | `participants` (sorted tuple of channel indices), `n_participants`, `frac_participants` |
 | `Yu_ripple_detector` | `n_suprathreshold_samples`, `detection_threshold_zscore` |
 | `Zugaro_ripple_detector` | `peak_time` |
 | `Long_sharp_wave_ripple_detector` | `peak_time`, `sharp_wave_zscore`, `sharp_wave_local_percentile`, `ripple_power_zscore`, `ripple_power_local_percentile`, `sharp_wave_duration`, `ripple_duration` |
@@ -429,7 +429,7 @@ conventions below.
 | `Yu_ripple_detector` | same | median over channels of each channel's z-scored 4 ms-smoothed envelope | `percentile` 99.99 of the mirrored immobility-noise distribution, estimated per call | ≥ 0.020 s | `close_ripple_threshold` 0.0 | noise from `speed <= threshold`; event endpoints ≤ threshold | Yu et al. 2017 |
 | `Zugaro_ripple_detector` | same, channels summed | z-scored smoothed squared signal, two thresholds | `low_threshold` 2.0 (bounds), `high_threshold` 5.0 (peak) | 0.020–0.100 s | `minimum_inter_ripple_interval` 0.030 s, merges | endpoints ≤ threshold | FMAToolbox `FindRipples` (Hirase; Zugaro) |
 | `Long_sharp_wave_ripple_detector` | **raw** LFP `(n_time, 2)`: ripple channel, stratum radiatum channel | sharp-wave difference and ripple power, split by k-means with local (±5 s) statistics | `sharp_wave_thresholds`, `ripple_thresholds` (0.5, 2.5) | sharp wave 0.020–0.500 s, ripple ≥ 0.025 s | `minimum_separation` 0.050 s, drops | endpoints ≤ threshold | Long, buzcode/neurocode `DetectSWR` |
-| `Carey_candidate_detector` | ripple-band LFP **and** spikes `(n_time, n_units)` | geometric mean of a ripple-power score and a multiunit score | `edge_threshold` 1.0, `peak_threshold` 3.0; ≥ `minimum_active_units` 5 | ≥ 0.020 s | none | whole event inside a low-speed interval (`speed <= threshold`) | Carey, Tanaka & van der Meer 2019 |
+| `Carey_candidate_detector` | ripple-band LFP **and** spikes `(n_time, n_units)` | geometric mean of a ripple-power score and a multiunit score | `low_threshold` 1.0, `high_threshold` 3.0; ≥ `minimum_active_units` 5 | ≥ 0.020 s | none | whole event inside a low-speed interval (`speed <= threshold`) | Carey, Tanaka & van der Meer 2019 |
 | `multiunit_HSE_detector` | spikes `(n_time, n_units)`, no LFP | z-scored 15 ms-smoothed population rate | `zscore_threshold` 2.0 | ≥ 0.015 s | `close_event_threshold` 0.0 | endpoints ≤ threshold | package convention; Davidson et al. 2009 lineage |
 
 Notes:

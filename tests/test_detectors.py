@@ -219,7 +219,7 @@ class TestShvartsmanRippleDetector:
         assert isinstance(ripples, pd.DataFrame)
         assert len(ripples) == 2
         assert all(ripples["n_participants"] == 2)
-        assert all(participants == {0, 1} for participants in ripples["participants"])
+        assert all(participants == (0, 1) for participants in ripples["participants"])
 
     def test_multi_channel_sparse_ripples(
         self, time_3s, multi_lfp_sparse_ripples, stationary_speed, sampling_frequency
@@ -296,7 +296,7 @@ class TestShvartsmanRippleDetector:
         # Verify number of participants
         assert all(ripples["n_participants"] == 2), "Each ripple should have two participants"
         # ripple channels are indices 0 and 1; the 11 noise channels never participate
-        assert all(p == {0, 1} for p in ripples["participants"]), (
+        assert all(p == (0, 1) for p in ripples["participants"]), (
             "Participants should be channels 0 and 1"
         )
         assert np.allclose(ripples["frac_participants"], 2 / 13), (
@@ -502,9 +502,9 @@ class TestShvartsmanRippleDetector:
             filtered_lfps,
             stationary_speed,
             sampling_frequency,
-            manual_normalization=True,
-            elec_baselines=env.mean(axis=0),
-            elec_deviations=env.std(axis=0),
+            normalization_method="manual",
+            channel_baselines=env.mean(axis=0),
+            channel_deviations=env.std(axis=0),
         )
         assert isinstance(ripples, pd.DataFrame)
         assert len(ripples) == 2
@@ -521,13 +521,13 @@ class TestShvartsmanRippleDetector:
                 filtered_lfps,
                 stationary_speed,
                 sampling_frequency,
-                manual_normalization=True,
+                normalization_method="manual",
             )
 
     def test_manual_norm_baseline_deviation_mismatch(
         self, time_3s, multi_lfp_sparse_cooccur_ripples, stationary_speed, sampling_frequency
     ):
-        """Test Shvartsman detector with manual normalization indicated but mismatched elec_baselines and elec_deviations lengths."""
+        """Test Shvartsman detector with manual normalization indicated but mismatched channel_baselines and channel_deviations lengths."""
         filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples, 1500)
         with pytest.raises(ValueError):
             Shvartsman_ripple_detector(
@@ -535,15 +535,15 @@ class TestShvartsmanRippleDetector:
                 filtered_lfps,
                 stationary_speed,
                 sampling_frequency,
-                manual_normalization=True,
-                elec_baselines=np.ones(filtered_lfps.shape[1]),
-                elec_deviations=np.ones(filtered_lfps.shape[1] - 1),
+                normalization_method="manual",
+                channel_baselines=np.ones(filtered_lfps.shape[1]),
+                channel_deviations=np.ones(filtered_lfps.shape[1] - 1),
             )
 
     def test_manual_norm_lfp_baseline_mismatch(
         self, time_3s, multi_lfp_sparse_cooccur_ripples, stationary_speed, sampling_frequency
     ):
-        """Test Shvartsman detector with manual normalization indicated but mismatched elec_baselines and filtered_lfp lengths."""
+        """Test Shvartsman detector with manual normalization indicated but mismatched channel_baselines and filtered_lfp lengths."""
         filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples, 1500)
         with pytest.raises(ValueError):
             Shvartsman_ripple_detector(
@@ -551,9 +551,9 @@ class TestShvartsmanRippleDetector:
                 filtered_lfps,
                 stationary_speed,
                 sampling_frequency,
-                manual_normalization=True,
-                elec_baselines=np.ones(filtered_lfps.shape[1] - 1),
-                elec_deviations=np.ones(filtered_lfps.shape[1] - 1),
+                normalization_method="manual",
+                channel_baselines=np.ones(filtered_lfps.shape[1] - 1),
+                channel_deviations=np.ones(filtered_lfps.shape[1] - 1),
             )
 
 
@@ -1052,7 +1052,7 @@ class TestKayConsensusTrace:
         assert np.all(valid_values >= 0), "Consensus trace should be non-negative"
 
 
-def _yu_reference_consensus(filtered_lfps, sampling_frequency, blocks, zscore_per_tetrode):
+def _yu_reference_consensus(filtered_lfps, sampling_frequency, blocks, zscore_per_channel):
     """Block-wise reference: envelope and 4 ms smoothing inside each block,
     per-tetrode z-score (ddof=1) pooled over all valid rows, then the median."""
     filtered_lfps = np.asarray(filtered_lfps, dtype=float)
@@ -1061,7 +1061,7 @@ def _yu_reference_consensus(filtered_lfps, sampling_frequency, blocks, zscore_pe
         env = get_envelope(filtered_lfps[start:stop])
         smoothed[start:stop] = gaussian_smooth(env, 0.004, sampling_frequency)
     valid = np.all(np.isfinite(smoothed), axis=1)
-    if zscore_per_tetrode:
+    if zscore_per_channel:
         mean = smoothed[valid].mean(axis=0, keepdims=True)
         std = smoothed[valid].std(axis=0, ddof=1, keepdims=True)
         smoothed = (smoothed - mean) / std
@@ -1094,10 +1094,10 @@ class TestYuConsensusTrace:
 
     def test_flag_off_is_median_of_smoothed_envelopes(self, triple_lfp, sampling_frequency):
         expected = _yu_reference_consensus(
-            triple_lfp, sampling_frequency, [(0, len(triple_lfp))], zscore_per_tetrode=False
+            triple_lfp, sampling_frequency, [(0, len(triple_lfp))], zscore_per_channel=False
         )
         consensus = get_Yu_ripple_consensus_trace(
-            triple_lfp, sampling_frequency, zscore_per_tetrode=False
+            triple_lfp, sampling_frequency, zscore_per_channel=False
         )
         np.testing.assert_allclose(consensus, expected, rtol=1e-12, atol=1e-12)
 
@@ -1105,7 +1105,7 @@ class TestYuConsensusTrace:
         self, triple_lfp, sampling_frequency
     ):
         expected = _yu_reference_consensus(
-            triple_lfp, sampling_frequency, [(0, len(triple_lfp))], zscore_per_tetrode=True
+            triple_lfp, sampling_frequency, [(0, len(triple_lfp))], zscore_per_channel=True
         )
         consensus = get_Yu_ripple_consensus_trace(triple_lfp, sampling_frequency)
         np.testing.assert_allclose(consensus, expected, rtol=1e-12, atol=1e-12)
@@ -1117,7 +1117,7 @@ class TestYuConsensusTrace:
         reference = get_Yu_ripple_consensus_trace(triple_lfp, sampling_frequency)
         np.testing.assert_allclose(with_flag, reference, rtol=1e-10, atol=1e-10)
         without_flag = get_Yu_ripple_consensus_trace(
-            scaled, sampling_frequency, zscore_per_tetrode=False
+            scaled, sampling_frequency, zscore_per_channel=False
         )
         assert not np.allclose(without_flag, reference)
 
@@ -1130,7 +1130,7 @@ class TestYuConsensusTrace:
         assert np.all(np.isfinite(consensus[:2000]))
         assert np.all(np.isfinite(consensus[2300:]))
         expected = _yu_reference_consensus(
-            lfps, sampling_frequency, [(0, 2000), (2300, len(lfps))], zscore_per_tetrode=True
+            lfps, sampling_frequency, [(0, 2000), (2300, len(lfps))], zscore_per_channel=True
         )
         np.testing.assert_allclose(consensus, expected, rtol=1e-12, atol=1e-12)
 
@@ -1143,7 +1143,7 @@ class TestYuConsensusTrace:
             triple_lfp,
             sampling_frequency,
             [(0, 2000), (2000, len(triple_lfp))],
-            zscore_per_tetrode=True,
+            zscore_per_channel=True,
         )
         np.testing.assert_allclose(consensus, expected, rtol=1e-12, atol=1e-12)
         contiguous = get_Yu_ripple_consensus_trace(triple_lfp, sampling_frequency)
@@ -1363,7 +1363,7 @@ class TestYuRippleDetector:
             "minimum_duration": 0.020,
             "percentile": 99.99,
             "smoothing_sigma": 0.004,
-            "zscore_per_tetrode": True,
+            "zscore_per_channel": True,
         }
         via_dict = Yu_ripple_detector(
             time=time,
@@ -1443,15 +1443,15 @@ class TestYuRippleDetector:
         with pytest.raises(ValueError):
             Yu_ripple_detector(time, lfps, np.full(self.N_TIME, 10.0), self.FS)
 
-    @pytest.mark.parametrize("zscore_per_tetrode", [True, False])
+    @pytest.mark.parametrize("zscore_per_channel", [True, False])
     def test_both_normalization_readings_detect_without_warnings(
-        self, time, stationary, zscore_per_tetrode
+        self, time, stationary, zscore_per_channel
     ):
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
         with warnings.catch_warnings():
             warnings.simplefilter("error")  # in particular, no positive-mode warning
             events = Yu_ripple_detector(
-                time, lfps, stationary, self.FS, zscore_per_tetrode=zscore_per_tetrode
+                time, lfps, stationary, self.FS, zscore_per_channel=zscore_per_channel
             )
         assert len(events) == 1
         assert abs(events.start_time.iloc[0] - time[5000]) < 0.020
@@ -2148,7 +2148,7 @@ class TestCareyCandidateDetector:
             multiunit,
             stationary,
             self.FS,
-            peak_threshold=1e6,
+            high_threshold=1e6,
             theta_lfp=lfps[:, 0],
         )
         assert events.empty
@@ -2315,9 +2315,9 @@ class TestDetectorErrorHandling:
                 filtered_lfps,
                 stationary_speed,
                 sampling_frequency,
-                manual_normalization=True,
-                elec_baselines=baselines,
-                elec_deviations=deviations,
+                normalization_method="manual",
+                channel_baselines=baselines,
+                channel_deviations=deviations,
             )
 
     def test_manual_norm_rejects_normalization_mask(
@@ -2328,15 +2328,15 @@ class TestDetectorErrorHandling:
         env = gaussian_smooth(
             get_envelope(filtered_lfps), sigma=0.004, sampling_frequency=sampling_frequency
         )
-        with pytest.raises(ValueError, match="manual_normalization"):
+        with pytest.raises(ValueError, match="manual"):
             Shvartsman_ripple_detector(
                 time_3s,
                 filtered_lfps,
                 stationary_speed,
                 sampling_frequency,
-                manual_normalization=True,
-                elec_baselines=env.mean(axis=0),
-                elec_deviations=env.std(axis=0),
+                normalization_method="manual",
+                channel_baselines=env.mean(axis=0),
+                channel_deviations=env.std(axis=0),
                 normalization_mask=np.zeros(len(time_3s), dtype=bool),
             )
 
@@ -2405,7 +2405,7 @@ class TestShvartsmanParticipationSemantics:
         event = ripples.iloc[0]
         assert event["start_time"] == first["start_time"]
         assert event["end_time"] == last["end_time"]
-        assert event["participants"] == {0, 1, 2}
+        assert event["participants"] == (0, 1, 2)
         assert all(type(channel) is int for channel in event["participants"])
         assert event["n_participants"] == len(event["participants"]) == 3
         assert event["frac_participants"] == 1.0
@@ -2454,7 +2454,7 @@ class TestShvartsmanParticipationSemantics:
         # metadata (a misaligned index would report the excluded event's count of 3).
         assert len(ripples) == 1
         assert ripples["n_participants"].iloc[0] == 1
-        assert ripples["participants"].iloc[0] == {0}
+        assert ripples["participants"].iloc[0] == (0,)
 
     def test_participating_fraction_of_one_means_all_channels(
         self,
@@ -2841,15 +2841,15 @@ class TestShvartsmanManualNormalizationValidation:
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
         filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
-        with pytest.raises(ValueError, match="manual_normalization"):
+        with pytest.raises(ValueError, match="manual"):
             Shvartsman_ripple_detector(
                 time_3s,
                 filtered_lfps,
                 stationary_speed,
                 sampling_frequency,
-                manual_normalization=True,
-                elec_baselines=np.array([0.0]),
-                elec_deviations=np.array([1.0]),
+                normalization_method="manual",
+                channel_baselines=np.array([0.0]),
+                channel_deviations=np.array([1.0]),
                 normalization_mask=time_3s <= time_3s[100],
             )
 

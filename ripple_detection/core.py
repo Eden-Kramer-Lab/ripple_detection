@@ -956,8 +956,8 @@ def normalize_signal(
 
 def normalize_signal_manually(
     data: ArrayLike,
-    elec_baselines: ArrayLike,
-    elec_deviations: ArrayLike,
+    channel_baselines: ArrayLike,
+    channel_deviations: ArrayLike,
 ) -> NDArray:
     """Normalize with supplied baselines and deviations.
 
@@ -970,9 +970,9 @@ def normalize_signal_manually(
     ----------
     data : array_like, shape (n_time,) or (n_time, n_channels)
         Input signal to normalize. Can be 1D or 2D.
-    elec_baselines : array_like, shape (n_channels,)
+    channel_baselines : array_like, shape (n_channels,)
         Baseline (center) value for each channel; a scalar for 1-D data.
-    elec_deviations : array_like, shape (n_channels,)
+    channel_deviations : array_like, shape (n_channels,)
         Deviation (scale) value for each channel; a scalar for 1-D data. Must
         be on the scale of a standard deviation: multiply a MAD by 1.4826
         first.
@@ -980,7 +980,7 @@ def normalize_signal_manually(
     Returns
     -------
     normalized_data : ndarray, shape matches input
-        ``(data - elec_baselines) / elec_deviations``.
+        ``(data - channel_baselines) / channel_deviations``.
 
     Raises
     ------
@@ -992,17 +992,17 @@ def normalize_signal_manually(
 
     """
     data = np.asarray(data, dtype=float)
-    baselines = np.atleast_1d(np.asarray(elec_baselines, dtype=float))
-    deviations = np.atleast_1d(np.asarray(elec_deviations, dtype=float))
+    baselines = np.atleast_1d(np.asarray(channel_baselines, dtype=float))
+    deviations = np.atleast_1d(np.asarray(channel_deviations, dtype=float))
     n_channels = 1 if data.ndim == 1 else data.shape[1]
     if baselines.shape != deviations.shape:
         raise ValueError(
-            f"elec_baselines {baselines.shape} and elec_deviations {deviations.shape} "
+            f"channel_baselines {baselines.shape} and channel_deviations {deviations.shape} "
             "must have the same shape."
         )
     if baselines.shape != (n_channels,):
         raise ValueError(
-            "elec_baselines and elec_deviations must have one entry per channel "
+            "channel_baselines and channel_deviations must have one entry per channel "
             f"(n_channels={n_channels}), got {baselines.size}."
         )
     degenerate = (deviations == 0) | ~np.isfinite(deviations) | ~np.isfinite(baselines)
