@@ -860,7 +860,13 @@ def Yu_ripple_detector(
     if not np.isfinite(threshold_zscore) or threshold_zscore <= 0:
         msg = (
             f"Estimated threshold ({threshold_zscore:.4f} SD) does not lie above the "
-            "immobility mean; the detection rule is undefined."
+            "immobility mean; the detection rule is undefined. The mirrored histogram "
+            "reaches past the mean only when the immobility trace has some spread of its "
+            "own, and here it has almost none next to the ripples: the grid's 0.01 SD "
+            "bins cannot resolve its distribution. This happens on simulated brown noise, "
+            "which has almost no ripple-band power, and on recordings with very little "
+            "ripple-band background. `noise_threshold_diagnostics` on the consensus trace "
+            "shows the histogram."
         )
         raise ValueError(msg)
 
