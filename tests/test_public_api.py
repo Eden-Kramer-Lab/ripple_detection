@@ -1,4 +1,4 @@
-"""The package's public surface: what ``from ripple_detection import *`` gives you."""
+"""The package's public surface: ``__all__`` is the contract, pinned exactly."""
 
 import ripple_detection
 
@@ -13,13 +13,18 @@ DETECTORS = [
     "Carey_candidate_detector",
     "multiunit_HSE_detector",
 ]
-HELPERS = [
+REGISTRY = [
     "DETECTORS",
     "DetectorSpec",
+    "SignalKind",
     "MULTIUNIT",
     "RAW_LFP_PAIR",
     "RIPPLE_BAND_LFP",
     "get_detector",
+]
+HELPERS = [
+    "DEFAULT_RIPPLE_BAND",
+    "DEFAULT_TRANSITION_WIDTH",
     "filter_ripple_band",
     "ripple_bandpass_filter",
     "get_envelope",
@@ -31,18 +36,20 @@ HELPERS = [
     "get_Yu_ripple_consensus_trace",
     "get_multiunit_population_firing_rate",
     "load_literature_parameters",
+    "exclude_close_events",
     "merge_close_events",
-    "minimum_sample_count",
-    "nearest_sample_index",
     "require_overlap",
+    "minimum_sample_count",
     "sample_count_within",
     "simulate_LFP",
     "simulate_time",
+    "__version__",
 ]
 
 
-def test_all_lists_every_detector_and_documented_helper():
-    assert set(DETECTORS + HELPERS) <= set(ripple_detection.__all__)
+def test_all_is_exactly_the_documented_surface():
+    """An accidental export, or a lost one, fails here."""
+    assert sorted(ripple_detection.__all__) == sorted(DETECTORS + REGISTRY + HELPERS)
 
 
 def test_every_name_in_all_is_importable():

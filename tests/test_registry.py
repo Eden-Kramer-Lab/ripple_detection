@@ -150,3 +150,33 @@ class TestCheckInputs:
         get_detector("Kay_ripple_detector").check_inputs(
             np.random.RandomState(0).randn(600, 4)
         )
+
+
+class TestParameters:
+    def test_parameters_are_the_keyword_only_tunables_with_defaults(self):
+        spec = get_detector("Kay_ripple_detector")
+        assert spec.parameters["zscore_threshold"] == 2.0
+        assert spec.parameters["speed_threshold"] == 4.0
+        assert "time" not in spec.parameters and "sampling_frequency" not in spec.parameters
+
+    def test_every_detector_runs_with_its_default_parameters_spelled_out(self):
+        """The mapping is exactly what **parameters needs."""
+        for spec in DETECTORS.values():
+            defaults = spec.parameters
+            assert all(value is not inspect.Parameter.empty for value in defaults.values()), (
+                spec.name
+            )
+            spec.check_parameters(defaults)
+
+    def test_signal_parameters_follow_inputs(self):
+        assert get_detector("Carey_candidate_detector").signal_parameters == (
+            "filtered_lfps",
+            "multiunit",
+        )
+        assert get_detector("Long_sharp_wave_ripple_detector").signal_parameters == (
+            "raw_lfps",
+        )
+
+    def test_check_parameters_names_the_unknown_key(self):
+        with pytest.raises(ValueError, match="does not take z_score_threshold"):
+            get_detector("Kay_ripple_detector").check_parameters({"z_score_threshold": 3.0})

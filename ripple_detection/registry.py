@@ -11,6 +11,7 @@ name alone lets a caller hand it filtered data and get plausible nonsense.
 verifies what an array can show, the shapes, but not whether it is filtered.
 """
 
+import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -74,6 +75,64 @@ class DetectorSpec:
     def name(self) -> str:
         """The detector's name, which is also its key in :data:`DETECTORS`."""
         return self.detector.__name__
+
+    @property
+    def signal_parameters(self) -> tuple[str, ...]:
+        """Names of the detector's signal parameters, one per entry of
+        :attr:`inputs` and in the same order, for callers that pass signals
+        by keyword."""
+        names = list(inspect.signature(self.detector).parameters)
+        return tuple(names[1 : 1 + len(self.inputs)])
+
+    @property
+    def parameters(self) -> dict[str, object]:
+        """The detector's tunable parameters and their defaults.
+
+        Everything after ``sampling_frequency``; every one is keyword-only
+        and has a default. A pipeline that stores a detector's parameters as
+        a mapping can build the default mapping from this and validate a
+        stored one with :meth:`check_parameters`.
+        """
+        signature = inspect.signature(self.detector)
+        return {
+            name: parameter.default
+            for name, parameter in signature.parameters.items()
+            if parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        }
+
+    def check_parameters(self, parameters: Mapping[str, object]) -> None:
+        """Raise if ``parameters`` holds a name this detector does not take.
+
+        Parameters
+        ----------
+        parameters : Mapping[str, object]
+            Tunables to pass as ``**parameters``.
+
+        Raises
+        ------
+        ValueError
+            Naming the unknown keys and the detector's parameters.
+
+        Examples
+        --------
+        >>> from ripple_detection import get_detector
+        >>> spec = get_detector("Kay_ripple_detector")
+        >>> spec.parameters["zscore_threshold"]
+        2.0
+        >>> spec.check_parameters({"zscore_threshold": 3.0})
+        >>> try:
+        ...     spec.check_parameters({"z_score_threshold": 3.0})
+        ... except ValueError as error:
+        ...     print(str(error).split(";")[0])
+        Kay_ripple_detector does not take z_score_threshold
+
+        """
+        unknown = sorted(set(parameters) - set(self.parameters))
+        if unknown:
+            raise ValueError(
+                f"{self.name} does not take {', '.join(unknown)}; its parameters are "
+                f"{', '.join(self.parameters)}."
+            )
 
     def check_inputs(self, *signals: ArrayLike) -> None:
         """Raise if the signals do not have the shape this detector takes.

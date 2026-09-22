@@ -159,7 +159,12 @@ spec.inputs == (RIPPLE_BAND_LFP,)  # True
 events = spec.detector(time, filtered_lfps, speed, sampling_frequency)
 
 sorted(DETECTORS)                 # every detector this package has
+spec.parameters                   # the tunables and their defaults, for a stored parameter dict
+spec.check_parameters({"zscore_threshold": 3.0})  # raises on a name the detector does not take
 ```
+
+The names in `ripple_detection.__all__` are the public API; anything else is an
+implementation detail that may change without notice.
 
 Check `inputs` before calling. The detectors do not all take the same signal,
 and two of the mismatches are silent rather than loud:

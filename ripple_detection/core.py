@@ -24,7 +24,7 @@ DEFAULT_TRANSITION_WIDTH = 25.0
 
 def ripple_bandpass_filter(
     sampling_frequency: float,
-    band: tuple[float, float] = DEFAULT_RIPPLE_BAND,
+    band: tuple[float, float] | None = None,
     transition_width: float = DEFAULT_TRANSITION_WIDTH,
 ) -> tuple[NDArray, float]:
     """Generate a bandpass filter for a ripple frequency band.
@@ -38,9 +38,10 @@ def ripple_bandpass_filter(
     sampling_frequency : float
         Sampling rate of the signal in Hz.
     band : tuple of (float, float), optional
-        Passband edges in Hz. Default is (150.0, 250.0), the most common
-        choice. Published bands vary, with lower edges from about 80 to
-        180 Hz and upper edges from 200 to 300 Hz.
+        Passband edges in Hz. Default is None, the 150-250 Hz band
+        (``DEFAULT_RIPPLE_BAND``), the most common choice. Published bands
+        vary, with lower edges from about 80 to 180 Hz and upper edges from
+        200 to 300 Hz.
     transition_width : float, optional
         Width in Hz of the transition on each side of the passband. Default is
         25.0. A narrower transition needs more taps, and therefore a longer
@@ -66,7 +67,7 @@ def ripple_bandpass_filter(
     STOPBAND_ATTENUATION_DB = 45.0
     MINIMUM_NUMTAPS = 101
 
-    low, high = float(band[0]), float(band[1])
+    low, high = (float(edge) for edge in (DEFAULT_RIPPLE_BAND if band is None else band))
     nyquist = 0.5 * sampling_frequency
     if transition_width <= 0:
         raise ValueError(f"transition_width must be positive, got {transition_width} Hz.")
@@ -315,9 +316,7 @@ def filter_ripple_band(
         filter_numerator, filter_denominator = _get_ripplefilter_kernel()
     else:
         filter_numerator, filter_denominator = ripple_bandpass_filter(
-            sampling_frequency,
-            band=DEFAULT_RIPPLE_BAND if band is None else band,
-            transition_width=transition_width,
+            sampling_frequency, band=band, transition_width=transition_width
         )
 
     data_array = np.asarray(data, dtype=float)
