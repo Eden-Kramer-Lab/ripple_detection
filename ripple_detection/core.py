@@ -583,29 +583,24 @@ def exclude_movement_by_majority(
         for filtering associated data arrays.
 
     """
-    candidate_ripple_times = _event_bounds(candidate_ripple_times)
-
-    speed_df = pd.DataFrame({"speed": speed}, index=time)
-
-    included_ripple_times = []
-    included_ripple_inds = []
-    for r, (start_time, end_time) in enumerate(candidate_ripple_times):
-        speed_segment = speed_df.loc[start_time:end_time, "speed"]
-        n_below_threshold = np.sum(speed_segment <= speed_threshold)
-        n_total = len(speed_segment)
-        if n_total == 0:
-            raise ValueError(
-                f"No speed samples fall within event [{start_time}, {end_time}]; "
-                "speed and time do not cover the candidate event."
-            )
-        if n_below_threshold / n_total >= majority_threshold:
-            included_ripple_times.append([start_time, end_time])
-            included_ripple_inds.append(r)
-
-    return (
-        np.asarray(included_ripple_times, dtype=float).reshape(-1, 2),
-        np.asarray(included_ripple_inds, dtype=int),
-    )
+    events = _event_bounds(candidate_ripple_times)
+    time = np.asarray(time, dtype=float)
+    speed = np.asarray(speed, dtype=float)
+    # samples with start_time <= time <= end_time, by bisection; the count of
+    # immobile ones is a difference of the cumulative sum at those bounds
+    first = np.searchsorted(time, events[:, 0], side="left")
+    last = np.searchsorted(time, events[:, 1], side="right")
+    n_total = last - first
+    if np.any(n_total == 0):
+        start_time, end_time = events[np.flatnonzero(n_total == 0)[0]]
+        raise ValueError(
+            f"No speed samples fall within event [{start_time}, {end_time}]; "
+            "speed and time do not cover the candidate event."
+        )
+    immobile = np.concatenate([[0], np.cumsum(speed <= speed_threshold)])
+    n_below_threshold = immobile[last] - immobile[first]
+    keep = n_below_threshold / n_total >= majority_threshold
+    return events[keep], np.flatnonzero(keep)
 
 
 def _find_containing_interval(
