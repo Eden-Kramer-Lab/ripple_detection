@@ -52,19 +52,13 @@ class TestShvartsmanRippleDetector:
     def test_single_channel_with_ripples(
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
-        """Test Shvartsman detector with single LFP channel containing ripples."""
+        """One channel cannot meet the default two-channel participation minimum,
+        so the detector says so rather than returning an empty frame."""
         filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
-        ripples = Shvartsman_ripple_detector(
-            time_3s, filtered_lfps, stationary_speed, sampling_frequency
-        )
-
-        # Verify output structure
-        assert isinstance(ripples, pd.DataFrame)
-
-        # Verify empty DataFrame (doesn't exceed 2-channel default participation minimum)
-        assert ripples.empty, (
-            "Should not detect any ripples because there's a 2-channel participation minimum default"
-        )
+        with pytest.raises(ValueError, match="no event could be kept"):
+            Shvartsman_ripple_detector(
+                time_3s, filtered_lfps, stationary_speed, sampling_frequency
+            )
 
     def test_single_channel_with_ripples_no_participation_criterion(
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
@@ -773,6 +767,33 @@ class TestKayRippleDetector:
 
         # Should have fewer or equal ripples with exclusion
         assert len(ripples_with_exclusion) <= len(ripples_no_exclusion)
+
+
+class TestShvartsmanNeedsEnoughChannels:
+    """The default asks two channels to agree; with one channel no event could
+    ever be kept, and returning an empty frame would look like a quiet recording."""
+
+    FS = 1500
+    N_TIME = 6000
+
+    def test_one_channel_at_the_default_raises(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2000, 2100, 20.0)])[:, :1]
+        with pytest.raises(ValueError, match="no event could be kept"):
+            Shvartsman_ripple_detector(time, lfps, stationary, self.FS)
+
+    def test_one_channel_with_a_minimum_of_one_detects(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2000, 2100, 20.0)])[:, :1]
+        events = Shvartsman_ripple_detector(
+            time, lfps, stationary, self.FS, minimum_participating_channels=1
+        )
+        assert len(events) == 1
+
+    def test_a_fraction_is_not_checked_against_the_channel_count(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2000, 2100, 20.0)])[:, :1]
+        events = Shvartsman_ripple_detector(
+            time, lfps, stationary, self.FS, minimum_participating_fraction=1.0
+        )
+        assert len(events) == 1
 
 
 class TestKarlssonRippleDetector:

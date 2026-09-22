@@ -136,6 +136,10 @@ raises on zero rows; that is hdmf's, not this package's.
 
 ### Changed
 
+- `Shvartsman_ripple_detector` raises when `minimum_participating_channels`
+  exceeds the number of channels given, as with one channel at the default of
+  2, where no event could be kept and an empty result looked like a quiet
+  recording. Pass `minimum_participating_channels=1` for one channel.
 - **Breaking.** `simulate_LFP` defaults to pink (1/f) noise. Brown noise, the
   old default, has almost no ripple-band power, so a ripple of any amplitude
   was tens to hundreds of times the band background and every detector found

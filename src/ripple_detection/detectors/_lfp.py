@@ -389,6 +389,7 @@ def Shvartsman_ripple_detector(
         given; 0 imposes no criterion. Each distinct channel with a detected
         ripple anywhere in the merged event counts once, including channels
         connected through a chain of overlapping ripples.
+        Raises when it exceeds the number of channels, since no event could be kept.
     minimum_participating_fraction : float, optional
         The same criterion as a fraction of the channels in `filtered_lfps`,
         in [0, 1]; 1.0 requires every channel. Give one of the two arguments,
@@ -481,6 +482,16 @@ def Shvartsman_ripple_detector(
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
+    required_channels = (
+        2 if minimum_participating_channels is None else minimum_participating_channels
+    )
+    if minimum_participating_fraction is None and required_channels > filtered_lfps.shape[1]:
+        msg = (
+            f"minimum_participating_channels is {required_channels} but filtered_lfps has "
+            f"{filtered_lfps.shape[1]} channel(s), so no event could be kept. Pass "
+            f"minimum_participating_channels={filtered_lfps.shape[1]} or fewer, or more channels."
+        )
+        raise ValueError(msg)
     is_valid, blocks = _valid_blocks(time, filtered_lfps, speed)
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
