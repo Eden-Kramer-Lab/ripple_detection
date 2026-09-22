@@ -12,8 +12,8 @@ from ripple_detection.core import (
     FloatArray,
     _is_immobile_at_endpoints,
     _unit_area_gaussian,
+    minimum_sample_count,
     normalize_signal,
-    sample_count_within,
 )
 from ripple_detection.detectors._blocks import (
     _drop_short_blocks,
@@ -352,6 +352,11 @@ def Long_sharp_wave_ripple_detector(
 
     records = []
     n_candidates = len(candidate_peaks)
+    # the duration limits as sample counts, the rule of sample_count_within,
+    # measured once rather than per candidate
+    min_ripple_samples = minimum_sample_count(time, minimum_ripple_duration)
+    min_sharp_wave_samples = minimum_sample_count(time, minimum_sharp_wave_duration)
+    max_sharp_wave_samples = minimum_sample_count(time, maximum_sharp_wave_duration)
     for ii, peak in enumerate(candidate_peaks):
         sw_window = sharp_wave_diff[peak - bound : peak + bound + 1]
         sw_median, sw_sd = np.median(sw_window), np.std(sw_window, ddof=1)
@@ -380,21 +385,11 @@ def Long_sharp_wave_ripple_detector(
         if len(rp_before) == 0 or len(rp_after) == 0:
             continue
         ripple_samples = (rp_peak_local + rp_after[0]) - rp_before[-1]
-        ripple_long_enough = sample_count_within(ripple_samples, time, minimum_ripple_duration)
-        sharp_wave_long_enough = sample_count_within(
-            sharp_wave_samples, time, minimum_sharp_wave_duration
-        )
-        if not ripple_long_enough and not sharp_wave_long_enough:
+        sharp_wave_long_enough = sharp_wave_samples >= min_sharp_wave_samples
+        if ripple_samples < min_ripple_samples and not sharp_wave_long_enough:
             continue
-        if (
-            not sample_count_within(
-                sharp_wave_samples,
-                time,
-                minimum_sharp_wave_duration,
-                maximum_sharp_wave_duration,
-            )
-            and sharp_wave_long_enough
-        ):
+        if sharp_wave_samples > max_sharp_wave_samples:
+            # an over-long sharp wave is dropped, whatever the ripple
             continue
         records.append(
             {
