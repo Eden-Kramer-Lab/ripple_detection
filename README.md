@@ -204,50 +204,57 @@ except ValueError as error:
 [`examples/simulation_study.py`](examples/simulation_study.py) runs every detector at its
 defaults on `simulate_session` output: pink noise, 40 ripples in 120 s of known time, duration
 and frequency, sized by `ripple_snr` (their filtered peak over the filtered background's SD),
-channels sharing half their noise, a sharp wave under each ripple for Long, and 100 Poisson
-units bursting with each ripple for Carey and HSE; three seeds per condition. An event is a
-hit when it overlaps the ripple's window. The [notebook](examples/simulation_study.ipynb)
-plots the whole sweep; four channels, means over seeds:
+4, 16 or 32 channels sharing half their noise, a sharp wave under each ripple for Long, and 100
+Poisson units bursting with each ripple for Carey and HSE; three seeds per condition. Further
+conditions put the ripple on only a quarter or half of 32 channels, sweep the thresholds of
+Kay, Karlsson and Zugaro, shrink the population to 20 units, and add 20 common-mode artifacts.
+An event is a hit when it overlaps the ripple's window. The
+[notebook](examples/simulation_study.ipynb) plots the whole sweep; 16 channels, means over
+seeds:
 
-| Detector | Recall, `ripple_snr` 2 | Recall, `ripple_snr` 4 | False positives per minute, no ripples | Precision with 20 common-mode artifacts | Event start minus ripple start, `ripple_snr` 4 |
+| Detector | Recall, `ripple_snr` 2 | Recall, `ripple_snr` 4 | False positives per minute, no ripples (4 / 16 / 32 ch) | Recall with the ripple on a quarter of 32 channels, `ripple_snr` 3 | Precision with 20 common-mode artifacts |
 |---|---|---|---|---|---|
-| Kay | 0.41 | 0.98 | 18 | 0.05 | +10 ms |
-| Karlsson | 0.18 | 0.92 | 2 | 0.00 | +4 ms |
-| Roumis | 0.43 | 0.98 | 21 | 0.05 | +10 ms |
-| Shvartsman | 0.04 | 0.71 | 0 | 0.00 | +4 ms |
-| Yu | 0.38 | 0.97 | 14 | 0.39 | +10 ms |
-| Zugaro | 0.28 | 0.87 | 11 | 0.00 | +22 ms |
-| Long | 0.42 | 0.80 | 8 | 1.00 | +19 ms |
-| Carey | 0.90 | 0.98 | 0.7 | 0.77 | -4 ms |
-| HSE | 1.00 | 1.00 | 50 | 0.84 | -16 ms |
+| Kay | 0.46 | 0.98 | 18 / 21 / 24 | 0.15 | 0.00 |
+| Karlsson | 0.32 | 0.98 | 2 / 9 / 19 | 0.60 | 0.00 |
+| Roumis | 0.46 | 0.99 | 21 / 23 / 26 | 0.10 | 0.00 |
+| Shvartsman | 0.08 | 0.92 | 0 / 0.7 / 2 | 0.40 | 0.00 |
+| Yu | 0.45 | 0.99 | 14 / 26 / 70 | 0.12 | 0.28 |
+| Zugaro | 0.27 | 0.92 | 11 / 14 / 16 | 0.06 | 0.00 |
+| Long | 0.42 | 0.81 | 8 / 8 / 8 | 0.58 | 0.94 |
+| Carey | 0.92 | 0.98 | 0.7 / 0.5 / 0.2 | 0.87 | 0.79 |
+| HSE | 0.99 | 0.99 | 50 / 50 / 53 | 0.98 | 0.85 |
 
 What it shows:
 
-- **The defaults sit at very different operating points.** On ripple-free sessions Kay and
-  Roumis at 2 SD produce about 20 events a minute, Karlsson at 3 SD 2, Shvartsman none; the
-  z-scored population rate at 2 SD gives HSE 50. With ripples present the same thresholds look
-  better, because the ripples inflate the standard deviation they are measured against.
-- **Karlsson and Shvartsman trade recall for precision**: they need one channel (or two) to
-  cross 3 SD on its own, so quiet channels (gains of 0.5 to 1 here) cost them ripples at
-  `ripple_snr` below 4, and Shvartsman finds nothing on one channel at its default.
-- **The spike detectors' recall is set by the population burst, not the LFP**: Carey and HSE
-  find 90 to 100 percent of ripples at every `ripple_snr`. With 20 units instead of 100 their
-  precision falls to 0.49 and 0.35 (see the notebook's sparse-population table).
-- **Long's recall plateaus near 0.9** by construction: its percentile cuts drop the weakest
-  tenth of the sharp-wave cluster, and it does not evaluate candidates within 5 s of a block
-  edge. Its events mark the sharp wave, so they start about 20 ms after the ripple window and
-  end 20 ms before it.
-- **Yu's data-driven threshold falls when channels share noise**, to about 1.1 SD here, and
-  its false-positive rate rises with it; check `detection_threshold_zscore`.
-- **Common-mode artifacts silence the ripple-band detectors at their defaults**: twenty
-  broadband bursts inflate the z-scoring until the ripples fall below threshold. Long cancels
-  them in its channel difference, and the spike detectors barely notice them. The notebook
-  shows what `normalization_method="median_mad"` recovers.
+- **The channel count changes the ranking.** Karlsson's false positives grow with the channel
+  count, since any one channel crossing 3 SD makes an event; Yu's data-driven threshold falls the
+  more correlated channels feed its median. Kay, Roumis, Zugaro, Long and Shvartsman barely move.
+- **At a matched false-positive rate the ripple-band algorithms are close, and Shvartsman
+  leads.** On 16 channels Kay at 3.0 SD, Karlsson at 3.5 and Zugaro at 8 each allow 1 to 2
+  false positives a minute and recall 0.5 to 0.64 of ripples at `ripple_snr` 3; Shvartsman at its
+  default allows 0.7 and recalls 0.67. Most of what separates the defaults is where the
+  threshold sits. Kay at 2 SD is a candidate generator, about 20 events a minute on noise.
+- **Which channels carry the ripple matters more than how many there are.** Pooled traces are
+  diluted by silent channels (Kay by the channel count, Roumis worse), and a median cannot see a
+  ripple on a minority of channels at any amplitude (Yu). Karlsson's per-channel rule is the only
+  one that does not pay for silent channels, at the price of inheriting every channel's noise.
+- **The spike detectors' recall is set by the population burst, not the LFP**, and their precision
+  by the population size: with 20 units instead of 100, Carey's falls from 1.0 to 0.40 and HSE's
+  from 0.83 to 0.32. HSE at 2 SD gives 50 events a minute on noise.
+- **Long's recall plateaus near 0.9** by construction: its percentile cuts drop the weakest tenth
+  of the sharp-wave cluster, and it does not evaluate candidates within 5 s of a block edge. Its
+  events mark the sharp wave, so they start about 18 ms after the ripple window and end 18 ms
+  before it.
+- **Common-mode artifacts silence the ripple-band detectors at their defaults, except Yu**,
+  whose threshold is read off the noise side of the histogram. Long cancels them in its channel
+  difference, and the spike detectors barely notice them. The notebook shows what
+  `normalization_method="median_mad"` recovers for Kay and Karlsson.
 
 What it cannot show: the simulator's ripples are sinusoids under a Gaussian envelope, its
 sharp wave a Gaussian, its units Poisson, its noise stationary 1/f with no theta or state
-changes, and its artifacts crude. The numbers rank the defaults and expose their mechanics;
-they are not the recall or precision to expect on a recording.
+changes, and its artifacts crude; every ripple has a sharp wave and a population burst, which
+builds in the advantage of the detectors that read them. The numbers rank the defaults and
+expose their mechanics; they are not the recall or precision to expect on a recording.
 
 ## Output Format
 
