@@ -308,7 +308,7 @@ The package also validates that example notebooks run without errors in CI.
 - Modular functions with single responsibility
 - Comprehensive test coverage: 98% overall
 - **Code quality tools**: Ruff (formatting and linting), Mypy (type checking)
-- Continuous integration with GitHub Actions (tests on Python 3.10, 3.11, 3.12, 3.13)
+- Continuous integration with GitHub Actions (tests on Python 3.10 through 3.14, and at the minimum dependency pins)
 
 ### Type Hints
 

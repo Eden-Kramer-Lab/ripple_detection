@@ -124,6 +124,7 @@ raises on zero rows; that is hdmf's, not this package's.
   environment; CI checks that the lock file is current.
 - A pre-commit configuration with ruff, codespell, mypy and the standard file
   checks.
+- Python 3.14 in the test matrix and the classifiers.
 
 ### Changed
 
@@ -185,6 +186,8 @@ raises on zero rows; that is hdmf's, not this package's.
 - The package lives under `src/`. Imports do not change.
 - The license is declared as an SPDX expression (PEP 639), and the license
   file is included in the distributions.
+- GitHub Actions are pinned to commits, run with read-only permissions unless
+  a job needs more, and are kept current by Dependabot.
 - Documentation. Each reference has a DOI that CrossRef resolved. Each link to
   laboratory code gives a file at a commit, and states its license. Each
   detector states its movement rule and its policy for missing samples, and
