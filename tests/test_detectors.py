@@ -60,17 +60,17 @@ class TestShvartsmanRippleDetector:
             "Should not detect any ripples because there's a 2-channel participation minimum default"
         )
 
-    def test_single_channel_with_ripples_participation_threshold_0(
+    def test_single_channel_with_ripples_no_participation_criterion(
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
-        """Test Shvartsman detector with single LFP channel containing ripples, with participation_threshold=0."""
+        """A single channel can only produce events when no participation is required."""
         filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
         ripples = Shvartsman_ripple_detector(
             time_3s,
             filtered_lfps,
             stationary_speed,
             sampling_frequency,
-            participation_threshold=0,
+            minimum_participating_channels=0,
         )
 
         # Verify output structure
@@ -2432,9 +2432,12 @@ class TestDetectorErrorHandling:
 class TestShvartsmanParticipationSemantics:
     """Preserve participation across merged events and subsequent exclusions."""
 
-    @pytest.mark.parametrize("participation_threshold", [3, 1.0])
+    @pytest.mark.parametrize(
+        "participation",
+        [{"minimum_participating_channels": 3}, {"minimum_participating_fraction": 1.0}],
+    )
     def test_chain_of_overlapping_ripples_counts_all_electrodes(
-        self, time_3s, stationary_speed, sampling_frequency, participation_threshold
+        self, time_3s, stationary_speed, sampling_frequency, participation
     ):
         """A-B and B-C overlap counts all three electrodes in the merged event."""
         lfps = np.column_stack(
@@ -2471,7 +2474,7 @@ class TestShvartsmanParticipationSemantics:
             filtered,
             stationary_speed,
             sampling_frequency,
-            participation_threshold=participation_threshold,
+            **participation,
         )
 
         assert len(ripples) == 1
@@ -2504,7 +2507,11 @@ class TestShvartsmanParticipationSemantics:
 
         # Sanity: with no movement both events survive with differing participation.
         both = Shvartsman_ripple_detector(
-            time_3s, filtered, stationary_speed, sampling_frequency, participation_threshold=0
+            time_3s,
+            filtered,
+            stationary_speed,
+            sampling_frequency,
+            minimum_participating_channels=0,
         )
         assert both["n_participants"].tolist() == [3, 1]
 
@@ -2516,7 +2523,7 @@ class TestShvartsmanParticipationSemantics:
             filtered,
             speed,
             sampling_frequency,
-            participation_threshold=0,
+            minimum_participating_channels=0,
             speed_threshold=4.0,
         )
         # Only the 1-participant event near 2.1s survives, and it must carry its own
@@ -2525,7 +2532,7 @@ class TestShvartsmanParticipationSemantics:
         assert ripples["n_participants"].iloc[0] == 1
         assert ripples["participants"].iloc[0] == {0}
 
-    def test_participation_threshold_fraction_means_all_channels(
+    def test_participating_fraction_of_one_means_all_channels(
         self,
         time_3s,
         dual_lfp_with_ripples,
@@ -2533,8 +2540,8 @@ class TestShvartsmanParticipationSemantics:
         stationary_speed,
         sampling_frequency,
     ):
-        """A fractional participation_threshold is a fraction of channels, and 1.0
-        means *all* channels (not one)."""
+        """minimum_participating_fraction is a fraction of channels, so 1.0 means
+        every channel, and the two arguments cannot be combined."""
         # The two channels ripple at separate times, so each event has only 1 of 2.
         filtered_sep = filter_ripple_band(dual_lfp_with_ripples, 1500)
         # 1.0 requires both channels in one event -> excluded (each has one).
@@ -2543,7 +2550,7 @@ class TestShvartsmanParticipationSemantics:
             filtered_sep,
             stationary_speed,
             sampling_frequency,
-            participation_threshold=1.0,
+            minimum_participating_fraction=1.0,
         ).empty
         # 0.5 requires 1 of 2 -> detected (a genuine fraction in (0, 1)).
         assert not Shvartsman_ripple_detector(
@@ -2551,7 +2558,7 @@ class TestShvartsmanParticipationSemantics:
             filtered_sep,
             stationary_speed,
             sampling_frequency,
-            participation_threshold=0.5,
+            minimum_participating_fraction=0.5,
         ).empty
 
         # Co-occurring ripples involve both channels, so 1.0 (all 2) detects them.
@@ -2561,8 +2568,25 @@ class TestShvartsmanParticipationSemantics:
             filtered_co,
             stationary_speed,
             sampling_frequency,
-            participation_threshold=1.0,
+            minimum_participating_fraction=1.0,
         ).empty
+        with pytest.raises(ValueError, match="not both"):
+            Shvartsman_ripple_detector(
+                time_3s,
+                filtered_co,
+                stationary_speed,
+                sampling_frequency,
+                minimum_participating_channels=1,
+                minimum_participating_fraction=0.5,
+            )
+        with pytest.raises(ValueError, match=r"\[0, 1\]"):
+            Shvartsman_ripple_detector(
+                time_3s,
+                filtered_co,
+                stationary_speed,
+                sampling_frequency,
+                minimum_participating_fraction=2.0,
+            )
 
     def test_dead_channel_raises_rather_than_diluting_participation(
         self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed

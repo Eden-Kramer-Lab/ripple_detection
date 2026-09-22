@@ -716,13 +716,15 @@ def Shvartsman_ripple_detector(
     manual_normalization: bool = False,
     elec_baselines: ArrayLike | None = None,
     elec_deviations: ArrayLike | None = None,
-    participation_threshold: float = 2,
+    minimum_participating_channels: int | None = None,
+    minimum_participating_fraction: float | None = None,
     maximum_duration: float | None = None,
 ) -> pd.DataFrame:
     """Detect sharp-wave ripples on each channel, keeping events that enough
     channels share.
 
-    An event is kept when at least ``participation_threshold`` channels detect
+    An event is kept when at least ``minimum_participating_channels`` channels
+    (default 2), or ``minimum_participating_fraction`` of the channels, detect
     it. This sits between the Kay detector, which builds one consensus trace,
     and the Karlsson detector, which keeps a ripple from any single channel.
     Requiring several channels makes it less sensitive than Karlsson to noise
@@ -807,16 +809,16 @@ def Shvartsman_ripple_detector(
         deviation (multiply a MAD by 1.4826 first). Required when
         ``manual_normalization=True``. A zero or NaN entry raises; drop that
         channel before detecting.
-    participation_threshold : float, optional
-        Participation cutoff for a merged event. If in [0, 1], interpreted as
-        the *fraction* of channels that must participate (note 1.0 means all
-        channels, not one). If > 1, interpreted as an absolute *number* of
-        channels. Default is 2. Each distinct channel with a detected ripple
-        anywhere in the merged event counts once, including channels connected
-        through a chain of overlapping ripples.
-
-        The denominator for the fraction (and for `frac_participants`) is the
-        number of channels in `filtered_lfps`.
+    minimum_participating_channels : int, optional
+        Number of channels that must detect a ripple in the merged event for
+        it to be kept. Default is 2 when neither participation argument is
+        given; 0 imposes no criterion. Each distinct channel with a detected
+        ripple anywhere in the merged event counts once, including channels
+        connected through a chain of overlapping ripples.
+    minimum_participating_fraction : float, optional
+        The same criterion as a fraction of the channels in `filtered_lfps`,
+        in [0, 1]; 1.0 requires every channel. Give one of the two arguments,
+        not both. Default is None.
 
     Returns
     -------
@@ -852,7 +854,7 @@ def Shvartsman_ripple_detector(
     ----------
     Unpublished variant contributed by Gabrielle Shvartsman (2026, pull
     request #11); it has no paper of its own. The participation rule requires
-    ``participation_threshold`` channels (a count, default 2) to detect the
+    ``minimum_participating_channels`` channels (default 2) to detect the
     ripple, so at the default a single-channel input never produces an event.
 
     """
@@ -867,8 +869,24 @@ def Shvartsman_ripple_detector(
             "must be left at their defaults. Drop them, or set "
             "manual_normalization=False."
         )
-    if participation_threshold < 0:
-        raise ValueError("participation_threshold must be non-negative.")
+    if (
+        minimum_participating_channels is not None
+        and minimum_participating_fraction is not None
+    ):
+        raise ValueError(
+            "Give minimum_participating_channels or minimum_participating_fraction, not both."
+        )
+    if minimum_participating_channels is None and minimum_participating_fraction is None:
+        minimum_participating_channels = 2
+    if minimum_participating_channels is not None and minimum_participating_channels < 0:
+        raise ValueError("minimum_participating_channels must be non-negative.")
+    if minimum_participating_fraction is not None and not (
+        0.0 <= minimum_participating_fraction <= 1.0
+    ):
+        raise ValueError(
+            f"minimum_participating_fraction must lie in [0, 1], got "
+            f"{minimum_participating_fraction}."
+        )
     _validate_duration_limits(minimum_duration, maximum_duration)
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
@@ -904,12 +922,11 @@ def Shvartsman_ripple_detector(
     merged_candidates = merge_overlapping_ranges_track_participation(candidate_ripple_times)
 
     n_elecs = normalized.shape[1]
-    if participation_threshold <= 1:
-        # interpret as a fraction of channels (1.0 means all channels)
-        n_elecs_thresh = n_elecs * participation_threshold
-    else:
-        # interpret as an absolute number of channels
-        n_elecs_thresh = participation_threshold
+    n_elecs_thresh = (
+        minimum_participating_channels
+        if minimum_participating_fraction is None
+        else n_elecs * minimum_participating_fraction
+    )
     participation_mask = (
         np.asarray([len(interval[2]) for interval in merged_candidates]) >= n_elecs_thresh
     )

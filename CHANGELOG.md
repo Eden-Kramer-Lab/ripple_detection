@@ -28,8 +28,9 @@ results.
 - `Carey_candidate_detector`, the candidate detector of Carey, Tanaka & van der
   Meer 2019. It combines a ripple score and a multiunit score.
 - `Shvartsman_ripple_detector`, an unpublished laboratory variant. It keeps an
-  event when at least `participation_threshold` channels detect it, and reports
-  which channels took part.
+  event when at least `minimum_participating_channels` channels, or
+  `minimum_participating_fraction` of them, detect it, and reports which
+  channels took part.
 - `maximum_duration` on every detector without a ceiling of its own (Zugaro and
   Long have theirs; Zugaro's now accepts `None`). It limits the event as the
   detector reports it, not the run above the threshold.
