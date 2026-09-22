@@ -296,8 +296,13 @@ class TestFilterRippleBandSamplingRate:
     def test_1500_hz_uses_the_shipped_kernel(self):
         _, x = self._tones(1500)
         kernel, _ = _get_ripplefilter_kernel()
-        np.testing.assert_array_equal(
-            filter_ripple_band(x, sampling_frequency=1500), filtfilt(kernel, 1, x)
+        # FFT convolution equals filtfilt to rounding; another kernel would
+        # differ by order one
+        np.testing.assert_allclose(
+            filter_ripple_band(x, sampling_frequency=1500),
+            filtfilt(kernel, 1, x),
+            rtol=0,
+            atol=1e-12,
         )
 
     def test_rate_too_low_for_the_band_raises(self):
@@ -1740,6 +1745,40 @@ class TestHelperErrorPaths:
 
     def test_nearest_sample_of_a_single_timestamp_is_it(self):
         np.testing.assert_array_equal(nearest_sample_index([2.0], [0.0, 5.0]), [0, 0])
+
+
+class TestFFTFiltfilt:
+    """filter_ripple_band convolves by FFT; it must equal scipy's direct
+    filtfilt to rounding, at the minimum run length too."""
+
+    @pytest.mark.parametrize(
+        ("sampling_frequency", "n_extra", "n_channels"),
+        [(1500, 0, 1), (1500, 5000, 3), (1000, 1, 2), (30_000, 20_000, 2)],
+    )
+    def test_matches_scipy_filtfilt(self, sampling_frequency, n_extra, n_channels):
+        from scipy.signal import filtfilt
+
+        if sampling_frequency == 1500:
+            kernel, _ = _get_ripplefilter_kernel()
+        else:
+            kernel, _ = ripple_bandpass_filter(sampling_frequency)
+        n_time = len(kernel) + n_extra
+        data = np.random.default_rng(0).standard_normal((n_time, n_channels))
+        expected = filtfilt(kernel, 1.0, data, axis=0, padlen=len(kernel) - 1)
+        np.testing.assert_allclose(
+            filter_ripple_band(data, sampling_frequency=sampling_frequency),
+            expected,
+            rtol=0,
+            atol=1e-12,
+        )
+
+    def test_the_cached_kernels_cannot_be_changed_by_a_caller(self):
+        kernel, _ = ripple_bandpass_filter(2000)
+        kernel[:] = 0.0
+        assert np.any(ripple_bandpass_filter(2000)[0] != 0.0)
+        shipped, _ = _get_ripplefilter_kernel()
+        shipped[:] = 0.0
+        assert np.any(_get_ripplefilter_kernel()[0] != 0.0)
 
 
 class TestCloseEventGap:
