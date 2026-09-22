@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from scipy.signal import filtfilt, freqz
-from scipy.stats import zscore
+from scipy.stats import median_abs_deviation, zscore
 
 from ripple_detection.core import (
     _extend_segment,
@@ -15,6 +15,7 @@ from ripple_detection.core import (
     estimate_noise_threshold,
     exclude_close_events,
     exclude_movement,
+    exclude_movement_by_majority,
     extend_threshold_to_mean,
     filter_ripple_band,
     gaussian_smooth,
@@ -23,6 +24,7 @@ from ripple_detection.core import (
     merge_close_events,
     merge_overlapping_ranges,
     merge_overlapping_ranges_track_participation,
+    minimum_sample_count,
     nearest_sample_index,
     normalize_signal,
     normalize_signal_manually,
@@ -1628,3 +1630,71 @@ def test_transition_width_applies_without_a_band_at_other_rates():
     )
 
     assert not np.allclose(default, narrow)
+
+
+class TestThresholdInclusivity:
+    """Docstrings say "at or above"; these pin it at exact equality."""
+
+    def test_a_run_exactly_at_the_threshold_qualifies(self):
+        fs = 1000
+        time = np.arange(1000) / fs
+        n_min = minimum_sample_count(time, 0.015)
+        z = np.full(1000, -1.0)
+        z[100 : 100 + n_min] = 2.0  # exactly the threshold, exactly the minimum run
+        assert threshold_by_zscore(z, time, 0.015, 2.0) == [(time[100], time[100 + n_min - 1])]
+        z[100 + n_min - 1] = 1.999
+        assert threshold_by_zscore(z, time, 0.015, 2.0) == []
+
+
+class TestEndpointSpeedRule:
+    def test_speed_equal_to_the_threshold_is_immobile(self):
+        time = np.arange(100) / 1000.0
+        speed = np.full(100, 4.0)
+        kept = exclude_movement(np.array([[time[10], time[20]]]), speed, time, 4.0)
+        assert len(kept) == 1
+
+    def test_movement_at_the_end_sample_alone_excludes(self):
+        time = np.arange(100) / 1000.0
+        speed = np.full(100, 1.0)
+        speed[20:] = 10.0
+        kept = exclude_movement(np.array([[time[10], time[20]]]), speed, time, 4.0)
+        assert kept.shape == (0, 2)
+
+    def test_exactly_half_the_samples_immobile_is_kept_by_the_majority_rule(self):
+        time = np.arange(100) / 1000.0
+        speed = np.full(100, 1.0)
+        speed[15:20] = 10.0  # 5 of the 10 samples in [10, 19]
+        kept, inds = exclude_movement_by_majority(
+            np.array([[time[10], time[19]]]), speed, time, 4.0
+        )
+        assert len(kept) == 1 and inds.tolist() == [0]
+        speed[14] = 10.0
+        kept, inds = exclude_movement_by_majority(
+            np.array([[time[10], time[19]]]), speed, time, 4.0
+        )
+        assert kept.shape == (0, 2) and inds.shape == (0,)
+
+
+class TestMinimumSampleCountUsesTheMedianStep:
+    def test_a_hole_in_the_timestamps_does_not_shrink_the_count(self):
+        fs = 1500
+        time = np.arange(fs * 10) / fs
+        time = np.concatenate([time[: fs * 3], time[fs * 4 :]])  # a 1 s hole
+        assert minimum_sample_count(time, 0.015) == 23
+
+    def test_mostly_repeated_timestamps_raise(self):
+        time = np.repeat(np.arange(100) / 1000.0, 3)
+        with pytest.raises(ValueError, match="median timestamp step"):
+            minimum_sample_count(time, 0.015)
+
+
+class TestMedianMadWithAMask:
+    def test_matches_a_hand_computation_on_the_masked_samples(self):
+        rng = np.random.default_rng(0)
+        data = rng.normal(size=(500, 2))
+        mask = np.zeros(500, dtype=bool)
+        mask[:200] = True
+        out = normalize_signal(data, method="median_mad", normalization_mask=mask)
+        median = np.median(data[:200], axis=0)
+        mad = median_abs_deviation(data[:200], axis=0, scale="normal")
+        np.testing.assert_allclose(out, (data - median) / mad)

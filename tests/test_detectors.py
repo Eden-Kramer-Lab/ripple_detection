@@ -1435,6 +1435,21 @@ class TestYuRippleDetector:
         events = Yu_ripple_detector(time, lfps, speed, self.FS)
         assert len(events) == 0
 
+    def test_movement_at_the_end_sample_alone_excludes_event(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        speed = stationary.copy()
+        speed[5030:5200] = 10.0  # still at the start, moving by the end
+        assert len(Yu_ripple_detector(time, lfps, stationary, self.FS)) == 1
+        assert len(Yu_ripple_detector(time, lfps, speed, self.FS)) == 0
+
+    def test_an_explicit_noise_mask_replaces_the_speed_rule(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        mask = np.ones(self.N_TIME, dtype=bool)
+        mask[4000:6000] = False  # the burst is not in the noise sample
+        events = Yu_ripple_detector(time, lfps, stationary, self.FS, normalization_mask=mask)
+        assert len(events) == 1
+        assert events.start_time.iloc[0] <= time[5000] <= events.end_time.iloc[0]
+
     def test_threshold_is_estimated_from_immobility_only(self, time, stationary):
         # a loud, long "artifact" during movement must not raise the threshold
         # enough to hide the immobile burst
@@ -1746,6 +1761,38 @@ class TestZugaroRippleDetector:
         speed[4900:5100] = 10.0
         assert len(Zugaro_ripple_detector(time, lfps, speed, self.FS)) == 0
 
+    def test_movement_at_the_end_sample_alone_excludes_event(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        speed = stationary.copy()
+        speed[5030:5200] = 10.0
+        assert len(Zugaro_ripple_detector(time, lfps, stationary, self.FS)) == 1
+        assert len(Zugaro_ripple_detector(time, lfps, speed, self.FS)) == 0
+
+    def test_a_peak_threshold_nothing_reaches_gives_an_empty_frame_with_peak_time(
+        self, time, stationary
+    ):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        events = Zugaro_ripple_detector(time, lfps, stationary, self.FS, high_threshold=50.0)
+        assert events.empty and "peak_time" in events.columns
+
+    def test_no_maximum_duration_keeps_a_long_event(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5300, 20.0)])
+        capped = Zugaro_ripple_detector(time, lfps, stationary, self.FS)
+        uncapped = Zugaro_ripple_detector(
+            time, lfps, stationary, self.FS, maximum_duration=None
+        )
+        assert len(capped) == 0 and len(uncapped) == 1
+
+    def test_a_block_shorter_than_the_smoothing_window_is_treated_as_missing(
+        self, time, stationary
+    ):
+        """Used to crash with a broadcast error inside np.convolve."""
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        lfps[8000:8100] = np.nan
+        lfps[8105:8200] = np.nan  # a five-sample island between two gaps
+        events = Zugaro_ripple_detector(time, lfps, stationary, self.FS)
+        assert len(events) == 1
+
     def test_spyglass_style_keyword_call_matches_direct_call(self, time, stationary):
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
         params = {
@@ -1990,6 +2037,32 @@ def _synthetic_joint_inputs(
 
 
 class TestCareyStateHelpers:
+    """Boundary rules of vandermeerlab TSDtoIV and restrict: gaps merge when
+    strictly shorter than merge_gap, intervals survive when strictly longer than
+    minimum_length, and containment is closed at both ends."""
+
+    # a quarter-second step keeps every gap and span exact in binary floating point
+    TIME = np.arange(300) * 0.25
+
+    def test_gap_equal_to_merge_gap_is_not_merged_and_shorter_is(self):
+        state = np.zeros(300, dtype=bool)
+        state[0:100] = True
+        state[149:300] = True  # time[149] - time[99] is exactly 12.5
+        assert len(_state_intervals(state, self.TIME, 12.5, 0.0)) == 2
+        assert len(_state_intervals(state, self.TIME, 12.6, 0.0)) == 1
+
+    def test_interval_exactly_minimum_length_is_dropped(self):
+        state = np.zeros(300, dtype=bool)
+        state[100:151] = True  # spans exactly 12.5
+        assert len(_state_intervals(state, self.TIME, 0.0, 12.5)) == 0
+        state[151] = True
+        assert len(_state_intervals(state, self.TIME, 0.0, 12.5)) == 1
+
+    def test_event_at_an_interval_edge_is_contained(self):
+        intervals = np.array([[10, 20]])
+        assert _contained_in_intervals(np.array([[10, 20], [10, 15]]), intervals).all()
+        assert not _contained_in_intervals(np.array([[9, 15], [15, 21]]), intervals).any()
+
     def test_state_intervals_with_no_true_sample_is_empty(self):
         time = np.arange(100) / 1000.0
         intervals = _state_intervals(np.zeros(100, dtype=bool), time, 0.05, 0.05)
@@ -2158,43 +2231,45 @@ class TestCareyCandidateDetector:
 class TestDetectorErrorHandling:
     """Test error handling and edge cases for detectors."""
 
-    def test_empty_time_array(self, sampling_frequency):
-        """Test detectors with empty input arrays."""
-        time = np.array([])
-        lfp = np.array([]).reshape(0, 1)
-        speed = np.array([])
+    def test_empty_input_raises(self, sampling_frequency):
+        with pytest.raises(ValueError, match="nothing to detect"):
+            Kay_ripple_detector(
+                np.array([]), np.array([]).reshape(0, 1), np.array([]), sampling_frequency
+            )
 
-        # Should handle gracefully without crashing
-        # Most detectors will return empty DataFrames
-        try:
-            ripples = Kay_ripple_detector(time, lfp, speed, sampling_frequency)
-            assert isinstance(ripples, pd.DataFrame)
-        except (ValueError, IndexError):
-            # Some implementations may raise errors on empty input
-            pass
-
-    def test_nan_in_lfp(
+    def test_nan_in_lfp_rows_are_dropped_and_the_ripples_still_found(
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
-        """Test handling of NaN values in LFP data."""
+        """Rows with NaN are dropped; the planted ripples away from them survive
+        and every statistic is finite."""
         lfp_with_nan = single_lfp_with_ripples.copy()
-        # Insert some NaN values
         lfp_with_nan[100:200, 0] = np.nan
 
-        filtered_lfps = filter_ripple_band(lfp_with_nan, 1500)
+        with pytest.warns(UserWarning, match="shorter than"):  # the 100-sample head
+            filtered_lfps = filter_ripple_band(lfp_with_nan, 1500)
         ripples = Kay_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
 
-        # Should handle NaN and return valid DataFrame
-        assert isinstance(ripples, pd.DataFrame)
+        assert len(ripples) >= 2
+        assert np.isfinite(ripples.drop(columns=[]).to_numpy(dtype=float)).all()
 
-    def test_nan_in_speed(
+    def test_nan_speed_inside_a_ripple_is_dropped_and_the_event_kept(
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
-        """Test handling of NaN values in speed data."""
+        """The row-drop contract: NaN speed samples are removed, the event
+        spans them, and its speed statistics come from the remaining samples."""
         speed_with_nan = stationary_speed.copy()
-        speed_with_nan[100:200] = np.nan
+        speed_with_nan[1640:1660] = np.nan  # inside the ripple planted at 1.1 s
+
+        filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
+        ripples = Kay_ripple_detector(
+            time_3s, filtered_lfps, speed_with_nan, sampling_frequency
+        )
+
+        covering = ripples[(ripples.start_time <= 1.1) & (ripples.end_time >= 1.1)]
+        assert len(covering) == 1
+        assert np.isfinite(covering.to_numpy(dtype=float)).all()
 
         filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
         ripples = Kay_ripple_detector(
@@ -2331,37 +2406,16 @@ class TestDetectorErrorHandling:
             )
 
     def test_mismatched_lengths(self, time_3s, single_lfp_with_ripples, sampling_frequency):
-        """Test with mismatched time and LFP lengths."""
-        # Create speed array with different length
-        speed_short = np.ones(len(time_3s) // 2)
-
         filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
-
-        # This should either handle gracefully or raise appropriate error
-        try:
-            ripples = Kay_ripple_detector(
-                time_3s, filtered_lfps, speed_short, sampling_frequency
+        with pytest.raises(ValueError, match="length mismatch"):
+            Kay_ripple_detector(
+                time_3s, filtered_lfps, np.ones(len(time_3s) // 2), sampling_frequency
             )
-            # If it succeeds, verify output is valid
-            assert isinstance(ripples, pd.DataFrame)
-        except (ValueError, IndexError, KeyError):
-            # Expected to raise an error with mismatched inputs
-            pass
 
-    def test_single_sample(self, sampling_frequency):
-        """Test detectors with single sample input."""
-        time = np.array([0.0])
-        lfp = np.array([[0.5]])
-        speed = np.array([2.0])
-
-        # Should handle single sample gracefully
-        try:
-            ripples = Kay_ripple_detector(time, lfp, speed, sampling_frequency)
-            assert isinstance(ripples, pd.DataFrame)
-            assert len(ripples) == 0  # Can't detect ripple from single sample
-        except (ValueError, IndexError):
-            # May raise error for insufficient data
-            pass
+    def test_single_sample_raises(self, sampling_frequency):
+        """One sample has no spread to normalize by."""
+        with pytest.raises(ValueError, match="zero or undefined"):
+            Kay_ripple_detector(np.array([0.0]), np.array([[0.5]]), np.array([2.0]), 1500)
 
 
 class TestShvartsmanParticipationSemantics:
@@ -3280,3 +3334,91 @@ class TestCountActiveUnits:
 
         assert counts.shape == (0,)
         assert counts.dtype == int
+
+
+class TestTimeMustBeIncreasing:
+    """Every event and speed lookup bisects the timestamps, so unsorted time is
+    rejected rather than producing plausible nonsense."""
+
+    FS = 1000
+    N_TIME = 5000
+
+    @pytest.fixture
+    def swapped_time(self):
+        time = np.arange(self.N_TIME) / self.FS
+        time[[100, 200]] = time[[200, 100]]
+        return time
+
+    @pytest.mark.parametrize(
+        "detector",
+        [
+            Kay_ripple_detector,
+            Karlsson_ripple_detector,
+            Roumis_ripple_detector,
+            Shvartsman_ripple_detector,
+            Yu_ripple_detector,
+            Zugaro_ripple_detector,
+        ],
+    )
+    def test_ripple_band_detectors_raise(self, detector, swapped_time):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2000, 2060, 20.0)])
+        with pytest.raises(ValueError, match="increasing"):
+            detector(swapped_time, lfps, np.full(self.N_TIME, 2.0), self.FS)
+
+    def test_burst_detector_raises(self, swapped_time):
+        multiunit = np.zeros((self.N_TIME, 4))
+        multiunit[2000:2060] = 1.0
+        with pytest.raises(ValueError, match="increasing"):
+            multiunit_HSE_detector(swapped_time, multiunit, np.full(self.N_TIME, 2.0), self.FS)
+
+    def test_two_channel_detector_raises(self, swapped_time):
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, [2500])
+        with pytest.raises(ValueError, match="increasing"):
+            Long_sharp_wave_ripple_detector(
+                swapped_time, lfp, np.full(self.N_TIME, 2.0), self.FS
+            )
+
+    def test_repeated_timestamps_raise(self):
+        time = np.repeat(np.arange(0, self.N_TIME, 3), 3)[: self.N_TIME] / self.FS
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2000, 2060, 20.0)])
+        with pytest.raises(ValueError, match="repeat"):
+            Kay_ripple_detector(time, lfps, np.full(self.N_TIME, 2.0), self.FS)
+
+
+class TestExclusionOrder:
+    """Close events are excluded before over-long ones, so an over-long event
+    still suppresses its neighbor before it is itself dropped."""
+
+    FS = 1000
+    N_TIME = 10_000
+
+    @pytest.mark.parametrize("detector", [Kay_ripple_detector, Karlsson_ripple_detector])
+    def test_a_long_event_suppresses_its_neighbor_before_being_dropped(self, detector):
+        time = np.arange(self.N_TIME) / self.FS
+        lfps = _synthetic_ripple_band(
+            self.N_TIME, self.FS, [(5000, 5500, 20.0), (5560, 5600, 20.0)]
+        )
+        speed = np.full(self.N_TIME, 2.0)
+        both = detector(time, lfps, speed, self.FS)
+        assert len(both) == 2
+        neither = detector(
+            time, lfps, speed, self.FS, close_ripple_threshold=0.1, maximum_duration=0.2
+        )
+        assert len(neither) == 0
+
+
+class TestCareyMinimumDuration:
+    FS = 1000
+    N_TIME = 20_000
+
+    def test_a_minimum_longer_than_the_bursts_removes_them(self):
+        time = np.arange(self.N_TIME) / self.FS
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, (5000, 12000))
+        speed = np.full(self.N_TIME, 2.0)
+        found = Carey_candidate_detector(time, lfps, multiunit, speed, self.FS)
+        assert len(found) >= 1
+        n_min = int(np.ceil(found.duration.max() * self.FS)) + 5
+        none = Carey_candidate_detector(
+            time, lfps, multiunit, speed, self.FS, minimum_duration=n_min / self.FS
+        )
+        assert len(none) == 0
