@@ -85,7 +85,7 @@ def normalize(y: NDArray, x: NDArray | None = None) -> NDArray:
     return y * np.sqrt(x / mean_squared(y))
 
 
-def pink(N: int, state: np.random.RandomState | None = None) -> NDArray:
+def pink(N: int, rng: int | np.random.Generator | None = None) -> NDArray:
     """Generate pink (1/f) noise.
 
     Pink noise has equal power in proportionally-wide frequency bands (octaves).
@@ -95,9 +95,9 @@ def pink(N: int, state: np.random.RandomState | None = None) -> NDArray:
     ----------
     N : int
         Number of samples to generate.
-    state : np.random.RandomState, optional
-        Random number generator state for reproducibility. If None, uses a
-        new RandomState. Default is None.
+    rng : int or numpy.random.Generator, optional
+        Seed, or a Generator to draw from. Default is None, a fresh
+        unseeded Generator.
 
     Returns
     -------
@@ -113,9 +113,11 @@ def pink(N: int, state: np.random.RandomState | None = None) -> NDArray:
     Adapted from python-acoustics library.
 
     """
-    state = np.random.RandomState() if state is None else state
+    rng = np.random.default_rng(rng)
     uneven = N % 2
-    X = state.randn(N // 2 + 1 + uneven) + 1j * state.randn(N // 2 + 1 + uneven)
+    X = rng.standard_normal(N // 2 + 1 + uneven) + 1j * rng.standard_normal(
+        N // 2 + 1 + uneven
+    )
     S = np.sqrt(np.arange(len(X)) + 1.0)  # +1 to avoid divide by zero
     y = (np.fft.irfft(X / S)).real
     if uneven:
@@ -123,7 +125,7 @@ def pink(N: int, state: np.random.RandomState | None = None) -> NDArray:
     return normalize(y)
 
 
-def white(N: int, state: np.random.RandomState | None = None) -> NDArray:
+def white(N: int, rng: int | np.random.Generator | None = None) -> NDArray:
     """Generate white noise.
 
     White noise has constant power spectral density across all frequencies (flat
@@ -133,9 +135,9 @@ def white(N: int, state: np.random.RandomState | None = None) -> NDArray:
     ----------
     N : int
         Number of samples to generate.
-    state : np.random.RandomState, optional
-        Random number generator state for reproducibility. If None, uses a
-        new RandomState. Default is None.
+    rng : int or numpy.random.Generator, optional
+        Seed, or a Generator to draw from. Default is None, a fresh
+        unseeded Generator.
 
     Returns
     -------
@@ -143,11 +145,11 @@ def white(N: int, state: np.random.RandomState | None = None) -> NDArray:
         White noise signal from standard normal distribution.
 
     """
-    state = np.random.RandomState() if state is None else state
-    return state.randn(N)
+    rng = np.random.default_rng(rng)
+    return rng.standard_normal(N)
 
 
-def brown(N: int, state: np.random.RandomState | None = None) -> NDArray:
+def brown(N: int, rng: int | np.random.Generator | None = None) -> NDArray:
     """Generate brown (Brownian, red) noise.
 
     Brown noise has power spectral density that decreases at 6 dB per octave
@@ -158,9 +160,9 @@ def brown(N: int, state: np.random.RandomState | None = None) -> NDArray:
     ----------
     N : int
         Number of samples to generate.
-    state : np.random.RandomState, optional
-        Random number generator state for reproducibility. If None, uses a
-        new RandomState. Default is None.
+    rng : int or numpy.random.Generator, optional
+        Seed, or a Generator to draw from. Default is None, a fresh
+        unseeded Generator.
 
     Returns
     -------
@@ -176,9 +178,11 @@ def brown(N: int, state: np.random.RandomState | None = None) -> NDArray:
     Adapted from python-acoustics library.
 
     """
-    state = np.random.RandomState() if state is None else state
+    rng = np.random.default_rng(rng)
     uneven = N % 2
-    X = state.randn(N // 2 + 1 + uneven) + 1j * state.randn(N // 2 + 1 + uneven)
+    X = rng.standard_normal(N // 2 + 1 + uneven) + 1j * rng.standard_normal(
+        N // 2 + 1 + uneven
+    )
     S = np.arange(len(X)) + 1
     y = np.fft.irfft(X / S).real
     if uneven:
@@ -194,12 +198,12 @@ NOISE_FUNCTION = {
 
 
 def _draw_per_ripple(
-    value: float | Sequence[float] | NDArray, n_ripples: int, state: np.random.RandomState
+    value: float | Sequence[float] | NDArray, n_ripples: int, rng: np.random.Generator
 ) -> NDArray:
     """A scalar repeated per ripple, or one uniform draw per ripple from a range.
 
     A scalar consumes no randomness; a two-element ``(low, high)`` sequence
-    draws ``n_ripples`` values from ``state``.
+    draws ``n_ripples`` values from ``rng``.
     """
     values = np.asarray(value, dtype=float)
     if values.ndim == 0:
@@ -209,7 +213,7 @@ def _draw_per_ripple(
     low, high = values
     if not low <= high:
         raise ValueError(f"Range must be (low, high) with low <= high, got {value}.")
-    return state.uniform(low, high, size=n_ripples)
+    return rng.uniform(low, high, size=n_ripples)
 
 
 def simulate_LFP(
@@ -219,7 +223,7 @@ def simulate_LFP(
     ripple_duration: float | tuple[float, float] = 0.100,
     noise_type: Literal["white", "pink", "brown"] = "brown",
     noise_amplitude: float = 1.3,
-    random_state: int | np.random.RandomState | None = None,
+    random_state: int | np.random.Generator | None = None,
     *,
     ripple_snr: float | None = None,
     ripple_frequency: float | tuple[float, float] = RIPPLE_FREQUENCY,
@@ -254,8 +258,9 @@ def simulate_LFP(
         ripple-band background closer to recordings. See Notes.
     noise_amplitude : float, optional
         Amplitude of background noise in the signal's units. Default is 1.3.
-    random_state : int or np.random.RandomState, optional
-        Seed or random state. The noise is drawn first, then per-ripple
+    random_state : int or numpy.random.Generator, optional
+        Seed, or a Generator to draw from, as ``numpy.random.default_rng``
+        takes it. The noise is drawn first, then per-ripple
         frequencies, then per-ripple durations; a scalar consumes no
         randomness. So a given seed produces the same noise whatever the
         ripple parameters, but giving a frequency range changes the duration
@@ -323,9 +328,8 @@ def simulate_LFP(
     """
     if ripple_amplitude is not None and ripple_snr is not None:
         raise ValueError("Give either ripple_amplitude or ripple_snr, not both.")
-    if not isinstance(random_state, np.random.RandomState):
-        random_state = np.random.RandomState(random_state)
-    noise = (noise_amplitude / 2) * NOISE_FUNCTION[noise_type](time.size, state=random_state)
+    rng = np.random.default_rng(random_state)
+    noise = (noise_amplitude / 2) * NOISE_FUNCTION[noise_type](time.size, rng=rng)
 
     if isinstance(ripple_times, (int, float)):
         ripple_times = [ripple_times]
@@ -342,8 +346,8 @@ def simulate_LFP(
     elif ripple_amplitude is None:
         ripple_amplitude = 2.0
 
-    frequencies = _draw_per_ripple(ripple_frequency, n_ripples, random_state)
-    durations = _draw_per_ripple(ripple_duration, n_ripples, random_state)
+    frequencies = _draw_per_ripple(ripple_frequency, n_ripples, rng)
+    durations = _draw_per_ripple(ripple_duration, n_ripples, rng)
     if n_ripples:
         nyquist = 0.5 / np.median(np.diff(time))
         outside = [t for t in ripple_times if not time.min() <= t <= time.max()]

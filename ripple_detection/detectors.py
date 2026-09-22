@@ -1754,7 +1754,7 @@ def Long_sharp_wave_ripple_detector(
     minimum_sharp_wave_duration: float = 0.020,
     maximum_sharp_wave_duration: float = 0.500,
     minimum_ripple_duration: float = 0.025,
-    random_state: int | np.random.Generator | None = None,
+    random_state: int | np.random.Generator | None = 0,
 ) -> pd.DataFrame:
     """Detect sharp-wave ripples from a pyramidal-layer and a stratum radiatum channel.
 
@@ -1850,8 +1850,11 @@ def Long_sharp_wave_ripple_detector(
         count is the original's, one less than the inclusive count used for
         the sharp wave, so ``ripple_duration`` is one sample shorter than the
         span between its two boundary crossings.
-    random_state : int or numpy Generator, optional
-        Seed for the k-means initialization. Default None.
+    random_state : int or numpy.random.Generator, optional
+        Seed, or a Generator, for the k-means initialization, as
+        ``numpy.random.default_rng`` takes it. Default is 0, so two runs on
+        the same data give the same events; the original's k-means is
+        unseeded, which ``None`` reproduces.
 
     Returns
     -------

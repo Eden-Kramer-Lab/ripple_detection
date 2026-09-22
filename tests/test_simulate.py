@@ -125,11 +125,11 @@ class TestWhiteNoise:
 
     def test_white_noise_reproducible(self):
         """Test that white noise is reproducible with same seed."""
-        state = np.random.RandomState(42)
-        noise1 = white(1000, state=state)
+        rng = np.random.default_rng(42)
+        noise1 = white(1000, rng=rng)
 
-        state = np.random.RandomState(42)
-        noise2 = white(1000, state=state)
+        rng = np.random.default_rng(42)
+        noise2 = white(1000, rng=rng)
 
         assert np.allclose(noise1, noise2)
 
@@ -158,11 +158,11 @@ class TestPinkNoise:
 
     def test_pink_noise_reproducible(self):
         """Test that pink noise is reproducible with same seed."""
-        state = np.random.RandomState(42)
-        noise1 = pink(1000, state=state)
+        rng = np.random.default_rng(42)
+        noise1 = pink(1000, rng=rng)
 
-        state = np.random.RandomState(42)
-        noise2 = pink(1000, state=state)
+        rng = np.random.default_rng(42)
+        noise2 = pink(1000, rng=rng)
 
         assert np.allclose(noise1, noise2)
 
@@ -205,11 +205,11 @@ class TestBrownNoise:
 
     def test_brown_noise_reproducible(self):
         """Test that brown noise is reproducible with same seed."""
-        state = np.random.RandomState(42)
-        noise1 = brown(1000, state=state)
+        rng = np.random.default_rng(42)
+        noise1 = brown(1000, rng=rng)
 
-        state = np.random.RandomState(42)
-        noise2 = brown(1000, state=state)
+        rng = np.random.default_rng(42)
+        noise2 = brown(1000, rng=rng)
 
         assert np.allclose(noise1, noise2)
 
@@ -473,15 +473,17 @@ def _dominant_frequency(y, sampling_frequency):
 class TestSimulateLFPRealism:
     FS = 1500
 
-    def test_default_output_is_unchanged(self):
-        # pinned before ripple_snr / frequency / duration ranges were added
+    def test_default_output_is_pinned(self):
+        """The default call's output, pinned so an unintended change to the
+        draw order or the noise shows up. Re-pinned for 2.0, which draws from
+        numpy.random.default_rng rather than the legacy RandomState."""
         t = simulate_time(4500, self.FS)
         y = simulate_LFP(t, [1.0, 2.0], random_state=0)
-        assert _digest(y) == "73b0be75fa46fcf7"
+        assert _digest(y) == "aec97d07aeeb5ff9"
         y = simulate_LFP(
             t, [1.0, 2.0], random_state=0, noise_type="pink", ripple_amplitude=1.0
         )
-        assert _digest(y) == "77859773f50401ce"
+        assert _digest(y) == "fb97eb68f45ea538"
 
     def test_ripple_snr_sets_peak_relative_to_in_band_background(self):
         t = simulate_time(self.FS * 20, self.FS)
@@ -610,7 +612,7 @@ class TestSimulateLFPRealism:
             t,
             [1.0, 2.0],
             ripple_frequency=(150.0, 250.0),
-            random_state=np.random.RandomState(7),
+            random_state=np.random.default_rng(7),
         )
         np.testing.assert_array_equal(from_seed, from_state)
 

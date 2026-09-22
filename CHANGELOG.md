@@ -101,8 +101,12 @@ raises on zero rows; that is hdmf's, not this package's.
 - `load_literature_parameters`, the survey of detection parameters in 57 papers
   that decode replay content.
 - `ripple_snr`, `random_state` and ranges for `ripple_frequency` and
-  `ripple_duration` on `simulate_LFP`. The default call gives the same output as
-  before.
+  `ripple_duration` on `simulate_LFP`. Every draw in the package goes through
+  `numpy.random.default_rng`, so `random_state` is a seed or a Generator on
+  `simulate_LFP`, the noise functions and `Long_sharp_wave_ripple_detector`
+  alike. The same seed gives different noise than 1.x, which used the legacy
+  `RandomState`. The Long detector is seeded with 0 by default, so two runs on
+  the same data agree; `None` gives the original's unseeded k-means.
 - The package root exports the helpers the detectors are built from, and
   `__all__` is the public API, pinned exactly by a test: `get_envelope`,
   `gaussian_smooth`, `ripple_bandpass_filter`, `normalize_signal_manually`,
