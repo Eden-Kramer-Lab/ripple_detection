@@ -338,4 +338,6 @@ All code quality tools are configured in [pyproject.toml](pyproject.toml):
 - Coverage of `src/ripple_detection` reported to the terminal with missing lines
 - Test path: `tests/`
 
+**Task runner.** There is no `nox` or `tox` file, on purpose. `uv run <command>` against the locked environment is the task runner, and the commands in this file are the whole list. This, and having no documentation site (the README and the docstrings are the documentation), are the deliberate departures from the Scientific Python development guide.
+
 For testing and development use `uv run` (the environment `uv sync` builds from `uv.lock`) or the `ripple_detection` conda environment if available, so dependency versions are consistent.
