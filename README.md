@@ -335,6 +335,17 @@ filter_num, filter_denom = ripple_bandpass_filter(sampling_frequency)
 filtered_lfps = filtfilt(filter_num, filter_denom, LFPs, axis=0)  # LFPs from Basic Usage
 ```
 
+#### Data sampled at 25 kHz or above
+
+`filter_ripple_band` designs its filter for the rate it is given, and at 25 kHz
+and above that design needs 2500 taps or more. There the equiripple algorithm
+stops short of its specification (about 41 dB of single-pass attenuation, 82 dB
+after the forward-backward pass, so the result is still clean), the kernel is
+about 0.1 s long, and a run of samples shorter than that cannot be filtered.
+Decimate to 3 kHz or below first (`scipy.signal.decimate`); nothing below
+300 Hz is lost, and the filter then meets its specification at a tenth of the
+cost. Pass the decimated rate as `sampling_frequency`.
+
 #### No ripples detected (empty DataFrame)
 
 If detection returns no events, try adjusting parameters:

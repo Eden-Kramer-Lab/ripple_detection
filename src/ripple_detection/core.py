@@ -74,6 +74,14 @@ def ripple_bandpass_filter(
     error is about 0.004 (48 dB) at 1500-2000 Hz, rising to 0.009 (41 dB) at
     30 kHz, and smaller at low rates, where the 101-tap minimum dominates.
 
+    At 25 kHz and above the design needs 2500 taps or more, where the
+    exchange algorithm no longer reaches its specification: the single-pass
+    attenuation settles at about 41 dB (82 dB after the forward-backward
+    pass, so still ample), the kernel is about 0.1 s long, and designing it
+    takes a few tenths of a second. Decimating such data to 3 kHz or below
+    before filtering loses nothing below 300 Hz and gives the specified
+    design at a tenth of the cost.
+
     """
     STOPBAND_ATTENUATION_DB = 45.0
     MINIMUM_NUMTAPS = 101
