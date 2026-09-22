@@ -35,6 +35,7 @@ from ripple_detection.detectors import (
     multiunit_HSE_detector,
 )
 from ripple_detection.detectors import _events as events_module
+from ripple_detection.detectors._blocks import _contiguous_valid_blocks
 from ripple_detection.detectors._carey import _contained_in_intervals, _state_intervals
 from ripple_detection.detectors._events import (
     _count_active_units,
@@ -2924,13 +2925,17 @@ class TestWarningsPointAtTheCaller:
     def test_time_step_warning_reports_this_file(self, detector):
         sampling_frequency = 1000.0
         n_time = 20_000
-        time_ms = np.arange(n_time) * 0.005  # five times the expected step
+        stretched_time = np.arange(n_time) * 0.00105  # five percent over the expected step
         lfps = _synthetic_ripple_band(n_time, sampling_frequency, [(5000, 5060, 20.0)])
         speed = np.full(n_time, 2.0)
         call = {
-            "Kay": lambda: Kay_ripple_detector(time_ms, lfps, speed, sampling_frequency),
-            "Zugaro": lambda: Zugaro_ripple_detector(time_ms, lfps, speed, sampling_frequency),
-            "Yu": lambda: Yu_ripple_detector(time_ms, lfps, speed, sampling_frequency),
+            "Kay": lambda: Kay_ripple_detector(
+                stretched_time, lfps, speed, sampling_frequency
+            ),
+            "Zugaro": lambda: Zugaro_ripple_detector(
+                stretched_time, lfps, speed, sampling_frequency
+            ),
+            "Yu": lambda: Yu_ripple_detector(stretched_time, lfps, speed, sampling_frequency),
         }[detector]
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
@@ -3999,14 +4004,23 @@ class TestParameterRanges:
             self._call(detector, **kwargs)
 
 
-class TestGapRuleUsesTheObservedStep:
-    """The block splitter measures the sample step from the timestamps. With a
-    nominal rate 1.5 times too high, every step would exceed 1.5 nominal
-    intervals and every sample would be its own block, so no event could be
-    found; measured from the data, the blocks and the events are unchanged."""
+class TestGapRule:
+    """A block ends wherever the timestamp step exceeds 1.5 times the median
+    step, measured from the timestamps rather than the nominal rate."""
 
-    FS = 1000
-    N_TIME = 20_000  # enough immobility for the Yu noise threshold
+    @pytest.mark.parametrize(("jump", "splits"), [(1.4, False), (1.5, False), (1.6, True)])
+    def test_the_threshold_is_one_and_a_half_median_steps(self, jump, splits):
+        step = 0.002  # a 500 Hz grid; the rule never sees a sampling rate
+        steps = np.full(99, step)
+        steps[50] = jump * step
+        time = np.concatenate([[0.0], np.cumsum(steps)])
+        blocks = _contiguous_valid_blocks(np.ones(100, dtype=bool), time)
+        assert blocks == ([(0, 51), (51, 100)] if splits else [(0, 100)])
+
+    def test_jitter_under_half_a_step_never_splits(self):
+        rng = np.random.default_rng(0)
+        time = np.cumsum(0.001 * (1 + rng.uniform(-0.4, 0.4, 10_000)))
+        assert _contiguous_valid_blocks(np.ones(10_000, dtype=bool), time) == [(0, 10_000)]
 
     @pytest.mark.parametrize(
         "detector",
@@ -4017,17 +4031,20 @@ class TestGapRuleUsesTheObservedStep:
             Zugaro_ripple_detector,
         ],
     )
-    def test_an_overstated_rate_warns_but_still_finds_the_ripples(
-        self, detector, time, stationary
-    ):
-        bursts = [(4000, 4060, 20.0), (10000, 10060, 20.0), (16000, 16060, 20.0)]
-        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, bursts)
-        with pytest.warns(UserWarning, match="differs from expected sampling interval"):
-            events = detector(time, lfps, stationary, 1.6 * self.FS)
-        for start, _, _ in bursts:
-            assert any(
-                (events.start_time <= time[start + 30]) & (events.end_time >= time[start + 30])
-            )
+    @pytest.mark.parametrize("factor", [0.5, 1.6])
+    def test_a_rate_more_than_ten_percent_off_raises(self, detector, factor):
+        fs = 1000
+        time = np.arange(20_000) / fs
+        lfps = _synthetic_ripple_band(20_000, fs, [(4000, 4060, 20.0)])
+        with pytest.raises(ValueError, match="times the interval sampling_frequency"):
+            detector(time, lfps, np.full(20_000, 2.0), factor * fs)
+
+    def test_a_nan_timestamp_raises_and_says_so(self):
+        time = np.arange(5000) / 1000.0
+        time[100] = np.nan
+        lfps = _synthetic_ripple_band(5000, 1000, [(2000, 2060, 20.0)])
+        with pytest.raises(ValueError, match="time holds 1 NaN"):
+            Kay_ripple_detector(time, lfps, np.full(5000, 2.0), 1000)
 
 
 class TestValidationPaths:

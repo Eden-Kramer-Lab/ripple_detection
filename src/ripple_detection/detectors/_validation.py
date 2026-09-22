@@ -99,17 +99,24 @@ def _validate_time_units(
     Raises
     ------
     ValueError
-        If time is not increasing, if its median step is not positive (most
-        timestamps repeat), or if it appears to be in samples instead of
-        seconds.
+        If time holds NaN or infinity, is not increasing, has a median step
+        that is not positive (most timestamps repeat), appears to be in
+        samples instead of seconds, or has a median step more than 10 percent
+        away from ``1 / sampling_frequency``.
 
     Warnings
     --------
     UserWarning
         If the median time step differs from ``1 / sampling_frequency`` by more
-        than 2 percent.
+        than 2 percent and at most 10.
 
     """
+    if not np.all(np.isfinite(time)):
+        msg = (
+            f"time holds {np.count_nonzero(~np.isfinite(time))} NaN or infinite value(s). "
+            "Every sample needs a timestamp; mark missing data with NaN in the signals."
+        )
+        raise ValueError(msg)
     if len(time) > 1:
         steps = np.diff(time)
         if np.any(steps < 0):
@@ -137,10 +144,20 @@ def _validate_time_units(
                 f"  time_seconds = time_samples / {sampling_frequency}"
             )
             raise ValueError(msg)
-        # Check if time step is suspiciously different from sampling frequency
-        # 2 %: clocks drift by far less, while the nominal rate sets the smoothing
-        # widths and windows and the timestamps set the sample counts, so a
-        # mismatch this size already changes the events
+        # The nominal rate sets the smoothing widths and windows and the
+        # timestamps set the sample counts. Beyond 10 % the two describe
+        # different recordings (a stated 300 Hz on 1500 Hz data changed the
+        # event count by a quarter), so raise; from 2 % warn, since a nominal
+        # rate can differ from an acquisition system's true one by a few percent
+        # while clocks drift by far less.
+        if not np.isclose(median_dt, expected_dt, rtol=0.10):
+            msg = (
+                f"The median time step ({median_dt:.6g} s) is "
+                f"{median_dt / expected_dt:.3g} times the interval sampling_frequency "
+                f"implies ({expected_dt:.6g} s at {sampling_frequency} Hz). Pass the rate "
+                "the timestamps were recorded at, and time in seconds."
+            )
+            raise ValueError(msg)
         if not np.isclose(median_dt, expected_dt, rtol=0.02):
             warnings.warn(
                 f"Time array step ({median_dt:.6f} s) differs from expected sampling interval "

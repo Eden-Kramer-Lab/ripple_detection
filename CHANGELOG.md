@@ -268,11 +268,13 @@ raises on zero rows; that is hdmf's, not this package's.
   full-length array per ripple. Ten minutes at 1500 Hz with 100 ripples
   peaked at 1.5 GB and now stays near the size of the output; the values are
   unchanged to ten decimals.
-- The sampling-rate check warns when `sampling_frequency` and the timestamps
-  disagree by 2 percent, not 20. The nominal rate sets the smoothing widths
-  and the Zugaro, Long and Carey windows while the timestamps set the sample
-  counts, so a 20 percent mismatch changed Kay's event count by a fifth and
-  said nothing.
+- **Breaking.** The sampling-rate check raises when `sampling_frequency` and
+  the timestamps disagree by more than 10 percent, and warns from 2 percent,
+  not 20. The nominal rate sets the smoothing widths and the Zugaro, Long and
+  Carey windows while the timestamps set the sample counts, so a 20 percent
+  mismatch changed Kay's event count by a fifth and said nothing, and an
+  understated rate of any size only warned. A NaN in `time` raises and says
+  so, instead of reporting that most timestamps repeat.
 - **Breaking.** `exclude_movement` and the per-event statistics read the speeds
   in time order, not one for each event. Nested events were kept or discarded in
   the wrong order, and a bound that was not on the sample grid discarded all
