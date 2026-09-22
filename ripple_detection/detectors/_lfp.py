@@ -764,7 +764,11 @@ def Yu_ripple_detector(
         0.0 (no exclusion).
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask selecting the noise sample instead of ``speed <=
-        speed_threshold``.
+        speed_threshold``. It sets the samples the threshold is estimated
+        from and the trace is normalized to. With ``zscore_per_channel``, the
+        per-channel z-score that precedes the median is pooled over every
+        valid sample regardless of this mask, as the original implementation
+        does.
     zscore_per_channel : bool, optional
         Z-score each tetrode's smoothed envelope before the median, as the
         original implementation does; the threshold is then estimated on that
