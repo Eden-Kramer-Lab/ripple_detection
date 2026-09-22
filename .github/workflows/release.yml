@@ -63,11 +63,30 @@ jobs:
           pip install -e .[examples]
           jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/detection_examples.ipynb
           jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/test_individual_algorithm_components.ipynb
+          jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/ripple_detection_tutorial.ipynb
+
+  test-minimum-pins:
+    name: Test at the declared dependency floors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install the floors pyproject.toml declares
+        run: |
+          pip install "numpy==1.24.*" "scipy==1.10.*" "pandas==2.0.*"
+          pip install --no-deps -e .
+          pip install pytest pytest-cov hypothesis pytest-snapshot
+      - name: Run tests
+        run: pytest tests/ --no-cov
 
   build:
     name: Build distribution
     runs-on: ubuntu-latest
-    needs: [quality, test]
+    needs: [quality, test, test-minimum-pins]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -109,12 +128,26 @@ jobs:
       - name: Install sdist
         if: matrix.package == 'sdist'
         run: pip install dist/*.tar.gz
-      - name: Check import
-        run: python -c "import ripple_detection; print('Version:', ripple_detection.__version__)"
-      - name: Install test dependencies
-        run: pip install pytest pytest-cov
-      - name: Run package tests
-        run: pytest --pyargs ripple_detection -v || echo "No tests found in package"
+      - name: Smoke-test the installed package
+        # exercises the two data files the wheel force-includes (the filter
+        # kernel and the literature survey) and one detector end to end
+        run: |
+          python - <<'EOF'
+          import numpy as np
+          import ripple_detection as rd
+          print("Version:", rd.__version__)
+          fs = 1500
+          time = np.arange(0, 20, 1 / fs)
+          lfp = np.column_stack([rd.simulate_LFP(time, [3.0, 9.0], random_state=s) for s in (1, 2)])
+          filtered = rd.filter_ripple_band(lfp, fs)  # loads ripplefilter.mat
+          events = rd.Kay_ripple_detector(time, filtered, np.full(len(time), 2.0), fs)
+          assert len(events) == 2, len(events)
+          assert rd.load_literature_parameters().shape == (57, 35)
+          spec = rd.get_detector("Kay_ripple_detector")
+          spec.check_inputs(filtered)
+          spec.check_parameters(spec.parameters)
+          print("smoke test passed")
+          EOF
 
   publish:
     name: Publish to PyPI
