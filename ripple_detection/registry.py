@@ -12,6 +12,7 @@ name alone lets a caller hand it filtered data and get plausible nonsense.
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import Literal
 
 import pandas as pd
 
@@ -27,14 +28,18 @@ from ripple_detection.detectors import (
     multiunit_HSE_detector,
 )
 
-RIPPLE_BAND_LFP = "ripple_band_lfp"
+SignalKind = Literal["ripple_band_lfp", "raw_lfp_pair", "multiunit"]
+"""The kinds of signal a detector can take. The three values below are the
+only ones, so a misspelled kind is a type error at the registration site."""
+
+RIPPLE_BAND_LFP: SignalKind = "ripple_band_lfp"
 """``(n_time, n_channels)`` LFP filtered to the ripple band."""
 
-RAW_LFP_PAIR = "raw_lfp_pair"
+RAW_LFP_PAIR: SignalKind = "raw_lfp_pair"
 """``(n_time, 2)`` **unfiltered** LFP: a pyramidal-layer channel and a
 stratum radiatum channel, in that order."""
 
-MULTIUNIT = "multiunit"
+MULTIUNIT: SignalKind = "multiunit"
 """``(n_time, n_units)`` spike counts or indicators."""
 
 
@@ -44,25 +49,31 @@ class DetectorSpec:
 
     Attributes
     ----------
-    name : str
-        The detector's name, the same string used as its registry key.
     detector : callable
         The detector itself. Every one takes ``time``, its signals, ``speed``
-        and ``sampling_frequency`` positionally, in that order, and returns one
-        DataFrame row per event.
-    inputs : tuple of str
-        The signals the detector takes, in the order it takes them, each one
-        of :data:`RIPPLE_BAND_LFP`, :data:`RAW_LFP_PAIR` or :data:`MULTIUNIT`.
+        and ``sampling_frequency`` positionally, in that order, followed by
+        keyword parameters that tune it. Every one returns a DataFrame with
+        one row per event, indexed by ``event_number`` from 1, holding the
+        columns listed under "Output Format" in the README; some add columns
+        of their own.
+    inputs : tuple of SignalKind
+        The required positional signals, in the order the detector takes
+        them. Optional signals such as ``Carey_candidate_detector``'s
+        ``theta_lfp`` are keyword parameters and are not listed.
 
     """
 
-    name: str
     detector: Callable[..., pd.DataFrame]
-    inputs: tuple[str, ...]
+    inputs: tuple[SignalKind, ...]
+
+    @property
+    def name(self) -> str:
+        """The detector's name, which is also its key in :data:`DETECTORS`."""
+        return self.detector.__name__
 
 
-def _spec(detector: Callable[..., pd.DataFrame], *inputs: str) -> DetectorSpec:
-    return DetectorSpec(name=detector.__name__, detector=detector, inputs=inputs)
+def _spec(detector: Callable[..., pd.DataFrame], *inputs: SignalKind) -> DetectorSpec:
+    return DetectorSpec(detector=detector, inputs=inputs)
 
 
 DETECTORS: Mapping[str, DetectorSpec] = MappingProxyType(
@@ -104,14 +115,11 @@ def get_detector(name: str) -> DetectorSpec:
 
     Examples
     --------
-    >>> from ripple_detection import get_detector
-    >>> spec = get_detector("Kay_ripple_detector")
-    >>> spec.inputs
-    ('ripple_band_lfp',)
-
     Check that a detector takes what you have before calling it:
 
-    >>> spec.inputs == ("ripple_band_lfp",)
+    >>> from ripple_detection import RIPPLE_BAND_LFP, get_detector
+    >>> spec = get_detector("Kay_ripple_detector")
+    >>> spec.inputs == (RIPPLE_BAND_LFP,)
     True
 
     """

@@ -43,6 +43,7 @@ from ripple_detection.registry import (
     RAW_LFP_PAIR,
     RIPPLE_BAND_LFP,
     DetectorSpec,
+    SignalKind,
     get_detector,
 )
 from ripple_detection.simulate import simulate_LFP, simulate_time
@@ -64,6 +65,7 @@ __all__ = [
     "Long_sharp_wave_ripple_detector",
     "Roumis_ripple_detector",
     "Shvartsman_ripple_detector",
+    "SignalKind",
     "Yu_ripple_detector",
     "Zugaro_ripple_detector",
     "__version__",

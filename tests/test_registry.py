@@ -6,7 +6,13 @@ import inspect
 import pytest
 
 import ripple_detection
-from ripple_detection import DETECTORS, get_detector
+from ripple_detection import (
+    DETECTORS,
+    MULTIUNIT,
+    RAW_LFP_PAIR,
+    RIPPLE_BAND_LFP,
+    get_detector,
+)
 
 
 def _exported_detectors():
@@ -75,14 +81,27 @@ def test_each_detector_declares_what_it_needs(name, inputs):
     assert get_detector(name).inputs == inputs
 
 
-def test_declared_inputs_match_the_signature():
-    """One entry per signal the detector actually takes, in order."""
-    signal_arguments = {"filtered_lfps", "raw_lfps", "multiunit"}
+def test_declared_inputs_match_the_signature_in_kind_and_position():
+    """The spec's promise is positional: time, the listed signals in order,
+    speed, sampling_frequency. A mislabeled kind (Long as ripple-band) or a
+    swapped pair (Carey's spikes before its LFP) fails here, independently of
+    the hand-written table above."""
+    kind_of_parameter = {
+        "filtered_lfps": RIPPLE_BAND_LFP,
+        "raw_lfps": RAW_LFP_PAIR,
+        "multiunit": MULTIUNIT,
+    }
     for name, spec in DETECTORS.items():
         parameters = list(inspect.signature(spec.detector).parameters)
-        signals = [p for p in parameters if p in signal_arguments]
+        n_signals = len(spec.inputs)
 
-        assert len(signals) == len(spec.inputs), name
+        assert parameters[0] == "time", name
+        assert parameters[n_signals + 1 : n_signals + 3] == ["speed", "sampling_frequency"], (
+            name
+        )
+        assert (
+            tuple(kind_of_parameter[p] for p in parameters[1 : n_signals + 1]) == spec.inputs
+        )
 
 
 def test_registry_is_read_only():
@@ -93,4 +112,4 @@ def test_registry_is_read_only():
 
 def test_spec_is_immutable():
     with pytest.raises(dataclasses.FrozenInstanceError):
-        get_detector("Kay_ripple_detector").name = "other"
+        get_detector("Kay_ripple_detector").inputs = ("multiunit",)
