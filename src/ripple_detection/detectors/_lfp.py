@@ -416,6 +416,7 @@ def Shvartsman_ripple_detector(
         what a published maximum describes. Default is None (no upper limit).
         Published ceilings run from a few hundred milliseconds to a couple of
         seconds.
+
     Returns
     -------
     ripple_times : pd.DataFrame
@@ -656,6 +657,7 @@ def Kay_ripple_detector(
         what a published maximum describes. Default is None (no upper limit).
         Published ceilings run from a few hundred milliseconds to a couple of
         seconds.
+
     Returns
     -------
     ripple_times : pd.DataFrame
@@ -831,6 +833,7 @@ def Yu_ripple_detector(
         what a published maximum describes. Default is None (no upper limit).
         Published ceilings run from a few hundred milliseconds to a couple of
         seconds.
+
     Returns
     -------
     ripple_times : pd.DataFrame
@@ -1019,6 +1022,7 @@ def Karlsson_ripple_detector(
         what a published maximum describes. Default is None (no upper limit).
         Published ceilings run from a few hundred milliseconds to a couple of
         seconds.
+
     Returns
     -------
     ripple_times : pd.DataFrame
@@ -1177,6 +1181,7 @@ def Roumis_ripple_detector(
         what a published maximum describes. Default is None (no upper limit).
         Published ceilings run from a few hundred milliseconds to a couple of
         seconds.
+
     Returns
     -------
     ripple_times : pd.DataFrame
