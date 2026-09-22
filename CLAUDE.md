@@ -313,9 +313,9 @@ All functions in the codebase use type hints with modern Python 3.10+ syntax:
 - `X | None` instead of `Optional[X]`
 - `list[X]`, `dict[K, V]`, `tuple[X, Y]` instead of `List[X]`, `Dict[K, V]`, `Tuple[X, Y]`
 - `collections.abc.Generator` for generators
-- `numpy.typing.ArrayLike` and `NDArray` for numpy array parameters and return types
+- `numpy.typing.ArrayLike` for array parameters (each function casts with `np.asarray` first) and the aliases `FloatArray`, `BoolArray` and `IntArray` from `core.py` for arrays it returns or holds, so the dtype is part of the signature
 
-The mypy configuration in `pyproject.toml` includes pragmatic overrides to avoid false positives with numpy's `ArrayLike` type while maintaining type safety.
+mypy runs in strict mode with no per-module overrides, and `py.typed` ships so downstream type checkers see the same annotations.
 
 ### Tool Configuration
 
@@ -328,9 +328,10 @@ All code quality tools are configured in [pyproject.toml](pyproject.toml):
 - Ignores E501 (line too long) since `ruff format` handles wrapping
 
 **Mypy** (`[tool.mypy]`):
-- Target: Python 3.10
+- `strict = true`, plus `warn_unreachable` and the `ignore-without-code`, `redundant-expr` and `truthy-bool` error codes
+- Target: Python 3.12 (NumPy's stubs use PEP 695 syntax; runtime support for 3.10 is verified by the test matrix)
 - `ignore_missing_imports = true` (for scipy, pandas - no stubs installed)
-- Module overrides disable specific error codes that cause false positives with `ArrayLike`
+- Checks `src/ripple_detection` only; the tests are not type-checked
 
 **Pytest** (`[tool.pytest.ini_options]`):
 - Auto coverage reporting to terminal with missing lines

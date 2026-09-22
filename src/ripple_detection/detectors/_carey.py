@@ -2,11 +2,14 @@
 
 import numpy as np
 import pandas as pd
-from numpy.typing import ArrayLike, NDArray
+from numpy.typing import ArrayLike
 from scipy.ndimage import convolve1d, gaussian_filter1d
 from scipy.signal import butter, filtfilt
 
 from ripple_detection.core import (
+    BoolArray,
+    FloatArray,
+    IntArray,
     _boolean_run_bounds,
     _unit_area_gaussian,
     get_envelope,
@@ -29,8 +32,8 @@ from ripple_detection.detectors._validation import (
 
 
 def _state_intervals(
-    is_in_state: NDArray, time: NDArray, merge_gap: float, minimum_length: float
-) -> NDArray:
+    is_in_state: BoolArray, time: FloatArray, merge_gap: float, minimum_length: float
+) -> IntArray:
     """Contiguous runs of a state, merged across gaps shorter than ``merge_gap``
     and dropped when shorter than ``minimum_length`` (vandermeerlab ``TSDtoIV``).
     Returns ``[start_index, stop_index]`` rows, inclusive."""
@@ -48,7 +51,7 @@ def _state_intervals(
     return np.column_stack([starts[long_enough], stops[long_enough]])
 
 
-def _contained_in_intervals(event_bounds: NDArray, intervals: NDArray) -> NDArray:
+def _contained_in_intervals(event_bounds: IntArray, intervals: IntArray) -> BoolArray:
     """True for each ``[start, stop]`` event lying inside some interval (vandermeerlab ``restrict``)."""
     if len(event_bounds) == 0:
         return np.empty(0, dtype=bool)
@@ -219,13 +222,14 @@ def Carey_candidate_detector(
         msg = f"Array length mismatch: multiunit has {multiunit.shape[0]} samples but time has {n_time}."
         raise ValueError(msg)
     signals = [filtered_lfps, multiunit, speed]
+    theta_signal: FloatArray | None = None
     theta_filter = None
     if theta_lfp is not None:
-        theta_lfp = np.asarray(theta_lfp, dtype=float)
-        if theta_lfp.shape != (n_time,):
-            msg = f"theta_lfp must have shape ({n_time},), got {theta_lfp.shape}."
+        theta_signal = np.asarray(theta_lfp, dtype=float)
+        if theta_signal.shape != (n_time,):
+            msg = f"theta_lfp must have shape ({n_time},), got {theta_signal.shape}."
             raise ValueError(msg)
-        signals.append(theta_lfp)
+        signals.append(theta_signal)
         theta_filter = butter(
             2, np.asarray(theta_band) / (0.5 * sampling_frequency), btype="bandpass"
         )
@@ -283,19 +287,19 @@ def Carey_candidate_detector(
 
     # two-threshold segmentation (TSDtoIV2) within each block: runs above the
     # edge, kept if the peak is above
-    candidates = []
+    candidate_runs: list[tuple[int, int]] = []
     for start, stop in blocks:
         block_z = zscored[start:stop]
         for run_start, run_stop in _boolean_run_bounds(block_z > low_threshold):
             if block_z[run_start:run_stop].max() > high_threshold:
-                candidates.append((start + run_start, start + run_stop - 1))
-    candidates = np.asarray(candidates, dtype=int).reshape(-1, 2)
+                candidate_runs.append((start + run_start, start + run_stop - 1))
+    candidates = np.asarray(candidate_runs, dtype=int).reshape(-1, 2)
     if len(candidates):
         n_samples = candidates[:, 1] - candidates[:, 0] + 1
         candidates = candidates[sample_count_within(n_samples, time, minimum_duration)]
 
     # state restriction: contained in a low-speed (and low-theta) interval
-    def _intervals(is_in_state: NDArray) -> NDArray:
+    def _intervals(is_in_state: BoolArray) -> IntArray:
         return np.concatenate(
             [np.empty((0, 2), dtype=int)]
             + [
@@ -314,11 +318,11 @@ def Carey_candidate_detector(
         candidates = candidates[
             _contained_in_intervals(candidates, _intervals(speed <= speed_threshold))
         ]
-    if len(candidates) and theta_filter is not None:
+    if len(candidates) and theta_filter is not None and theta_signal is not None:
         theta_envelope = np.full(n_time, np.nan)
         for start, stop in blocks:
             theta_envelope[start:stop] = get_envelope(
-                filtfilt(*theta_filter, theta_lfp[start:stop])
+                filtfilt(*theta_filter, theta_signal[start:stop])
             )
         low_theta = _intervals(normalize_signal(theta_envelope) < theta_threshold)
         candidates = candidates[_contained_in_intervals(candidates, low_theta)]

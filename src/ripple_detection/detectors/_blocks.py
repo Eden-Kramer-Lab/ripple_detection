@@ -5,9 +5,11 @@ import warnings
 from itertools import pairwise
 
 import numpy as np
-from numpy.typing import ArrayLike, NDArray
+from numpy.typing import ArrayLike
 
 from ripple_detection.core import (
+    BoolArray,
+    FloatArray,
     _get_normalization_mask,
     gaussian_smooth,
     get_envelope,
@@ -16,7 +18,9 @@ from ripple_detection.core import (
 )
 
 
-def _valid_blocks(time: NDArray, *signals: NDArray) -> tuple[NDArray, list[tuple[int, int]]]:
+def _valid_blocks(
+    time: FloatArray, *signals: FloatArray
+) -> tuple[BoolArray, list[tuple[int, int]]]:
     """The samples every detector may use, and their contiguous blocks.
 
     A sample is valid when every channel of every signal is finite. Valid
@@ -58,7 +62,7 @@ def _valid_blocks(time: NDArray, *signals: NDArray) -> tuple[NDArray, list[tuple
 
 def _drop_short_blocks(
     blocks: list[tuple[int, int]],
-    is_valid: NDArray,
+    is_valid: BoolArray,
     minimum_length: int,
     reason: str,
     stacklevel: int = 3,
@@ -90,7 +94,7 @@ def _drop_short_blocks(
     return kept
 
 
-def _mask_invalid(signal: NDArray, is_valid: NDArray) -> NDArray:
+def _mask_invalid(signal: FloatArray, is_valid: BoolArray) -> FloatArray:
     """A copy of ``signal`` with NaN at every invalid sample, so a helper that
     splits blocks on its own splits them where the detector does."""
     masked = signal.copy()
@@ -99,8 +103,8 @@ def _mask_invalid(signal: NDArray, is_valid: NDArray) -> NDArray:
 
 
 def _normalization_mask_over_valid(
-    n_time: int, is_valid: NDArray, normalization_mask: ArrayLike | None
-) -> NDArray:
+    n_time: int, is_valid: BoolArray, normalization_mask: ArrayLike | None
+) -> BoolArray:
     """The samples the normalization statistics come from: the caller's mask,
     if any, restricted to valid samples."""
     mask = _get_normalization_mask((n_time,), normalization_mask)
@@ -115,8 +119,8 @@ def _normalization_mask_over_valid(
 
 
 def _threshold_blocks(
-    normalized: NDArray,
-    time: NDArray,
+    normalized: FloatArray,
+    time: FloatArray,
     blocks: list[tuple[int, int]],
     minimum_duration: float,
     zscore_threshold: float,
@@ -142,7 +146,9 @@ def _threshold_blocks(
     return events
 
 
-def _contiguous_valid_blocks(is_valid: NDArray, time: NDArray | None) -> list[tuple[int, int]]:
+def _contiguous_valid_blocks(
+    is_valid: BoolArray, time: FloatArray | None
+) -> list[tuple[int, int]]:
     """Split rows into maximal contiguous valid blocks.
 
     A block ends at an invalid row or, when ``time`` is given, wherever the
@@ -177,12 +183,12 @@ def _contiguous_valid_blocks(is_valid: NDArray, time: NDArray | None) -> list[tu
 
 
 def _smoothed_envelope(
-    filtered_lfps: NDArray,
+    filtered_lfps: FloatArray,
     blocks: list[tuple[int, int]],
     sampling_frequency: float,
     smoothing_sigma: float,
     square: bool = False,
-) -> NDArray:
+) -> FloatArray:
     """Per-channel envelope, squared if asked, smoothed within each block.
 
     Neither the Hilbert transform nor the Gaussian kernel spans a gap.

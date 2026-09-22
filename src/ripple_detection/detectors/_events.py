@@ -3,9 +3,13 @@ tail, active-unit counts, and the per-event statistics every detector reports.""
 
 import numpy as np
 import pandas as pd
-from numpy.typing import ArrayLike, NDArray
+from numpy.typing import ArrayLike
+from scipy.integrate import trapezoid
 
 from ripple_detection.core import (
+    BoolArray,
+    FloatArray,
+    IntArray,
     exclude_close_events,
     exclude_movement,
     minimum_sample_count,
@@ -18,13 +22,10 @@ from ripple_detection.detectors._blocks import (
     _threshold_blocks,
 )
 
-# NumPy 2.x renamed trapz to trapezoid
-trapezoid = np.trapezoid if hasattr(np, "trapezoid") else np.trapz  # type: ignore[attr-defined]  # noqa: NPY201
-
 
 def _exclude_long_events(
-    event_times: ArrayLike, time: NDArray, maximum_duration: float | None
-) -> tuple[NDArray, NDArray]:
+    event_times: ArrayLike, time: FloatArray, maximum_duration: float | None
+) -> tuple[FloatArray, BoolArray]:
     """Drop events longer than ``maximum_duration``.
 
     The limit applies to the event as it will be reported, after the bounds
@@ -71,10 +72,10 @@ def _exclude_long_events(
 
 
 def _detect_from_trace(
-    trace: NDArray,
-    time: NDArray,
-    speed: NDArray,
-    is_valid: NDArray,
+    trace: FloatArray,
+    time: FloatArray,
+    speed: FloatArray,
+    is_valid: BoolArray,
     blocks: list[tuple[int, int]],
     *,
     minimum_duration: float,
@@ -135,7 +136,7 @@ def _detect_from_trace(
     )
 
 
-def _count_active_units(multiunit: NDArray, event_bounds: ArrayLike) -> NDArray:
+def _count_active_units(multiunit: FloatArray, event_bounds: ArrayLike) -> IntArray:
     """Number of units with at least one spike inside each event.
 
     Units are counted, not spikes, so a unit bursting hard counts once. The
@@ -223,7 +224,7 @@ def _get_event_stats(
     n_participants: ArrayLike | None = None,
     frac_participants: ArrayLike | None = None,
     blocks: list[tuple[int, int]] | None = None,
-    clipped: NDArray | None = None,
+    clipped: BoolArray | None = None,
 ) -> pd.DataFrame:
     """Compute comprehensive statistics for detected events.
 
@@ -311,6 +312,9 @@ def _get_event_stats(
         )
         raise ValueError(msg)
 
+    participant_channels = (
+        None if participants is None else np.asarray(participants, dtype=object)
+    )
     first = np.searchsorted(time_arr, events[:, 0], side="left")
     last = np.searchsorted(time_arr, events[:, 1], side="right")
     rows = []
@@ -319,10 +323,11 @@ def _get_event_stats(
     ):
         event_time = time_arr[a:b]
         event_speed = speed_arr[a:b]
-        if participants is None:
+        if participant_channels is None:
             z = metric[a:b]
         else:
-            z = metric[a:b][:, list(participants[index])].mean(axis=1)
+            channels = np.asarray(participant_channels[index], dtype=int)
+            z = metric[a:b][:, channels].mean(axis=1)
         rows.append(
             (
                 start_time,

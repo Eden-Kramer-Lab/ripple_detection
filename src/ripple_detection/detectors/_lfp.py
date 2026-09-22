@@ -2,12 +2,15 @@
 Shvartsman and Yu, with their consensus traces."""
 
 from itertools import chain
+from typing import cast
 
 import numpy as np
 import pandas as pd
-from numpy.typing import ArrayLike, NDArray
+from numpy.typing import ArrayLike
 
 from ripple_detection.core import (
+    FloatArray,
+    IntArray,
     _boolean_run_bounds,
     _is_immobile_at_endpoints,
     estimate_noise_threshold,
@@ -48,7 +51,7 @@ def get_Kay_ripple_consensus_trace(
     smoothing_sigma: float = 0.004,
     *,
     time: ArrayLike | None = None,
-) -> NDArray:
+) -> FloatArray:
     """Compute Kay consensus trace from multi-channel ripple-filtered LFPs.
 
     Combines multiple LFP channels into a single consensus trace, following
@@ -107,7 +110,7 @@ def get_Kay_ripple_consensus_trace(
         smoothed[start:stop] = gaussian_smooth(
             summed_power[start:stop], smoothing_sigma, sampling_frequency
         )
-    return np.sqrt(smoothed)
+    return np.asarray(np.sqrt(smoothed), dtype=float)
 
 
 def get_Yu_ripple_consensus_trace(
@@ -117,7 +120,7 @@ def get_Yu_ripple_consensus_trace(
     zscore_per_channel: bool = True,
     *,
     time: ArrayLike | None = None,
-) -> NDArray:
+) -> FloatArray:
     """Compute the Yu et al. 2017 consensus trace: median of per-tetrode envelopes.
 
     Each channel's ripple-band envelope is smoothed with a Gaussian kernel and,
@@ -214,11 +217,11 @@ def get_Yu_ripple_consensus_trace(
 
 
 def _extract_Yu_ripple_events(
-    trace: NDArray,
-    time: NDArray,
+    trace: FloatArray,
+    time: FloatArray,
     minimum_duration: float,
     threshold: float,
-) -> tuple[NDArray, NDArray]:
+) -> tuple[FloatArray, IntArray]:
     """Extract events from one contiguous block of a mean-zero consensus trace.
 
     A run of consecutive samples at or above ``threshold`` qualifies when it
@@ -463,8 +466,6 @@ def Shvartsman_ripple_detector(
             "Give minimum_participating_channels or minimum_participating_fraction, not both."
         )
         raise ValueError(msg)
-    if minimum_participating_channels is None and minimum_participating_fraction is None:
-        minimum_participating_channels = 2
     if minimum_participating_channels is not None and minimum_participating_channels < 0:
         msg = "minimum_participating_channels must be non-negative."
         raise ValueError(msg)
@@ -484,7 +485,9 @@ def Shvartsman_ripple_detector(
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     if manual:
-        normalized = normalize_signal_manually(smoothed, channel_baselines, channel_deviations)
+        normalized = normalize_signal_manually(
+            smoothed, cast(ArrayLike, channel_baselines), cast(ArrayLike, channel_deviations)
+        )
     else:
         mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
         normalized = normalize_signal(
@@ -500,23 +503,24 @@ def Shvartsman_ripple_detector(
     merged_candidates = merge_overlapping_ranges_track_participation(candidate_ripple_times)
 
     n_elecs = normalized.shape[1]
-    # round so that 25 channels at 0.28 ask for 7, not the 7.000000000000001 of
-    # floating-point multiplication, which would demand 8
-    n_elecs_thresh = (
-        minimum_participating_channels
-        if minimum_participating_fraction is None
-        else round(n_elecs * minimum_participating_fraction, 9)
-    )
+    if minimum_participating_fraction is not None:
+        # round so that 25 channels at 0.28 ask for 7, not the 7.000000000000001 of
+        # floating-point multiplication, which would demand 8
+        n_elecs_thresh = round(n_elecs * minimum_participating_fraction, 9)
+    else:
+        n_elecs_thresh = (
+            2 if minimum_participating_channels is None else minimum_participating_channels
+        )
     participation_mask = (
         np.asarray([len(interval[2]) for interval in merged_candidates]) >= n_elecs_thresh
     )
-    candidate_ripple_times = merged_candidates[participation_mask, :2]
+    candidate_bounds = merged_candidates[participation_mask, :2]
 
-    candidate_ripple_times, included_ripple_inds = exclude_movement_by_majority(
-        candidate_ripple_times, speed, time, speed_threshold=speed_threshold
+    candidate_bounds, included_ripple_inds = exclude_movement_by_majority(
+        candidate_bounds, speed, time, speed_threshold=speed_threshold
     )
     ripple_times, included_ripple_inds = exclude_close_events(
-        candidate_ripple_times, close_ripple_threshold, included_ripple_inds
+        candidate_bounds, close_ripple_threshold, included_ripple_inds
     )
     # Keep participant metadata aligned through movement and proximity exclusion.
     participant_sets = merged_candidates[participation_mask, 2][included_ripple_inds]
@@ -846,12 +850,12 @@ def Yu_ripple_detector(
         # units the histogram grid assumes; convert the result to the
         # immobility-normalized units the events are extracted in.
         threshold = estimate_noise_threshold(noise_values, percentile=percentile)
-        threshold_zscore = (threshold - baseline) / scale
+        threshold_zscore = float((threshold - baseline) / scale)
     else:
         # A raw median of envelopes is not in the grid's units, so follow the
         # paper's text instead: normalize to immobility, then estimate.
-        threshold_zscore = estimate_noise_threshold(
-            normalized[noise_mask], percentile=percentile
+        threshold_zscore = float(
+            estimate_noise_threshold(normalized[noise_mask], percentile=percentile)
         )
     if not np.isfinite(threshold_zscore) or threshold_zscore <= 0:
         msg = (
@@ -861,18 +865,18 @@ def Yu_ripple_detector(
         raise ValueError(msg)
 
     n_min = minimum_sample_count(time, minimum_duration)
-    event_times = [np.empty((0, 2))]
-    n_suprathreshold = [np.empty(0, dtype=int)]
+    event_time_blocks: list[FloatArray] = [np.empty((0, 2))]
+    n_suprathreshold_blocks: list[IntArray] = [np.empty(0, dtype=int)]
     for start, stop in blocks:
         if stop - start < n_min:
             continue
         block_events, block_n = _extract_Yu_ripple_events(
             normalized[start:stop], time[start:stop], minimum_duration, threshold_zscore
         )
-        event_times.append(block_events)
-        n_suprathreshold.append(block_n)
-    event_times = np.concatenate(event_times)
-    n_suprathreshold = np.concatenate(n_suprathreshold)
+        event_time_blocks.append(block_events)
+        n_suprathreshold_blocks.append(block_n)
+    event_times: FloatArray = np.concatenate(event_time_blocks)
+    n_suprathreshold: IntArray = np.concatenate(n_suprathreshold_blocks)
 
     # the per-event count is filtered alongside the events at each step
     keep = _is_immobile_at_endpoints(event_times, speed, time, speed_threshold)

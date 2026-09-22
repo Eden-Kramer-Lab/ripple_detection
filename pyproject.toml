@@ -110,28 +110,10 @@ mypy_path = "src"
 # statements (only valid for python_version >= 3.12). Runtime 3.10 support is
 # verified by the test matrix.
 python_version = "3.12"
-warn_return_any = false
-warn_unused_configs = true
-disallow_untyped_defs = false
-ignore_missing_imports = true
-check_untyped_defs = true
-strict_optional = false
-warn_redundant_casts = true
-warn_unused_ignores = false
-allow_redefinition = true
-
-# Disable specific checks that cause false positives with ArrayLike
-[[tool.mypy.overrides]]
-module = "ripple_detection.*"
-disable_error_code = [
-    "index",
-    "operator",
-    "union-attr",
-    "arg-type",
-    "assignment",
-    "call-overload",
-    "no-any-return",
-]
+strict = true
+warn_unreachable = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+ignore_missing_imports = true  # scipy and pandas ship no stubs we use
 
 [tool.ruff]
 line-length = 95

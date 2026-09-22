@@ -4,10 +4,12 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from numpy.typing import ArrayLike, NDArray
+from numpy.typing import ArrayLike
+
+from ripple_detection.core import FloatArray
 
 
-def _validate_lfp_dimensions(filtered_lfps: NDArray) -> None:
+def _validate_lfp_dimensions(filtered_lfps: FloatArray) -> None:
     """Validate that LFP array is 2D with shape (n_time, n_channels).
 
     Parameters
@@ -45,7 +47,9 @@ def _validate_lfp_dimensions(filtered_lfps: NDArray) -> None:
         raise ValueError(msg)
 
 
-def _validate_array_lengths(time: NDArray, filtered_lfps: NDArray, speed: NDArray) -> None:
+def _validate_array_lengths(
+    time: FloatArray, filtered_lfps: FloatArray, speed: FloatArray
+) -> None:
     """Validate that time, LFP, and speed arrays have matching lengths.
 
     Parameters
@@ -79,7 +83,7 @@ def _validate_array_lengths(time: NDArray, filtered_lfps: NDArray, speed: NDArra
 
 
 def _validate_time_units(
-    time: NDArray, sampling_frequency: float, stacklevel: int = 4
+    time: FloatArray, sampling_frequency: float, stacklevel: int = 4
 ) -> None:
     """Validate that time array is in seconds (not samples).
 
@@ -145,7 +149,9 @@ def _validate_time_units(
             )
 
 
-def _validate_speed_units(speed: NDArray, speed_threshold: float, stacklevel: int = 4) -> None:
+def _validate_speed_units(
+    speed: FloatArray, speed_threshold: float, stacklevel: int = 4
+) -> None:
     """Validate that speed is in cm/s (not m/s).
 
     Parameters
@@ -186,7 +192,7 @@ def _validate_detector_inputs(
     sampling_frequency: float,
     speed_threshold: float,
     stacklevel: int = 4,
-) -> tuple[NDArray, NDArray, NDArray]:
+) -> tuple[FloatArray, FloatArray, FloatArray]:
     """Cast the inputs to float arrays and check shapes, lengths and units.
 
     Parameters

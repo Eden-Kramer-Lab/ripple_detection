@@ -4,11 +4,12 @@ from itertools import pairwise
 
 import numpy as np
 import pandas as pd
-from numpy.typing import ArrayLike, NDArray
+from numpy.typing import ArrayLike
 from scipy.cluster.vq import kmeans2
 from scipy.ndimage import convolve1d
 
 from ripple_detection.core import (
+    FloatArray,
     _is_immobile_at_endpoints,
     _unit_area_gaussian,
     normalize_signal,
@@ -29,7 +30,7 @@ from ripple_detection.detectors._validation import (
 
 def _gaussian_lowpass_fir(
     cutoff: float, sampling_frequency: float, n_sd: float = 6.0
-) -> NDArray:
+) -> FloatArray:
     """Unit-area Gaussian low-pass kernel with standard deviation
     ``fs / (2 pi cutoff)`` samples, truncated at ``n_sd`` standard deviations
     (Eran Stark's ``makegausslpfir``)."""
@@ -37,19 +38,21 @@ def _gaussian_lowpass_fir(
     return _unit_area_gaussian(sigma_samples, max(n_sd, 3.0))
 
 
-def _firfilt(x: NDArray, kernel: NDArray) -> NDArray:
+def _firfilt(x: FloatArray, kernel: FloatArray) -> FloatArray:
     """Zero-phase FIR filtering along axis 0 with the ends reflected.
 
     A centered convolution with the signal mirrored at both ends, which is what
     Eran Stark's ``firfilt`` (mirror-pad, causal filter, crop the delay)
     computes for the odd symmetric kernels used here.
     """
-    return convolve1d(np.asarray(x, dtype=float), kernel, axis=0, mode="reflect")
+    return np.asarray(
+        convolve1d(np.asarray(x, dtype=float), kernel, axis=0, mode="reflect"), dtype=float
+    )
 
 
 def _difference_of_gaussians_band(
-    x: NDArray, band: tuple[float, float], sampling_frequency: float
-) -> NDArray:
+    x: FloatArray, band: tuple[float, float], sampling_frequency: float
+) -> FloatArray:
     """Band-pass as the difference of two Gaussian low-passes: low-pass at the
     band's upper edge, minus a low-pass of that at the band's lower edge."""
     low_passed = _firfilt(x, _gaussian_lowpass_fir(band[1], sampling_frequency))
@@ -57,7 +60,7 @@ def _difference_of_gaussians_band(
     return low_passed - slow
 
 
-def _matlab_percentile(values: NDArray, percent: float) -> float:
+def _matlab_percentile(values: FloatArray, percent: float) -> float:
     """MATLAB ``prctile``: linear interpolation between order statistics placed
     at percentiles 100 (k - 0.5) / n (NumPy's ``hazen`` method)."""
     return float(np.percentile(values, percent, method="hazen"))
@@ -229,7 +232,9 @@ def Long_sharp_wave_ripple_detector(
     rng = np.random.default_rng(random_state)
 
     # features, within each block
-    power_kernel = _gaussian_lowpass_fir(np.mean(ripple_band) / np.pi, sampling_frequency)
+    power_kernel = _gaussian_lowpass_fir(
+        float(np.mean(ripple_band)) / np.pi, sampling_frequency
+    )
     sharp_wave_diff = np.full(n_time, np.nan)
     ripple_power = np.full(n_time, np.nan)
     for start, stop in blocks:
@@ -248,7 +253,10 @@ def Long_sharp_wave_ripple_detector(
     window = int(np.floor(window_size * sampling_frequency))
     half_window = window // 2
     bound = int(local_window * sampling_frequency)
-    feature_index, sharp_wave_feature, ripple_feature, in_range = [], [], [], []
+    feature_index_list: list[int] = []
+    sharp_wave_list: list[float] = []
+    ripple_list: list[float] = []
+    in_range_list: list[bool] = []
     for block_start, block_stop in blocks:
         # arange to block_stop inclusive, so a block that is an exact multiple of
         # the window keeps its last complete window; a partial window is dropped
@@ -261,17 +269,19 @@ def Long_sharp_wave_ripple_detector(
                     continue
                 if int(np.argmax(sharp_wave_diff[peak - 1 : peak + 2])) != 1:
                     continue
-            feature_index.append(peak)
-            sharp_wave_feature.append(segment[local_arg])
+            feature_index_list.append(peak)
+            sharp_wave_list.append(float(segment[local_arg]))
             lo = max(peak - half_window, block_start)
             hi = min(peak + half_window, block_stop - 1)
-            ripple_feature.append(ripple_power[lo : hi + 1].max())
+            ripple_list.append(float(ripple_power[lo : hi + 1].max()))
             # the local statistics need the whole +/- local_window inside the block
-            in_range.append(peak - bound >= block_start and peak + bound <= block_stop - 1)
-    feature_index = np.asarray(feature_index, dtype=int)
-    sharp_wave_feature = np.asarray(sharp_wave_feature)
-    ripple_feature = np.asarray(ripple_feature)
-    in_range = np.asarray(in_range, dtype=bool)
+            in_range_list.append(
+                peak - bound >= block_start and peak + bound <= block_stop - 1
+            )
+    feature_index = np.asarray(feature_index_list, dtype=int)
+    sharp_wave_feature = np.asarray(sharp_wave_list, dtype=float)
+    ripple_feature = np.asarray(ripple_list, dtype=float)
+    in_range = np.asarray(in_range_list, dtype=bool)
     if len(feature_index) < 2:
         msg = "Too few candidate windows to cluster; the recording is too short."
         raise ValueError(msg)

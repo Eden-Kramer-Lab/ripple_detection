@@ -4,13 +4,14 @@ from collections.abc import Sequence
 from typing import Literal
 
 import numpy as np
-from numpy.typing import NDArray
 from scipy.stats import norm
+
+from ripple_detection.core import FloatArray
 
 RIPPLE_FREQUENCY = 200
 
 
-def simulate_time(n_samples: int, sampling_frequency: float) -> NDArray:
+def simulate_time(n_samples: int, sampling_frequency: float) -> FloatArray:
     """Generate time array for simulation.
 
     Parameters
@@ -29,7 +30,7 @@ def simulate_time(n_samples: int, sampling_frequency: float) -> NDArray:
     return np.arange(n_samples) / sampling_frequency
 
 
-def mean_squared(x: NDArray) -> float:
+def mean_squared(x: FloatArray) -> float:
     """Calculate the mean squared value of a signal.
 
     Parameters
@@ -43,10 +44,10 @@ def mean_squared(x: NDArray) -> float:
         Mean of squared absolute values.
 
     """
-    return (np.abs(x) ** 2.0).mean()
+    return float((np.abs(x) ** 2.0).mean())
 
 
-def normalize(y: NDArray, x: NDArray | None = None) -> NDArray:
+def normalize(y: FloatArray, x: FloatArray | None = None) -> FloatArray:
     """Normalize signal power to match white noise or reference signal.
 
     Scales the signal `y` to have the same mean squared value as a standard
@@ -81,11 +82,12 @@ def normalize(y: NDArray, x: NDArray | None = None) -> NDArray:
     Adapted from python-acoustics library.
 
     """
-    x = mean_squared(x) if x is not None else 1.0
-    return y * np.sqrt(x / mean_squared(y))
+    reference_power = mean_squared(x) if x is not None else 1.0
+    # np.divide, not /, so a zero-power signal gives NaN with a RuntimeWarning, as documented
+    return np.asarray(y * np.sqrt(np.divide(reference_power, mean_squared(y))), dtype=float)
 
 
-def pink(N: int, rng: int | np.random.Generator | None = None) -> NDArray:
+def pink(N: int, rng: int | np.random.Generator | None = None) -> FloatArray:
     """Generate pink (1/f) noise.
 
     Pink noise has equal power in proportionally-wide frequency bands (octaves).
@@ -125,7 +127,7 @@ def pink(N: int, rng: int | np.random.Generator | None = None) -> NDArray:
     return normalize(y)
 
 
-def white(N: int, rng: int | np.random.Generator | None = None) -> NDArray:
+def white(N: int, rng: int | np.random.Generator | None = None) -> FloatArray:
     """Generate white noise.
 
     White noise has constant power spectral density across all frequencies (flat
@@ -149,7 +151,7 @@ def white(N: int, rng: int | np.random.Generator | None = None) -> NDArray:
     return rng.standard_normal(N)
 
 
-def brown(N: int, rng: int | np.random.Generator | None = None) -> NDArray:
+def brown(N: int, rng: int | np.random.Generator | None = None) -> FloatArray:
     """Generate brown (Brownian, red) noise.
 
     Brown noise has power spectral density that decreases at 6 dB per octave
@@ -198,8 +200,8 @@ NOISE_FUNCTION = {
 
 
 def _draw_per_ripple(
-    value: float | Sequence[float] | NDArray, n_ripples: int, rng: np.random.Generator
-) -> NDArray:
+    value: float | Sequence[float] | FloatArray, n_ripples: int, rng: np.random.Generator
+) -> FloatArray:
     """A scalar repeated per ripple, or one uniform draw per ripple from a range.
 
     A scalar consumes no randomness; a two-element ``(low, high)`` sequence
@@ -219,7 +221,7 @@ def _draw_per_ripple(
 
 
 def simulate_LFP(
-    time: NDArray,
+    time: FloatArray,
     ripple_times: float | list[float],
     ripple_amplitude: float | None = None,
     ripple_duration: float | tuple[float, float] = 0.100,
@@ -230,7 +232,7 @@ def simulate_LFP(
     ripple_snr: float | None = None,
     ripple_frequency: float | tuple[float, float] = RIPPLE_FREQUENCY,
     sampling_frequency: float | None = None,
-) -> NDArray:
+) -> FloatArray:
     """Simulate local field potential with embedded ripple oscillations.
 
     Generates a synthetic LFP signal containing ripple events (sinusoids at
@@ -344,11 +346,13 @@ def simulate_LFP(
             raise ValueError(msg)
         from ripple_detection.core import filter_ripple_band
 
-        if sampling_frequency is None:
-            sampling_frequency = 1.0 / np.median(np.diff(time))
-        band_noise_sd = filter_ripple_band(noise, sampling_frequency=sampling_frequency).std()
-    elif ripple_amplitude is None:
-        ripple_amplitude = 2.0
+        rate = (
+            float(1.0 / np.median(np.diff(time)))
+            if sampling_frequency is None
+            else float(sampling_frequency)
+        )
+        band_noise_sd = filter_ripple_band(noise, sampling_frequency=rate).std()
+    amplitude = 2.0 if ripple_amplitude is None else ripple_amplitude
 
     frequencies = _draw_per_ripple(ripple_frequency, n_ripples, rng)
     durations = _draw_per_ripple(ripple_duration, n_ripples, rng)
@@ -381,11 +385,9 @@ def simulate_LFP(
         if ripple_snr is not None:
             # scale so that this burst's peak *after the filter* is ripple_snr
             # background SDs; the filter's gain depends on frequency and duration
-            filtered_peak = np.abs(
-                filter_ripple_band(burst, sampling_frequency=sampling_frequency)
-            ).max()
+            filtered_peak = np.abs(filter_ripple_band(burst, sampling_frequency=rate)).max()
             signal.append(ripple_snr * band_noise_sd / filtered_peak * burst)
         else:
-            signal.append((ripple_amplitude / 2) * burst)
+            signal.append((amplitude / 2) * burst)
 
-    return np.sum(signal, axis=0) + noise
+    return np.asarray(np.sum(signal, axis=0) + noise, dtype=float)

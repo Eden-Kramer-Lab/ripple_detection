@@ -196,9 +196,9 @@ def multiunit_HSE_detector(
         normalization_mask=normalization_mask,
     )
 
-    start = nearest_sample_index(time, events.start_time.to_numpy())
-    stop = nearest_sample_index(time, events.end_time.to_numpy())
-    n_active = _count_active_units(multiunit, np.column_stack([start, stop]))
+    first_sample = nearest_sample_index(time, events.start_time.to_numpy())
+    last_sample = nearest_sample_index(time, events.end_time.to_numpy())
+    n_active = _count_active_units(multiunit, np.column_stack([first_sample, last_sample]))
     keep = n_active >= minimum_active_units
     events = events.iloc[np.flatnonzero(keep)].copy()
     events["n_active_units"] = n_active[keep]

@@ -2,9 +2,11 @@
 
 import numpy as np
 import pandas as pd
-from numpy.typing import ArrayLike, NDArray
+from numpy.typing import ArrayLike
 
 from ripple_detection.core import (
+    BoolArray,
+    FloatArray,
     _boolean_run_bounds,
     _is_immobile_at_endpoints,
     minimum_sample_count,
@@ -33,14 +35,14 @@ def _zugaro_smoothing_window(sampling_frequency: float) -> int:
 
 
 def _two_threshold_events(
-    zscored: NDArray,
-    time: NDArray,
+    zscored: FloatArray,
+    time: FloatArray,
     low_threshold: float,
     high_threshold: float,
     minimum_inter_ripple_interval: float,
     minimum_duration: float,
     maximum_duration: float | None,
-) -> tuple[NDArray, NDArray, NDArray]:
+) -> tuple[FloatArray, FloatArray, BoolArray]:
     """Segment a normalized power trace with the FindRipples two-threshold rule.
 
     Follows the segmentation rule of FMAToolbox ``FindRipples``:
@@ -274,9 +276,9 @@ def Zugaro_ripple_detector(
     normalized = normalize_signal(smoothed, normalization_mask=mask)
 
     n_min = minimum_sample_count(time, minimum_duration)
-    event_times = [np.empty((0, 2))]
-    peak_times = [np.empty(0)]
-    clipped = [np.empty((0, 2), dtype=bool)]
+    event_time_blocks: list[FloatArray] = [np.empty((0, 2))]
+    peak_time_blocks: list[FloatArray] = [np.empty(0)]
+    clipped_blocks: list[BoolArray] = [np.empty((0, 2), dtype=bool)]
     for start, stop in blocks:
         if stop - start < n_min:
             continue
@@ -289,12 +291,12 @@ def Zugaro_ripple_detector(
             minimum_duration,
             maximum_duration,
         )
-        event_times.append(block_events)
-        peak_times.append(block_peaks)
-        clipped.append(block_clipped)
-    event_times = np.concatenate(event_times)
-    peak_times = np.concatenate(peak_times)
-    clipped_flags = np.concatenate(clipped)
+        event_time_blocks.append(block_events)
+        peak_time_blocks.append(block_peaks)
+        clipped_blocks.append(block_clipped)
+    event_times: FloatArray = np.concatenate(event_time_blocks)
+    peak_times: FloatArray = np.concatenate(peak_time_blocks)
+    clipped_flags: BoolArray = np.concatenate(clipped_blocks)
 
     keep = _is_immobile_at_endpoints(event_times, speed, time, speed_threshold)
     event_times, peak_times, clipped_flags = (

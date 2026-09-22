@@ -3,9 +3,10 @@ potentials.
 """
 
 import warnings
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -15,6 +16,15 @@ from scipy.io import loadmat
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import filtfilt, hilbert, remez
 from scipy.stats import median_abs_deviation
+
+FloatArray = NDArray[np.floating]
+"""A NumPy array of floats, the shape stated in each docstring."""
+
+BoolArray = NDArray[np.bool_]
+"""A NumPy array of booleans."""
+
+IntArray = NDArray[np.integer]
+"""A NumPy array of integers, usually sample indices."""
 
 DEFAULT_RIPPLE_BAND = (150.0, 250.0)
 """Default passband in Hz, the most common choice in the replay literature."""
@@ -27,7 +37,7 @@ def ripple_bandpass_filter(
     sampling_frequency: float,
     band: tuple[float, float] | None = None,
     transition_width: float = DEFAULT_TRANSITION_WIDTH,
-) -> tuple[NDArray, float]:
+) -> tuple[FloatArray, float]:
     """Generate a bandpass filter for a ripple frequency band.
 
     Uses the Remez exchange algorithm to design a finite impulse response (FIR)
@@ -156,7 +166,7 @@ def sample_count_within(
     time: ArrayLike,
     minimum_duration: float,
     maximum_duration: float | None = None,
-) -> NDArray | bool:
+) -> BoolArray | bool:
     """Whether an event of ``n_samples`` samples meets the package's duration limits.
 
     Every detector applies this one rule. ``minimum_sample_count`` turns a
@@ -189,7 +199,7 @@ def sample_count_within(
     return bool(ok) if counts.ndim == 0 else ok
 
 
-def _boolean_run_bounds(values: NDArray) -> NDArray:
+def _boolean_run_bounds(values: ArrayLike) -> IntArray:
     """Start (inclusive) and stop (exclusive) positions of each run of True."""
     padded = np.concatenate([[False], np.asarray(values, dtype=bool), [False]])
     return np.flatnonzero(padded[1:] != padded[:-1]).reshape(-1, 2)
@@ -246,7 +256,7 @@ def filter_ripple_band(
     sampling_frequency: float,
     band: tuple[float, float] | None = None,
     transition_width: float = DEFAULT_TRANSITION_WIDTH,
-) -> NDArray:
+) -> FloatArray:
     """Bandpass filter signal(s) to the ripple band, 150-250 Hz by default.
 
     At 1500 Hz with the default band, the pre-computed 318-tap FIR kernel
@@ -362,7 +372,7 @@ def filter_ripple_band(
     return filtered_data
 
 
-def _get_ripplefilter_kernel() -> tuple[NDArray, int]:
+def _get_ripplefilter_kernel() -> tuple[FloatArray, float]:
     """Load the pre-computed ripple filter kernel from the Frank lab.
 
     The kernel is a 150-250 Hz bandpass filter with 40 dB roll-off and 10 Hz
@@ -372,13 +382,13 @@ def _get_ripplefilter_kernel() -> tuple[NDArray, int]:
     -------
     filter_numerator : ndarray
         Filter kernel coefficients.
-    filter_denominator : int
-        Denominator coefficient (always 1 for FIR filters).
+    filter_denominator : float
+        Denominator coefficient (always 1.0 for FIR filters).
 
     """
     filter_file = Path(__file__).resolve().parent / "ripplefilter.mat"
     ripplefilter = loadmat(str(filter_file))
-    return ripplefilter["ripplefilter"]["kernel"][0][0].flatten(), 1
+    return ripplefilter["ripplefilter"]["kernel"][0][0].flatten(), 1.0
 
 
 def extend_threshold_to_mean(
@@ -423,7 +433,7 @@ def extend_threshold_to_mean(
     return sorted(_extend_segment(above_threshold_segments, above_mean_segments))
 
 
-def nearest_sample_index(time: ArrayLike, query_times: ArrayLike) -> NDArray:
+def nearest_sample_index(time: ArrayLike, query_times: ArrayLike) -> FloatArray:
     """Index of the sample in ``time`` closest to each query time.
 
     Event bounds come from ``time``, so the match is normally exact. Looking
@@ -463,7 +473,7 @@ def nearest_sample_index(time: ArrayLike, query_times: ArrayLike) -> NDArray:
     return np.where(closer_to_right, right, left)
 
 
-def _event_bounds(events: ArrayLike | pd.DataFrame) -> NDArray:
+def _event_bounds(events: ArrayLike | pd.DataFrame) -> FloatArray:
     """``[start_time, end_time]`` rows from an array or a detector's DataFrame.
 
     Every helper that takes an event inventory reads it through this, so a
@@ -488,7 +498,8 @@ def _event_bounds(events: ArrayLike | pd.DataFrame) -> NDArray:
 
     """
     if isinstance(events, pd.DataFrame):
-        return events[["start_time", "end_time"]].to_numpy(dtype=float).reshape(-1, 2)
+        bounds = events[["start_time", "end_time"]].to_numpy(dtype=float)
+        return np.asarray(bounds, dtype=float).reshape(-1, 2)
     bounds = np.asarray(events, dtype=float)
     if bounds.size == 0:
         return np.empty((0, 2))
@@ -502,8 +513,8 @@ def _event_bounds(events: ArrayLike | pd.DataFrame) -> NDArray:
 
 
 def _is_immobile_at_endpoints(
-    event_times: NDArray, speed: ArrayLike, time: ArrayLike, speed_threshold: float
-) -> NDArray:
+    event_times: FloatArray, speed: ArrayLike, time: ArrayLike, speed_threshold: float
+) -> BoolArray:
     """The package's endpoint speed rule: speed at the event's first and last
     sample is at or below ``speed_threshold``. Returns a bool mask over events."""
     events = _event_bounds(event_times)
@@ -512,7 +523,8 @@ def _is_immobile_at_endpoints(
     speed = np.asarray(speed, dtype=float)
     speed_at_start = speed[nearest_sample_index(time, events[:, 0])]
     speed_at_end = speed[nearest_sample_index(time, events[:, 1])]
-    return (speed_at_start <= speed_threshold) & (speed_at_end <= speed_threshold)
+    immobile = (speed_at_start <= speed_threshold) & (speed_at_end <= speed_threshold)
+    return np.asarray(immobile, dtype=bool)
 
 
 def exclude_movement(
@@ -520,7 +532,7 @@ def exclude_movement(
     speed: ArrayLike,
     time: ArrayLike,
     speed_threshold: float = 4.0,
-) -> NDArray | pd.DataFrame:
+) -> FloatArray | pd.DataFrame:
     """Filter out candidate ripples that occur during animal movement.
 
     Removes events where the animal's speed at either the start or end of the
@@ -561,7 +573,7 @@ def exclude_movement_by_majority(
     time: ArrayLike,
     speed_threshold: float = 4.0,
     majority_threshold: float = 0.5,
-) -> tuple[NDArray, NDArray]:
+) -> tuple[FloatArray, IntArray]:
     """Filter out candidate ripples that occur during animal movement.
 
     Retains an event only if the animal's speed is at or below `speed_threshold`
@@ -684,7 +696,7 @@ def _extend_segment(
     return list(set(segments))  # remove duplicate segments
 
 
-def get_envelope(data: ArrayLike, axis: int = 0) -> NDArray:
+def get_envelope(data: ArrayLike, axis: int = 0) -> FloatArray:
     """Extract the instantaneous amplitude (envelope) using Hilbert transform.
 
     Computes the analytic signal via Hilbert transform and returns its
@@ -715,7 +727,7 @@ def gaussian_smooth(
     sampling_frequency: float,
     axis: int = 0,
     truncate: float = 8,
-) -> NDArray:
+) -> FloatArray:
     """Apply 1D Gaussian smoothing to data.
 
     Convolves the data with a Gaussian kernel. The standard deviation is
@@ -743,14 +755,15 @@ def gaussian_smooth(
         Gaussian-smoothed data, same shape as input.
 
     """
-    return gaussian_filter1d(
+    smoothed = gaussian_filter1d(
         data, sigma * sampling_frequency, truncate=truncate, axis=axis, mode="constant"
     )
+    return np.asarray(smoothed, dtype=float)
 
 
 def _get_normalization_mask(
     data_shape: tuple[int, ...], normalization_mask: ArrayLike | None
-) -> NDArray | None:
+) -> BoolArray | None:
     """Validate the mask the normalization statistics come from.
 
     Parameters
@@ -800,7 +813,7 @@ def _get_normalization_mask(
     return mask
 
 
-def _normalize(data: NDArray, mask: NDArray | None, method: str) -> NDArray:
+def _normalize(data: FloatArray, mask: BoolArray | None, method: str) -> FloatArray:
     """Center and scale ``data`` with statistics from ``data[mask]``.
 
     Parameters
@@ -844,14 +857,14 @@ def _normalize(data: NDArray, mask: NDArray | None, method: str) -> NDArray:
             "drop it before detecting."
         )
         raise ValueError(msg)
-    return (data - center) / scale
+    return np.asarray((data - center) / scale, dtype=float)
 
 
 def normalize_signal(
     data: ArrayLike,
     method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
-) -> NDArray:
+) -> FloatArray:
     """Normalize signal using mean/std (z-score) or median/MAD.
 
     The statistics (mean/std or median/MAD) come from the whole signal, or
@@ -969,7 +982,7 @@ def normalize_signal_manually(
     data: ArrayLike,
     channel_baselines: ArrayLike,
     channel_deviations: ArrayLike,
-) -> NDArray:
+) -> FloatArray:
     """Normalize with supplied baselines and deviations.
 
     The statistics come from the arguments rather than from ``data``. This
@@ -1027,8 +1040,8 @@ def normalize_signal_manually(
         )
         raise ValueError(msg)
     if data.ndim == 1:
-        return (data - baselines[0]) / deviations[0]
-    return (data - baselines) / deviations
+        return np.asarray((data - baselines[0]) / deviations[0], dtype=float)
+    return np.asarray((data - baselines) / deviations, dtype=float)
 
 
 def threshold_by_zscore(
@@ -1069,8 +1082,9 @@ def threshold_by_zscore(
             "lies inside a run above the normalization center."
         )
         raise ValueError(msg)
-    is_above_mean = zscored_data >= 0
-    is_above_threshold = zscored_data >= zscore_threshold
+    zscored = np.asarray(zscored_data, dtype=float)
+    is_above_mean = zscored >= 0
+    is_above_threshold = zscored >= zscore_threshold
 
     return extend_threshold_to_mean(
         is_above_mean, is_above_threshold, time, minimum_duration=minimum_duration
@@ -1078,7 +1092,7 @@ def threshold_by_zscore(
 
 
 def merge_overlapping_ranges(
-    ranges: list[tuple[float, float]],
+    ranges: Iterable[tuple[float, float]],
 ) -> Generator[tuple[float, float], None, None]:
     """Merge overlapping and adjacent ranges
 
@@ -1107,12 +1121,12 @@ def merge_overlapping_ranges(
     list-of-ranges-that-overlap
 
     """
-    ranges = iter(sorted(ranges))
+    remaining = iter(sorted(ranges))
     try:
-        current_start, current_stop = next(ranges)
+        current_start, current_stop = next(remaining)
     except StopIteration:
         return None
-    for start, stop in ranges:
+    for start, stop in remaining:
         if start > current_stop:
             # Gap between segments: output current segment and start a new
             # one.
@@ -1126,7 +1140,7 @@ def merge_overlapping_ranges(
 
 def merge_overlapping_ranges_track_participation(
     candidate_ripple_times: list[list[tuple[float, float]]],
-) -> NDArray:
+) -> FloatArray:
     """Merge overlapping/adjacent per-channel ranges, tracking participation.
 
     Like `merge_overlapping_ranges`, but also records which channels contribute
@@ -1151,7 +1165,7 @@ def merge_overlapping_ranges_track_participation(
 
     all_intervals.sort(key=lambda x: x[0])
 
-    merged: list[list] = []
+    merged: list[list[Any]] = []
 
     for start, end, e_idx in all_intervals:
         if not merged:
@@ -1175,7 +1189,9 @@ _GAP_TOLERANCE = 1e-9
 """Relative tolerance for comparing an inter-event gap with a threshold."""
 
 
-def _is_gap_below(gap: NDArray | float, close_event_threshold: float) -> NDArray | np.bool_:
+def _is_gap_below(
+    gap: FloatArray | float, close_event_threshold: float
+) -> BoolArray | np.bool_:
     """Whether an inter-event gap is shorter than the threshold.
 
     The boundary rule that :func:`exclude_close_events` and
@@ -1207,7 +1223,7 @@ def exclude_close_events(
     candidate_event_times: ArrayLike | pd.DataFrame,
     close_event_threshold: float = 1.0,
     included_ripple_inds: ArrayLike | None = None,
-) -> NDArray | pd.DataFrame | tuple[NDArray, NDArray]:
+) -> FloatArray | pd.DataFrame | tuple[FloatArray, NDArray[Any]]:
     """Remove events that occur too close together in time.
 
     Filters out successive events that start within `close_event_threshold`
@@ -1273,7 +1289,7 @@ def merge_close_events(
     event_times: ArrayLike | pd.DataFrame,
     close_event_threshold: float = 0.0,
     maximum_duration: float | None = None,
-) -> NDArray:
+) -> FloatArray:
     """Join events separated by less than a gap into one longer event.
 
     The other convention for closely spaced events is
@@ -1342,7 +1358,7 @@ def merge_close_events(
     while len(events) > 1:
         gap = events[1:, 0] - events[:-1, 1]
         if close_event_threshold > 0:
-            to_merge = _is_gap_below(gap, close_event_threshold)
+            to_merge = np.asarray(_is_gap_below(gap, close_event_threshold), dtype=bool)
         else:
             # events that touch merge, which _is_gap_below would exclude
             to_merge = gap <= 0
@@ -1367,7 +1383,7 @@ def require_overlap(
     event_times: ArrayLike | pd.DataFrame,
     reference_event_times: ArrayLike | pd.DataFrame,
     minimum_overlap: float = 0.0,
-) -> NDArray | pd.DataFrame:
+) -> FloatArray | pd.DataFrame:
     """Keep the events that overlap an event in a second inventory.
 
     Many studies require a ripple and a population burst together, usually by
@@ -1423,7 +1439,6 @@ def require_overlap(
         )
         raise ValueError(msg)
 
-    is_frame = isinstance(event_times, pd.DataFrame)
     events = _event_bounds(event_times)
     reference = _event_bounds(reference_event_times)
 
@@ -1445,7 +1460,7 @@ def require_overlap(
         overlap = np.where(meets, cumulative[last] - cumulative[first] - head - tail, 0.0)
         keep = (overlap > 0) & (overlap >= minimum_overlap)
 
-    if is_frame:
+    if isinstance(event_times, pd.DataFrame):
         return event_times.iloc[np.flatnonzero(keep)].copy()
     return events[keep]
 
@@ -1470,7 +1485,7 @@ _OUT_OF_GRID_CEILING = 1e-3
 """Largest tolerated fraction of samples outside ``YU_HISTOGRAM_EDGES``."""
 
 
-def _matlab_smooth(x: NDArray, window: int) -> NDArray:
+def _matlab_smooth(x: ArrayLike, window: int) -> FloatArray:
     """Moving average with MATLAB ``smooth(x, window)`` end handling.
 
     Interior points average ``window`` neighbors; near either end the window
@@ -1484,10 +1499,10 @@ def _matlab_smooth(x: NDArray, window: int) -> NDArray:
     low = index - half_width
     high = index + half_width + 1
     cumulative = np.concatenate([[0.0], np.cumsum(x)])
-    return (cumulative[high] - cumulative[low]) / (high - low)
+    return np.asarray((cumulative[high] - cumulative[low]) / (high - low), dtype=float)
 
 
-def _histc(values: NDArray, edges: NDArray) -> NDArray:
+def _histc(values: FloatArray, edges: FloatArray) -> IntArray:
     """MATLAB ``histc``: left-closed bins, with a final bin for ``values == edges[-1]``."""
     counts = np.zeros(len(edges), dtype=np.int64)
     counts[:-1], _ = np.histogram(values, bins=edges)
@@ -1533,11 +1548,11 @@ class NoiseThresholdDiagnostics:
     mean: float
     min: float
     flank_ratio: float
-    histogram_edges: NDArray
-    counts: NDArray
-    smoothed_counts: NDArray
-    mirrored_positions: NDArray
-    mirrored_counts: NDArray
+    histogram_edges: FloatArray
+    counts: IntArray
+    smoothed_counts: FloatArray
+    mirrored_positions: FloatArray
+    mirrored_counts: IntArray
     out_of_grid_fraction: float
     n_values: int
     n_in_grid: int
@@ -1745,18 +1760,18 @@ def noise_threshold_diagnostics(
     )
 
 
-def _unit_area_gaussian(sigma_samples: float, n_sd: float) -> NDArray:
+def _unit_area_gaussian(sigma_samples: float, n_sd: float) -> FloatArray:
     """Unit-area Gaussian kernel truncated at ``n_sd`` standard deviations
     (vandermeerlab ``gausskernel(R, S)`` with ``R = n_sd * S``)."""
     radius = int(np.ceil(n_sd * sigma_samples))
     x = np.arange(-radius, radius + 1)
     kernel = np.exp(-(x**2) / (2.0 * sigma_samples**2))
-    return kernel / kernel.sum()
+    return np.asarray(kernel / kernel.sum(), dtype=float)
 
 
 def get_multiunit_population_firing_rate(
     multiunit: ArrayLike, sampling_frequency: float, smoothing_sigma: float = 0.015
-) -> NDArray:
+) -> FloatArray:
     """Calculates the multiunit population firing rate.
 
     Parameters
