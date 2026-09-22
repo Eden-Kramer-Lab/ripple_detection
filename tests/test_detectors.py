@@ -1465,7 +1465,7 @@ class TestYuRippleDetector:
 
     def test_no_immobility_raises(self, time):
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [])
-        with pytest.raises(ValueError, match="selects no sample"):
+        with pytest.raises(ValueError, match="no immobility noise"):
             Yu_ripple_detector(time, lfps, np.full(self.N_TIME, 10.0), self.FS)
 
     @pytest.mark.parametrize("zscore_per_channel", [True, False])
@@ -3305,7 +3305,7 @@ class TestMultiunitActiveUnits:
         """A three-unit burst at 1.0 s and a ten-unit burst at 3.0 s."""
         multiunit = np.zeros((self.N_TIME, self.N_UNITS))
         multiunit[1_000:1_060, :3] = 4.0
-        multiunit[3_000:3_060, :10] = 1.2
+        multiunit[3_000:3_060, :10] = 1.0
         return multiunit
 
     def test_reports_the_active_unit_count(self, time, multiunit, stationary):
@@ -3331,7 +3331,7 @@ class TestMultiunitActiveUnits:
         and then be dropped itself."""
         multiunit = np.zeros((self.N_TIME, self.N_UNITS))
         multiunit[1_000:1_060, :3] = 4.0  # three units: fails a minimum of five
-        multiunit[1_150:1_210, :10] = 1.2  # ten units, 90 ms later
+        multiunit[1_150:1_210, :10] = 1.0  # ten units, 90 ms later
         events = multiunit_HSE_detector(
             time,
             multiunit,
@@ -4002,6 +4002,75 @@ class TestParameterRanges:
     def test_detector_specific_tunables(self, detector, kwargs, match):
         with pytest.raises(ValueError, match=match):
             self._call(detector, **kwargs)
+
+
+class TestInputContents:
+    """Inputs of the right shape whose contents would change the result
+    without an error: rates passed as counts, dead channels, empty channels."""
+
+    FS = 1000
+    N_TIME = 5_000
+
+    @pytest.fixture
+    def time(self):
+        return np.arange(self.N_TIME) / self.FS
+
+    @pytest.mark.parametrize("detector", [multiunit_HSE_detector, Carey_candidate_detector])
+    @pytest.mark.parametrize("transform", ["smoothed rate", "negative"])
+    def test_multiunit_that_is_not_counts_raises_without_the_registry(
+        self, detector, transform, time
+    ):
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, (2500,))
+        if transform == "smoothed rate":
+            multiunit = gaussian_smooth(multiunit, 0.01, self.FS) * self.FS
+        else:
+            multiunit = multiunit - 1
+        speed = np.full(self.N_TIME, 2.0)
+        signals = (multiunit,) if detector is multiunit_HSE_detector else (lfps, multiunit)
+        with pytest.raises(ValueError, match="spike counts or indicators"):
+            detector(time, *signals, speed, self.FS, minimum_active_units=1)
+
+    @pytest.mark.parametrize(
+        "detector",
+        [
+            Kay_ripple_detector,
+            Roumis_ripple_detector,
+            Zugaro_ripple_detector,
+            Carey_candidate_detector,
+            Long_sharp_wave_ripple_detector,
+        ],
+    )
+    def test_a_flat_channel_raises_and_is_named(self, detector, time):
+        speed = np.full(self.N_TIME, 2.0)
+        if detector is Long_sharp_wave_ripple_detector:
+            lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, (2500,))
+            lfp[:, 1] = 0.0
+            call = lambda: detector(time, lfp, speed, self.FS)  # noqa: E731
+            match = r"raw_lfps channel\(s\) \[1\]"
+        else:
+            lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, (2500,))
+            lfps[:, 2] = 0.0
+            match = r"filtered_lfps channel\(s\) \[2\]"
+            if detector is Carey_candidate_detector:
+                call = lambda: detector(time, lfps, multiunit, speed, self.FS)  # noqa: E731
+            else:
+                call = lambda: detector(time, lfps, speed, self.FS)  # noqa: E731
+        with pytest.raises(ValueError, match=match):
+            call()
+
+    def test_a_channel_with_no_finite_sample_is_named(self, time):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2500, 2560, 20.0)])
+        lfps[:, 1] = np.nan
+        with pytest.raises(ValueError, match=r"channel\(s\) \[1\] of signal 1"):
+            Kay_ripple_detector(time, lfps, np.full(self.N_TIME, 2.0), self.FS)
+
+    def test_an_infinite_sample_is_missing_to_the_filter(self):
+        rng = np.random.default_rng(0)
+        raw = rng.standard_normal((6000, 2))
+        raw[3000, 1] = np.inf
+        filtered = filter_ripple_band(raw, sampling_frequency=1500)
+        assert np.isnan(filtered[3000]).all()
+        assert np.isfinite(np.delete(filtered, 3000, axis=0)).all()
 
 
 class TestGapRule:

@@ -32,6 +32,7 @@ from ripple_detection.detectors import (
     Zugaro_ripple_detector,
     multiunit_HSE_detector,
 )
+from ripple_detection.detectors._validation import _validate_multiunit
 
 SignalKind = Literal["ripple_band_lfp", "raw_lfp_pair", "multiunit"]
 """The kinds of signal a detector can take. The three values below are the
@@ -189,13 +190,7 @@ class DetectorSpec:
                 )
                 raise ValueError(msg)
             if kind == MULTIUNIT:
-                finite = array[np.isfinite(array)]
-                if np.any(finite < 0) or np.any(finite != np.round(finite)):
-                    msg = (
-                        f"{what}: spike counts or indicators, non-negative whole numbers, "
-                        "but the array holds other values."
-                    )
-                    raise ValueError(msg)
+                _validate_multiunit(array, what)
 
 
 def _spec(detector: Callable[..., pd.DataFrame], *inputs: SignalKind) -> DetectorSpec:

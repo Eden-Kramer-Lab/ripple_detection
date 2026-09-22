@@ -29,6 +29,7 @@ from ripple_detection.detectors._blocks import (
     _contiguous_valid_blocks,
     _mask_invalid,
     _normalization_mask_over_valid,
+    _reject_flat_channels,
     _smoothed_envelope,
     _threshold_blocks,
     _valid_blocks,
@@ -722,6 +723,7 @@ def Kay_ripple_detector(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
+    _reject_flat_channels(filtered_lfps, is_valid, "filtered_lfps")
 
     consensus = get_Kay_ripple_consensus_trace(
         _mask_invalid(filtered_lfps, is_valid),
@@ -878,6 +880,13 @@ def Yu_ripple_detector(
 
     if normalization_mask is None:
         normalization_mask = speed <= speed_threshold
+        if not np.any(normalization_mask & is_valid):
+            msg = (
+                "No sample with valid LFP has speed at or below speed_threshold "
+                f"({speed_threshold} cm/s), so there is no immobility noise to estimate "
+                "the threshold from. Pass normalization_mask to choose the noise sample."
+            )
+            raise ValueError(msg)
     noise_mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
     noise_values = consensus[noise_mask]
     baseline = np.mean(noise_values)
@@ -1213,6 +1222,7 @@ def Roumis_ripple_detector(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
+    _reject_flat_channels(filtered_lfps, is_valid, "filtered_lfps")
 
     smoothed_power = _smoothed_envelope(
         filtered_lfps, blocks, sampling_frequency, smoothing_sigma, square=True

@@ -15,6 +15,7 @@ from ripple_detection.core import (
 from ripple_detection.detectors._blocks import (
     _drop_short_blocks,
     _normalization_mask_over_valid,
+    _reject_flat_channels,
     _valid_blocks,
 )
 from ripple_detection.detectors._events import (
@@ -271,6 +272,7 @@ def Zugaro_ripple_detector(
         msg = f"smoothing_window must be a positive odd integer, got {window}."
         raise ValueError(msg)
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
+    _reject_flat_channels(filtered_lfps, is_valid, "filtered_lfps")
     blocks = _drop_short_blocks(blocks, is_valid, window, "the smoothing window")
 
     kernel = np.ones(window) / window

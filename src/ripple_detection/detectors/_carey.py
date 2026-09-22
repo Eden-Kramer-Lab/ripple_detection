@@ -21,6 +21,7 @@ from ripple_detection.detectors._blocks import (
     _contiguous_valid_blocks,
     _drop_short_blocks,
     _mask_invalid,
+    _reject_flat_channels,
     _valid_blocks,
 )
 from ripple_detection.detectors._events import (
@@ -37,6 +38,7 @@ from ripple_detection.detectors._validation import (
     _check_thresholds,
     _validate_detector_inputs,
     _validate_duration_limits,
+    _validate_multiunit,
 )
 
 
@@ -194,8 +196,9 @@ def Carey_candidate_detector(
     filtered_lfps : array_like, shape (n_time, n_channels)
         Ripple-band-filtered LFP; the original uses 140-250 Hz on one channel.
     multiunit : array_like, shape (n_time, n_units)
-        Spike counts (or indicators) per sample per unit; clusterless marks
-        per tetrode work, with the per-unit cap then applying per tetrode.
+        Spike counts (or indicators) per sample per unit, non-negative whole
+        numbers, not a rate; clusterless marks per tetrode work, with the
+        per-unit cap then applying per tetrode.
     speed : array_like, shape (n_time,)
         Animal's running speed in cm/s.
     sampling_frequency : float
@@ -281,6 +284,7 @@ def Carey_candidate_detector(
         msg = f"multiunit must be a 2D array of shape (n_time, n_units), got shape {multiunit.shape}."
         raise ValueError(msg)
     _check_minimum_active_units(minimum_active_units, multiunit.shape[1])
+    _validate_multiunit(multiunit)
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
@@ -300,6 +304,7 @@ def Carey_candidate_detector(
         theta_envelope = _theta_envelope(theta_signal, time, sampling_frequency, theta_band)
         signals.append(theta_envelope)
     is_valid, blocks = _valid_blocks(time, *signals, minimum_duration=minimum_duration)
+    _reject_flat_channels(filtered_lfps, is_valid, "filtered_lfps")
 
     # ripple score (OldWizard, 'amplitude', 'wizard' kernel), rescaled to mean 1
     ripple_score = np.full(n_time, np.nan)

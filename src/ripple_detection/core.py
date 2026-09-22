@@ -275,7 +275,7 @@ def filter_ripple_band(
     the same in hertz regardless of the sampling rate. The filter is applied
     forward and backward (``filtfilt``) for zero phase distortion.
 
-    A row holding NaN in any channel is missing. Each contiguous run of
+    A row holding NaN or infinity in any channel is missing. Each contiguous run of
     present rows is filtered on its own, so the filter never sees the step
     between the two sides of a gap. Stitching the sides together instead
     produces a transient at the join that a detector then reads as a
@@ -351,9 +351,10 @@ def filter_ripple_band(
         )
 
     data_array = np.asarray(data, dtype=float)
-    is_present = (
-        ~np.isnan(data_array).any(axis=-1) if data_array.ndim > 1 else ~np.isnan(data_array)
-    )
+    # NaN and infinity alike are missing: one inf inside a run would spread
+    # through the whole run under the filter
+    finite = np.isfinite(data_array)
+    is_present = finite.all(axis=-1) if data_array.ndim > 1 else finite
     # filtfilt reflects padlen samples past each end and needs more samples than
     # that. Its default of 3 x the taps suits IIR filters; an FIR remembers only
     # taps - 1 samples, so that pad length gives the identical output (to the
@@ -365,7 +366,7 @@ def filter_ripple_band(
     if not np.any(long_enough):
         longest = int((runs[:, 1] - runs[:, 0]).max()) if len(runs) else 0
         msg = (
-            f"Signal too short for filtering: the longest run of non-NaN samples holds "
+            f"Signal too short for filtering: the longest run of finite samples holds "
             f"{longest}, but at least {min_required_length} are needed (the filter's tap "
             "count)."
         )
@@ -373,7 +374,7 @@ def filter_ripple_band(
     if not np.all(long_enough):
         short = runs[~long_enough]
         warnings.warn(
-            f"{len(short)} run(s) of non-NaN samples shorter than the {min_required_length} "
+            f"{len(short)} run(s) of finite samples shorter than the {min_required_length} "
             "samples the filter needs are returned as NaN (sample ranges "
             f"{[(int(a), int(b)) for a, b in short[:5]]}{', ...' if len(short) > 5 else ''}). "
             "Interpolate short gaps before filtering if those samples matter.",

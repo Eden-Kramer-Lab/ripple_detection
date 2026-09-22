@@ -344,6 +344,22 @@ def _check_minimum_active_units(minimum_active_units: int, n_units: int) -> None
         raise ValueError(msg)
 
 
+def _validate_multiunit(multiunit: FloatArray, what: str = "multiunit") -> None:
+    """Spike counts or indicators: non-negative whole numbers where finite.
+
+    A rate in Hz or a baseline-subtracted count passes every shape check and
+    changes what the spike cap and the z-score mean, so it is rejected here,
+    in the detectors, and not only when a pipeline goes through the registry.
+    """
+    finite = multiunit[np.isfinite(multiunit)]
+    if np.any(finite < 0) or np.any(finite != np.round(finite)):
+        msg = (
+            f"{what}: spike counts or indicators, non-negative whole numbers, but the "
+            "array holds other values. Pass counts per sample, not a rate."
+        )
+        raise ValueError(msg)
+
+
 def _validate_duration_limits(minimum_duration: float, maximum_duration: float | None) -> None:
     """Reject duration limits that are not durations or leave no admissible event."""
     if not 0 <= minimum_duration < np.inf:

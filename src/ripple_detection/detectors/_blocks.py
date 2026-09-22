@@ -64,10 +64,18 @@ def _valid_blocks(
         finite = np.isfinite(signal)
         is_valid &= finite.all(axis=1) if finite.ndim == 2 else finite
     if not np.any(is_valid):
-        msg = (
-            "Every sample has a NaN in at least one channel, so there is nothing to "
-            "detect on. Check the alignment of the inputs."
+        empty = [
+            f"channel(s) {np.flatnonzero(~np.isfinite(signal).any(axis=0)).tolist()} "
+            f"of signal {position + 1}"
+            for position, signal in enumerate(signals)
+            if signal.ndim == 2 and len(signal) and (~np.isfinite(signal).any(axis=0)).any()
+        ]
+        cause = (
+            f"; {' and '.join(empty)} hold no finite sample. Drop them before detecting"
+            if empty
+            else ". Check the alignment of the inputs"
         )
+        msg = f"Every sample has a NaN in at least one channel, so there is nothing to detect on{cause}."
         raise ValueError(msg)
     blocks = _contiguous_valid_blocks(is_valid, time)
     if minimum_duration is not None:
@@ -79,6 +87,26 @@ def _valid_blocks(
             stacklevel=4,
         )
     return is_valid, blocks
+
+
+def _reject_flat_channels(signal: FloatArray, is_valid: BoolArray, name: str) -> None:
+    """Raise for a channel that is constant over the valid samples.
+
+    A dead or disconnected channel adds nothing to a sum or mean of
+    envelopes, so a detector that combines channels would run on fewer than
+    the caller passed, and dilute the rest, without a word. The per-channel
+    detectors already raise on its zero normalization scale.
+    """
+    valid = signal[is_valid]
+    if len(valid) < 2:
+        return  # one sample has no spread; the normalization reports that
+    flat = np.flatnonzero(np.all(valid == valid[0], axis=0))
+    if flat.size:
+        msg = (
+            f"{name} channel(s) {flat.tolist()} are constant over the valid samples, "
+            "as a dead or disconnected channel is. Drop them before detecting."
+        )
+        raise ValueError(msg)
 
 
 def _drop_short_blocks(

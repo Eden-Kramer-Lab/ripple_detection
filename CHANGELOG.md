@@ -315,6 +315,14 @@ raises on zero rows; that is hdmf's, not this package's.
     non-integer channel, unit or window count, and a `minimum_active_units`
     above the number of units. Each disabled a criterion or emptied the
     result without an error; `minimum_duration=0` still means no minimum;
+  - `multiunit` holding negative or fractional values, in
+    `multiunit_HSE_detector` and `Carey_candidate_detector` called directly
+    (before, only the registry checked), a ripple-band channel that is constant
+    over the valid samples in the detectors that combine channels (Kay,
+    Roumis, Zugaro, Carey, Long), which ran on fewer channels than given, and
+    a Yu call with no immobile sample, whose error named a mask the caller had
+    not passed. An error for input with no finite sample names the channels
+    that hold none;
   - in `simulate_LFP`, a ripple time outside `time`, a non-positive or NaN
     duration, a frequency outside the Nyquist range or NaN, a ripple size or
     noise amplitude that is NaN, a negative `ripple_amplitude`, or a
@@ -324,7 +332,8 @@ raises on zero rows; that is hdmf's, not this package's.
   `minimum_duration` of the caller to the sustained-z-score statistic. Before,
   they used the default of 15 ms.
 - The length guard of `filter_ripple_band` was one sample too permissive, so a
-  signal of exactly that length failed inside scipy.
+  signal of exactly that length failed inside scipy. An infinite sample is
+  missing, as NaN is; before, one `inf` turned its whole run to NaN.
 - `normalization_mask` is restricted to the valid samples, as the data is.
 - `get_envelope` and `get_multiunit_population_firing_rate` convert their input,
   as their `array_like` annotation states.

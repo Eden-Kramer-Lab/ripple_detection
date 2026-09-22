@@ -24,6 +24,7 @@ from ripple_detection.detectors._validation import (
     _check_smoothing_sigma,
     _validate_detector_inputs,
     _validate_duration_limits,
+    _validate_multiunit,
 )
 
 
@@ -65,13 +66,11 @@ def multiunit_HSE_detector(
     time : array_like, shape (n_time,)
         Time values for each sample in **seconds**.
     multiunit : array_like, shape (n_time, n_units)
-        Spike indicator matrix for each unit at each time point.
-        Can be either:
-        - **Binary** (0 = no spike, 1 = spike) - recommended for consistent results
-        - **Spike counts** (0, 1, 2, ...) - also supported, represents number of spikes per bin
-
-        Both formats work, but may produce different sensitivities. For multi-spike
-        bins, results are typically more consistent with binary format.
+        Spikes per sample for each unit: indicators (0 or 1) or counts
+        (0, 1, 2, ...). The two differ only in bins holding more than one
+        spike, where counts weigh the bin by its spikes. Values must be
+        non-negative whole numbers; a rate in Hz or a smoothed rate raises
+        when it is not whole, and NaN marks a missing sample.
     speed : array_like, shape (n_time,)
         Animal's running speed at each time point in **cm/s**.
     sampling_frequency : float
@@ -180,6 +179,7 @@ def multiunit_HSE_detector(
         )
         raise ValueError(msg)
     _check_minimum_active_units(minimum_active_units, multiunit.shape[1])
+    _validate_multiunit(multiunit)
     time, multiunit, speed = _validate_detector_inputs(
         time, multiunit, speed, sampling_frequency, speed_threshold
     )
