@@ -858,7 +858,7 @@ class TestKarlssonEventStatistics:
             time_3s,
             ripple_times=[1.0, 2.0],
             noise_amplitude=1.3,
-            ripple_amplitude=1.0,
+            ripple_snr=6.0,
             random_state=1,
         )
         quiet = [
@@ -1462,8 +1462,7 @@ class TestYuRippleDetector:
         fs = 1500
         time = np.arange(fs * 20) / fs
         planted = [2.0, 5.0, 8.0, 11.0, 14.0, 17.0]
-        # ripple_amplitude 0.3 gives ripples ~25x the in-band background,
-        # already generous; the fixture default of 1.5 is ~135x (see next test)
+        # ripples five times the ripple-band background on pink noise
         lfps = filter_ripple_band(
             np.column_stack(
                 [
@@ -1471,7 +1470,7 @@ class TestYuRippleDetector:
                         time,
                         ripple_times=planted,
                         noise_amplitude=1.2,
-                        ripple_amplitude=0.3,
+                        ripple_snr=5.0,
                         random_state=seed,
                     )
                     for seed in (1, 2, 3, 4)
@@ -1511,12 +1510,15 @@ class TestYuRippleDetector:
         fs = 1500
         time = np.arange(fs * 20) / fs
         planted = [2.0, 5.0, 8.0, 11.0, 14.0, 17.0]
+        # brown noise has almost no ripple-band power, so these ripples are more
+        # than a hundred times the background and hold nearly all the variance
         lfps = filter_ripple_band(
             np.column_stack(
                 [
                     simulate_LFP(
                         time,
                         ripple_times=planted,
+                        noise_type="brown",
                         noise_amplitude=1.2,
                         ripple_amplitude=1.5,
                         random_state=seed,
@@ -2267,14 +2269,23 @@ class TestDetectorErrorHandling:
         assert np.isfinite(ripples.drop(columns=[]).to_numpy(dtype=float)).all()
 
     def test_nan_speed_inside_a_ripple_splits_it_into_two_clipped_events(
-        self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
+        self, time_3s, stationary_speed, sampling_frequency
     ):
         """Missing speed is missing data: the ripple is cut at the gap, and the
         two halves end and start on the gap's edges, flagged as clipped."""
         speed_with_nan = stationary_speed.copy()
         speed_with_nan[1640:1660] = np.nan  # inside the ripple planted at 1.1 s
+        # a long, loud ripple, so each half clears the threshold for 15 ms on its own
+        lfp = simulate_LFP(
+            time_3s,
+            [1.1, 2.1],
+            noise_amplitude=1.2,
+            ripple_snr=12.0,
+            ripple_duration=0.15,
+            random_state=0,
+        )
 
-        filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
+        filtered_lfps = filter_ripple_band(lfp[:, np.newaxis], 1500)
         ripples = Kay_ripple_detector(
             time_3s, filtered_lfps, speed_with_nan, sampling_frequency
         )
@@ -2288,14 +2299,6 @@ class TestDetectorErrorHandling:
         assert after.clipped_start.item()
         assert not after.clipped_end.item()
         assert not ripples[(ripples.start_time < 1.1) & (ripples.end_time > 1.1)].shape[0]
-
-        filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
-        ripples = Kay_ripple_detector(
-            time_3s, filtered_lfps, speed_with_nan, sampling_frequency
-        )
-
-        # Should handle NaN in speed data
-        assert isinstance(ripples, pd.DataFrame)
 
     def test_integer_lfp_not_truncated(
         self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency

@@ -225,7 +225,7 @@ def simulate_LFP(
     ripple_times: float | list[float],
     ripple_amplitude: float | None = None,
     ripple_duration: float | tuple[float, float] = 0.100,
-    noise_type: Literal["white", "pink", "brown"] = "brown",
+    noise_type: Literal["white", "pink", "brown"] = "pink",
     noise_amplitude: float = 1.3,
     random_state: int | np.random.Generator | None = None,
     *,
@@ -255,11 +255,12 @@ def simulate_LFP(
         draws one duration per ripple uniformly from that range. Default is
         0.100 (100 ms).
     noise_type : {'white', 'pink', 'brown'}, optional
-        Type of background noise. Default is 'brown'. Brown (1/f²) noise
-        leaves very little power in the 150-250 Hz band, and the fraction
-        falls further as the record lengthens (it is a random walk), so
-        ripples of any visible size dominate the band; 'pink' gives a
-        ripple-band background closer to recordings. See Notes.
+        Type of background noise. Default is 'pink' (1/f), whose ripple-band
+        background is closest to recordings. Brown (1/f²) noise, the default
+        before 2.0, leaves very little power in the 150-250 Hz band, and the
+        fraction falls further as the record lengthens (it is a random walk),
+        so ripples of any visible size dominate the band and every detector
+        finds every one of them. See Notes.
     noise_amplitude : float, optional
         Amplitude of background noise in the signal's units. Default is 1.3.
     random_state : int or numpy.random.Generator, optional
@@ -318,7 +319,7 @@ def simulate_LFP(
     Examples
     --------
     >>> time = simulate_time(3000, 1000)  # 3 seconds at 1000 Hz
-    >>> lfp = simulate_LFP(time, [1.0, 2.0], noise_type='brown')
+    >>> lfp = simulate_LFP(time, [1.0, 2.0])
 
     Ripples five times the ripple-band background, varying in frequency and
     duration, on a pink-noise background:

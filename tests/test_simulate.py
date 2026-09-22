@@ -476,9 +476,12 @@ class TestSimulateLFPRealism:
     def test_default_output_is_pinned(self):
         """The default call's output, pinned so an unintended change to the
         draw order or the noise shows up. Re-pinned for 2.0, which draws from
-        numpy.random.default_rng rather than the legacy RandomState."""
+        numpy.random.default_rng rather than the legacy RandomState and whose
+        default noise is pink; the explicit brown call is the 1.x default."""
         t = simulate_time(4500, self.FS)
         y = simulate_LFP(t, [1.0, 2.0], random_state=0)
+        assert _digest(y) == "38aba443e5f044ca"
+        y = simulate_LFP(t, [1.0, 2.0], random_state=0, noise_type="brown")
         assert _digest(y) == "aec97d07aeeb5ff9"
         y = simulate_LFP(
             t, [1.0, 2.0], random_state=0, noise_type="pink", ripple_amplitude=1.0

@@ -128,6 +128,11 @@ raises on zero rows; that is hdmf's, not this package's.
 
 ### Changed
 
+- **Breaking.** `simulate_LFP` defaults to pink (1/f) noise. Brown noise, the
+  old default, has almost no ripple-band power, so a ripple of any amplitude
+  was tens to hundreds of times the band background and every detector found
+  every ripple; on pink noise a ripple of `ripple_snr` 1 to 4 is a real test.
+  Pass `noise_type="brown"` for the old signal.
 - `Carey_candidate_detector` filters `theta_lfp` over each run of finite theta
   samples, as the original filtered the whole recording, rather than within
   the blocks its other inputs define. A dropout in speed or the spikes no
