@@ -500,7 +500,7 @@ pytest tests/test_properties.py    # property-based (hypothesis)
 pytest tests/test_snapshots.py     # regression snapshots
 
 # HTML coverage report (open htmlcov/index.html)
-pytest --cov=ripple_detection --cov-report=html
+pytest --cov-report=html
 ```
 
 Test modules mirror the package modules (`test_core`, `test_detectors`,
@@ -511,16 +511,16 @@ Test modules mirror the package modules (`test_core`, `test_detectors`,
 
 ```bash
 # Format code with ruff
-ruff format ripple_detection/ tests/
+ruff format src/ tests/
 
 # Lint code with ruff
-ruff check ripple_detection/ tests/
+ruff check src/ tests/
 
 # Type check with mypy
-mypy ripple_detection/
+mypy src/
 
 # Check formatting without modifying
-ruff format --check ripple_detection/ tests/
+ruff format --check src/ tests/
 ```
 
 ### Release Process
@@ -529,10 +529,10 @@ Releases are automated via GitHub Actions when a version tag is pushed:
 
 ```bash
 # 1. Ensure all tests pass and code quality checks pass
-pytest --cov=ripple_detection tests/
-ruff format --check ripple_detection/ tests/
-ruff check ripple_detection/ tests/
-mypy ripple_detection/
+pytest tests/
+ruff format --check src/ tests/
+ruff check src/ tests/
+mypy src/
 
 # 2. Update CHANGELOG.md with new version and changes
 # - Add ## [X.Y.Z] - YYYY-MM-DD section

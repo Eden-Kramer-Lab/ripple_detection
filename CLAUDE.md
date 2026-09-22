@@ -35,7 +35,7 @@ tools; keep them identical.
 
 ```bash
 # Run all tests with coverage
-pytest --cov=ripple_detection tests/
+pytest tests/
 
 # Run one module
 pytest tests/test_core.py          # signal processing
@@ -52,7 +52,7 @@ pytest tests/test_core.py::TestGetEnvelope
 pytest tests/test_detectors.py::TestKayRippleDetector::test_single_channel_with_ripples
 
 # Generate HTML coverage report
-pytest --cov=ripple_detection --cov-report=html tests/
+pytest --cov-report=html tests/
 open htmlcov/index.html
 
 # Test notebooks (as done in CI)
@@ -65,19 +65,19 @@ jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --exec
 
 ```bash
 # Format code with ruff
-ruff format ripple_detection/ tests/
+ruff format src/ tests/
 
 # Check formatting without modifying files
-ruff format --check ripple_detection/ tests/
+ruff format --check src/ tests/
 
 # Lint code with ruff
-ruff check ripple_detection/ tests/
+ruff check src/ tests/
 
 # Auto-fix ruff issues where possible
-ruff check --fix ripple_detection/ tests/
+ruff check --fix src/ tests/
 
 # Type check with mypy
-mypy ripple_detection/
+mypy src/
 ```
 
 ### Building
@@ -96,12 +96,12 @@ When preparing a new release:
 
 ```bash
 # 1. Run all tests to ensure everything passes
-pytest --cov=ripple_detection tests/
+pytest tests/
 
 # 2. Run code quality checks
-ruff format --check ripple_detection/ tests/
-ruff check ripple_detection/ tests/
-mypy ripple_detection/
+ruff format --check src/ tests/
+ruff check src/ tests/
+mypy src/
 
 # 3. Update CHANGELOG.md
 # - Add new version section with date: ## [X.Y.Z] - YYYY-MM-DD
@@ -144,16 +144,16 @@ git push origin vX.Y.Z
 - Always update CHANGELOG.md BEFORE creating the tag
 - The tag must be an annotated tag (use `-a` flag) with a meaningful message
 - Version follows semantic versioning (MAJOR.MINOR.PATCH)
-- The version in `ripple_detection/_version.py` is auto-generated from the git tag by hatch-vcs
+- The version in `src/ripple_detection/_version.py` is auto-generated from the git tag by hatch-vcs
 - Monitor the release workflow at: https://github.com/Eden-Kramer-Lab/ripple_detection/actions
 
 ## Architecture
 
 ### Core Module Structure
 
-The package is organized into five modules, one of them a package:
+The package lives under `src/` (the Scientific Python guide's layout, so tests import the installed package, never the checkout) and is organized into five modules, one of them a package:
 
-1. **[ripple_detection/core.py](ripple_detection/core.py)** - Low-level signal processing utilities
+1. **[src/ripple_detection/core.py](src/ripple_detection/core.py)** - Low-level signal processing utilities
    - Bandpass filtering for ripple band (150-250 Hz)
    - Envelope extraction via Hilbert transform
    - Gaussian smoothing
@@ -161,7 +161,7 @@ The package is organized into five modules, one of them a package:
    - Movement exclusion based on speed
    - Utility functions for time series segmentation
 
-2. **[ripple_detection/detectors/](ripple_detection/detectors/)** - High-level detection algorithms, a package whose `__init__` re-exports the public names so `from ripple_detection.detectors import Kay_ripple_detector` still works
+2. **[src/ripple_detection/detectors/](src/ripple_detection/detectors/)** - High-level detection algorithms, a package whose `__init__` re-exports the public names so `from ripple_detection.detectors import Kay_ripple_detector` still works
    - `_validation.py` - shape, length, unit and duration-limit checks
    - `_blocks.py` - the missing-sample policy: valid samples, contiguous blocks, block-wise transforms and threshold tests
    - `_events.py` - the shared detection tail, duration ceiling, active-unit counts, and `_get_event_stats`
@@ -173,16 +173,16 @@ The package is organized into five modules, one of them a package:
    - The README's "Choosing a detector" table is the reference for how their conventions differ
    - All detectors return pandas DataFrames with event statistics
 
-3. **[ripple_detection/simulate.py](ripple_detection/simulate.py)** - Synthetic data generation
+3. **[src/ripple_detection/simulate.py](src/ripple_detection/simulate.py)** - Synthetic data generation
    - Simulate LFPs with embedded ripples
    - Multiple noise types (white, pink, brown)
    - Used for testing and validation
 
-4. **[ripple_detection/registry.py](ripple_detection/registry.py)** - `DETECTORS`, `get_detector`, `DetectorSpec`
+4. **[src/ripple_detection/registry.py](src/ripple_detection/registry.py)** - `DETECTORS`, `get_detector`, `DetectorSpec`
    - Resolves a detector by name and says which signal kind it takes (`RIPPLE_BAND_LFP`, `RAW_LFP_PAIR`, `MULTIUNIT`)
    - For pipelines that store a detector's name rather than importing it
 
-5. **[ripple_detection/literature.py](ripple_detection/literature.py)** - `load_literature_parameters`
+5. **[src/ripple_detection/literature.py](src/ripple_detection/literature.py)** - `load_literature_parameters`
    - The survey of detection parameters from 57 replay papers, shipped as `data/literature_detection_parameters.csv`
    - The README's "Published parameter values" table is computed from it
 
@@ -215,7 +215,7 @@ Yu, Zugaro, Long and Carey use their own segmentation rules but the same blocks:
 
 ### Pre-computed Filter
 
-The package includes a pre-computed ripple bandpass filter ([ripple_detection/ripplefilter.mat](ripple_detection/ripplefilter.mat)) from the Frank lab with specific characteristics:
+The package includes a pre-computed ripple bandpass filter ([ripple_detection/ripplefilter.mat](src/ripple_detection/ripplefilter.mat)) from the Frank lab with specific characteristics:
 
 - 150-250 Hz bandpass
 - 40 dB roll-off
@@ -262,7 +262,7 @@ The package also validates that example notebooks run without errors in CI.
 - Uses `hatchling` as build backend (PEP 517/518/621 compliant)
 - Dynamic versioning via `hatch-vcs` from git tags
 - Version automatically determined from git tags (e.g., `v1.5.1`)
-- Fallback version in `ripple_detection/_version.py`
+- Fallback version in `src/ripple_detection/_version.py`
 - Pure pyproject.toml - no setup.py or setup.cfg needed
 
 **Python version**: Requires Python >= 3.10

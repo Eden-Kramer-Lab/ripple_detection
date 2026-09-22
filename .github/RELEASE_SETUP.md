@@ -106,7 +106,7 @@ Before pushing a release tag:
 - [ ] `CHANGELOG.md` updated with version number and date
 - [ ] Version tag follows semantic versioning (e.g., `v1.6.0`)
 - [ ] All tests pass locally: `pytest tests/`
-- [ ] Quality checks pass: `ruff format --check .`, `ruff check .`, and `mypy ripple_detection/`
+- [ ] Quality checks pass: `ruff format --check .`, `ruff check .`, and `mypy src/`
 - [ ] Built and tested locally: `python -m build` works
 
 ## Troubleshooting
@@ -133,9 +133,9 @@ Before pushing a release tag:
 - Run locally to see errors:
 
   ```bash
-  ruff format --check ripple_detection/ tests/
-  ruff check ripple_detection/ tests/
-  mypy ripple_detection/
+  ruff format --check src/ tests/
+  ruff check src/ tests/
+  mypy src/
   ```
 
 - Fix issues, commit, and push

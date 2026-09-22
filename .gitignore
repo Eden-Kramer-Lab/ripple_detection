@@ -104,4 +104,4 @@ ENV/
 .pytest_cache/
 
 # Auto-generated version file
-ripple_detection/_version.py
+src/ripple_detection/_version.py
