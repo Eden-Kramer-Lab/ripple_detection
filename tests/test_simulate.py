@@ -697,6 +697,16 @@ class TestSimulateLFPRejectsSilentlyBrokenRipples:
             simulate_LFP(t, [1.0], ripple_frequency=frequency)
 
 
+class TestRippleTimes:
+    @pytest.mark.parametrize(
+        "value", [1.0, np.float32(1.0), np.int64(1), [1.0], np.array([1.0])]
+    )
+    def test_one_ripple_time_in_any_numeric_form(self, value):
+        t = simulate_time(3000, 1500)
+        expected = simulate_LFP(t, 1.0, random_state=0)
+        np.testing.assert_array_equal(simulate_LFP(t, value, random_state=0), expected)
+
+
 class TestDrawPerRipple:
     def test_an_explicit_value_per_ripple_is_used_as_given(self):
         rng = np.random.default_rng(0)

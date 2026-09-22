@@ -244,7 +244,7 @@ def _draw_per_ripple(
 
 def simulate_LFP(
     time: FloatArray,
-    ripple_times: float | list[float],
+    ripple_times: float | Sequence[float] | FloatArray,
     ripple_amplitude: float | None = None,
     ripple_duration: float | tuple[float, float] = 0.100,
     noise_type: NoiseType = "pink",
@@ -265,7 +265,7 @@ def simulate_LFP(
     ----------
     time : ndarray, shape (n_time,)
         Time array in seconds.
-    ripple_times : float or list of float
+    ripple_times : float or array_like of float
         Center time(s) of ripple event(s) in seconds.
     ripple_amplitude : float, optional
         Peak-to-peak amplitude of the ripple oscillation in the signal's units
@@ -358,37 +358,85 @@ def simulate_LFP(
     _validate_sizes(ripple_amplitude, ripple_snr, noise_amplitude)
     rng = np.random.default_rng(random_state)
     noise = (noise_amplitude / 2) * NOISE_FUNCTION[noise_type](time.size, rng=rng)
+    return noise + _ripple_waveform(
+        time,
+        _as_ripple_times(ripple_times),
+        noise,
+        rng,
+        ripple_amplitude=ripple_amplitude,
+        ripple_snr=ripple_snr,
+        ripple_duration=ripple_duration,
+        ripple_frequency=ripple_frequency,
+        noise_amplitude=noise_amplitude,
+        sampling_frequency=sampling_frequency,
+    )
 
-    if isinstance(ripple_times, (int, float)):
-        ripple_times = [ripple_times]
-    n_ripples = len(ripple_times)
 
+def _as_ripple_times(ripple_times: float | Sequence[float] | FloatArray) -> FloatArray:
+    """One ripple time or several, as a 1-D float array; NumPy scalars included."""
+    return np.atleast_1d(np.asarray(ripple_times, dtype=float))
+
+
+def _channel_gains(
+    channel_gains: Sequence[float] | FloatArray | None, n_channels: int
+) -> FloatArray:
+    """Each channel's ripple gain, 1 by default, checked against the channel count."""
+    gains = (
+        np.ones(n_channels)
+        if channel_gains is None
+        else np.asarray(channel_gains, dtype=float)
+    )
+    if gains.shape != (n_channels,):
+        msg = f"channel_gains must have shape ({n_channels},), got {gains.shape}."
+        raise ValueError(msg)
+    return gains
+
+
+def _ripple_waveform(
+    time: FloatArray,
+    ripple_times: FloatArray,
+    reference_noise: FloatArray,
+    rng: np.random.Generator,
+    *,
+    ripple_amplitude: float | None,
+    ripple_snr: float | None,
+    ripple_duration: float | tuple[float, float] | FloatArray,
+    ripple_frequency: float | tuple[float, float] | FloatArray,
+    noise_amplitude: float,
+    sampling_frequency: float | None,
+) -> FloatArray:
+    """The ripple bursts alone, zero elsewhere, shape (n_time,).
+
+    Draws the per-ripple frequencies, then durations, from ``rng``. With
+    ``ripple_snr`` each burst is sized against the ripple-band spread of
+    ``reference_noise``; otherwise its peak is half ``ripple_amplitude``
+    (default 2).
+    """
     rate = _sampling_rate(time, sampling_frequency)
     band_noise_sd = np.nan
     if ripple_snr is not None:
         if noise_amplitude <= 0:
             msg = "ripple_snr needs a background: noise_amplitude must be > 0."
             raise ValueError(msg)
-        band_noise_sd = float(filter_ripple_band(noise, sampling_frequency=rate).std())
-    amplitude = 2.0 if ripple_amplitude is None else ripple_amplitude
-
-    frequencies = _draw_per_ripple(ripple_frequency, n_ripples, rng)
-    durations = _draw_per_ripple(ripple_duration, n_ripples, rng)
+        band_noise_sd = float(
+            filter_ripple_band(reference_noise, sampling_frequency=rate).std()
+        )
+    frequencies = _draw_per_ripple(ripple_frequency, ripple_times.size, rng)
+    durations = _draw_per_ripple(ripple_duration, ripple_times.size, rng)
     _validate_ripples(time, ripple_times, frequencies, durations)
-
-    signal = np.asarray(noise, dtype=float)
+    ripple = np.zeros(time.size)
     _add_ripple_bursts(
-        signal,
+        ripple,
         time,
         ripple_times,
         frequencies,
         durations,
-        amplitude=amplitude,
+        amplitude=2.0 if ripple_amplitude is None else ripple_amplitude,
         ripple_snr=ripple_snr,
         band_noise_sd=band_noise_sd,
         rate=rate,
     )
-    return signal
+    return ripple
 
 
 def _sampling_rate(time: FloatArray, sampling_frequency: float | None) -> float:
@@ -420,7 +468,7 @@ def _validate_sizes(
 
 def _validate_ripples(
     time: FloatArray,
-    ripple_times: Sequence[float],
+    ripple_times: Sequence[float] | FloatArray,
     frequencies: FloatArray,
     durations: FloatArray,
 ) -> None:
@@ -463,7 +511,7 @@ def _gaussian_window(
 def _add_ripple_bursts(
     out: FloatArray,
     time: FloatArray,
-    ripple_times: Sequence[float],
+    ripple_times: Sequence[float] | FloatArray,
     frequencies: FloatArray,
     durations: FloatArray,
     *,
@@ -541,7 +589,7 @@ def _add_common_mode_artifacts(
 
 def simulate_multichannel_LFP(
     time: FloatArray,
-    ripple_times: float | list[float],
+    ripple_times: float | Sequence[float] | FloatArray,
     n_channels: int,
     *,
     channel_gains: Sequence[float] | FloatArray | None = None,
@@ -571,7 +619,7 @@ def simulate_multichannel_LFP(
     ----------
     time : ndarray, shape (n_time,)
         Time array in seconds.
-    ripple_times : float or list of float
+    ripple_times : float or array_like of float
         Center time(s) of ripple event(s) in seconds.
     n_channels : int
         Number of channels.
@@ -632,45 +680,22 @@ def simulate_multichannel_LFP(
     if n_channels < 1:
         msg = f"n_channels must be at least 1, got {n_channels}."
         raise ValueError(msg)
-    gains = (
-        np.ones(n_channels)
-        if channel_gains is None
-        else np.asarray(channel_gains, dtype=float)
-    )
-    if gains.shape != (n_channels,):
-        msg = f"channel_gains must have shape ({n_channels},), got {gains.shape}."
-        raise ValueError(msg)
+    gains = _channel_gains(channel_gains, n_channels)
     rng = np.random.default_rng(random_state)
-    if isinstance(ripple_times, (int, float)):
-        ripple_times = [ripple_times]
-    n_ripples = len(ripple_times)
-
     lfps = _correlated_noise(
         time.size, n_channels, noise_type, noise_amplitude, shared_noise_fraction, rng
     )
-    rate = _sampling_rate(time, sampling_frequency)
-    band_noise_sd = np.nan
-    if ripple_snr is not None:
-        if noise_amplitude <= 0:
-            msg = "ripple_snr needs a background: noise_amplitude must be > 0."
-            raise ValueError(msg)
-        band_noise_sd = float(filter_ripple_band(lfps[:, 0], sampling_frequency=rate).std())
-    amplitude = 2.0 if ripple_amplitude is None else ripple_amplitude
-
-    frequencies = _draw_per_ripple(ripple_frequency, n_ripples, rng)
-    durations = _draw_per_ripple(ripple_duration, n_ripples, rng)
-    _validate_ripples(time, ripple_times, frequencies, durations)
-    ripple = np.zeros(time.size)
-    _add_ripple_bursts(
-        ripple,
+    ripple = _ripple_waveform(
         time,
-        ripple_times,
-        frequencies,
-        durations,
-        amplitude=amplitude,
+        _as_ripple_times(ripple_times),
+        lfps[:, 0],
+        rng,
+        ripple_amplitude=ripple_amplitude,
         ripple_snr=ripple_snr,
-        band_noise_sd=band_noise_sd,
-        rate=rate,
+        ripple_duration=ripple_duration,
+        ripple_frequency=ripple_frequency,
+        noise_amplitude=noise_amplitude,
+        sampling_frequency=sampling_frequency,
     )
     lfps += ripple[:, np.newaxis] * gains
     if artifact_times is not None and len(artifact_times):
@@ -688,7 +713,7 @@ def simulate_multichannel_LFP(
 def _add_sharp_waves(
     out: FloatArray,
     time: FloatArray,
-    ripple_times: Sequence[float],
+    ripple_times: Sequence[float] | FloatArray,
     amplitude: float,
     duration: float,
 ) -> None:
@@ -698,9 +723,24 @@ def _add_sharp_waves(
         out[window] += amplitude * envelope
 
 
+def _add_sharp_wave_pair(
+    ripple_channel: FloatArray,
+    radiatum_channel: FloatArray,
+    time: FloatArray,
+    ripple_times: FloatArray,
+    amplitude: float,
+    duration: float,
+    leak: float,
+) -> None:
+    """The sharp wave under each ripple: negative on the radiatum channel,
+    and ``leak`` of it, positive, on the ripple channel. In place."""
+    _add_sharp_waves(ripple_channel, time, ripple_times, leak * amplitude, duration)
+    _add_sharp_waves(radiatum_channel, time, ripple_times, -amplitude, duration)
+
+
 def simulate_sharp_wave_ripple_pair(
     time: FloatArray,
-    ripple_times: float | list[float],
+    ripple_times: float | Sequence[float] | FloatArray,
     *,
     sharp_wave_amplitude: float = 2.0,
     sharp_wave_duration: float = 0.080,
@@ -727,7 +767,7 @@ def simulate_sharp_wave_ripple_pair(
     Parameters
     ----------
     time : ndarray, shape (n_time,)
-    ripple_times : float or list of float
+    ripple_times : float or array_like of float
     sharp_wave_amplitude : float, optional
         Peak of the radiatum deflection, in the signal's units. Default 2.0,
         about three standard deviations of the default noise.
@@ -766,24 +806,21 @@ def simulate_sharp_wave_ripple_pair(
         random_state=random_state,
         sampling_frequency=sampling_frequency,
     )
-    if isinstance(ripple_times, (int, float)):
-        ripple_times = [ripple_times]
-    _add_sharp_waves(
+    _add_sharp_wave_pair(
         pair[:, 0],
+        pair[:, 1],
         time,
-        ripple_times,
-        sharp_wave_leak * sharp_wave_amplitude,
+        _as_ripple_times(ripple_times),
+        sharp_wave_amplitude,
         sharp_wave_duration,
-    )
-    _add_sharp_waves(
-        pair[:, 1], time, ripple_times, -sharp_wave_amplitude, sharp_wave_duration
+        sharp_wave_leak,
     )
     return pair
 
 
 def simulate_multiunit(
     time: FloatArray,
-    ripple_times: float | list[float],
+    ripple_times: float | Sequence[float] | FloatArray,
     n_units: int,
     *,
     baseline_rate: float | tuple[float, float] | FloatArray = (0.5, 5.0),
@@ -804,7 +841,7 @@ def simulate_multiunit(
     Parameters
     ----------
     time : ndarray, shape (n_time,)
-    ripple_times : float or list of float
+    ripple_times : float or array_like of float
     n_units : int
     baseline_rate : float, (low, high) or array of shape (n_units,), optional
         Baseline rate in spikes per second: one value for every unit, a
@@ -836,9 +873,8 @@ def simulate_multiunit(
         msg = f"ripple_rate_gain must be at least 1, got {ripple_rate_gain}."
         raise ValueError(msg)
     rng = np.random.default_rng(random_state)
-    if isinstance(ripple_times, (int, float)):
-        ripple_times = [ripple_times]
-    n_ripples = len(ripple_times)
+    ripple_times = _as_ripple_times(ripple_times)
+    n_ripples = ripple_times.size
     rates = _draw_per_ripple(baseline_rate, n_units, rng)
     if not np.all(rates >= 0):
         msg = f"baseline_rate must be non-negative, got {rates}."
@@ -931,7 +967,7 @@ class SimulatedSession:
 
 def simulate_session(
     time: FloatArray,
-    ripple_times: float | list[float],
+    ripple_times: float | Sequence[float] | FloatArray,
     *,
     n_channels: int = 4,
     n_units: int = 50,
@@ -968,7 +1004,7 @@ def simulate_session(
     Parameters
     ----------
     time : ndarray, shape (n_time,)
-    ripple_times : float or list of float
+    ripple_times : float or array_like of float
     n_channels, n_units : int, optional
         Default 4 channels and 50 units. The spike detectors z-score the
         population rate, so their false-positive rate depends on how many
@@ -1007,22 +1043,13 @@ def simulate_session(
         ripple_snr = None
     time = np.asarray(time, dtype=float)
     rng = np.random.default_rng(random_state)
-    if isinstance(ripple_times, (int, float)):
-        ripple_times = [ripple_times]
-    centers = np.asarray(ripple_times, dtype=float)
+    centers = _as_ripple_times(ripple_times)
     frequencies = _draw_per_ripple(ripple_frequency, centers.size, rng)
     durations = _draw_per_ripple(ripple_duration, centers.size, rng)
-    gains = (
-        np.ones(n_channels)
-        if channel_gains is None
-        else np.asarray(channel_gains, dtype=float)
-    )
-    if gains.shape != (n_channels,):
-        msg = f"channel_gains must have shape ({n_channels},), got {gains.shape}."
-        raise ValueError(msg)
+    gains = _channel_gains(channel_gains, n_channels)
     channels = simulate_multichannel_LFP(
         time,
-        list(centers),
+        centers,
         n_channels + 1,
         channel_gains=np.append(gains, ripple_leak),
         shared_noise_fraction=shared_noise_fraction,
@@ -1039,17 +1066,18 @@ def simulate_session(
         sampling_frequency=sampling_frequency,
     )
     lfps, radiatum = channels[:, :n_channels], channels[:, n_channels]
-    _add_sharp_waves(
+    _add_sharp_wave_pair(
         lfps[:, 0],
+        radiatum,
         time,
-        list(centers),
-        sharp_wave_leak * sharp_wave_amplitude,
+        centers,
+        sharp_wave_amplitude,
         sharp_wave_duration,
+        sharp_wave_leak,
     )
-    _add_sharp_waves(radiatum, time, list(centers), -sharp_wave_amplitude, sharp_wave_duration)
     multiunit = simulate_multiunit(
         time,
-        list(centers),
+        centers,
         n_units,
         baseline_rate=baseline_rate,
         ripple_rate_gain=ripple_rate_gain,
