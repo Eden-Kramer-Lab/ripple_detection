@@ -244,7 +244,7 @@ The suite has one shared fixture module and eight test modules:
 8. **[tests/test_registry.py](tests/test_registry.py)** - Every exported detector is registered; each spec matches its signature by kind and position
 9. **[tests/test_literature.py](tests/test_literature.py)** - The shipped survey loads with the documented shape and types
 
-**Test Execution**: about 580 tests in ~11 seconds (`pytest --collect-only -q | tail -1` for the current count)
+**Test Execution**: about 650 tests in ~10 seconds (`pytest --collect-only -q | tail -1` for the current count)
 
 The package also validates that example notebooks run without errors in CI.
 
