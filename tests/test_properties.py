@@ -164,9 +164,8 @@ class TestGaussianSmoothProperties:
         """Smoothing a constant signal should return approximately the same constant."""
         data = np.full(n_samples, value)
         smoothed = gaussian_smooth(data, sigma, sampling_frequency=1500)
-        # Check central region to avoid edge effects
-        middle = slice(500, -500)
-        assert np.allclose(smoothed[middle], value, rtol=1e-3, atol=1e-4)
+        # every sample, the ends included: the kernel is renormalized there
+        assert np.allclose(smoothed, value, rtol=1e-9, atol=1e-12)
 
 
 class TestThresholdByZscoreProperties:

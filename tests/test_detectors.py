@@ -3103,7 +3103,7 @@ class TestMaximumDuration:
     N_TIME = 20_000  # long enough for the Yu noise threshold
     # the long burst comes first on purpose: if the dropped event were last,
     # a wrong mask on the per-event columns would look the same as a right one
-    LONG = (5_000, 5_500, 20.0)  # 500 ms burst
+    LONG = (5_000, 5_500, 5.0)  # 500 ms burst, quiet enough that the Yu noise sample is noise
     SHORT = (12_000, 12_060, 20.0)  # 60 ms burst
 
     @pytest.fixture
@@ -3626,6 +3626,30 @@ class TestNoEventSpansAGap:
         gap = (5040, 5041)
         events = detector(*self._cut(gap, time, lfps, speed), self.FS, **kwargs)
         self._check(events, time, gap)
+
+    @pytest.mark.parametrize(
+        "detector", [Kay_ripple_detector, Karlsson_ripple_detector, Roumis_ripple_detector]
+    )
+    def test_a_moderate_ripple_cut_by_a_gap_reaches_it_and_is_flagged(self, detector, time):
+        """Smoothing is renormalized at a block edge rather than zero-padded, so
+        the trace keeps its level up to the gap: a ripple of 1.5 noise SDs cut
+        by the gap ends and starts on the gap's edges and is flagged there.
+        Zero padding pulled the trace under the threshold a few samples early,
+        so the halves stopped short of the gap and were not flagged."""
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5080, 1.5)])
+        gap = (5040, 5046)
+        events = detector(*self._cut(gap, time, lfps, np.zeros(self.N_TIME)), self.FS)
+        near_gap = events[
+            (events.end_time > time[gap[0]] - 0.02) & (events.start_time < time[gap[1]] + 0.02)
+        ]
+        assert len(near_gap) >= 1
+        for event in near_gap.itertuples():
+            if event.end_time < time[gap[0]]:
+                assert event.end_time == time[gap[0] - 1]
+                assert event.clipped_end
+            else:
+                assert event.start_time == time[gap[1]]
+                assert event.clipped_start
 
     @pytest.mark.parametrize("where", ["spikes", "time"])
     def test_burst_detector(self, where, time):

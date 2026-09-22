@@ -210,6 +210,16 @@ raises on zero rows; that is hdmf's, not this package's.
   the speed statistics skip unknown values, and `speed_threshold=np.inf`
   keeps every event. Speed that is NaN everywhere raises unless the
   criterion is off.
+- **Breaking.** `gaussian_smooth` renormalizes its kernel where it runs past
+  either end of the data, instead of padding with zeros. Every block of valid
+  samples is smoothed as its own array, so zero padding pulled the trace
+  toward zero over the last few samples before each gap: an event cut off by
+  the gap stopped short of it and was not flagged in `clipped_start` or
+  `clipped_end`, and a 1.5 SD ripple split by a 6 ms gap lost both flags. Event
+  bounds away from the recording edges and gaps are unchanged; the z-score
+  statistics move in the third or fourth decimal, because the normalization no
+  longer includes the artificially low samples at the recording's two ends.
+  Carey and Zugaro keep the zero-padded kernels of their originals.
 - **Breaking.** `max_thresh` is `max_sustained_zscore`, the largest z-score
   sustained for `minimum_duration`, which is the highest threshold at which the
   detector would still find the event. The old value could fall below

@@ -405,10 +405,9 @@ class TestGaussianSmooth:
 
         smoothed = gaussian_smooth(signal, sigma, sampling_frequency)
 
-        # Smoothing a constant signal should preserve most values
-        # Edge effects may cause some variation
-        middle = slice(100, -100)
-        assert np.allclose(smoothed[middle], signal[middle], atol=0.1)
+        # the kernel is renormalized where it runs past the data, so the ends
+        # keep the level too instead of being pulled toward zero
+        np.testing.assert_allclose(smoothed, signal, rtol=1e-12)
 
     def test_smooths_step_function(self):
         """Test smoothing of step function."""

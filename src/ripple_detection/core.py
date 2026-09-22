@@ -775,6 +775,13 @@ def gaussian_smooth(
     the sampling frequency. This is a wrapper around scipy's `gaussian_filter1d`
     with truncation at 8 standard deviations (instead of 4).
 
+    Near either end of ``axis`` the kernel runs past the data; there it is
+    renormalized to unit sum over the samples it covers, so an end is an
+    average of the data that exists rather than being pulled toward zero as
+    zero padding pulls it. The detectors smooth each block of valid samples as
+    its own array, so a trace next to a gap keeps its level, and an event cut
+    off by the gap reaches the gap's edge and is flagged there.
+
     Parameters
     ----------
     data : array_like
@@ -795,9 +802,17 @@ def gaussian_smooth(
         Gaussian-smoothed data, same shape as input.
 
     """
+    data = np.asarray(data, dtype=float)
+    sigma_samples = sigma * sampling_frequency
     smoothed = gaussian_filter1d(
-        data, sigma * sampling_frequency, truncate=truncate, axis=axis, mode="constant"
+        data, sigma_samples, truncate=truncate, axis=axis, mode="constant"
     )
+    weight = gaussian_filter1d(
+        np.ones(data.shape[axis]), sigma_samples, truncate=truncate, mode="constant"
+    )
+    shape = [1] * data.ndim
+    shape[axis] = data.shape[axis]
+    smoothed = smoothed / weight.reshape(shape)
     return np.asarray(smoothed, dtype=float)
 
 
