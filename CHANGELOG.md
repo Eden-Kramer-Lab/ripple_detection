@@ -56,6 +56,14 @@ raises on zero rows; that is hdmf's, not this package's.
 
 ### Added
 
+- Simulators for the inputs the detectors take, sharing one set of ripples:
+  `simulate_multichannel_LFP` (channels with a common ripple scaled by gain,
+  noise part shared and part their own, optional common-mode artifacts),
+  `simulate_sharp_wave_ripple_pair` (the raw two-channel input of the Long
+  detector), `simulate_multiunit` (units that burst with the ripples), and
+  `simulate_session`, which returns all of them with the ground truth as a
+  `SimulatedSession`. `ripple_duration` and `ripple_frequency` accept one
+  value per ripple so a draw can be shared between them.
 - `Yu_ripple_detector`, the detector of Yu et al. 2017. It estimates the
   threshold at each call, from the noise distribution during immobility.
 - `Zugaro_ripple_detector`, the `FindRipples` algorithm of FMAToolbox. The

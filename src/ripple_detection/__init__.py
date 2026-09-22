@@ -49,7 +49,15 @@ from ripple_detection.registry import (
     SignalKind,
     get_detector,
 )
-from ripple_detection.simulate import simulate_LFP, simulate_time
+from ripple_detection.simulate import (
+    SimulatedSession,
+    simulate_LFP,
+    simulate_multichannel_LFP,
+    simulate_multiunit,
+    simulate_session,
+    simulate_sharp_wave_ripple_pair,
+    simulate_time,
+)
 
 try:
     from ripple_detection._version import __version__
@@ -72,6 +80,7 @@ __all__ = [
     "Roumis_ripple_detector",
     "Shvartsman_ripple_detector",
     "SignalKind",
+    "SimulatedSession",
     "Yu_ripple_detector",
     "Zugaro_ripple_detector",
     "__version__",
@@ -95,5 +104,9 @@ __all__ = [
     "ripple_bandpass_filter",
     "sample_count_within",
     "simulate_LFP",
+    "simulate_multichannel_LFP",
+    "simulate_multiunit",
+    "simulate_session",
+    "simulate_sharp_wave_ripple_pair",
     "simulate_time",
 ]

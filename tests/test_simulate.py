@@ -8,11 +8,17 @@ import pytest
 from ripple_detection import filter_ripple_band
 from ripple_detection.simulate import (
     NOISE_FUNCTION,
+    SimulatedSession,
+    _draw_per_ripple,
     brown,
     mean_squared,
     normalize,
     pink,
     simulate_LFP,
+    simulate_multichannel_LFP,
+    simulate_multiunit,
+    simulate_session,
+    simulate_sharp_wave_ripple_pair,
     simulate_time,
     white,
 )
@@ -671,3 +677,250 @@ class TestSimulateLFPRejectsSilentlyBrokenRipples:
         t = simulate_time(3000, 1000)
         with pytest.raises(ValueError, match="Nyquist"):
             simulate_LFP(t, [1.0], ripple_frequency=frequency)
+
+
+class TestDrawPerRipple:
+    def test_an_explicit_value_per_ripple_is_used_as_given(self):
+        rng = np.random.default_rng(0)
+        values = np.array([0.05, 0.10, 0.15])
+        np.testing.assert_array_equal(_draw_per_ripple(values, 3, rng), values)
+
+    def test_two_values_for_two_ripples_are_a_range(self):
+        """The documented ambiguity: a two-element sequence is always a range."""
+        rng = np.random.default_rng(0)
+        drawn = _draw_per_ripple((0.05, 0.10), 2, rng)
+        assert drawn.shape == (2,)
+        assert np.all((drawn >= 0.05) & (drawn <= 0.10))
+        assert not np.array_equal(drawn, [0.05, 0.10])
+
+    def test_the_wrong_number_of_values_raises(self):
+        with pytest.raises(ValueError, match="one value per ripple"):
+            _draw_per_ripple([0.05, 0.10, 0.15], 4, np.random.default_rng(0))
+
+
+class TestSimulateMultichannelLFP:
+    FS = 1500
+
+    def test_shape(self):
+        t = simulate_time(3000, self.FS)
+        assert simulate_multichannel_LFP(t, [1.0], 3, random_state=0).shape == (3000, 3)
+
+    def test_every_channel_carries_the_same_ripple_scaled_by_its_gain(self):
+        t = simulate_time(3000, self.FS)
+        lfps = simulate_multichannel_LFP(
+            t, [1.0], 2, channel_gains=[1.0, 0.5], noise_amplitude=0.0, random_state=0
+        )
+        np.testing.assert_allclose(lfps[:, 1], 0.5 * lfps[:, 0], atol=1e-15)
+        assert np.abs(lfps[:, 0]).max() > 0.9
+
+    def test_shared_fraction_is_the_correlation_between_channels(self):
+        t = simulate_time(30000, self.FS)
+        for fraction in (0.0, 0.5, 1.0):
+            lfps = simulate_multichannel_LFP(
+                t, [], 2, shared_noise_fraction=fraction, noise_type="white", random_state=1
+            )
+            assert np.corrcoef(lfps[:, 0], lfps[:, 1])[0, 1] == pytest.approx(
+                fraction, abs=0.03
+            )
+
+    def test_noise_has_the_single_channel_scale(self):
+        """Each channel's noise has the mean square simulate_LFP's noise has."""
+        t = simulate_time(30000, self.FS)
+        lfps = simulate_multichannel_LFP(t, [], 3, noise_type="white", random_state=2)
+        single = simulate_LFP(t, [], noise_type="white", random_state=2)
+        np.testing.assert_allclose(np.mean(lfps**2, axis=0), np.mean(single**2), rtol=0.05)
+
+    def test_ripple_snr_holds_on_a_unit_gain_channel(self):
+        t = simulate_time(self.FS * 20, self.FS)
+        lfps = simulate_multichannel_LFP(
+            t, [5.0, 10.0, 15.0], 2, channel_gains=[1.0, 0.5], ripple_snr=5.0, random_state=3
+        )
+        background = simulate_multichannel_LFP(
+            t, [], 2, channel_gains=[1.0, 0.5], noise_type="pink", random_state=3
+        )
+        # the same seed draws the same noise, so the difference is the ripples alone
+        ripples_only = filter_ripple_band(lfps[:, 0] - background[:, 0], self.FS)
+        band_sd = filter_ripple_band(background[:, 0], self.FS).std()
+        peaks = [
+            np.abs(ripples_only[(t > m - 0.06) & (t < m + 0.06)]).max()
+            for m in (5.0, 10.0, 15.0)
+        ]
+        np.testing.assert_allclose(np.array(peaks) / band_sd, 5.0, rtol=0.05)
+
+    def test_artifacts_are_identical_on_every_channel_and_local_in_time(self):
+        t = simulate_time(6000, self.FS)
+        lfps = simulate_multichannel_LFP(
+            t,
+            [],
+            3,
+            noise_amplitude=0.0,
+            artifact_times=[2.0],
+            artifact_amplitude=1.0,
+            random_state=4,
+        )
+        np.testing.assert_array_equal(lfps[:, 0], lfps[:, 1])
+        np.testing.assert_array_equal(lfps[:, 0], lfps[:, 2])
+        assert np.abs(lfps[(t > 1.9) & (t < 2.1), 0]).max() > 0.5
+        assert np.all(lfps[(t < 1.9) | (t > 2.1), 0] == 0.0)
+
+    def test_seed_reproduces_and_changes(self):
+        t = simulate_time(3000, self.FS)
+        a = simulate_multichannel_LFP(t, [1.0], 2, random_state=5)
+        np.testing.assert_array_equal(
+            a, simulate_multichannel_LFP(t, [1.0], 2, random_state=5)
+        )
+        assert not np.array_equal(a, simulate_multichannel_LFP(t, [1.0], 2, random_state=6))
+
+    def test_bad_arguments_raise(self):
+        t = simulate_time(3000, self.FS)
+        with pytest.raises(ValueError, match="channel_gains"):
+            simulate_multichannel_LFP(t, [1.0], 2, channel_gains=[1.0], random_state=0)
+        with pytest.raises(ValueError, match="shared_noise_fraction"):
+            simulate_multichannel_LFP(t, [1.0], 2, shared_noise_fraction=1.5, random_state=0)
+        with pytest.raises(ValueError, match="n_channels"):
+            simulate_multichannel_LFP(t, [1.0], 0, random_state=0)
+        with pytest.raises(ValueError, match="not both"):
+            simulate_multichannel_LFP(t, [1.0], 2, ripple_amplitude=1.0, ripple_snr=2.0)
+
+
+class TestSimulateSharpWaveRipplePair:
+    FS = 1500
+
+    def test_shape_and_channel_order(self):
+        t = simulate_time(3000, self.FS)
+        assert simulate_sharp_wave_ripple_pair(t, [1.0], random_state=0).shape == (3000, 2)
+
+    def test_sharp_wave_is_negative_on_the_radiatum_channel_and_leaks_positive(self):
+        t = simulate_time(3000, self.FS)
+        pair = simulate_sharp_wave_ripple_pair(
+            t, [1.0], noise_amplitude=0.0, ripple_amplitude=2.0, sharp_wave_amplitude=2.0
+        )
+        near = (t > 0.95) & (t < 1.05)
+        # radiatum: a -2 deflection carrying 0.3 of a unit-peak ripple
+        assert -2.3 <= pair[near, 1].min() <= -1.7
+        assert pair[near, 1].sum() < 0.0
+        assert pair[np.abs(t - 1.0) < 0.005, 1].mean() < -1.5
+        # pyramidal: the ripple (peak 1) on 0.3 x 2 of sharp wave
+        assert pair[near, 0].max() == pytest.approx(1.6, abs=0.2)
+        assert np.all(np.abs(pair[(t < 0.85) | (t > 1.15)]) < 1e-6)
+
+    def test_no_sharp_wave_without_ripples(self):
+        t = simulate_time(3000, self.FS)
+        pair = simulate_sharp_wave_ripple_pair(t, [], noise_amplitude=0.0)
+        assert np.all(pair == 0.0)
+
+
+class TestSimulateMultiunit:
+    FS = 1500
+
+    def test_shape_and_counts(self):
+        t = simulate_time(3000, self.FS)
+        counts = simulate_multiunit(t, [1.0], 5, random_state=0)
+        assert counts.shape == (3000, 5)
+        assert np.all(counts >= 0)
+        assert np.all(counts == np.round(counts))
+
+    def test_units_burst_during_the_ripple(self):
+        t = simulate_time(self.FS * 20, self.FS)
+        counts = simulate_multiunit(
+            t,
+            [10.0],
+            20,
+            baseline_rate=5.0,
+            ripple_rate_gain=8.0,
+            participation=1.0,
+            ripple_duration=0.1,
+            random_state=1,
+        )
+        inside = counts[(t > 9.98) & (t < 10.02)].sum()
+        outside = counts[(t > 4.98) & (t < 5.02)].sum()
+        assert inside > 4 * max(outside, 1)
+
+    def test_no_participation_means_no_burst(self):
+        t = simulate_time(self.FS * 20, self.FS)
+        counts = simulate_multiunit(
+            t, [10.0], 20, baseline_rate=5.0, participation=0.0, random_state=1
+        )
+        inside = counts[(t > 9.9) & (t < 10.1)].sum()
+        outside = counts[(t > 4.9) & (t < 5.1)].sum()
+        assert inside < 2.0 * max(outside, 1)
+
+    def test_baseline_rate_is_honoured(self):
+        t = simulate_time(self.FS * 60, self.FS)
+        counts = simulate_multiunit(t, [], 10, baseline_rate=4.0, random_state=2)
+        np.testing.assert_allclose(counts.sum(axis=0) / 60.0, 4.0, rtol=0.2)
+
+    def test_bad_arguments_raise(self):
+        t = simulate_time(3000, self.FS)
+        with pytest.raises(ValueError, match="n_units"):
+            simulate_multiunit(t, [1.0], 0)
+        with pytest.raises(ValueError, match="participation"):
+            simulate_multiunit(t, [1.0], 2, participation=1.5)
+        with pytest.raises(ValueError, match="ripple_rate_gain"):
+            simulate_multiunit(t, [1.0], 2, ripple_rate_gain=0.5)
+        with pytest.raises(ValueError, match="baseline_rate"):
+            simulate_multiunit(t, [1.0], 2, baseline_rate=-1.0)
+
+
+class TestSimulateSession:
+    FS = 1500
+
+    def test_shapes_and_ground_truth(self):
+        t = simulate_time(self.FS * 20, self.FS)
+        session = simulate_session(
+            t, [3.0, 9.0, 15.0], n_channels=3, n_units=8, random_state=0
+        )
+        assert isinstance(session, SimulatedSession)
+        assert session.lfps.shape == (t.size, 3)
+        assert session.raw_lfp_pair.shape == (t.size, 2)
+        assert session.multiunit.shape == (t.size, 8)
+        assert session.speed.shape == (t.size,)
+        assert np.all(session.speed == 0.0)
+        np.testing.assert_array_equal(session.ripple_times, [3.0, 9.0, 15.0])
+        assert session.ripple_durations.shape == (3,)
+        assert np.all((session.ripple_durations >= 0.04) & (session.ripple_durations <= 0.12))
+        assert np.all(
+            (session.ripple_frequencies >= 150) & (session.ripple_frequencies <= 250)
+        )
+        windows = session.ripple_windows
+        np.testing.assert_allclose(windows[:, 1] - windows[:, 0], session.ripple_durations)
+        np.testing.assert_allclose(windows.mean(axis=1), session.ripple_times)
+        assert session.sampling_frequency == pytest.approx(self.FS)
+        assert session.artifact_times.shape == (0,)
+
+    def test_the_ripple_channel_is_shared_by_the_lfps_and_the_pair(self):
+        t = simulate_time(3000, self.FS)
+        session = simulate_session(t, [1.0], random_state=1)
+        np.testing.assert_array_equal(session.lfps[:, 0], session.raw_lfp_pair[:, 0])
+
+    def test_the_three_signals_carry_the_same_events(self):
+        t = simulate_time(self.FS * 20, self.FS)
+        session = simulate_session(
+            t,
+            [5.0, 10.0, 15.0],
+            ripple_amplitude=2.0,
+            noise_amplitude=0.0,
+            baseline_rate=5.0,
+            participation=1.0,
+            random_state=2,
+        )
+        for start, end in session.ripple_windows:
+            inside = (t >= start) & (t <= end)
+            assert np.abs(session.lfps[inside, 0]).max() > 0.9  # the ripple
+            assert session.raw_lfp_pair[inside, 1].min() < -1.5  # the sharp wave
+            rate_inside = session.multiunit[inside].sum() / inside.sum()
+            rate_outside = session.multiunit[~inside].sum() / (~inside).sum()
+            assert rate_inside > 2.5 * rate_outside  # the population burst
+
+    def test_seed_reproduces(self):
+        t = simulate_time(3000, self.FS)
+        a = simulate_session(t, [1.0], random_state=3)
+        b = simulate_session(t, [1.0], random_state=3)
+        np.testing.assert_array_equal(a.lfps, b.lfps)
+        np.testing.assert_array_equal(a.multiunit, b.multiunit)
+        np.testing.assert_array_equal(a.ripple_durations, b.ripple_durations)
+
+    def test_artifacts_are_recorded(self):
+        t = simulate_time(6000, self.FS)
+        session = simulate_session(t, [1.0], artifact_times=[3.0], random_state=4)
+        np.testing.assert_array_equal(session.artifact_times, [3.0])

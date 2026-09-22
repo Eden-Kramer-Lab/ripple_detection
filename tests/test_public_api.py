@@ -44,6 +44,11 @@ HELPERS = [
     "minimum_sample_count",
     "sample_count_within",
     "simulate_LFP",
+    "simulate_multichannel_LFP",
+    "simulate_sharp_wave_ripple_pair",
+    "simulate_multiunit",
+    "simulate_session",
+    "SimulatedSession",
     "simulate_time",
     "__version__",
 ]
