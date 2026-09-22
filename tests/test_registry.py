@@ -12,6 +12,8 @@ from ripple_detection import (
     MULTIUNIT,
     RAW_LFP_PAIR,
     RIPPLE_BAND_LFP,
+    DetectorSpec,
+    Kay_ripple_detector,
     get_detector,
 )
 
@@ -117,6 +119,23 @@ def test_spec_is_immutable():
         get_detector("Kay_ripple_detector").inputs = ("multiunit",)
 
 
+class TestSpecConstruction:
+    """A spec is checked when it is built, not only by the test that walks the
+    built-in table, so a hand-made spec cannot name the wrong signal parameters."""
+
+    def test_a_list_of_inputs_is_stored_as_a_tuple(self):
+        spec = DetectorSpec(Kay_ripple_detector, [RIPPLE_BAND_LFP])
+        assert spec.inputs == (RIPPLE_BAND_LFP,)
+
+    def test_an_unknown_kind_raises(self):
+        with pytest.raises(ValueError, match="not signal kinds"):
+            DetectorSpec(Kay_ripple_detector, ("ripple_lfp",))
+
+    def test_inputs_that_do_not_match_the_signature_raise(self):
+        with pytest.raises(ValueError, match="takes time, the signals, speed"):
+            DetectorSpec(Kay_ripple_detector, (RIPPLE_BAND_LFP, MULTIUNIT))
+
+
 class TestCheckInputs:
     """The spec checks what an array can show about a signal: count, shape, and
     for spikes that the values are counts. It does not judge filtered against raw."""
@@ -129,7 +148,7 @@ class TestCheckInputs:
 
     def test_spike_counts_must_be_non_negative_whole_numbers(self):
         spec = get_detector("multiunit_HSE_detector")
-        counts = np.random.RandomState(0).poisson(0.1, (600, 4)).astype(float)
+        counts = np.random.default_rng(0).poisson(0.1, (600, 4)).astype(float)
         counts[10, 0] = np.nan  # missing is allowed
         spec.check_inputs(counts)
         with pytest.raises(ValueError, match="whole numbers"):
@@ -149,7 +168,7 @@ class TestCheckInputs:
     def test_ripple_band_lfp_of_any_content_passes(self):
         """Raw and filtered LFP have the same shape; the check makes no claim."""
         get_detector("Kay_ripple_detector").check_inputs(
-            np.random.RandomState(0).randn(600, 4)
+            np.random.default_rng(0).standard_normal((600, 4))
         )
 
 

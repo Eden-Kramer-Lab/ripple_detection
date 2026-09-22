@@ -15,7 +15,7 @@ import inspect
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal
+from typing import Literal, get_args
 
 import numpy as np
 import pandas as pd
@@ -67,10 +67,47 @@ class DetectorSpec:
         them. Optional signals such as ``Carey_candidate_detector``'s
         ``theta_lfp`` are keyword parameters and are not listed.
 
+    Raises
+    ------
+    ValueError
+        If an input is not a :data:`SignalKind`, or the detector's positional
+        parameters are not ``time``, one per input, ``speed`` and
+        ``sampling_frequency``, so that :attr:`signal_parameters` would name
+        the wrong ones.
+
+    Notes
+    -----
+    :attr:`name` is the key a pipeline stores, so it is a public contract: a
+    detector renamed in a later release keeps its old name here as an alias.
+
     """
 
     detector: Callable[..., pd.DataFrame]
     inputs: tuple[SignalKind, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "inputs", tuple(self.inputs))
+        unknown = [kind for kind in self.inputs if kind not in get_args(SignalKind)]
+        if unknown:
+            msg = f"{unknown} are not signal kinds; the kinds are {get_args(SignalKind)}."
+            raise ValueError(msg)
+        positional = [
+            parameter.name
+            for parameter in inspect.signature(self.detector).parameters.values()
+            if parameter.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+        ]
+        n_signals = len(self.inputs)
+        if (
+            len(positional) != n_signals + 3
+            or positional[0] != "time"
+            or positional[-2:] != ["speed", "sampling_frequency"]
+        ):
+            msg = (
+                f"{self.detector.__name__} takes {positional} positionally; a detector "
+                f"with {n_signals} signal(s) takes time, the signals, speed and "
+                "sampling_frequency."
+            )
+            raise ValueError(msg)
 
     @property
     def name(self) -> str:
