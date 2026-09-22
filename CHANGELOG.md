@@ -8,9 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.0.0] - 2026-09-21
 
 Detection results change. The same recording gives different events, so upgrade
-deliberately and detect again. Two calls need editing: `filter_ripple_band` now
-requires `sampling_frequency`, and `multiunit_HSE_detector` lost one deprecated
-parameter (see Removed). Every other name and position is unchanged; nine
+deliberately and detect again. Three calls need editing: `filter_ripple_band` now
+requires `sampling_frequency`, `normalization_time_range` is gone (see Removed),
+and `multiunit_HSE_detector` lost one deprecated parameter. Every other name and position is unchanged; nine
 signatures gained parameters at the end. Inputs that used to give a wrong or
 empty result now raise (see Fixed). Pin `ripple-detection>=2,<3` and record the
 version with the events that you detect. Entries marked **Breaking** change the
@@ -121,6 +121,11 @@ results.
 
 ### Removed
 
+- `normalization_time_range`, and the `time` argument of `normalize_signal`
+  that existed only to serve it. A time range is a mask:
+  `normalization_mask=(time >= start) & (time <= end)`. One way to say which
+  samples the statistics come from, on `normalize_signal` and on every
+  detector that takes it.
 - `use_speed_threshold_for_zscore` on `multiunit_HSE_detector`. It has warned
   since 1.7.0. Use `normalization_mask=speed <= speed_threshold`, which does the
   same and says so. The three normalization parameters after it move one

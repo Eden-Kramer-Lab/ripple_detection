@@ -1731,9 +1731,6 @@ class TestZugaroRippleDetector:
         masked = Zugaro_ripple_detector(
             time, lfps, stationary, self.FS, normalization_mask=mask
         )
-        ranged = Zugaro_ripple_detector(
-            time, lfps, stationary, self.FS, normalization_time_range=(time[0], time[3999])
-        )
 
         def planted(events):
             hit = events[(events.start_time <= time[5030]) & (events.end_time >= time[5030])]
@@ -1742,7 +1739,6 @@ class TestZugaroRippleDetector:
 
         # the burst is excluded from the normalization stretch, so its z-score rises
         assert planted(masked).max_zscore > planted(whole).max_zscore
-        pd.testing.assert_frame_equal(masked, ranged)
 
     def test_movement_at_endpoint_excludes_event(self, time, stationary):
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
@@ -2838,26 +2834,16 @@ class TestWarningsPointAtTheCaller:
 
 
 class TestNormalizationArgumentValidation:
-    """Giving both a mask and a time range is an error in every detector."""
-
     @pytest.mark.parametrize("detector", ["Yu", "Zugaro"])
-    def test_mask_and_time_range_together_raise(self, detector):
-        sampling_frequency = 1000.0
+    def test_a_non_boolean_mask_is_rejected(self, detector):
+        sampling_frequency = 1000
         n_time = 20_000
         time = np.arange(n_time) / sampling_frequency
         lfps = _synthetic_ripple_band(n_time, sampling_frequency, [(5000, 5060, 20.0)])
         speed = np.full(n_time, 2.0)
-        mask = np.ones(n_time, dtype=bool)
         detect = Yu_ripple_detector if detector == "Yu" else Zugaro_ripple_detector
-        with pytest.raises(ValueError):
-            detect(
-                time,
-                lfps,
-                speed,
-                sampling_frequency,
-                normalization_mask=mask,
-                normalization_time_range=(time[0], time[100]),
-            )
+        with pytest.raises(ValueError, match="must be boolean"):
+            detect(time, lfps, speed, sampling_frequency, normalization_mask=speed)
 
 
 class TestShvartsmanManualNormalizationValidation:
@@ -2874,7 +2860,7 @@ class TestShvartsmanManualNormalizationValidation:
                 manual_normalization=True,
                 elec_baselines=np.array([0.0]),
                 elec_deviations=np.array([1.0]),
-                normalization_time_range=(time_3s[0], time_3s[100]),
+                normalization_mask=time_3s <= time_3s[100],
             )
 
 
@@ -2900,9 +2886,14 @@ class TestRowDropDetectorsSmoothWithinBlocks:
         with_gap[gap] = np.nan
 
         # normalize both over the first block, so only the transform can differ
-        window = {"normalization_time_range": (time[0], time[4599])}
-        whole = detector(time, with_gap, speed, self.FS, **window)
-        first_block = detector(time[:4600], lfp[:4600], speed[:4600], self.FS, **window)
+        whole = detector(time, with_gap, speed, self.FS, normalization_mask=time <= time[4599])
+        first_block = detector(
+            time[:4600],
+            lfp[:4600],
+            speed[:4600],
+            self.FS,
+            normalization_mask=np.ones(4600, dtype=bool),
+        )
 
         before_gap = whole[whole.end_time < time[4600]]
         pd.testing.assert_frame_equal(

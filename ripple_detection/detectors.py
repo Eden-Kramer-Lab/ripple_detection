@@ -14,7 +14,6 @@ from ripple_detection.core import (
     _boolean_run_bounds,
     _get_normalization_mask,
     _is_immobile_at_endpoints,
-    _validate_normalization_params,
     estimate_noise_threshold,
     exclude_close_events,
     exclude_movement,
@@ -332,21 +331,11 @@ def _mask_invalid(signal: NDArray, is_valid: NDArray) -> NDArray:
 
 
 def _normalization_mask_over_valid(
-    n_time: int,
-    time: NDArray,
-    is_valid: NDArray,
-    normalization_method: str,
-    normalization_mask: ArrayLike | None,
-    normalization_time_range: tuple[float, float] | None,
+    n_time: int, is_valid: NDArray, normalization_mask: ArrayLike | None
 ) -> NDArray:
-    """The samples the normalization statistics come from: the caller's mask
-    or time range, if any, restricted to valid samples."""
-    _validate_normalization_params(
-        normalization_method, normalization_mask, normalization_time_range, time
-    )
-    mask = _get_normalization_mask(
-        (n_time,), time, normalization_mask, normalization_time_range
-    )
+    """The samples the normalization statistics come from: the caller's mask,
+    if any, restricted to valid samples."""
+    mask = _get_normalization_mask((n_time,), normalization_mask)
     mask = is_valid if mask is None else mask & is_valid
     if not np.any(mask):
         raise ValueError(
@@ -712,7 +701,6 @@ def Shvartsman_ripple_detector(
     close_ripple_threshold: float = 0.0,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
-    normalization_time_range: tuple[float, float] | None = None,
     manual_normalization: bool = False,
     elec_baselines: ArrayLike | None = None,
     elec_deviations: ArrayLike | None = None,
@@ -789,12 +777,8 @@ def Shvartsman_ripple_detector(
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask selecting samples used to compute normalization statistics.
         For example, use `speed <= speed_threshold` to compute statistics only
-        during immobility. Cannot be used with `normalization_time_range`. Only
+        during immobility. Only
         used when ``manual_normalization=False``. Default is None (use all data).
-    normalization_time_range : tuple of (float, float), optional
-        Time range (start_time, end_time) in seconds for computing normalization
-        statistics. Cannot be used with `normalization_mask`. Only used when
-        ``manual_normalization=False``. Default is None (use all data).
     manual_normalization : bool, optional
         If True, normalize each channel with the supplied `elec_baselines` and
         `elec_deviations` instead of computing statistics from the data. The
@@ -859,15 +843,12 @@ def Shvartsman_ripple_detector(
 
     """
     if manual_normalization and (
-        normalization_mask is not None
-        or normalization_time_range is not None
-        or normalization_method != "zscore"
+        normalization_mask is not None or normalization_method != "zscore"
     ):
         raise ValueError(
             "manual_normalization=True uses elec_baselines and elec_deviations, so "
-            "normalization_method, normalization_mask, and normalization_time_range "
-            "must be left at their defaults. Drop them, or set "
-            "manual_normalization=False."
+            "normalization_method and normalization_mask must be left at their "
+            "defaults. Drop them, or set manual_normalization=False."
         )
     if (
         minimum_participating_channels is not None
@@ -901,14 +882,7 @@ def Shvartsman_ripple_detector(
             )
         normalized = normalize_signal_manually(smoothed, elec_baselines, elec_deviations)
     else:
-        mask = _normalization_mask_over_valid(
-            len(time),
-            time,
-            is_valid,
-            normalization_method,
-            normalization_mask,
-            normalization_time_range,
-        )
+        mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
         normalized = normalize_signal(
             smoothed, method=normalization_method, normalization_mask=mask
         )
@@ -1028,7 +1002,6 @@ def _detect_from_trace(
     maximum_duration: float | None = None,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
-    normalization_time_range: tuple[float, float] | None = None,
 ) -> pd.DataFrame:
     """Normalize one detection trace, threshold it, and summarize the events.
 
@@ -1056,7 +1029,7 @@ def _detect_from_trace(
         As in the public detectors.
     maximum_duration : float, optional
         As in the public detectors. Default is None (no upper limit).
-    normalization_method, normalization_mask, normalization_time_range
+    normalization_method, normalization_mask
         Passed to ``normalize_signal``.
 
     Returns
@@ -1065,14 +1038,7 @@ def _detect_from_trace(
         One row per event, indexed by ``event_number``.
 
     """
-    mask = _normalization_mask_over_valid(
-        len(time),
-        time,
-        is_valid,
-        normalization_method,
-        normalization_mask,
-        normalization_time_range,
-    )
+    mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
     normalized = normalize_signal(trace, method=normalization_method, normalization_mask=mask)
     candidate_times = _threshold_blocks(
         normalized, time, blocks, minimum_duration, zscore_threshold
@@ -1099,7 +1065,6 @@ def Kay_ripple_detector(
     close_ripple_threshold: float = 0.0,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
-    normalization_time_range: tuple[float, float] | None = None,
     maximum_duration: float | None = None,
 ) -> pd.DataFrame:
     """Detect sharp-wave ripple events using multi-channel consensus method.
@@ -1162,12 +1127,7 @@ def Kay_ripple_detector(
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask to specify which samples to use for computing normalization
         statistics. For example, use `speed <= speed_threshold` to compute
-        statistics only during immobility. Cannot be used with
-        `normalization_time_range`. Default is None (use all data).
-    normalization_time_range : tuple of (float, float), optional
-        Time range (start_time, end_time) in seconds for computing normalization
-        statistics. Useful for baseline normalization. Cannot be used with
-        `normalization_mask`. Default is None (use all data).
+        statistics only during immobility. Default is None (use all data).
 
     Returns
     -------
@@ -1251,7 +1211,6 @@ def Kay_ripple_detector(
         maximum_duration=maximum_duration,
         normalization_method=normalization_method,
         normalization_mask=normalization_mask,
-        normalization_time_range=normalization_time_range,
     )
 
 
@@ -1266,7 +1225,6 @@ def Yu_ripple_detector(
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
     normalization_mask: ArrayLike | None = None,
-    normalization_time_range: tuple[float, float] | None = None,
     zscore_per_tetrode: bool = True,
     maximum_duration: float | None = None,
 ) -> pd.DataFrame:
@@ -1324,9 +1282,7 @@ def Yu_ripple_detector(
         0.0 (no exclusion).
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask selecting the noise sample instead of ``speed <=
-        speed_threshold``. Cannot be combined with ``normalization_time_range``.
-    normalization_time_range : tuple of (float, float), optional
-        Time range selecting the noise sample instead of the speed rule.
+        speed_threshold``.
     zscore_per_tetrode : bool, optional
         Z-score each tetrode's smoothed envelope before the median, as the
         original implementation does; the threshold is then estimated on that
@@ -1380,11 +1336,9 @@ def Yu_ripple_detector(
         time=time,
     )
 
-    if normalization_mask is None and normalization_time_range is None:
+    if normalization_mask is None:
         normalization_mask = speed <= speed_threshold
-    noise_mask = _normalization_mask_over_valid(
-        len(time), time, is_valid, "zscore", normalization_mask, normalization_time_range
-    )
+    noise_mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
     noise_values = consensus[noise_mask]
     baseline = np.mean(noise_values)
     scale = np.std(noise_values, ddof=0)  # the ddof normalize_signal uses
@@ -1559,7 +1513,6 @@ def Zugaro_ripple_detector(
     maximum_duration: float | None = 0.100,
     smoothing_window: int | None = None,
     normalization_mask: ArrayLike | None = None,
-    normalization_time_range: tuple[float, float] | None = None,
 ) -> pd.DataFrame:
     """Detect ripples with the FMAToolbox ``FindRipples`` two-threshold algorithm.
 
@@ -1638,8 +1591,6 @@ def Zugaro_ripple_detector(
         supplied value must be a positive odd integer.
     normalization_mask : array_like, shape (n_time,), optional
         Samples used for the z-score statistics (the original's ``restrict``).
-    normalization_time_range : tuple of (float, float), optional
-        Time range used for the z-score statistics instead of a mask.
 
     Returns
     -------
@@ -1686,9 +1637,7 @@ def Zugaro_ripple_detector(
     for start, stop in blocks:
         smoothed[start:stop] = np.convolve(power[start:stop], kernel, mode="same")
 
-    mask = _normalization_mask_over_valid(
-        len(time), time, is_valid, "zscore", normalization_mask, normalization_time_range
-    )
+    mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
     normalized = normalize_signal(smoothed, normalization_mask=mask)
 
     n_min = minimum_sample_count(time, minimum_duration)
@@ -2432,7 +2381,6 @@ def Karlsson_ripple_detector(
     close_ripple_threshold: float = 0.0,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
-    normalization_time_range: tuple[float, float] | None = None,
     maximum_duration: float | None = None,
 ) -> pd.DataFrame:
     """Detect sharp-wave ripples using per-channel detection with merging.
@@ -2494,12 +2442,7 @@ def Karlsson_ripple_detector(
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask to specify which samples to use for computing normalization
         statistics. For example, use `speed <= speed_threshold` to compute
-        statistics only during immobility. Cannot be used with
-        `normalization_time_range`. Default is None (use all data).
-    normalization_time_range : tuple of (float, float), optional
-        Time range (start_time, end_time) in seconds for computing normalization
-        statistics. Useful for baseline normalization. Cannot be used with
-        `normalization_mask`. Default is None (use all data).
+        statistics only during immobility. Default is None (use all data).
 
     Returns
     -------
@@ -2543,14 +2486,7 @@ def Karlsson_ripple_detector(
     is_valid, blocks = _valid_blocks(time, sampling_frequency, filtered_lfps, speed)
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
-    mask = _normalization_mask_over_valid(
-        len(time),
-        time,
-        is_valid,
-        normalization_method,
-        normalization_mask,
-        normalization_time_range,
-    )
+    mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
     normalized = normalize_signal(
         smoothed, method=normalization_method, normalization_mask=mask
     )
@@ -2587,7 +2523,6 @@ def Roumis_ripple_detector(
     close_ripple_threshold: float = 0.0,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
-    normalization_time_range: tuple[float, float] | None = None,
     maximum_duration: float | None = None,
 ) -> pd.DataFrame:
     """Detect sharp-wave ripples using averaged square-root envelope method.
@@ -2649,12 +2584,7 @@ def Roumis_ripple_detector(
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask to specify which samples to use for computing normalization
         statistics. For example, use `speed <= speed_threshold` to compute
-        statistics only during immobility. Cannot be used with
-        `normalization_time_range`. Default is None (use all data).
-    normalization_time_range : tuple of (float, float), optional
-        Time range (start_time, end_time) in seconds for computing normalization
-        statistics. Useful for baseline normalization. Cannot be used with
-        `normalization_mask`. Default is None (use all data).
+        statistics only during immobility. Default is None (use all data).
 
     Returns
     -------
@@ -2711,7 +2641,6 @@ def Roumis_ripple_detector(
         maximum_duration=maximum_duration,
         normalization_method=normalization_method,
         normalization_mask=normalization_mask,
-        normalization_time_range=normalization_time_range,
     )
 
 
@@ -2727,7 +2656,6 @@ def multiunit_HSE_detector(
     close_event_threshold: float = 0.0,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
-    normalization_time_range: tuple[float, float] | None = None,
     maximum_duration: float | None = None,
     minimum_active_units: int = 0,
 ) -> pd.DataFrame:
@@ -2811,13 +2739,7 @@ def multiunit_HSE_detector(
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask to specify which samples to use for computing normalization
         statistics. For example, use `speed <= speed_threshold` to compute
-        statistics only during immobility. Cannot be used with
-        `normalization_time_range`.
-        Default is None (use all data).
-    normalization_time_range : tuple of (float, float), optional
-        Time range (start_time, end_time) in seconds for computing normalization
-        statistics. Useful for baseline normalization. Cannot be used with
-        `normalization_mask`.
+        statistics only during immobility.
         Default is None (use all data).
 
     Returns
@@ -2891,7 +2813,6 @@ def multiunit_HSE_detector(
         maximum_duration=maximum_duration,
         normalization_method=normalization_method,
         normalization_mask=normalization_mask,
-        normalization_time_range=normalization_time_range,
     )
 
     start = nearest_sample_index(time, events.start_time.to_numpy())

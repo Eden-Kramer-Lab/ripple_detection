@@ -428,9 +428,9 @@ Notes:
   gap or by the recording edge is kept and flagged in `clipped_start` and `clipped_end`. A block
   too short for a detector's transform (Zugaro's smoothing window, Long's sharp-wave kernel,
   Carey's theta filter) is treated as missing, with a warning.
-- Every detector normalizes over the whole recording unless `normalization_mask` or
-  `normalization_time_range` restricts it (Yu defaults to immobility); the Long and Carey
-  detectors do not take these arguments.
+- Every detector normalizes over the whole recording unless `normalization_mask` restricts it
+  (Yu defaults to immobility); a baseline period is `(time >= start) & (time <= end)`. The Long
+  and Carey detectors do not take this argument.
 - Two conventions are the package's, not each source's: every duration limit is an inclusive
   round-half-up sample count (`sample_count_within`), and immobility is `speed <= speed_threshold`.
 - "Close events" above says what each detector does by default. `merge_close_events` applies

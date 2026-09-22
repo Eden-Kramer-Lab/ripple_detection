@@ -658,21 +658,6 @@ class TestNormalizeSignal:
         assert len(normalized) == 100
         assert np.abs(np.median(normalized[mask])) < 0.5
 
-    def test_normalization_time_range(self):
-        """Test normalization with time range."""
-        rng = np.random.default_rng(42)
-        time = np.arange(100) / 100.0  # 0 to 0.99 seconds
-        data = rng.standard_normal(100) + 5.0
-
-        # Normalize using first 50 time points (0 to 0.49 seconds)
-        normalized = normalize_signal(
-            data, time=time, method="zscore", normalization_time_range=(0.0, 0.49)
-        )
-
-        assert len(normalized) == 100
-        # First half should have mean ~0
-        assert np.abs(np.mean(normalized[:50])) < 0.5
-
     def test_multichannel_zscore(self):
         """Test z-score normalization with multi-channel data."""
         rng = np.random.default_rng(42)
@@ -759,27 +744,6 @@ class TestNormalizeSignal:
         with pytest.raises(ValueError, match="Invalid normalization method"):
             normalize_signal(data, method="invalid")
 
-    def test_mask_and_time_range_both_specified(self):
-        """Test that using both mask and time_range raises error."""
-        data = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        time = np.arange(5) / 5.0
-        mask = np.array([True, True, False, False, False])
-
-        with pytest.raises(ValueError, match="Cannot specify both"):
-            normalize_signal(
-                data,
-                time=time,
-                normalization_mask=mask,
-                normalization_time_range=(0.0, 0.5),
-            )
-
-    def test_time_range_without_time(self):
-        """Test that time_range without time raises error."""
-        data = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-
-        with pytest.raises(ValueError, match="'time' parameter is required"):
-            normalize_signal(data, normalization_time_range=(0.0, 2.0))
-
     def test_mask_length_mismatch(self):
         """Test that mask length mismatch raises error."""
         data = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
@@ -787,14 +751,6 @@ class TestNormalizeSignal:
 
         with pytest.raises(ValueError, match="normalization_mask length"):
             normalize_signal(data, normalization_mask=mask)
-
-    def test_empty_time_range(self):
-        """Test that empty time range raises error."""
-        data = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        time = np.array([0.0, 0.1, 0.2, 0.3, 0.4])
-
-        with pytest.raises(ValueError, match="does not contain any data points"):
-            normalize_signal(data, time=time, normalization_time_range=(1.0, 2.0))
 
     def test_comparison_with_scipy_zscore(self):
         """Test that default zscore matches scipy.stats.zscore."""
@@ -834,7 +790,7 @@ class TestNormalizeSignal:
         lfp[300:] += 3.0  # Shift after baseline period
 
         # Normalize using baseline (0 to 0.2 seconds)
-        normalized = normalize_signal(lfp, time=time, normalization_time_range=(0.0, 0.2))
+        normalized = normalize_signal(lfp, normalization_mask=time <= 0.2)
 
         # Baseline period should have mean ~0
         baseline_mask = time < 0.2

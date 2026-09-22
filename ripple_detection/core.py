@@ -696,68 +696,17 @@ def gaussian_smooth(
     )
 
 
-def _validate_normalization_params(
-    method: str,
-    normalization_mask: ArrayLike | None,
-    normalization_time_range: tuple[float, float] | None,
-    time: ArrayLike | None,
-) -> None:
-    """Validate normalization parameters.
-
-    Parameters
-    ----------
-    method : str
-        Normalization method to validate.
-    normalization_mask : array_like or None
-        Boolean mask for normalization subset.
-    normalization_time_range : tuple or None
-        Time range for normalization subset.
-    time : array_like or None
-        Time array required if time_range is specified.
-
-    Raises
-    ------
-    ValueError
-        If parameters are invalid or incompatible.
-
-    """
-    if normalization_mask is not None and normalization_time_range is not None:
-        raise ValueError(
-            "Cannot specify both 'normalization_mask' and 'normalization_time_range'. "
-            "Choose one method for defining the normalization subset."
-        )
-
-    if normalization_time_range is not None and time is None:
-        raise ValueError(
-            "'time' parameter is required when using 'normalization_time_range'. "
-            "Provide the time array corresponding to your data samples."
-        )
-
-    if method not in ("zscore", "median_mad"):
-        raise ValueError(
-            f"Invalid normalization method: '{method}'. "
-            "Must be either 'zscore' or 'median_mad'."
-        )
-
-
 def _get_normalization_mask(
-    data_shape: tuple[int, ...],
-    time: ArrayLike | None,
-    normalization_mask: ArrayLike | None,
-    normalization_time_range: tuple[float, float] | None,
+    data_shape: tuple[int, ...], normalization_mask: ArrayLike | None
 ) -> NDArray | None:
-    """Determine which data subset to use for computing normalization statistics.
+    """Validate the mask the normalization statistics come from.
 
     Parameters
     ----------
     data_shape : tuple
         Shape of the data array.
-    time : array_like or None
-        Time values for each sample.
     normalization_mask : array_like or None
         Boolean mask specifying samples to use.
-    normalization_time_range : tuple or None
-        Time range (start, end) for computing statistics.
 
     Returns
     -------
@@ -767,40 +716,29 @@ def _get_normalization_mask(
     Raises
     ------
     ValueError
-        If mask length doesn't match data, or time range is empty.
+        If the mask is not boolean, its length does not match the data, or it
+        selects no sample.
 
     """
-    if normalization_mask is not None:
-        mask = np.asarray(normalization_mask)
-        if mask.dtype != bool:
-            raise ValueError(
-                f"normalization_mask must be boolean, got dtype {mask.dtype}. Casting "
-                "would make every nonzero value True; pass a comparison such as "
-                "speed <= speed_threshold."
-            )
-        if mask.shape[0] != data_shape[0]:
-            raise ValueError(
-                f"normalization_mask length ({mask.shape[0]}) must match "
-                f"data length ({data_shape[0]})."
-            )
-        if not np.any(mask):
-            raise ValueError(
-                "normalization_mask selects no samples; cannot compute "
-                "normalization statistics."
-            )
-        return mask
-    elif normalization_time_range is not None:
-        time_arr = np.asarray(time)
-        start_time, end_time = normalization_time_range
-        mask = (time_arr >= start_time) & (time_arr <= end_time)
-        if not np.any(mask):
-            raise ValueError(
-                f"normalization_time_range ({start_time}, {end_time}) does not "
-                "contain any data points. Check that the time range is valid."
-            )
-        return mask
-    else:
+    if normalization_mask is None:
         return None
+    mask = np.asarray(normalization_mask)
+    if mask.dtype != bool:
+        raise ValueError(
+            f"normalization_mask must be boolean, got dtype {mask.dtype}. Casting "
+            "would make every nonzero value True; pass a comparison such as "
+            "speed <= speed_threshold."
+        )
+    if mask.shape[0] != data_shape[0]:
+        raise ValueError(
+            f"normalization_mask length ({mask.shape[0]}) must match "
+            f"data length ({data_shape[0]})."
+        )
+    if not np.any(mask):
+        raise ValueError(
+            "normalization_mask selects no samples; cannot compute normalization statistics."
+        )
+    return mask
 
 
 def _normalize(data: NDArray, mask: NDArray | None, method: str) -> NDArray:
@@ -851,24 +789,19 @@ def _normalize(data: NDArray, mask: NDArray | None, method: str) -> NDArray:
 
 def normalize_signal(
     data: ArrayLike,
-    time: ArrayLike | None = None,
     method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
-    normalization_time_range: tuple[float, float] | None = None,
 ) -> NDArray:
     """Normalize signal using mean/std (z-score) or median/MAD.
 
-    Provides flexible normalization options for ripple detection. The statistics
-    (mean/std or median/MAD) can be computed from the entire signal or from a
-    custom subset specified by a mask or time range.
+    The statistics (mean/std or median/MAD) come from the whole signal, or
+    from the samples ``normalization_mask`` selects, and are applied to every
+    sample.
 
     Parameters
     ----------
     data : array_like, shape (n_time,) or (n_time, n_channels)
         Input signal to normalize. Can be 1D or 2D.
-    time : array_like, shape (n_time,), optional
-        Time values for each sample. Required if `normalization_time_range`
-        is specified. Default is None.
     method : {'zscore', 'median_mad'}, optional
         Normalization method:
 
@@ -878,15 +811,11 @@ def normalize_signal(
 
         Default is 'zscore'. Use 'median_mad' for more robust normalization
         when data contains outliers.
-    normalization_mask : array_like, shape (n_time,), optional
-        Boolean mask specifying which samples to use for computing normalization
-        statistics. True indicates samples to include. For example, use
-        `speed <= speed_threshold` to compute statistics only during immobility.
-        Cannot be used with `normalization_time_range`. Default is None (use all data).
-    normalization_time_range : tuple of (float, float), optional
-        Time range (start_time, end_time) for computing normalization statistics.
-        Requires `time` parameter. Cannot be used with `normalization_mask`.
-        Default is None (use all data).
+    normalization_mask : array_like of bool, shape (n_time,), optional
+        Samples the statistics are computed from. For example,
+        ``speed <= speed_threshold`` restricts them to immobility, and
+        ``(time >= start) & (time <= end)`` to a baseline period. Default is
+        None (use all data).
 
     Returns
     -------
@@ -896,12 +825,11 @@ def normalize_signal(
     Raises
     ------
     ValueError
-        If both `normalization_mask` and `normalization_time_range` are specified,
-        if `normalization_time_range` is used without `time`, if `method` is
-        not recognized, if the mask is not boolean or selects no samples, or if
-        the scale (standard deviation or MAD) of the trace or of any channel is
-        zero or undefined over the normalization samples. A constant or
-        all-NaN channel has no scale; drop it before detecting.
+        If `method` is not recognized, if the mask is not boolean, has the
+        wrong length or selects no samples, or if the scale (standard
+        deviation or MAD) of the trace or of any channel is zero or undefined
+        over the normalization samples. A constant or all-NaN channel has no
+        scale; drop it before detecting.
 
     Notes
     -----
@@ -946,14 +874,12 @@ def normalize_signal(
     >>> time = np.arange(1000) / 1500  # 1500 Hz sampling
     >>> speed = np.random.rand(1000) * 10  # Speed in cm/s
     >>> lfp = np.random.randn(1000)
-    >>> immobility_mask = speed <= 4.0
-    >>> normalized = normalize_signal(lfp, normalization_mask=immobility_mask)
+    >>> normalized = normalize_signal(lfp, normalization_mask=speed <= 4.0)
 
-    Normalize using baseline period:
+    Normalize using a baseline period:
 
-    >>> baseline_range = (0.0, 10.0)  # First 10 seconds
-    >>> normalized = normalize_signal(lfp, time=time,
-    ...                               normalization_time_range=baseline_range)
+    >>> baseline = (time >= 0.0) & (time <= 0.3)
+    >>> normalized = normalize_signal(lfp, normalization_mask=baseline)
 
     See Also
     --------
@@ -968,15 +894,13 @@ def normalize_signal(
        Psychology, 49(4), 764-766. doi:10.1016/j.jesp.2013.03.013
 
     """
-    # Validate parameters
-    _validate_normalization_params(method, normalization_mask, normalization_time_range, time)
-
-    # Convert to array and determine mask
+    if method not in ("zscore", "median_mad"):
+        raise ValueError(
+            f"Invalid normalization method: '{method}'. "
+            "Must be either 'zscore' or 'median_mad'."
+        )
     data_arr = np.asarray(data, dtype=float)
-    mask = _get_normalization_mask(
-        data_arr.shape, time, normalization_mask, normalization_time_range
-    )
-
+    mask = _get_normalization_mask(data_arr.shape, normalization_mask)
     return _normalize(data_arr, mask, method)
 
 
