@@ -406,7 +406,7 @@ conventions below.
 
 | Detector | Signal input | What is thresholded | Threshold (default) | Duration (default) | Close events | Missing samples (NaN) | Speed rule (default 4 cm/s) | Source |
 |---|---|---|---|---|---|---|---|---|
-| `Kay_ripple_detector` | ripple-band LFP `(n_time, n_channels)` | z-scored consensus √(smoothed Σ envelope²), 4 ms | `zscore_threshold` 2.0 | ≥ 0.015 s | `close_ripple_threshold` 0.0, drops the later event | rows dropped, rest stitched | speed at first and last sample ≤ threshold | Kay et al. 2016 |
+| `Kay_ripple_detector` | ripple-band LFP `(n_time, n_channels)` | z-scored consensus √(smoothed Σ envelope²), 4 ms | `zscore_threshold` 2.0 | ≥ 0.015 s | `close_ripple_threshold` 0.0, drops the later event | rows dropped; envelope and smoothing within each block; threshold across | speed at first and last sample ≤ threshold | Kay et al. 2016 |
 | `Karlsson_ripple_detector` | same | each channel's z-scored envelope; overlapping per-channel events merged | 3.0 | ≥ 0.015 s | same | same | same | Karlsson & Frank 2009 |
 | `Roumis_ripple_detector` | same | z-scored mean over channels of √(smoothed envelope²), 4 ms | 2.0 | ≥ 0.015 s | same | same | same | Frank-lab variant (D. Roumis), unpublished |
 | `Shvartsman_ripple_detector` | same | per-channel z-scored envelopes; event kept when ≥ `participation_threshold` channels (2) detect it | 3.0 | ≥ 0.015 s | same | same | at least half the event's samples ≤ threshold | lab variant (G. Shvartsman), unpublished |
@@ -418,9 +418,11 @@ conventions below.
 
 Notes:
 
-- "rows dropped, rest stitched" means samples with NaN in any channel or in `speed` are removed
-  and the remaining samples are treated as contiguous, so an event can span a gap. Pass one
-  contiguous block at a time if that matters; the Yu and Zugaro detectors do this for you.
+- "rows dropped" means samples with NaN in any channel or in `speed` are removed. The envelope
+  and the smoothing are computed within each contiguous block of what remains, so neither spans
+  a gap, but the threshold test treats the blocks as adjacent, so an event can still span one.
+  Pass one contiguous block at a time if that matters; the Yu and Zugaro detectors keep every
+  step within a block.
 - Every detector normalizes over the whole recording unless `normalization_mask` or
   `normalization_time_range` restricts it (Yu defaults to immobility); the Long and Carey
   detectors do not take these arguments.

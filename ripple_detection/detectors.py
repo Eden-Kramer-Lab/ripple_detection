@@ -406,6 +406,46 @@ def _contiguous_valid_blocks(
     return [(int(start), int(stop)) for start, stop in pairwise(edges) if is_valid[start]]
 
 
+def _smoothed_envelope(
+    filtered_lfps: NDArray,
+    time: NDArray,
+    sampling_frequency: float,
+    smoothing_sigma: float,
+    square: bool = False,
+) -> NDArray:
+    """Per-channel envelope, squared if asked, smoothed within each contiguous block.
+
+    A block ends wherever the timestamp step exceeds 1.5 sample intervals,
+    so neither the Hilbert transform nor the Gaussian kernel spans a gap left
+    by removed samples. Blocks are otherwise treated as adjacent.
+
+    Parameters
+    ----------
+    filtered_lfps : ndarray, shape (n_time, n_channels)
+        Ripple-band LFP with no missing samples.
+    time : ndarray, shape (n_time,)
+        Sample timestamps in seconds, increasing.
+    sampling_frequency : float
+    smoothing_sigma : float
+        Gaussian standard deviation in seconds.
+    square : bool, optional
+        Square the envelope before smoothing. Default is False.
+
+    Returns
+    -------
+    smoothed : ndarray, shape (n_time, n_channels)
+
+    """
+    smoothed = np.empty_like(filtered_lfps)
+    all_valid = np.ones(len(time), dtype=bool)
+    for start, stop in _contiguous_valid_blocks(all_valid, time, sampling_frequency):
+        envelope = get_envelope(filtered_lfps[start:stop])
+        if square:
+            envelope = envelope**2
+        smoothed[start:stop] = gaussian_smooth(envelope, smoothing_sigma, sampling_frequency)
+    return smoothed
+
+
 def get_Yu_ripple_consensus_trace(
     ripple_filtered_lfps: ArrayLike,
     sampling_frequency: float,
@@ -731,11 +771,14 @@ def Shvartsman_ripple_detector(
     Notes
     -----
     Missing samples: rows with NaN in any channel of ``filtered_lfps`` or in
-    ``speed`` are dropped and the remaining samples are treated as contiguous,
-    so an event can span the gap. Pass one contiguous block per call if that
-    matters; ``Yu_ripple_detector`` and ``Zugaro_ripple_detector`` instead
-    handle gaps block-wise. See the README's "Choosing a detector" table for
-    how the detectors' conventions differ.
+    ``speed`` are dropped. The envelope and the smoothing are computed within
+    each contiguous block of the remaining samples, so neither spans a gap.
+    The threshold test then treats the blocks as adjacent, so a run above
+    threshold on both sides of a gap is one event that spans it. Pass one
+    contiguous block per call if that matters; ``Yu_ripple_detector`` and
+    ``Zugaro_ripple_detector`` instead keep every step within a block. See
+    the README's "Choosing a detector" table for how the detectors'
+    conventions differ.
 
     References
     ----------
@@ -766,9 +809,8 @@ def Shvartsman_ripple_detector(
         normalization_mask=None if manual_normalization else normalization_mask,
     )
 
-    filtered_lfps = get_envelope(filtered_lfps)
-    filtered_lfps = gaussian_smooth(
-        filtered_lfps, sigma=smoothing_sigma, sampling_frequency=sampling_frequency
+    filtered_lfps = _smoothed_envelope(
+        filtered_lfps, time, sampling_frequency, smoothing_sigma
     )
 
     if manual_normalization:
@@ -1065,11 +1107,14 @@ def Kay_ripple_detector(
     Notes
     -----
     Missing samples: rows with NaN in any channel of ``filtered_lfps`` or in
-    ``speed`` are dropped and the remaining samples are treated as contiguous,
-    so an event can span the gap. Pass one contiguous block per call if that
-    matters; ``Yu_ripple_detector`` and ``Zugaro_ripple_detector`` instead
-    handle gaps block-wise. See the README's "Choosing a detector" table for
-    how the detectors' conventions differ.
+    ``speed`` are dropped. The envelope and the smoothing are computed within
+    each contiguous block of the remaining samples, so neither spans a gap.
+    The threshold test then treats the blocks as adjacent, so a run above
+    threshold on both sides of a gap is one event that spans it. Pass one
+    contiguous block per call if that matters; ``Yu_ripple_detector`` and
+    ``Zugaro_ripple_detector`` instead keep every step within a block. See
+    the README's "Choosing a detector" table for how the detectors'
+    conventions differ.
 
     Examples
     --------
@@ -1107,7 +1152,7 @@ def Kay_ripple_detector(
     )
 
     combined_filtered_lfps = get_Kay_ripple_consensus_trace(
-        filtered_lfps, sampling_frequency, smoothing_sigma=smoothing_sigma
+        filtered_lfps, sampling_frequency, smoothing_sigma=smoothing_sigma, time=time
     )
     return _detect_from_trace(
         combined_filtered_lfps,
@@ -2411,11 +2456,14 @@ def Karlsson_ripple_detector(
     Notes
     -----
     Missing samples: rows with NaN in any channel of ``filtered_lfps`` or in
-    ``speed`` are dropped and the remaining samples are treated as contiguous,
-    so an event can span the gap. Pass one contiguous block per call if that
-    matters; ``Yu_ripple_detector`` and ``Zugaro_ripple_detector`` instead
-    handle gaps block-wise. See the README's "Choosing a detector" table for
-    how the detectors' conventions differ.
+    ``speed`` are dropped. The envelope and the smoothing are computed within
+    each contiguous block of the remaining samples, so neither spans a gap.
+    The threshold test then treats the blocks as adjacent, so a run above
+    threshold on both sides of a gap is one event that spans it. Pass one
+    contiguous block per call if that matters; ``Yu_ripple_detector`` and
+    ``Zugaro_ripple_detector`` instead keep every step within a block. See
+    the README's "Choosing a detector" table for how the detectors'
+    conventions differ.
 
     References
     ----------
@@ -2434,9 +2482,8 @@ def Karlsson_ripple_detector(
         normalization_mask=normalization_mask,
     )
 
-    filtered_lfps = get_envelope(filtered_lfps)
-    filtered_lfps = gaussian_smooth(
-        filtered_lfps, sigma=smoothing_sigma, sampling_frequency=sampling_frequency
+    filtered_lfps = _smoothed_envelope(
+        filtered_lfps, time, sampling_frequency, smoothing_sigma
     )
     filtered_lfps = normalize_signal(
         filtered_lfps,
@@ -2561,11 +2608,14 @@ def Roumis_ripple_detector(
     Notes
     -----
     Missing samples: rows with NaN in any channel of ``filtered_lfps`` or in
-    ``speed`` are dropped and the remaining samples are treated as contiguous,
-    so an event can span the gap. Pass one contiguous block per call if that
-    matters; ``Yu_ripple_detector`` and ``Zugaro_ripple_detector`` instead
-    handle gaps block-wise. See the README's "Choosing a detector" table for
-    how the detectors' conventions differ.
+    ``speed`` are dropped. The envelope and the smoothing are computed within
+    each contiguous block of the remaining samples, so neither spans a gap.
+    The threshold test then treats the blocks as adjacent, so a run above
+    threshold on both sides of a gap is one event that spans it. Pass one
+    contiguous block per call if that matters; ``Yu_ripple_detector`` and
+    ``Zugaro_ripple_detector`` instead keep every step within a block. See
+    the README's "Choosing a detector" table for how the detectors'
+    conventions differ.
 
     References
     ----------
@@ -2584,11 +2634,10 @@ def Roumis_ripple_detector(
         normalization_mask=normalization_mask,
     )
 
-    filtered_lfps = get_envelope(filtered_lfps) ** 2
-    filtered_lfps = gaussian_smooth(
-        filtered_lfps, sigma=smoothing_sigma, sampling_frequency=sampling_frequency
+    smoothed_power = _smoothed_envelope(
+        filtered_lfps, time, sampling_frequency, smoothing_sigma, square=True
     )
-    combined_filtered_lfps = np.mean(np.sqrt(filtered_lfps), axis=1)
+    combined_filtered_lfps = np.mean(np.sqrt(smoothed_power), axis=1)
     return _detect_from_trace(
         combined_filtered_lfps,
         time,

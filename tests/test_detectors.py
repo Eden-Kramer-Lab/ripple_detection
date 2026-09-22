@@ -2789,6 +2789,38 @@ class TestShvartsmanManualNormalizationValidation:
             )
 
 
+class TestRowDropDetectorsSmoothWithinBlocks:
+    """After NaN rows are dropped, the envelope and the smoothing stay inside
+    each contiguous block, so a ripple just before a gap looks the same
+    whether or not the data after the gap is present."""
+
+    FS = 1500
+
+    @pytest.mark.parametrize(
+        "detector", [Kay_ripple_detector, Karlsson_ripple_detector, Roumis_ripple_detector]
+    )
+    def test_events_before_a_gap_match_the_block_run_alone(self, detector):
+        time = np.arange(self.FS * 8) / self.FS
+        lfp = _synthetic_ripple_band(
+            len(time), self.FS, [(4400, 4500, 20.0), (9000, 9100, 20.0)]
+        )
+        lfp = np.column_stack([lfp, lfp * 0.8])
+        speed = np.full(len(time), 2.0)
+        gap = slice(4600, 7000)
+        with_gap = lfp.copy()
+        with_gap[gap] = np.nan
+
+        # normalize both over the first block, so only the transform can differ
+        window = {"normalization_time_range": (time[0], time[4599])}
+        whole = detector(time, with_gap, speed, self.FS, **window)
+        first_block = detector(time[:4600], lfp[:4600], speed[:4600], self.FS, **window)
+
+        before_gap = whole[whole.end_time < time[4600]]
+        pd.testing.assert_frame_equal(
+            before_gap.reset_index(drop=True), first_block.reset_index(drop=True)
+        )
+
+
 class TestKayConsensusTraceMissingSamples:
     def test_smoothing_does_not_cross_a_gap(self):
         sampling_frequency = 1500.0
