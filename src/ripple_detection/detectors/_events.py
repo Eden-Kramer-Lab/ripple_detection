@@ -214,6 +214,20 @@ def _max_sustained_zscore(
     return float(windows.min(axis=1).max())
 
 
+def _known_speed_summary(event_speed: FloatArray) -> tuple[float, float, float, float]:
+    """Max, min, median and mean of the event's known (finite) speeds; NaN
+    for each when no speed inside the event is known."""
+    known = event_speed[np.isfinite(event_speed)]
+    if known.size == 0:
+        return (np.nan, np.nan, np.nan, np.nan)
+    return (
+        float(known.max()),
+        float(known.min()),
+        float(np.median(known)),
+        float(known.mean()),
+    )
+
+
 def _get_event_stats(
     event_times: ArrayLike,
     time: ArrayLike,
@@ -284,8 +298,10 @@ def _get_event_stats(
         - mean_zscore, median_zscore, max_zscore, min_zscore: Z-score statistics
         - area: Integral of z-score over event duration
         - total_energy: Integral of squared z-score
-        - speed_at_start, speed_at_end: Speed at event boundaries
+        - speed_at_start, speed_at_end: Speed at event boundaries, NaN where
+            it is unknown
         - max_speed, min_speed, median_speed, mean_speed: Speed statistics
+            over the event's samples with a known (not NaN) speed; NaN if none
         - clipped_start, clipped_end: Whether the event's first or last sample
             is the first or last sample of its block, i.e. the event was cut
             off by missing data or the recording edge
@@ -343,10 +359,7 @@ def _get_event_stats(
                 trapezoid(z**2, event_time),
                 event_speed[0],
                 event_speed[-1],
-                event_speed.max(),
-                event_speed.min(),
-                np.median(event_speed),
-                event_speed.mean(),
+                *_known_speed_summary(event_speed),
             )
         )
 

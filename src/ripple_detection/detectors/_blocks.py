@@ -29,11 +29,15 @@ def _valid_blocks(
     detector runs within a block, so nothing is computed across a gap and
     no event spans one.
 
+    Speed is not one of the signals: it does not enter any trace, so a NaN
+    in speed is an unknown speed, which the movement rules handle, not a
+    missing sample that would split a block and cut a ripple in two.
+
     Parameters
     ----------
     time : ndarray, shape (n_time,)
     *signals : ndarray, shape (n_time,) or (n_time, n_channels)
-        The LFP, spikes and speed the detector reads.
+        The LFP and spikes the detector reads.
 
     Returns
     -------
@@ -53,7 +57,7 @@ def _valid_blocks(
         is_valid &= finite.all(axis=1) if finite.ndim == 2 else finite
     if not np.any(is_valid):
         msg = (
-            "Every sample has a NaN in a signal or in speed, so there is nothing to "
+            "Every sample has a NaN in at least one channel, so there is nothing to "
             "detect on. Check the alignment of the inputs."
         )
         raise ValueError(msg)

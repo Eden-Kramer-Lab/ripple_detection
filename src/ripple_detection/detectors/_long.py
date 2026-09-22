@@ -121,8 +121,10 @@ def Long_sharp_wave_ripple_detector(
     Five departures, each documented below. ``random_state`` seeds the
     k-means, where MATLAB's is unseeded. A candidate whose local window holds
     no sample below the boundary threshold is rejected, where the original
-    errors. The package's endpoint speed rule is applied afterwards. Missing
-    samples (NaN, or a gap in ``time``) split the recording into blocks: the
+    errors. The package's endpoint speed rule is applied afterwards; a NaN in
+    ``speed`` is an unknown speed, which fails it at an endpoint but splits no
+    block. Missing samples (NaN in ``lfp``, or a gap in ``time``) split the
+    recording into blocks: the
     filters and candidate windows run within each block, the k-means pools
     the candidates of every block, and a candidate within ``local_window`` of
     a block edge is not evaluated, as the original does at the record edges.
@@ -220,7 +222,7 @@ def Long_sharp_wave_ripple_detector(
         time, lfp, speed, sampling_frequency, speed_threshold
     )
     n_time = len(time)
-    is_valid, blocks = _valid_blocks(time, lfp, speed)
+    is_valid, blocks = _valid_blocks(time, lfp)
     slowest_kernel = len(_gaussian_lowpass_fir(sharp_wave_band[0], sampling_frequency))
     blocks = _drop_short_blocks(
         blocks,

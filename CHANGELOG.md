@@ -155,7 +155,7 @@ raises on zero rows; that is hdmf's, not this package's.
   Pass `noise_type="brown"` for the old signal.
 - `Carey_candidate_detector` filters `theta_lfp` over each run of finite theta
   samples, as the original filtered the whole recording, rather than within
-  the blocks its other inputs define. A dropout in speed or the spikes no
+  the blocks its other inputs define. A dropout in the LFP or the spikes no
   longer restarts the theta filter, whose transient reads as high theta for
   up to 0.4 s and excluded candidates near every such edge; at 30 kHz the
   first sample of a block read 2.1 SD where the truth was -0.7. The filter
@@ -195,7 +195,7 @@ raises on zero rows; that is hdmf's, not this package's.
   of 32000. `normalize_signal_manually` raises instead of zeroing the channel
   with a warning. Drop a dead channel before detecting.
 - **Breaking.** One missing-sample policy for every detector. A sample is
-  missing when any channel of any signal, or `speed`, is NaN, or when the step
+  missing when any channel of any signal is NaN or infinite, or when the step
   in `time` to it exceeds 1.5 times the median step. The valid samples form
   contiguous blocks, and every step of every detector runs within a block, so
   nothing is smoothed, thresholded or merged across a gap and no event spans
@@ -203,7 +203,13 @@ raises on zero rows; that is hdmf's, not this package's.
   treated what remained as continuous, so an event could span a gap, and the
   HSE detector raised on any NaN. A block too short for a detector's transform
   is treated as missing, with a warning. Output on data without gaps does not
-  change.
+  change. A NaN in `speed` is an unknown speed, not a missing sample, so a
+  tracking dropout does not cut a ripple in two: an event with unknown speed
+  at its first or last sample fails the endpoint rule, the majority rule of
+  `exclude_movement_by_majority` counts only the samples with known speed,
+  the speed statistics skip unknown values, and `speed_threshold=np.inf`
+  keeps every event. Speed that is NaN everywhere raises unless the
+  criterion is off.
 - **Breaking.** `max_thresh` is `max_sustained_zscore`, the largest z-score
   sustained for `minimum_duration`, which is the highest threshold at which the
   detector would still find the event. The old value could fall below

@@ -529,19 +529,31 @@ def _event_bounds(events: ArrayLike | pd.DataFrame) -> FloatArray:
     return bounds
 
 
+def _is_immobile(speed: ArrayLike, speed_threshold: float) -> BoolArray:
+    """Samples known to be at or below ``speed_threshold``.
+
+    A NaN speed is unknown and so not known to be immobile, unless the
+    threshold is infinite, which turns the criterion off.
+    """
+    speed = np.asarray(speed, dtype=float)
+    if np.isposinf(speed_threshold):
+        return np.ones(speed.shape, dtype=bool)
+    return np.asarray(speed <= speed_threshold, dtype=bool)
+
+
 def _is_immobile_at_endpoints(
     event_times: FloatArray, speed: ArrayLike, time: ArrayLike, speed_threshold: float
 ) -> BoolArray:
     """The package's endpoint speed rule: speed at the event's first and last
-    sample is at or below ``speed_threshold``. Returns a bool mask over events."""
+    sample is at or below ``speed_threshold``; a NaN there fails it (see
+    ``_is_immobile``). Returns a bool mask over events."""
     events = _event_bounds(event_times)
     if len(events) == 0:
         return np.zeros(0, dtype=bool)
-    speed = np.asarray(speed, dtype=float)
-    speed_at_start = speed[nearest_sample_index(time, events[:, 0])]
-    speed_at_end = speed[nearest_sample_index(time, events[:, 1])]
-    immobile = (speed_at_start <= speed_threshold) & (speed_at_end <= speed_threshold)
-    return np.asarray(immobile, dtype=bool)
+    immobile = _is_immobile(speed, speed_threshold)
+    at_start = immobile[nearest_sample_index(time, events[:, 0])]
+    at_end = immobile[nearest_sample_index(time, events[:, 1])]
+    return np.asarray(at_start & at_end, dtype=bool)
 
 
 def exclude_movement(
@@ -554,7 +566,8 @@ def exclude_movement(
 
     Removes events where the animal's speed at either the start or end of the
     event exceeds the specified threshold. Speed inside the event is not
-    tested.
+    tested. A NaN speed at either end is unknown, so that event is removed
+    too, unless ``speed_threshold`` is ``np.inf``, which keeps every event.
 
     Parameters
     ----------
@@ -594,7 +607,9 @@ def exclude_movement_by_majority(
     """Filter out candidate ripples that occur during animal movement.
 
     Retains an event only if the animal's speed is at or below `speed_threshold`
-    for at least `majority_threshold` of the samples within the event.
+    for at least `majority_threshold` of the samples within the event whose
+    speed is known (not NaN); an event with no known speed is removed, unless
+    `speed_threshold` is ``np.inf``, which keeps every event.
     `exclude_movement` instead tests only the event's first and last sample.
 
     Parameters
@@ -637,9 +652,17 @@ def exclude_movement_by_majority(
             "speed and time do not cover the candidate event."
         )
         raise ValueError(msg)
+    if np.isposinf(speed_threshold):
+        return events, np.arange(len(events))
     immobile = np.concatenate([[0], np.cumsum(speed <= speed_threshold)])
+    known = np.concatenate([[0], np.cumsum(np.isfinite(speed))])
     n_below_threshold = immobile[last] - immobile[first]
-    keep = n_below_threshold / n_total >= majority_threshold
+    n_known = known[last] - known[first]
+    # divide rather than multiply the threshold, so 3 of 10 meets 0.3 exactly
+    fraction = np.divide(
+        n_below_threshold, n_known, out=np.zeros(len(events)), where=n_known > 0
+    )
+    keep = (n_known > 0) & (fraction >= majority_threshold)
     return events[keep], np.flatnonzero(keep)
 
 

@@ -535,12 +535,17 @@ conventions below.
 Notes:
 
 - **Missing samples** are handled the same way by every detector. A sample is missing when any
-  channel of any signal, or `speed`, is NaN, or when the step in `time` to it exceeds 1.5 sample
-  intervals. The valid samples form contiguous blocks; every step runs within a block, so nothing
-  is smoothed, thresholded or merged across a gap and no event spans one. An event cut off by a
-  gap or by the recording edge is kept and flagged in `clipped_start` and `clipped_end`. A block
-  too short for a detector's transform (Zugaro's smoothing window, Long's sharp-wave kernel,
+  channel of any signal is NaN or infinite, or when the step in `time` to it exceeds 1.5 times
+  the median step. The valid samples form contiguous blocks; every step runs within a block, so
+  nothing is smoothed, thresholded or merged across a gap and no event spans one. An event cut off
+  by a gap or by the recording edge is kept and flagged in `clipped_start` and `clipped_end`. A
+  block too short for a detector's transform (Zugaro's smoothing window, Long's sharp-wave kernel,
   Carey's theta filter) is treated as missing, with a warning.
+- **Unknown speed** (NaN in `speed`, as from a tracking dropout) is not a missing sample: speed
+  enters no trace, so it splits no block. An event whose first or last sample has unknown speed
+  fails the endpoint rule; Shvartsman's majority is taken over the samples with known speed;
+  Carey treats unknown speed as not low speed. `speed_threshold=np.inf` turns the criterion off,
+  unknown speed included. The speed statistics skip unknown values.
 - Every detector normalizes over the whole recording unless `normalization_mask` restricts it
   (Yu defaults to immobility); a baseline period is `(time >= start) & (time <= end)`. The Long
   and Carey detectors do not take this argument.

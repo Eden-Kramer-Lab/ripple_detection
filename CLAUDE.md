@@ -201,7 +201,7 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
 
 Kay, Roumis and the HSE detector share one pipeline whose tail is `_detect_from_trace`; Karlsson and Shvartsman run the same steps on each channel and merge the per-channel events:
 
-1. **Preprocessing**: Validate shapes, units and time order; mark samples with NaN in any signal or in speed as missing and split the rest into contiguous blocks (`_valid_blocks`), ending a block also wherever the timestamp step exceeds 1.5 times the median step
+1. **Preprocessing**: Validate shapes, units and time order; mark samples with NaN in any signal as missing (NaN speed is unknown speed, handled by the movement rules, and splits nothing) and split the rest into contiguous blocks (`_valid_blocks`), ending a block also wherever the timestamp step exceeds 1.5 times the median step
 2. **Signal Transformation**: Hilbert envelope and Gaussian smoothing within each contiguous block (`_smoothed_envelope`); combine channels (Kay: consensus trace; Karlsson and Shvartsman: per channel; Roumis: mean; HSE: population rate)
 3. **Normalization**: Z-score (or median/MAD) the trace; a zero or undefined scale raises
 4. **Threshold Detection**: Runs at or above the threshold for at least `minimum_sample_count` samples
@@ -222,7 +222,7 @@ Yu, Zugaro, Long and Carey use their own segmentation rules but the same blocks:
 - **Long detector**: Raw two-channel input; sharp-wave difference and ripple power clustered by k-means with local statistics
 - **Carey detector**: Geometric mean of a ripple-envelope score and a capped multiunit score; whole event inside a low-speed interval
 - **HSE detector**: Z-scored smoothed population spike rate, no LFP
-- One missing-sample policy for every detector: NaN in any signal or speed, or a gap in time, ends a block; nothing crosses a gap; clipped events are flagged
+- One missing-sample policy for every detector: NaN in any signal, or a gap in time, ends a block; nothing crosses a gap; clipped events are flagged. NaN speed is unknown speed: it fails the endpoint rule and splits no block
 
 ### Pre-computed Filter
 

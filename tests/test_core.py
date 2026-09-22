@@ -1689,6 +1689,35 @@ class TestEndpointSpeedRule:
         assert kept.shape == (0, 2)
         assert inds.shape == (0,)
 
+    def test_the_majority_is_of_the_samples_whose_speed_is_known(self):
+        time = np.arange(100) / 1000.0
+        event = np.array([[time[10], time[19]]])
+        speed = np.full(100, 1.0)
+        speed[10:14] = np.nan
+        speed[14:17] = 10.0  # 3 of the 6 known samples moving
+        kept, _ = exclude_movement_by_majority(event, speed, time, 4.0, majority_threshold=0.5)
+        assert len(kept) == 1
+        kept, _ = exclude_movement_by_majority(event, speed, time, 4.0, majority_threshold=0.6)
+        assert len(kept) == 0
+
+    def test_three_of_ten_meets_a_threshold_of_three_tenths(self):
+        time = np.arange(100) / 1000.0
+        speed = np.full(100, 10.0)
+        speed[10:13] = 1.0
+        kept, _ = exclude_movement_by_majority(
+            np.array([[time[10], time[19]]]), speed, time, 4.0, majority_threshold=0.3
+        )
+        assert len(kept) == 1
+
+    def test_no_known_speed_fails_both_rules_unless_the_threshold_is_infinite(self):
+        time = np.arange(100) / 1000.0
+        event = np.array([[time[10], time[19]]])
+        speed = np.full(100, np.nan)
+        assert len(exclude_movement_by_majority(event, speed, time, 4.0)[0]) == 0
+        assert len(exclude_movement(event, speed, time, 4.0)) == 0
+        assert len(exclude_movement_by_majority(event, speed, time, np.inf)[0]) == 1
+        assert len(exclude_movement(event, speed, time, np.inf)) == 1
+
 
 class TestMinimumSampleCountUsesTheMedianStep:
     def test_a_hole_in_the_timestamps_does_not_shrink_the_count(self):

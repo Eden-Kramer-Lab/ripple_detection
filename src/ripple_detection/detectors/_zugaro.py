@@ -175,7 +175,8 @@ def Zugaro_ripple_detector(
     the normalized power, not the trough of a single filtered channel.
 
     Missing samples are handled block-wise, as in every detector here, so
-    smoothing and segmentation never cross a gap. A run that touches a gap or
+    smoothing and segmentation never cross a gap; a NaN in ``speed`` is an
+    unknown speed, which fails the endpoint rule but splits no block. A run that touches a gap or
     the record edge lacks one of its two crossings; the original drops it,
     this package keeps it and flags it in ``clipped_start`` or
     ``clipped_end``, so ``events[~(events.clipped_start | events.clipped_end)]``
@@ -263,7 +264,7 @@ def Zugaro_ripple_detector(
     if window < 1 or window % 2 == 0:
         msg = f"smoothing_window must be a positive odd integer, got {window}."
         raise ValueError(msg)
-    is_valid, blocks = _valid_blocks(time, filtered_lfps, speed)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps)
     blocks = _drop_short_blocks(blocks, is_valid, window, "the smoothing window")
 
     kernel = np.ones(window) / window

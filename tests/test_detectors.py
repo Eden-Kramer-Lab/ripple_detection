@@ -2289,14 +2289,13 @@ class TestDetectorErrorHandling:
         assert len(ripples) >= 2
         assert np.isfinite(ripples.drop(columns=[]).to_numpy(dtype=float)).all()
 
-    def test_nan_speed_inside_a_ripple_splits_it_into_two_clipped_events(
+    def test_nan_speed_inside_a_ripple_leaves_it_whole(
         self, time_3s, stationary_speed, sampling_frequency
     ):
-        """Missing speed is missing data: the ripple is cut at the gap, and the
-        two halves end and start on the gap's edges, flagged as clipped."""
+        """Speed does not enter the trace, so unknown speed inside a ripple
+        neither splits it nor clips it; the speed statistics skip the NaN."""
         speed_with_nan = stationary_speed.copy()
         speed_with_nan[1640:1660] = np.nan  # inside the ripple planted at 1.1 s
-        # a long, loud ripple, so each half clears the threshold for 15 ms on its own
         lfp = simulate_LFP(
             time_3s,
             [1.1, 2.1],
@@ -2305,21 +2304,21 @@ class TestDetectorErrorHandling:
             ripple_duration=0.15,
             random_state=0,
         )
-
         filtered_lfps = filter_ripple_band(lfp[:, np.newaxis], 1500)
+        whole = Kay_ripple_detector(
+            time_3s, filtered_lfps, stationary_speed, sampling_frequency
+        )
         ripples = Kay_ripple_detector(
             time_3s, filtered_lfps, speed_with_nan, sampling_frequency
         )
 
-        before = ripples[ripples.end_time == time_3s[1639]]
-        after = ripples[ripples.start_time == time_3s[1660]]
-        assert len(before) == 1
-        assert len(after) == 1
-        assert before.clipped_end.item()
-        assert not before.clipped_start.item()
-        assert after.clipped_start.item()
-        assert not after.clipped_end.item()
-        assert not ripples[(ripples.start_time < 1.1) & (ripples.end_time > 1.1)].shape[0]
+        pd.testing.assert_frame_equal(
+            ripples[["start_time", "end_time", "clipped_start", "clipped_end"]],
+            whole[["start_time", "end_time", "clipped_start", "clipped_end"]],
+        )
+        spanning = ripples[(ripples.start_time < 1.1) & (ripples.end_time > 1.1)]
+        assert len(spanning) == 1
+        assert np.isfinite(spanning[["max_speed", "mean_speed"]].to_numpy()).all()
 
     def test_integer_lfp_not_truncated(
         self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
@@ -3549,9 +3548,9 @@ class TestCareyMinimumDuration:
 
 
 class TestNoEventSpansAGap:
-    """The one missing-sample policy: a NaN in any signal or in speed ends a
-    block, nothing is computed across the gap, no event spans it, and an event
-    cut off by the gap is flagged. Here a gap is cut through the middle of a
+    """The one missing-sample policy: a NaN in any signal, or a gap in time,
+    ends a block, nothing is computed across the gap, no event spans it, and
+    an event cut off by the gap is flagged. Here a gap is cut through the middle of a
     burst, so every detector must return one event ending on the sample before
     the gap and one starting on the sample after it."""
 
@@ -3595,16 +3594,13 @@ class TestNoEventSpansAGap:
             Zugaro_ripple_detector,
         ],
     )
-    @pytest.mark.parametrize("where", ["lfp", "speed", "time"])
+    @pytest.mark.parametrize("where", ["lfp", "time"])
     def test_ripple_band_detectors(self, detector, where, time):
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(*self.BURST, 20.0)])
         speed = np.full(self.N_TIME, 2.0)
         kwargs = {"maximum_duration": None} if detector is Zugaro_ripple_detector else {}
         if where == "lfp":
             lfps[slice(*self.GAP), 0] = np.nan
-            events = detector(time, lfps, speed, self.FS, **kwargs)
-        elif where == "speed":
-            speed[slice(*self.GAP)] = np.nan
             events = detector(time, lfps, speed, self.FS, **kwargs)
         else:
             events = detector(*self._cut(self.GAP, time, lfps, speed), self.FS, **kwargs)
@@ -3631,7 +3627,7 @@ class TestNoEventSpansAGap:
         events = detector(*self._cut(gap, time, lfps, speed), self.FS, **kwargs)
         self._check(events, time, gap)
 
-    @pytest.mark.parametrize("where", ["spikes", "speed", "time"])
+    @pytest.mark.parametrize("where", ["spikes", "time"])
     def test_burst_detector(self, where, time):
         multiunit = np.zeros((self.N_TIME, 6))
         multiunit[slice(*self.BURST)] = 1.0
@@ -3639,27 +3635,19 @@ class TestNoEventSpansAGap:
         if where == "spikes":
             multiunit[slice(*self.GAP), 2] = np.nan
             events = multiunit_HSE_detector(time, multiunit, speed, self.FS)
-        elif where == "speed":
-            speed[slice(*self.GAP)] = np.nan
-            events = multiunit_HSE_detector(time, multiunit, speed, self.FS)
         else:
             events = multiunit_HSE_detector(
                 *self._cut(self.GAP, time, multiunit, speed), self.FS
             )
         self._check(events, time, self.GAP)
 
-    @pytest.mark.parametrize("where", ["spikes", "speed", "time"])
+    @pytest.mark.parametrize("where", ["spikes", "time"])
     def test_joint_detector(self, where, time):
         lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, (self.BURST[0] + 40,))
         gap = (self.BURST[0] + 35, self.BURST[0] + 45)
         speed = np.full(self.N_TIME, 2.0)
         if where == "spikes":
             multiunit[slice(*gap), 0] = np.nan
-            events = Carey_candidate_detector(
-                time, lfps, multiunit, speed, self.FS, minimum_active_units=1
-            )
-        elif where == "speed":
-            speed[slice(*gap)] = np.nan
             events = Carey_candidate_detector(
                 time, lfps, multiunit, speed, self.FS, minimum_active_units=1
             )
@@ -3672,20 +3660,103 @@ class TestNoEventSpansAGap:
         )
         assert len(events) >= 1
 
-    @pytest.mark.parametrize("where", ["lfp", "speed"])
+    @pytest.mark.parametrize("where", ["lfp", "time"])
     def test_two_channel_detector_never_evaluates_a_candidate_across_a_gap(self, where, time):
         centers = (3000, 7000, 11000, 15000)
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, centers)
         speed = np.full(self.N_TIME, 2.0)
+        gap = (7000, 7002)  # through the second event
         if where == "lfp":
-            lfp[7000:7002, 1] = np.nan  # a gap through the second event
+            lfp[slice(*gap), 1] = np.nan
+            events = Long_sharp_wave_ripple_detector(time, lfp, speed, self.FS, random_state=0)
         else:
-            speed[7000:7002] = np.nan
-        # candidates within the 5 s local window of a block edge are not evaluated
-        events = Long_sharp_wave_ripple_detector(time, lfp, speed, self.FS, random_state=0)
-        assert not any((events.start_time < time[7000]) & (events.end_time > time[7001]))
+            events = Long_sharp_wave_ripple_detector(
+                *self._cut(gap, time, lfp, speed), self.FS, random_state=0
+            )
+        # candidates within the 5 s local window of a block edge are not
+        # evaluated, so only the event far from both the gap and the edges is left
+        assert len(events) >= 1
+        assert not any(
+            (events.start_time < time[gap[0]]) & (events.end_time > time[gap[1] - 1])
+        )
         assert not events.clipped_start.any()
         assert not events.clipped_end.any()
+
+
+class TestUnknownSpeed:
+    """Speed does not enter any trace, so a NaN in speed is an unknown speed,
+    not a missing sample: it splits no block. The endpoint rule needs a known
+    speed at both ends; the majority rule and Carey's low-speed intervals are
+    judged on the known samples; ``speed_threshold=np.inf`` turns the
+    criterion off, NaN included."""
+
+    FS = 1000
+    N_TIME = 20_000
+    BURST = (5000, 5080)
+    INSIDE = (5035, 5045)
+
+    RIPPLE_BAND = (
+        Kay_ripple_detector,
+        Karlsson_ripple_detector,
+        Roumis_ripple_detector,
+        Shvartsman_ripple_detector,
+        Yu_ripple_detector,
+        Zugaro_ripple_detector,
+    )
+
+    def _run(self, detector, time, speed, **kwargs):
+        if detector is multiunit_HSE_detector:
+            multiunit = np.zeros((self.N_TIME, 6))
+            multiunit[slice(*self.BURST)] = 1.0
+            return detector(time, multiunit, speed, self.FS, **kwargs)
+        if detector is Carey_candidate_detector:
+            lfps, multiunit = _synthetic_joint_inputs(
+                self.N_TIME, self.FS, (self.BURST[0] + 40,)
+            )
+            return detector(
+                time, lfps, multiunit, speed, self.FS, minimum_active_units=1, **kwargs
+            )
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(*self.BURST, 20.0)])
+        if detector is Zugaro_ripple_detector:
+            kwargs.setdefault("maximum_duration", None)
+        return detector(time, lfps, speed, self.FS, **kwargs)
+
+    @staticmethod
+    def _bounds(events):
+        return events[["start_time", "end_time", "clipped_start", "clipped_end"]]
+
+    @pytest.mark.parametrize(
+        "detector", [*RIPPLE_BAND, multiunit_HSE_detector, Carey_candidate_detector]
+    )
+    def test_nan_inside_an_event_changes_nothing_but_the_speed_statistics(
+        self, detector, time
+    ):
+        speed = np.full(self.N_TIME, 2.0)
+        known = self._run(detector, time, speed)
+        speed[slice(*self.INSIDE)] = np.nan
+        unknown = self._run(detector, time, speed)
+        assert len(known) >= 1
+        pd.testing.assert_frame_equal(self._bounds(unknown), self._bounds(known))
+        speeds = unknown[["max_speed", "min_speed", "median_speed", "mean_speed"]]
+        np.testing.assert_array_equal(speeds.to_numpy(), 2.0)
+
+    @pytest.mark.parametrize("detector", RIPPLE_BAND[:3])
+    def test_an_unknown_endpoint_fails_the_endpoint_rule(self, detector, time):
+        speed = np.full(self.N_TIME, 2.0)
+        known = self._run(detector, time, speed)
+        start = int(np.searchsorted(time, known.start_time.iloc[0]))
+        speed[start] = np.nan
+        assert len(self._run(detector, time, speed)) == len(known) - 1
+        kept = self._run(detector, time, speed, speed_threshold=np.inf)
+        pd.testing.assert_frame_equal(self._bounds(kept), self._bounds(known))
+
+    def test_speed_nan_everywhere_raises_unless_the_criterion_is_off(self, time):
+        speed = np.full(self.N_TIME, np.nan)
+        with pytest.raises(ValueError, match="speed is NaN at every sample"):
+            self._run(Kay_ripple_detector, time, speed)
+        events = self._run(Kay_ripple_detector, time, speed, speed_threshold=np.inf)
+        assert len(events) == 1
+        assert events[["max_speed", "speed_at_start"]].isna().all(axis=None)
 
 
 class TestGapRuleUsesTheObservedStep:

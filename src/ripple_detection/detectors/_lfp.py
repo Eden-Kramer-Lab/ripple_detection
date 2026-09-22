@@ -342,7 +342,8 @@ def Shvartsman_ripple_detector(
         to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
-        by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
+        by 100. To disable movement exclusion, pass ``np.inf``, which also
+        keeps events whose speed is unknown (NaN).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
@@ -421,13 +422,16 @@ def Shvartsman_ripple_detector(
 
     Notes
     -----
-    Missing samples: a NaN in any channel of ``filtered_lfps`` or in ``speed``
-    marks that sample missing, as does a step in ``time`` larger than 1.5
-    sample intervals. The valid samples form contiguous blocks, and every
-    step runs within a block, so nothing is computed across a gap and no
-    event spans one. An event cut off by a gap or by the recording edge is
-    kept and flagged in ``clipped_start`` and ``clipped_end``. Every detector
-    in the package follows this rule.
+    Missing samples: a NaN or infinite value in any channel of
+    ``filtered_lfps`` marks that sample missing, as does a step in ``time``
+    larger than 1.5 times its median step. The valid samples form contiguous
+    blocks, and every step runs within a block, so nothing is computed across
+    a gap and no event spans one. An event cut off by a gap or by the
+    recording edge is kept and flagged in ``clipped_start`` and
+    ``clipped_end``. Every detector in the package follows this rule. A NaN
+    in ``speed`` is an unknown speed, not a missing sample: it splits no
+    block, and an event whose first or last sample has unknown speed fails
+    the speed criterion.
     See the README's "Choosing a detector" table for how the detectors'
     conventions differ.
 
@@ -492,7 +496,7 @@ def Shvartsman_ripple_detector(
             f"minimum_participating_channels={filtered_lfps.shape[1]} or fewer, or more channels."
         )
         raise ValueError(msg)
-    is_valid, blocks = _valid_blocks(time, filtered_lfps, speed)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps)
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     if manual:
@@ -598,7 +602,8 @@ def Kay_ripple_detector(
         to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
-        by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
+        by 100. To disable movement exclusion, pass ``np.inf``, which also
+        keeps events whose speed is unknown (NaN).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
@@ -658,13 +663,16 @@ def Kay_ripple_detector(
 
     Notes
     -----
-    Missing samples: a NaN in any channel of ``filtered_lfps`` or in ``speed``
-    marks that sample missing, as does a step in ``time`` larger than 1.5
-    sample intervals. The valid samples form contiguous blocks, and every
-    step runs within a block, so nothing is computed across a gap and no
-    event spans one. An event cut off by a gap or by the recording edge is
-    kept and flagged in ``clipped_start`` and ``clipped_end``. Every detector
-    in the package follows this rule.
+    Missing samples: a NaN or infinite value in any channel of
+    ``filtered_lfps`` marks that sample missing, as does a step in ``time``
+    larger than 1.5 times its median step. The valid samples form contiguous
+    blocks, and every step runs within a block, so nothing is computed across
+    a gap and no event spans one. An event cut off by a gap or by the
+    recording edge is kept and flagged in ``clipped_start`` and
+    ``clipped_end``. Every detector in the package follows this rule. A NaN
+    in ``speed`` is an unknown speed, not a missing sample: it splits no
+    block, and an event whose first or last sample has unknown speed fails
+    the speed criterion.
     See the README's "Choosing a detector" table for how the detectors'
     conventions differ.
 
@@ -698,7 +706,7 @@ def Kay_ripple_detector(
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
-    is_valid, blocks = _valid_blocks(time, filtered_lfps, speed)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps)
 
     consensus = get_Kay_ripple_consensus_trace(
         _mask_invalid(filtered_lfps, is_valid),
@@ -769,7 +777,9 @@ def Yu_ripple_detector(
         Immobility is speed at or below this value (cm/s), the package's rule
         (the paper says "below 4 cm/s"; the two differ only at exact equality).
         It selects the noise sample for the threshold and, at event
-        boundaries, which events are kept. Default is 4.0.
+        boundaries, which events are kept. A NaN speed is unknown: it is left
+        out of the noise sample, fails the rule at an event boundary, and
+        splits no block. Default is 4.0.
     minimum_duration : float, optional
         Minimum time the consensus must stay at or above the threshold, in
         seconds, applied as a sample count (round-half-up). Default is 0.020.
@@ -839,7 +849,7 @@ def Yu_ripple_detector(
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
-    is_valid, blocks = _valid_blocks(time, filtered_lfps, speed)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps)
 
     consensus = get_Yu_ripple_consensus_trace(
         _mask_invalid(filtered_lfps, is_valid),
@@ -953,7 +963,8 @@ def Karlsson_ripple_detector(
         to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
-        by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
+        by 100. To disable movement exclusion, pass ``np.inf``, which also
+        keeps events whose speed is unknown (NaN).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
@@ -1008,13 +1019,16 @@ def Karlsson_ripple_detector(
 
     Notes
     -----
-    Missing samples: a NaN in any channel of ``filtered_lfps`` or in ``speed``
-    marks that sample missing, as does a step in ``time`` larger than 1.5
-    sample intervals. The valid samples form contiguous blocks, and every
-    step runs within a block, so nothing is computed across a gap and no
-    event spans one. An event cut off by a gap or by the recording edge is
-    kept and flagged in ``clipped_start`` and ``clipped_end``. Every detector
-    in the package follows this rule.
+    Missing samples: a NaN or infinite value in any channel of
+    ``filtered_lfps`` marks that sample missing, as does a step in ``time``
+    larger than 1.5 times its median step. The valid samples form contiguous
+    blocks, and every step runs within a block, so nothing is computed across
+    a gap and no event spans one. An event cut off by a gap or by the
+    recording edge is kept and flagged in ``clipped_start`` and
+    ``clipped_end``. Every detector in the package follows this rule. A NaN
+    in ``speed`` is an unknown speed, not a missing sample: it splits no
+    block, and an event whose first or last sample has unknown speed fails
+    the speed criterion.
     See the README's "Choosing a detector" table for how the detectors'
     conventions differ.
 
@@ -1029,7 +1043,7 @@ def Karlsson_ripple_detector(
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
-    is_valid, blocks = _valid_blocks(time, filtered_lfps, speed)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps)
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
@@ -1097,7 +1111,8 @@ def Roumis_ripple_detector(
         to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
-        by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
+        by 100. To disable movement exclusion, pass ``np.inf``, which also
+        keeps events whose speed is unknown (NaN).
     minimum_duration : float, optional
         Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
         The signal must stay at or above ``zscore_threshold`` for at least
@@ -1148,13 +1163,16 @@ def Roumis_ripple_detector(
 
     Notes
     -----
-    Missing samples: a NaN in any channel of ``filtered_lfps`` or in ``speed``
-    marks that sample missing, as does a step in ``time`` larger than 1.5
-    sample intervals. The valid samples form contiguous blocks, and every
-    step runs within a block, so nothing is computed across a gap and no
-    event spans one. An event cut off by a gap or by the recording edge is
-    kept and flagged in ``clipped_start`` and ``clipped_end``. Every detector
-    in the package follows this rule.
+    Missing samples: a NaN or infinite value in any channel of
+    ``filtered_lfps`` marks that sample missing, as does a step in ``time``
+    larger than 1.5 times its median step. The valid samples form contiguous
+    blocks, and every step runs within a block, so nothing is computed across
+    a gap and no event spans one. An event cut off by a gap or by the
+    recording edge is kept and flagged in ``clipped_start`` and
+    ``clipped_end``. Every detector in the package follows this rule. A NaN
+    in ``speed`` is an unknown speed, not a missing sample: it splits no
+    block, and an event whose first or last sample has unknown speed fails
+    the speed criterion.
     See the README's "Choosing a detector" table for how the detectors'
     conventions differ.
 
@@ -1170,7 +1188,7 @@ def Roumis_ripple_detector(
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
-    is_valid, blocks = _valid_blocks(time, filtered_lfps, speed)
+    is_valid, blocks = _valid_blocks(time, filtered_lfps)
 
     smoothed_power = _smoothed_envelope(
         filtered_lfps, blocks, sampling_frequency, smoothing_sigma, square=True

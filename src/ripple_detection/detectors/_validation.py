@@ -220,7 +220,8 @@ def _validate_detector_inputs(
     ------
     ValueError
         If the signal is not 2-D, the lengths differ, time is not increasing
-        or appears to be in samples.
+        or appears to be in samples, or speed is NaN everywhere while the
+        movement criterion is on.
 
     """
     signal = np.asarray(signal, dtype=float)
@@ -228,6 +229,12 @@ def _validate_detector_inputs(
     time = np.asarray(time, dtype=float)
     _validate_lfp_dimensions(signal)
     _validate_array_lengths(time, signal, speed)
+    if speed.size and not np.isposinf(speed_threshold) and not np.any(np.isfinite(speed)):
+        msg = (
+            "speed is NaN at every sample, so no event can pass the movement criterion. "
+            "Pass speed_threshold=np.inf to detect without one."
+        )
+        raise ValueError(msg)
     _validate_time_units(time, sampling_frequency, stacklevel=stacklevel)
     _validate_speed_units(speed, speed_threshold, stacklevel=stacklevel)
     return time, signal, speed

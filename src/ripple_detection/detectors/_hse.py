@@ -77,7 +77,8 @@ def multiunit_HSE_detector(
         is 4.0 cm/s, which corresponds to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
-        by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
+        by 100. To disable movement exclusion, pass ``np.inf``, which also
+        keeps events whose speed is unknown (NaN).
     minimum_duration : float, optional
         Minimum event duration in **seconds**. Default is 0.015 (15 milliseconds).
         The firing rate must stay at or above ``zscore_threshold`` for at least
@@ -137,12 +138,14 @@ def multiunit_HSE_detector(
 
     Notes
     -----
-    Missing samples: a NaN anywhere in ``multiunit`` or ``speed`` marks that
-    sample missing, as does a step in ``time`` larger than 1.5 sample
-    intervals. The population rate is smoothed within each contiguous block
+    Missing samples: a NaN or infinite value anywhere in ``multiunit`` marks
+    that sample missing, as does a step in ``time`` larger than 1.5 times its
+    median step. The population rate is smoothed within each contiguous block
     of valid samples, no event spans a gap, and an event cut off by one is
     flagged in ``clipped_start`` and ``clipped_end``. A spike count that is
-    absent rather than missing should be 0, not NaN.
+    absent rather than missing should be 0, not NaN. A NaN in ``speed`` is an
+    unknown speed, not a missing sample: it splits no block, and an event
+    whose first or last sample has unknown speed fails the speed criterion.
 
     The defaults (2 SD, 15 ms smoothing, 15 ms minimum, 4 cm/s) are this
     package's convention. Published multiunit-burst detectors in the same
@@ -173,7 +176,7 @@ def multiunit_HSE_detector(
     time, multiunit, speed = _validate_detector_inputs(
         time, multiunit, speed, sampling_frequency, speed_threshold
     )
-    is_valid, blocks = _valid_blocks(time, multiunit, speed)
+    is_valid, blocks = _valid_blocks(time, multiunit)
 
     firing_rate = np.full(len(time), np.nan)
     for start, stop in blocks:

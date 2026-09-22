@@ -11,6 +11,7 @@ from ripple_detection.core import (
     FloatArray,
     IntArray,
     _boolean_run_bounds,
+    _is_immobile,
     _unit_area_gaussian,
     get_envelope,
     normalize_signal,
@@ -78,7 +79,7 @@ def _theta_envelope(
     ``filtfilt``, then the Hilbert envelope in ``LFPpower``). Here the channel
     is filtered over each of its own runs of finite samples, split also at
     gaps in ``time``, and not over the blocks the detector's other inputs
-    define, so a NaN in speed or the spikes does not restart the filter. A run
+    define, so a NaN in the LFP or the spikes does not restart the filter. A run
     with no more samples than the filter's pad length cannot be filtered and
     is NaN, which makes its samples missing for the detector, with a warning.
     """
@@ -164,13 +165,16 @@ def Carey_candidate_detector(
     +/-60-sample ripple smoothing); the defaults here are those values in
     seconds. Its speed limit is 10 pixels/s in tracking units; the default
     here is the package's 4 cm/s. Missing samples (NaN in the LFP, the
-    spikes, speed or ``theta_lfp``, or a gap in ``time``) split the recording
-    into blocks; the scores, the segmentation and the state intervals run
-    within each block, so no candidate spans a gap, and a candidate cut off by
-    one is flagged in ``clipped_start`` and ``clipped_end``. With
-    ``theta_lfp`` given, the theta channel is filtered over each of its own
-    runs of finite samples, as the original filtered the whole recording, so a
-    NaN in speed or the spikes does not restart the theta filter; a run of
+    spikes or ``theta_lfp``, or a gap in ``time``) split the recording into
+    blocks; the scores, the segmentation and the state intervals run within
+    each block, so no candidate spans a gap, and a candidate cut off by one is
+    flagged in ``clipped_start`` and ``clipped_end``. A NaN in speed is an
+    unknown speed: it splits no block and is not low speed, so it breaks a
+    low-speed interval unless the interval merge (``state_merge_gap``) bridges
+    it. With ``theta_lfp`` given, the theta channel is filtered over each of
+    its own runs of finite samples, as the original filtered the whole
+    recording, so a NaN in the spikes does not restart the theta filter; a
+    run of
     theta samples no longer than the filter's pad length (15) cannot be
     filtered and is treated as missing, with a warning. The filter's
     transient lasts about three time constants, 0.4 s for a 6-10 Hz band, so
@@ -264,7 +268,7 @@ def Carey_candidate_detector(
     if multiunit.shape[0] != n_time:
         msg = f"Array length mismatch: multiunit has {multiunit.shape[0]} samples but time has {n_time}."
         raise ValueError(msg)
-    signals = [filtered_lfps, multiunit, speed]
+    signals = [filtered_lfps, multiunit]
     theta_envelope: FloatArray | None = None
     if theta_lfp is not None:
         theta_signal = np.asarray(theta_lfp, dtype=float)
@@ -352,7 +356,9 @@ def Carey_candidate_detector(
 
     if len(candidates):
         candidates = candidates[
-            _contained_in_intervals(candidates, _intervals(speed <= speed_threshold))
+            _contained_in_intervals(
+                candidates, _intervals(_is_immobile(speed, speed_threshold))
+            )
         ]
     if len(candidates) and theta_envelope is not None:
         theta_z = normalize_signal(_mask_invalid(theta_envelope, is_valid))
