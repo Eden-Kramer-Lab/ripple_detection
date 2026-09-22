@@ -354,8 +354,8 @@ def Shvartsman_ripple_detector(
         events but may increase false positives.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
-        Default is 3.0 (higher than Kay's 2.0 because per-channel detection
-        is more sensitive). Lower values detect more events.
+        Default is 3.0, the per-tetrode threshold of Karlsson & Frank 2009.
+        Lower values detect more events.
     smoothing_sigma : float, optional
         Standard deviation of Gaussian smoothing kernel in **seconds**.
         Default is 0.004 (4 ms). Rarely needs adjustment; increase for
@@ -965,8 +965,8 @@ def Karlsson_ripple_detector(
         events but may increase false positives.
     zscore_threshold : float, optional
         Detection sensitivity threshold in standard deviations above mean.
-        Default is 3.0 (higher than Kay's 2.0 because per-channel detection
-        is more sensitive). Lower values detect more events.
+        Default is 3.0, the per-tetrode threshold of Karlsson & Frank 2009.
+        Lower values detect more events.
     smoothing_sigma : float, optional
         Standard deviation of Gaussian smoothing kernel in **seconds**.
         Default is 0.004 (4 ms). Rarely needs adjustment; increase for

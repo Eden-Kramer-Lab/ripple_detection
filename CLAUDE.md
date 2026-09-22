@@ -172,7 +172,7 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
    - `_lfp.py` - `Kay_ripple_detector` (Kay et al. 2016), `Karlsson_ripple_detector` (Karlsson & Frank 2009), `Roumis_ripple_detector` (Frank-lab variant, unpublished), `Shvartsman_ripple_detector` (unpublished), `Yu_ripple_detector` (Yu et al. 2017), and the two consensus traces
    - `_zugaro.py` - `Zugaro_ripple_detector`, the FMAToolbox `FindRipples` two-threshold rule
    - `_long.py` - `Long_sharp_wave_ripple_detector`, sharp wave + ripple power on two raw channels, k-means split (Long, `DetectSWR`)
-   - `_carey.py` - `Carey_candidate_detector`, joint ripple-power × multiunit score (Carey, Tanaka & van der Meer 2019)
+   - `_carey.py` - `Carey_candidate_detector`, joint ripple-envelope × multiunit score (Carey, Tanaka & van der Meer 2019)
    - `_hse.py` - `multiunit_HSE_detector`, multiunit High Synchrony Events (spikes only)
    - The README's "Choosing a detector" table is the reference for how their conventions differ
    - All detectors return pandas DataFrames with event statistics
@@ -192,7 +192,7 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
 
 ### Detection Pipeline Architecture
 
-Kay, Karlsson, Roumis, Shvartsman and the HSE detector share one pipeline; `_detect_from_trace` is its tail:
+Kay, Roumis and the HSE detector share one pipeline whose tail is `_detect_from_trace`; Karlsson and Shvartsman run the same steps on each channel and merge the per-channel events:
 
 1. **Preprocessing**: Validate shapes, units and time order; mark samples with NaN in any signal or in speed as missing and split the rest into contiguous blocks (`_valid_blocks`), ending a block also wherever the timestamp step exceeds 1.5 times the median step
 2. **Signal Transformation**: Hilbert envelope and Gaussian smoothing within each contiguous block (`_smoothed_envelope`); combine channels (Kay: consensus trace; Karlsson and Shvartsman: per channel; Roumis: mean; HSE: population rate)
@@ -213,7 +213,7 @@ Yu, Zugaro, Long and Carey use their own segmentation rules but the same blocks:
 - **Yu detector**: Median of per-channel z-scored envelopes; threshold from the mirrored immobility-noise histogram
 - **Zugaro detector**: Two thresholds (bounds and peak) on the z-scored squared sum; merges close events
 - **Long detector**: Raw two-channel input; sharp-wave difference and ripple power clustered by k-means with local statistics
-- **Carey detector**: Geometric mean of a ripple-power score and a capped multiunit score; whole event inside a low-speed interval
+- **Carey detector**: Geometric mean of a ripple-envelope score and a capped multiunit score; whole event inside a low-speed interval
 - **HSE detector**: Z-scored smoothed population spike rate, no LFP
 - One missing-sample policy for every detector: NaN in any signal or speed, or a gap in time, ends a block; nothing crosses a gap; clipped events are flagged
 
