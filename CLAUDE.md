@@ -237,7 +237,7 @@ All detectors return rich event statistics via `_get_event_stats()`:
 
 ## Testing Strategy
 
-**Test Coverage: 97%** (core and detector modules each 97%; registry, literature and simulate 100%)
+**Test Coverage: 98%** (core 97%, the detectors package 98%; registry, literature and simulate 100%)
 
 The suite has one shared fixture module and eight test modules:
 
@@ -302,7 +302,7 @@ The package also validates that example notebooks run without errors in CI.
 - Numpy Docstrings for all public functions and classes using numpy docstring best practices
 - Uses f-strings for formatting
 - Modular functions with single responsibility
-- Comprehensive test coverage: 97% overall
+- Comprehensive test coverage: 98% overall
 - **Code quality tools**: Ruff (formatting and linting), Mypy (type checking)
 - Continuous integration with GitHub Actions (tests on Python 3.10, 3.11, 3.12, 3.13)
 
