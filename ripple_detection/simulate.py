@@ -287,8 +287,11 @@ def simulate_LFP(
     ------
     ValueError
         If both ``ripple_amplitude`` and ``ripple_snr`` are given, if
-        ``ripple_snr`` is given with ``noise_amplitude = 0``, or if a range
-        is not a two-element ordered sequence.
+        ``ripple_snr`` is given with ``noise_amplitude = 0``, if a range is
+        not a two-element ordered sequence, if a ripple time lies outside
+        ``time``, if a duration is not positive, or if a frequency is not
+        between zero and the Nyquist frequency. Each of these would otherwise
+        give an all-NaN, empty, or aliased ripple with no error.
 
     Notes
     -----
@@ -341,6 +344,21 @@ def simulate_LFP(
 
     frequencies = _draw_per_ripple(ripple_frequency, n_ripples, random_state)
     durations = _draw_per_ripple(ripple_duration, n_ripples, random_state)
+    if n_ripples:
+        nyquist = 0.5 / np.median(np.diff(time))
+        outside = [t for t in ripple_times if not time.min() <= t <= time.max()]
+        if outside:
+            raise ValueError(
+                f"ripple_times {outside} lie outside time "
+                f"[{time.min()}, {time.max()}]; the ripple would have no samples."
+            )
+        if np.any(durations <= 0):
+            raise ValueError(f"ripple_duration must be positive, got {ripple_duration}.")
+        if np.any(frequencies <= 0) or np.any(frequencies >= nyquist):
+            raise ValueError(
+                f"ripple_frequency must lie in (0, {nyquist:.1f}) Hz, the Nyquist range of "
+                f"time's sampling rate, got {ripple_frequency}."
+            )
 
     signal = []
     for ripple_time, frequency, duration in zip(

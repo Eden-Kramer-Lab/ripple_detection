@@ -621,3 +621,24 @@ class TestSimulateLFPRealism:
         base = simulate_LFP(t, [], random_state=5)
         same = simulate_LFP(t, [], random_state=5, ripple_frequency=200.0, ripple_duration=0.1)
         np.testing.assert_array_equal(base, same)
+
+
+class TestSimulateLFPRejectsSilentlyBrokenRipples:
+    """Each of these used to return an all-NaN, empty, or aliased signal."""
+
+    def test_ripple_outside_the_record_raises(self):
+        t = simulate_time(3000, 1000)
+        with pytest.raises(ValueError, match="outside time"):
+            simulate_LFP(t, [100.0])
+
+    @pytest.mark.parametrize("duration", [0.0, -0.05])
+    def test_non_positive_duration_raises(self, duration):
+        t = simulate_time(3000, 1000)
+        with pytest.raises(ValueError, match="positive"):
+            simulate_LFP(t, [1.0], ripple_duration=duration)
+
+    @pytest.mark.parametrize("frequency", [0.0, 700.0])
+    def test_frequency_outside_the_nyquist_range_raises(self, frequency):
+        t = simulate_time(3000, 1000)
+        with pytest.raises(ValueError, match="Nyquist"):
+            simulate_LFP(t, [1.0], ripple_frequency=frequency)
