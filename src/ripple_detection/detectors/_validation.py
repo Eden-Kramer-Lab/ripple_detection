@@ -106,7 +106,8 @@ def _validate_time_units(
     Warnings
     --------
     UserWarning
-        If time step differs significantly from expected.
+        If the median time step differs from ``1 / sampling_frequency`` by more
+        than 2 percent.
 
     """
     if len(time) > 1:
@@ -137,7 +138,10 @@ def _validate_time_units(
             )
             raise ValueError(msg)
         # Check if time step is suspiciously different from sampling frequency
-        if not np.isclose(median_dt, expected_dt, rtol=0.2):
+        # 2 %: clocks drift by far less, while the nominal rate sets the smoothing
+        # widths and windows and the timestamps set the sample counts, so a
+        # mismatch this size already changes the events
+        if not np.isclose(median_dt, expected_dt, rtol=0.02):
             warnings.warn(
                 f"Time array step ({median_dt:.6f} s) differs from expected sampling interval "
                 f"({expected_dt:.6f} s at {sampling_frequency} Hz).\n"

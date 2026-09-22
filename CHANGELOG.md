@@ -204,6 +204,11 @@ raises on zero rows; that is hdmf's, not this package's.
 
 ### Fixed
 
+- The sampling-rate check warns when `sampling_frequency` and the timestamps
+  disagree by 2 percent, not 20. The nominal rate sets the smoothing widths
+  and the Zugaro, Long and Carey windows while the timestamps set the sample
+  counts, so a 20 percent mismatch changed Kay's event count by a fifth and
+  said nothing.
 - **Breaking.** `exclude_movement` and the per-event statistics read the speeds
   in time order, not one for each event. Nested events were kept or discarded in
   the wrong order, and a bound that was not on the sample grid discarded all
