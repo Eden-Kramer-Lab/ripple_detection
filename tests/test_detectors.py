@@ -3320,6 +3320,24 @@ class TestMultiunitActiveUnits:
         assert events.iloc[0].n_active_units == 10
         assert events.iloc[0].start_time > 2.0
 
+    def test_a_rejected_event_does_not_suppress_its_neighbour(self, time, stationary):
+        """The unit count is applied before close events are excluded, so a
+        sparse event that fails it cannot drop the dense event just after it
+        and then be dropped itself."""
+        multiunit = np.zeros((self.N_TIME, self.N_UNITS))
+        multiunit[1_000:1_060, :3] = 4.0  # three units: fails a minimum of five
+        multiunit[1_150:1_210, :10] = 1.2  # ten units, 90 ms later
+        events = multiunit_HSE_detector(
+            time,
+            multiunit,
+            stationary,
+            self.FS,
+            minimum_active_units=5,
+            close_event_threshold=0.2,
+        )
+        assert len(events) == 1
+        assert events.iloc[0].n_active_units == 10
+
     def test_index_is_renumbered_after_filtering(self, time, multiunit, stationary):
         """Every detector returns event_number 1..n with no holes."""
         events = multiunit_HSE_detector(

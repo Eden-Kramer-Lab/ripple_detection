@@ -1,6 +1,8 @@
 """From candidate events to the result: duration ceiling, the shared detection
 tail, active-unit counts, and the per-event statistics every detector reports."""
 
+from collections.abc import Callable
+
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
@@ -85,6 +87,7 @@ def _detect_from_trace(
     maximum_duration: float | None = None,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
+    keep_candidates: Callable[[FloatArray], BoolArray] | None = None,
 ) -> pd.DataFrame:
     """Normalize one detection trace, threshold it, and summarize the events.
 
@@ -92,10 +95,14 @@ def _detect_from_trace(
     normalizes the trace over the valid samples. Within each block it takes
     the runs at or above ``zscore_threshold`` that last ``minimum_duration``
     and extends each to the normalization center. It drops events whose first
-    or last sample exceeds ``speed_threshold``, then events too close to the
-    last retained event, then events longer than ``maximum_duration``. It then
-    computes the per-event statistics, flagging events cut off by a block
-    edge.
+    or last sample exceeds ``speed_threshold``, then those ``keep_candidates``
+    rejects, then events too close to the last retained event, then events
+    longer than ``maximum_duration``. It then computes the per-event
+    statistics, flagging events cut off by a block edge.
+
+    A candidate criterion goes through ``keep_candidates`` rather than after
+    this function, so an event it rejects cannot suppress a neighbour in the
+    close-event step and then disappear itself.
 
     Parameters
     ----------
@@ -114,6 +121,9 @@ def _detect_from_trace(
         As in the public detectors. Default is None (no upper limit).
     normalization_method, normalization_mask
         Passed to ``normalize_signal``.
+    keep_candidates : callable, optional
+        Takes the ``(n_events, 2)`` event times left by the speed rule and
+        returns a bool mask of those to keep. Default None keeps them all.
 
     Returns
     -------
@@ -129,6 +139,8 @@ def _detect_from_trace(
     event_times = exclude_movement(
         candidate_times, speed, time, speed_threshold=speed_threshold
     )
+    if keep_candidates is not None:
+        event_times = event_times[keep_candidates(event_times)]
     event_times = exclude_close_events(event_times, close_event_threshold)
     event_times, _ = _exclude_long_events(event_times, time, maximum_duration)
     return _get_event_stats(

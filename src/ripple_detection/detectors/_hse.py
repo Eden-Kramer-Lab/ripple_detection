@@ -5,6 +5,8 @@ import pandas as pd
 from numpy.typing import ArrayLike
 
 from ripple_detection.core import (
+    FloatArray,
+    IntArray,
     get_multiunit_population_firing_rate,
     nearest_sample_index,
 )
@@ -118,8 +120,9 @@ def multiunit_HSE_detector(
         seconds.
     minimum_active_units : int, optional
         Minimum number of units with at least one spike inside an event.
-        Events with fewer are dropped. Default is 0, which imposes no
-        criterion. Published criteria are most often around five units.
+        Events with fewer are dropped, after the speed rule and before close
+        events are excluded, so a dropped event suppresses no neighbour.
+        Default is 0, which imposes no criterion. Published criteria are most often around five units.
         ``Carey_candidate_detector`` applies the same rule with its original's
         default of 5.
     Returns
@@ -186,6 +189,11 @@ def multiunit_HSE_detector(
             multiunit[start:stop], sampling_frequency, smoothing_sigma
         )
 
+    def active_unit_counts(event_times: FloatArray) -> IntArray:
+        first = nearest_sample_index(time, event_times[:, 0])
+        last = nearest_sample_index(time, event_times[:, 1])
+        return _count_active_units(multiunit, np.column_stack([first, last]))
+
     events = _detect_from_trace(
         firing_rate,
         time,
@@ -199,15 +207,12 @@ def multiunit_HSE_detector(
         maximum_duration=maximum_duration,
         normalization_method=normalization_method,
         normalization_mask=normalization_mask,
+        # before the close-event step, so a rejected event suppresses no neighbour
+        keep_candidates=lambda event_times: (
+            active_unit_counts(event_times) >= minimum_active_units
+        ),
     )
-
-    first_sample = nearest_sample_index(time, events.start_time.to_numpy())
-    last_sample = nearest_sample_index(time, events.end_time.to_numpy())
-    n_active = _count_active_units(multiunit, np.column_stack([first_sample, last_sample]))
-    keep = n_active >= minimum_active_units
-    events = events.iloc[np.flatnonzero(keep)].copy()
-    events["n_active_units"] = n_active[keep]
-    # renumber, so the index is 1..n with no holes as it is for every other
-    # detector; Carey filters before _get_event_stats and gets this for free
-    events.index = pd.RangeIndex(1, len(events) + 1, name=events.index.name)
+    events["n_active_units"] = active_unit_counts(
+        events[["start_time", "end_time"]].to_numpy()
+    )
     return events
