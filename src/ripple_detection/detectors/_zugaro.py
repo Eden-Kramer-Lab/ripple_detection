@@ -8,6 +8,7 @@ from ripple_detection.core import (
     BoolArray,
     FloatArray,
     _boolean_run_bounds,
+    _check_non_negative,
     _is_immobile_at_endpoints,
     normalize_signal,
     sample_count_within,
@@ -22,7 +23,6 @@ from ripple_detection.detectors._events import (
     _get_event_stats,
 )
 from ripple_detection.detectors._validation import (
-    _check_non_negative,
     _check_thresholds,
     _check_whole_number,
     _validate_detector_inputs,
@@ -273,11 +273,11 @@ def Zugaro_ripple_detector(
         if smoothing_window is None
         else int(smoothing_window)
     )
-    if window < 1 or window % 2 == 0:
+    if window % 2 == 0:  # positive by _check_whole_number or by construction
         msg = f"smoothing_window must be a positive odd integer, got {window}."
         raise ValueError(msg)
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
-    _reject_flat_channels(filtered_lfps, is_valid, "filtered_lfps")
+    _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
     blocks = _drop_short_blocks(blocks, is_valid, window, "the smoothing window")
 
     kernel = np.ones(window) / window

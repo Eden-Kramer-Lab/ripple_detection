@@ -702,10 +702,10 @@ def exclude_movement_by_majority(
             "speed and time do not cover the candidate event."
         )
         raise ValueError(msg)
-    if np.isposinf(speed_threshold):
-        return events, np.arange(len(events))
-    immobile = np.concatenate([[0], np.cumsum(speed <= speed_threshold)])
-    known = np.concatenate([[0], np.cumsum(np.isfinite(speed))])
+    is_immobile = _is_immobile(speed, speed_threshold)
+    # with the criterion off (an infinite threshold) every sample counts as known
+    immobile = np.concatenate([[0], np.cumsum(is_immobile)])
+    known = np.concatenate([[0], np.cumsum(np.isfinite(speed) | is_immobile)])
     n_below_threshold = immobile[last] - immobile[first]
     n_known = known[last] - known[first]
     # divide rather than multiply the threshold, so 3 of 10 meets 0.3 exactly
@@ -1251,14 +1251,13 @@ def _is_gap_below(
     )
 
 
-def _check_gap(close_event_threshold: float) -> None:
-    """A gap between events: non-negative, not NaN (infinity keeps only the first)."""
-    if not close_event_threshold >= 0:
-        msg = (
-            f"close_event_threshold must be non-negative, got {close_event_threshold}. "
-            "It is a gap between events, in the units of event_times."
-        )
-        raise ValueError(msg)
+def _check_non_negative(**values: float) -> None:
+    """Raise for a value that is NaN or negative. Infinity passes: it is how a
+    caller turns a speed or proximity criterion off."""
+    for name, value in values.items():
+        if not value >= 0:
+            msg = f"{name} must be non-negative, got {value}."
+            raise ValueError(msg)
 
 
 def exclude_close_events(
@@ -1308,7 +1307,7 @@ def exclude_close_events(
     is not sorted, results may be incorrect.
 
     """
-    _check_gap(close_event_threshold)
+    _check_non_negative(close_event_threshold=close_event_threshold)
     events = _event_bounds(candidate_event_times)
     # Each event is compared with the last *retained* event, so a cluster is
     # reduced to its first event. Comparing with the immediately preceding
@@ -1383,7 +1382,7 @@ def merge_close_events(
     array([[0. , 0.2]])
 
     """
-    _check_gap(close_event_threshold)
+    _check_non_negative(close_event_threshold=close_event_threshold)
     events = _event_bounds(event_times).copy()
     if events.size == 0:
         return np.empty((0, 2))
@@ -1470,12 +1469,7 @@ def require_overlap(
     array([[1. , 1.1]])
 
     """
-    if minimum_overlap < 0:
-        msg = (
-            f"minimum_overlap must be non-negative, got {minimum_overlap}. "
-            "It is a duration in the units of the event times."
-        )
-        raise ValueError(msg)
+    _check_non_negative(minimum_overlap=minimum_overlap)
 
     events = _event_bounds(event_times)
     reference = _event_bounds(reference_event_times)

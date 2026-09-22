@@ -259,7 +259,7 @@ def Long_sharp_wave_ripple_detector(
     )
     n_time = len(time)
     is_valid, blocks = _valid_blocks(time, lfp)
-    _reject_flat_channels(lfp, is_valid, "raw_lfps")
+    _reject_flat_channels(lfp, blocks, "raw_lfps")
     slowest_kernel = len(_gaussian_lowpass_fir(sharp_wave_band[0], sampling_frequency))
     blocks = _drop_short_blocks(
         blocks,

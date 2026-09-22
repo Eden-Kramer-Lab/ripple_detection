@@ -11,6 +11,7 @@ from ripple_detection.core import (
     FloatArray,
     IntArray,
     _boolean_run_bounds,
+    _check_non_negative,
     _is_immobile,
     _unit_area_gaussian,
     get_envelope,
@@ -32,7 +33,6 @@ from ripple_detection.detectors._events import (
 from ripple_detection.detectors._validation import (
     _check_band,
     _check_minimum_active_units,
-    _check_non_negative,
     _check_positive,
     _check_smoothing_sigma,
     _check_thresholds,
@@ -280,11 +280,8 @@ def Carey_candidate_detector(
         msg = f"theta_threshold must be finite, got {theta_threshold}."
         raise ValueError(msg)
     multiunit = np.asarray(multiunit, dtype=float)
-    if multiunit.ndim != 2:
-        msg = f"multiunit must be a 2D array of shape (n_time, n_units), got shape {multiunit.shape}."
-        raise ValueError(msg)
-    _check_minimum_active_units(minimum_active_units, multiunit.shape[1])
     _validate_multiunit(multiunit)
+    _check_minimum_active_units(minimum_active_units, multiunit.shape[1])
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
@@ -304,7 +301,7 @@ def Carey_candidate_detector(
         theta_envelope = _theta_envelope(theta_signal, time, sampling_frequency, theta_band)
         signals.append(theta_envelope)
     is_valid, blocks = _valid_blocks(time, *signals, minimum_duration=minimum_duration)
-    _reject_flat_channels(filtered_lfps, is_valid, "filtered_lfps")
+    _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
 
     # ripple score (OldWizard, 'amplitude', 'wizard' kernel), rescaled to mean 1
     ripple_score = np.full(n_time, np.nan)
@@ -361,9 +358,8 @@ def Carey_candidate_detector(
             if block_z[run_start:run_stop].max() > high_threshold:
                 candidate_runs.append((start + run_start, start + run_stop - 1))
     candidates = np.asarray(candidate_runs, dtype=int).reshape(-1, 2)
-    if len(candidates):
-        n_samples = candidates[:, 1] - candidates[:, 0] + 1
-        candidates = candidates[sample_count_within(n_samples, time, minimum_duration)]
+    n_samples = candidates[:, 1] - candidates[:, 0] + 1
+    candidates = candidates[sample_count_within(n_samples, time, minimum_duration)]
 
     # state restriction: contained in a low-speed (and low-theta) interval
     def _intervals(is_in_state: BoolArray) -> IntArray:
@@ -395,15 +391,10 @@ def Carey_candidate_detector(
 
     # minimum number of active units
     n_active = _count_active_units(multiunit, candidates)
-    if len(candidates):
-        keep = n_active >= minimum_active_units
-        candidates, n_active = candidates[keep], n_active[keep]
+    keep = n_active >= minimum_active_units
+    candidates, n_active = candidates[keep], n_active[keep]
 
-    event_times = (
-        np.column_stack([time[candidates[:, 0]], time[candidates[:, 1]]])
-        if len(candidates)
-        else np.empty((0, 2))
-    )
+    event_times = np.column_stack([time[candidates[:, 0]], time[candidates[:, 1]]])
     event_times, keep = _exclude_long_events(event_times, time, maximum_duration)
     n_active = n_active[keep]
     events = _get_event_stats(

@@ -12,6 +12,7 @@ from ripple_detection.core import (
     BoolArray,
     FloatArray,
     IntArray,
+    _check_non_negative,
     _is_immobile_at_endpoints,
     _runs_extended_to_mean,
     estimate_noise_threshold,
@@ -41,7 +42,6 @@ from ripple_detection.detectors._events import (
 )
 from ripple_detection.detectors._validation import (
     _check_finite_non_negative,
-    _check_non_negative,
     _check_smoothing_sigma,
     _check_whole_number,
     _validate_detector_inputs,
@@ -520,6 +520,7 @@ def Shvartsman_ripple_detector(
         )
         raise ValueError(msg)
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
+    _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     if manual:
@@ -546,9 +547,7 @@ def Shvartsman_ripple_detector(
         # floating-point multiplication, which would demand 8
         n_elecs_thresh = round(n_elecs * minimum_participating_fraction, 9)
     else:
-        n_elecs_thresh = (
-            2 if minimum_participating_channels is None else minimum_participating_channels
-        )
+        n_elecs_thresh = required_channels
     participation_mask = (
         np.asarray([len(interval[2]) for interval in merged_candidates]) >= n_elecs_thresh
     )
@@ -736,7 +735,7 @@ def Kay_ripple_detector(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
-    _reject_flat_channels(filtered_lfps, is_valid, "filtered_lfps")
+    _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
 
     consensus = _kay_consensus(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     return _detect_from_trace(
@@ -877,6 +876,7 @@ def Yu_ripple_detector(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
+    _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
 
     consensus = _yu_consensus(
         filtered_lfps,
@@ -1082,6 +1082,7 @@ def Karlsson_ripple_detector(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
+    _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
@@ -1233,7 +1234,7 @@ def Roumis_ripple_detector(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
-    _reject_flat_channels(filtered_lfps, is_valid, "filtered_lfps")
+    _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
 
     smoothed_power = _smoothed_envelope(
         filtered_lfps, blocks, sampling_frequency, smoothing_sigma, square=True

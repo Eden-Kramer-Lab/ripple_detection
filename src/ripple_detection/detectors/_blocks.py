@@ -89,18 +89,25 @@ def _valid_blocks(
     return is_valid, blocks
 
 
-def _reject_flat_channels(signal: FloatArray, is_valid: BoolArray, name: str) -> None:
-    """Raise for a channel that is constant over the valid samples.
+def _reject_flat_channels(
+    signal: FloatArray, blocks: list[tuple[int, int]], name: str
+) -> None:
+    """Raise for a channel that is constant over the samples in ``blocks``.
 
     A dead or disconnected channel adds nothing to a sum or mean of
     envelopes, so a detector that combines channels would run on fewer than
-    the caller passed, and dilute the rest, without a word. The per-channel
-    detectors already raise on its zero normalization scale.
+    the caller passed, and dilute the rest, without a word; and its
+    normalization scale is rounding noise (1e-16), not zero, so a
+    per-channel detector does not catch it either. Compared block by block
+    against the first valid row, so the LFP is not copied.
     """
-    valid = signal[is_valid]
-    if len(valid) < 2:
+    if sum(stop - start for start, stop in blocks) < 2:
         return  # one sample has no spread; the normalization reports that
-    flat = np.flatnonzero(np.all(valid == valid[0], axis=0))
+    reference = signal[blocks[0][0]]
+    is_flat = np.ones(signal.shape[1], dtype=bool)
+    for start, stop in blocks:
+        is_flat &= np.all(signal[start:stop] == reference, axis=0)
+    flat = np.flatnonzero(is_flat)
     if flat.size:
         msg = (
             f"{name} channel(s) {flat.tolist()} are constant over the valid samples, "

@@ -318,9 +318,10 @@ raises on zero rows; that is hdmf's, not this package's.
     result without an error; `minimum_duration=0` still means no minimum;
   - `multiunit` holding negative or fractional values, in
     `multiunit_HSE_detector` and `Carey_candidate_detector` called directly
-    (before, only the registry checked), a ripple-band channel that is constant
-    over the valid samples in the detectors that combine channels (Kay,
-    Roumis, Zugaro, Carey, Long), which ran on fewer channels than given, and
+    (before, only the registry checked), an LFP channel that is constant over
+    the valid samples, in every LFP detector (the ones that combine channels
+    ran on fewer than given, and a nonzero constant's normalization scale is
+    rounding noise, not zero, so the per-channel ones missed it too), and
     a Yu call with no immobile sample, whose error named a mask the caller had
     not passed. An error for input with no finite sample names the channels
     that hold none;

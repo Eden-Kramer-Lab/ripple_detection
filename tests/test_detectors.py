@@ -4046,22 +4046,27 @@ class TestInputContents:
         "detector",
         [
             Kay_ripple_detector,
+            Karlsson_ripple_detector,
             Roumis_ripple_detector,
+            Shvartsman_ripple_detector,
+            Yu_ripple_detector,
             Zugaro_ripple_detector,
             Carey_candidate_detector,
             Long_sharp_wave_ripple_detector,
         ],
     )
     def test_a_flat_channel_raises_and_is_named(self, detector, time):
+        """A nonzero constant too: its normalization scale is rounding noise,
+        not zero, so only the flat-channel check catches it."""
         speed = np.full(self.N_TIME, 2.0)
         if detector is Long_sharp_wave_ripple_detector:
             lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, (2500,))
-            lfp[:, 1] = 0.0
+            lfp[:, 1] = 0.7
             call = lambda: detector(time, lfp, speed, self.FS)  # noqa: E731
             match = r"raw_lfps channel\(s\) \[1\]"
         else:
             lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, (2500,))
-            lfps[:, 2] = 0.0
+            lfps[:, 2] = 0.7
             match = r"filtered_lfps channel\(s\) \[2\]"
             if detector is Carey_candidate_detector:
                 call = lambda: detector(time, lfps, multiunit, speed, self.FS)  # noqa: E731
@@ -4151,7 +4156,7 @@ class TestRemainingErrorPaths:
             )
 
     @pytest.mark.parametrize(
-        ("lfps", "match"), [(np.float64(1.0), "scalar"), (np.zeros((10, 2, 2)), "3D")]
+        ("lfps", "match"), [(np.float64(1.0), "0D"), (np.zeros((10, 2, 2)), "3D")]
     )
     def test_lfp_of_the_wrong_rank_raises(self, lfps, match):
         with pytest.raises(ValueError, match=match):

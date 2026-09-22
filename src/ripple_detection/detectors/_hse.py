@@ -7,6 +7,7 @@ from numpy.typing import ArrayLike
 from ripple_detection.core import (
     FloatArray,
     IntArray,
+    _check_non_negative,
     get_multiunit_population_firing_rate,
     nearest_sample_index,
 )
@@ -20,7 +21,6 @@ from ripple_detection.detectors._events import (
 from ripple_detection.detectors._validation import (
     _check_finite_non_negative,
     _check_minimum_active_units,
-    _check_non_negative,
     _check_smoothing_sigma,
     _validate_detector_inputs,
     _validate_duration_limits,
@@ -173,14 +173,8 @@ def multiunit_HSE_detector(
     _check_non_negative(close_event_threshold=close_event_threshold)
     _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
     multiunit = np.asarray(multiunit, dtype=float)
-    if multiunit.ndim != 2:
-        msg = (
-            f"multiunit must be a 2D array of shape (n_time, n_units), got shape "
-            f"{multiunit.shape}. For a single unit, pass multiunit[:, np.newaxis]."
-        )
-        raise ValueError(msg)
-    _check_minimum_active_units(minimum_active_units, multiunit.shape[1])
     _validate_multiunit(multiunit)
+    _check_minimum_active_units(minimum_active_units, multiunit.shape[1])
     time, multiunit, speed = _validate_detector_inputs(
         time, multiunit, speed, sampling_frequency, speed_threshold
     )

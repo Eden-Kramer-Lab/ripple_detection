@@ -3,10 +3,9 @@
 import warnings
 
 import numpy as np
-import pandas as pd
 from numpy.typing import ArrayLike
 
-from ripple_detection.core import FloatArray
+from ripple_detection.core import FloatArray, _check_non_negative
 
 
 def _validate_lfp_dimensions(filtered_lfps: FloatArray) -> None:
@@ -23,26 +22,16 @@ def _validate_lfp_dimensions(filtered_lfps: FloatArray) -> None:
         If array is not 2D with appropriate shape.
 
     """
-    if filtered_lfps.ndim == 0:
-        msg = (
-            "filtered_lfps must be a 2D array with shape (n_time, n_channels).\n"
-            "Received a scalar value.\n"
-            "Expected: A 2D array where each row is a time point and each column is a channel."
-        )
-        raise ValueError(msg)
-    if filtered_lfps.ndim == 1:
-        msg = (
-            "filtered_lfps must be a 2D array with shape (n_time, n_channels).\n"
-            f"Received a 1D array with shape {filtered_lfps.shape}.\n"
-            "If you have a single channel, reshape your data using:\n"
+    if filtered_lfps.ndim != 2:
+        hint = (
+            "\nIf you have a single channel, reshape your data using:\n"
             "  filtered_lfps = filtered_lfps.reshape(-1, 1)"
+            if filtered_lfps.ndim == 1
+            else ""
         )
-        raise ValueError(msg)
-    if filtered_lfps.ndim > 2:
         msg = (
             "filtered_lfps must be a 2D array with shape (n_time, n_channels).\n"
-            f"Received a {filtered_lfps.ndim}D array with shape {filtered_lfps.shape}.\n"
-            "Expected: 2D array with rows as time points and columns as channels."
+            f"Received a {filtered_lfps.ndim}D array with shape {filtered_lfps.shape}.{hint}"
         )
         raise ValueError(msg)
 
@@ -188,22 +177,20 @@ def _validate_speed_units(
         If speed values appear to be in m/s instead of cm/s.
 
     """
-    non_nan_speed = speed[pd.notna(speed)]
-    if len(non_nan_speed) > 0:
-        non_zero_speed = non_nan_speed[non_nan_speed > 0]
-        if len(non_zero_speed) > 0:
-            median_speed = np.median(non_zero_speed)
-            # If median speed is very small and threshold is typical (> 1 cm/s),
-            # user likely passed speed in m/s instead of cm/s
-            if median_speed < 0.5 and speed_threshold > 1.0:
-                warnings.warn(
-                    f"Speed values appear very small (median non-zero: {median_speed:.4f}).\n"
-                    f"Speed should be in cm/s, not m/s.\n"
-                    f"If your speed is in m/s, multiply by 100:\n"
-                    "  speed_cms = speed_ms * 100",
-                    UserWarning,
-                    stacklevel=stacklevel,
-                )
+    moving = speed[speed > 0]  # NaN compares False, so it drops out here
+    if moving.size == 0 or speed_threshold <= 1.0:
+        return
+    median_speed = np.median(moving)
+    # a median under 0.5 against a typical threshold (> 1 cm/s) is m/s
+    if median_speed < 0.5:
+        warnings.warn(
+            f"Speed values appear very small (median non-zero: {median_speed:.4f}).\n"
+            f"Speed should be in cm/s, not m/s.\n"
+            f"If your speed is in m/s, multiply by 100:\n"
+            "  speed_cms = speed_ms * 100",
+            UserWarning,
+            stacklevel=stacklevel,
+        )
 
 
 def _validate_detector_inputs(
@@ -258,15 +245,6 @@ def _validate_detector_inputs(
     _validate_time_units(time, sampling_frequency, stacklevel=stacklevel)
     _validate_speed_units(speed, speed_threshold, stacklevel=stacklevel)
     return time, signal, speed
-
-
-def _check_non_negative(**values: float) -> None:
-    """Raise for a value that is NaN or negative. Infinity passes: it is how a
-    caller turns a speed or proximity criterion off."""
-    for name, value in values.items():
-        if not value >= 0:
-            msg = f"{name} must be non-negative, got {value}."
-            raise ValueError(msg)
 
 
 def _check_finite_non_negative(**values: float) -> None:
@@ -345,26 +323,38 @@ def _check_minimum_active_units(minimum_active_units: int, n_units: int) -> None
 
 
 def _validate_multiunit(multiunit: FloatArray, what: str = "multiunit") -> None:
-    """Spike counts or indicators: non-negative whole numbers where finite.
+    """Spike counts or indicators, shape (n_time, n_units): non-negative whole
+    numbers where finite.
 
     A rate in Hz or a baseline-subtracted count passes every shape check and
     changes what the spike cap and the z-score mean, so it is rejected here,
     in the detectors, and not only when a pipeline goes through the registry.
+    The values are tested in row chunks, so the test's temporaries stay small
+    next to an hour of spikes.
     """
-    finite = multiunit[np.isfinite(multiunit)]
-    if np.any(finite < 0) or np.any(finite != np.round(finite)):
+    if multiunit.ndim != 2:
         msg = (
-            f"{what}: spike counts or indicators, non-negative whole numbers, but the "
-            "array holds other values. Pass counts per sample, not a rate."
+            f"{what} must be a 2D array of shape (n_time, n_units), got shape "
+            f"{multiunit.shape}. For a single unit, pass multiunit[:, np.newaxis]."
         )
         raise ValueError(msg)
+    for start in range(0, len(multiunit), _MULTIUNIT_CHUNK):
+        chunk = multiunit[start : start + _MULTIUNIT_CHUNK]
+        finite = chunk[np.isfinite(chunk)]
+        if np.any(finite < 0) or np.any(finite != np.round(finite)):
+            msg = (
+                f"{what}: spike counts or indicators, non-negative whole numbers, but "
+                "the array holds other values. Pass counts per sample, not a rate."
+            )
+            raise ValueError(msg)
+
+
+_MULTIUNIT_CHUNK = 65_536
 
 
 def _validate_duration_limits(minimum_duration: float, maximum_duration: float | None) -> None:
     """Reject duration limits that are not durations or leave no admissible event."""
-    if not 0 <= minimum_duration < np.inf:
-        msg = f"minimum_duration must be finite and non-negative, got {minimum_duration}."
-        raise ValueError(msg)
+    _check_finite_non_negative(minimum_duration=minimum_duration)
     if maximum_duration is not None and not maximum_duration > 0:
         msg = f"maximum_duration must be positive or None, got {maximum_duration}."
         raise ValueError(msg)
