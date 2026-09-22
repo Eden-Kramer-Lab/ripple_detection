@@ -77,7 +77,7 @@ def test_each_detector_declares_what_it_needs(name, inputs):
 
 def test_declared_inputs_match_the_signature():
     """One entry per signal the detector actually takes, in order."""
-    signal_arguments = {"filtered_lfps", "lfp", "multiunit"}
+    signal_arguments = {"filtered_lfps", "raw_lfps", "multiunit"}
     for name, spec in DETECTORS.items():
         parameters = list(inspect.signature(spec.detector).parameters)
         signals = [p for p in parameters if p in signal_arguments]

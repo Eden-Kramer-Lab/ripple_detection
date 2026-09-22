@@ -1241,12 +1241,17 @@ class TestExtractYuRippleEvents:
         events, _, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         np.testing.assert_allclose(events, [[time[100], time[299]]])
 
-    def test_zero_sample_ends_a_run(self):
+    def test_a_sample_at_the_mean_stays_in_the_run_and_one_below_ends_it(self):
+        """The extension rule is the package's: at or above the mean, as in
+        threshold_by_zscore."""
         fs = 1000
         n_time = 500
         time = np.arange(n_time) / fs
         trace = self._trace(n_time, above_zero=[(100, 300)], above_threshold=[(150, 200)])
-        trace[250] = 0.0  # equality to the mean ends the run
+        trace[250] = 0.0
+        events, _, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
+        np.testing.assert_allclose(events, [[time[100], time[299]]])
+        trace[250] = -1e-9
         events, _, _ = _extract_Yu_ripple_events(trace, time, 0.020, 3.0)
         np.testing.assert_allclose(events, [[time[100], time[249]]])
 

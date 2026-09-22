@@ -112,8 +112,8 @@ def minimum_sample_count(time: ArrayLike, minimum_duration: float) -> int:
     Parameters
     ----------
     time : array_like, shape (n_time,)
-        Sample timestamps in seconds. Fewer than two samples, or a
-        non-positive median step, give a count of 1.
+        Sample timestamps in seconds. Fewer than two samples give a count
+        of 1.
     minimum_duration : float
         Duration in seconds.
 
@@ -122,13 +122,23 @@ def minimum_sample_count(time: ArrayLike, minimum_duration: float) -> int:
     n_samples : int
         At least 1.
 
+    Raises
+    ------
+    ValueError
+        If the median timestamp step is not positive and finite, as when
+        most timestamps repeat. A count of 1 would then disable the duration
+        criterion.
+
     """
     time = np.asarray(time, dtype=float)
     if time.size < 2:
         return 1
     sample_interval = np.median(np.diff(time))
     if not np.isfinite(sample_interval) or sample_interval <= 0:
-        return 1
+        raise ValueError(
+            f"The median timestamp step is {sample_interval}, so no duration can be "
+            "converted to a sample count. Check that time is increasing and in seconds."
+        )
     # small tolerance so an exact half-sample product is not lost to round-off
     return max(1, int(np.floor(minimum_duration / sample_interval + 0.5 + 1e-6)))
 
@@ -434,6 +444,8 @@ def nearest_sample_index(time: ArrayLike, query_times: ArrayLike) -> NDArray:
     query_times = np.asarray(query_times, dtype=float)
     if time.size == 0:
         raise ValueError("time is empty, so no sample can be looked up.")
+    if time.size == 1:
+        return np.zeros(query_times.shape, dtype=int)
     right = np.searchsorted(time, query_times)
     right = np.clip(right, 1, time.size - 1)
     left = right - 1

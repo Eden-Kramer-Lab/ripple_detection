@@ -1,5 +1,6 @@
 """High-level detectors for sharp-wave ripple events and multiunit synchrony events."""
 
+import warnings
 from itertools import chain, pairwise
 
 import numpy as np
@@ -121,7 +122,9 @@ def _validate_time_units(
     Raises
     ------
     ValueError
-        If time appears to be in samples instead of seconds.
+        If time is not increasing, if its median step is not positive (most
+        timestamps repeat), or if it appears to be in samples instead of
+        seconds.
 
     Warnings
     --------
@@ -129,11 +132,20 @@ def _validate_time_units(
         If time step differs significantly from expected.
 
     """
-    import warnings
-
     if n_samples > 1:
-        median_dt = np.median(np.diff(time))
+        steps = np.diff(time)
+        if np.any(steps < 0):
+            raise ValueError(
+                "time must be increasing. Sort time, and the signals with it, before "
+                "detecting: the event and speed lookups assume time order."
+            )
+        median_dt = np.median(steps)
         expected_dt = 1.0 / sampling_frequency
+        if not median_dt > 0:
+            raise ValueError(
+                f"The median time step is {median_dt}: most timestamps repeat, so no "
+                "duration can be measured in samples. Check the time array."
+            )
 
         # Check if time appears to be in samples instead of seconds
         if median_dt > 10 * expected_dt:
@@ -173,8 +185,6 @@ def _validate_speed_units(speed: NDArray, speed_threshold: float, stacklevel: in
         If speed values appear to be in m/s instead of cm/s.
 
     """
-    import warnings
-
     non_nan_speed = speed[pd.notna(speed)]
     if len(non_nan_speed) > 0:
         non_zero_speed = non_nan_speed[non_nan_speed > 0]
@@ -239,13 +249,16 @@ def _preprocess_detector_inputs(
     Raises
     ------
     ValueError
-        If filtered_lfps is not 2D, if array lengths don't match, or if
-        time/speed appear to be in incorrect units.
+        If filtered_lfps is not 2D, if array lengths don't match, if time is
+        not increasing or appears to be in samples, or if every sample holds
+        a NaN.
 
     Warnings
     --------
     UserWarning
-        If speed values appear to be in wrong units (m/s instead of cm/s).
+        If speed values appear to be in wrong units (m/s instead of cm/s), or
+        if removing NaN samples changed the median time step by more than
+        20 %, since the smoothing then assumes a rate the data no longer has.
 
     """
     # Convert to arrays
@@ -261,6 +274,23 @@ def _preprocess_detector_inputs(
 
     # Remove NaN values
     not_null = np.all(pd.notna(filtered_lfps), axis=1) & pd.notna(speed)
+    if not np.any(not_null):
+        raise ValueError(
+            "Every sample has NaN in filtered_lfps or in speed, so there is nothing to "
+            "detect on. Check the alignment of the inputs."
+        )
+    if not np.all(not_null):
+        step = np.median(np.diff(time[not_null]))
+        if not np.isclose(step, 1.0 / sampling_frequency, rtol=0.2):
+            warnings.warn(
+                f"Removing {int(np.sum(~not_null))} samples with NaN left a median time "
+                f"step of {step:.6f} s, not the {1.0 / sampling_frequency:.6f} s that "
+                f"sampling_frequency={sampling_frequency} implies. The envelope and the "
+                "smoothing kernel assume that rate. Interpolate NaN speed samples, or pass "
+                "one contiguous block per call.",
+                UserWarning,
+                stacklevel=3,
+            )
 
     # Filter the normalization mask by the same rows so it stays aligned with
     # the cleaned data (otherwise its length no longer matches after NaN removal).
@@ -488,8 +518,8 @@ def _extract_Yu_ripple_events(
 
     A run of consecutive samples at or above ``threshold`` qualifies when it
     holds at least ``minimum_sample_count(time, minimum_duration)`` samples.
-    Each qualifying run is extended to the run of samples strictly above zero,
-    the immobility mean, that contains it. One event is emitted per containing
+    Each qualifying run is extended to the run of samples at or above zero,
+    the immobility mean, that contains it, as ``threshold_by_zscore`` does. One event is emitted per containing
     run. This is the sample-count convention of the Frank lab
     ``extractevents`` routine, which the Yu et al. 2017 detector used
     (``DFFunctions/extractevents.cpp`` in
@@ -515,7 +545,7 @@ def _extract_Yu_ripple_events(
     -------
     event_times : ndarray, shape (n_events, 2)
         ``[start_time, end_time]`` of each event: the native timestamps of the
-        first and last samples of the containing above-zero run.
+        first and last samples of the containing run at or above zero.
     is_clipped : ndarray of bool, shape (n_events, 2)
         Whether the event's start or end coincides with the block edge, i.e.
         the run was truncated by the end of the available data.
@@ -542,7 +572,7 @@ def _extract_Yu_ripple_events(
     if len(supra_runs) == 0:
         return np.empty((0, 2)), np.empty((0, 2), dtype=bool), np.empty(0, dtype=int)
 
-    above_zero_runs = _boolean_run_bounds(trace > 0)
+    above_zero_runs = _boolean_run_bounds(trace >= 0)
     # the above-zero run containing each qualifying run's first sample
     containing = np.searchsorted(above_zero_runs[:, 0], supra_runs[:, 0], side="right") - 1
     run_lengths = supra_runs[:, 1] - supra_runs[:, 0]
@@ -1332,7 +1362,7 @@ def _two_threshold_events(
     high_threshold: float,
     minimum_inter_ripple_interval: float,
     minimum_duration: float,
-    maximum_duration: float,
+    maximum_duration: float | None,
 ) -> tuple[NDArray, NDArray]:
     """Segment a normalized power trace with the FindRipples two-threshold rule.
 
@@ -1367,8 +1397,10 @@ def _two_threshold_events(
         Sample timestamps in seconds.
     low_threshold, high_threshold : float
         Boundary and peak thresholds in standard deviations.
-    minimum_inter_ripple_interval, minimum_duration, maximum_duration : float
+    minimum_inter_ripple_interval, minimum_duration : float
         In seconds.
+    maximum_duration : float or None
+        In seconds; None removes the ceiling from the merge and from step 4.
 
     Returns
     -------
@@ -1393,7 +1425,9 @@ def _two_threshold_events(
     while len(events) > 1:
         gap = time[events[1:, 0]] - time[events[:-1, 1]]
         merged_span = time[events[1:, 1]] - time[events[:-1, 0]]
-        to_merge = (gap < minimum_inter_ripple_interval) & (merged_span < maximum_duration)
+        to_merge = gap < minimum_inter_ripple_interval
+        if maximum_duration is not None:
+            to_merge &= merged_span < maximum_duration
         if not np.any(to_merge):
             break
         padded = np.concatenate([[False], to_merge])
@@ -1428,7 +1462,7 @@ def Zugaro_ripple_detector(
     high_threshold: float = 5.0,
     minimum_inter_ripple_interval: float = 0.030,
     minimum_duration: float = 0.020,
-    maximum_duration: float = 0.100,
+    maximum_duration: float | None = 0.100,
     smoothing_window: int | None = None,
     normalization_mask: ArrayLike | None = None,
     normalization_time_range: tuple[float, float] | None = None,
@@ -1462,7 +1496,8 @@ def Zugaro_ripple_detector(
     Missing samples are handled block-wise, so smoothing and segmentation
     never cross a gap. A run that touches a gap or the record edge lacks one
     of its two crossings and is dropped, as in the original.
-    ``Yu_ripple_detector`` keeps such runs and flags them instead.
+    ``Yu_ripple_detector`` keeps such runs and flags them instead. A block
+    shorter than the smoothing window is treated as missing.
 
     Parameters
     ----------
@@ -1498,7 +1533,9 @@ def Zugaro_ripple_detector(
         0.020 and 0.100 s (FMAToolbox; neurocode uses 0.025 and 0.500).
         The 100 ms ceiling is FMAToolbox's, and is shorter than the ceilings
         most of the replay literature uses. Raise it for a limit typical of
-        that literature rather than of this algorithm's original settings.
+        that literature rather than of this algorithm's original settings, or
+        pass ``maximum_duration=None`` for no ceiling, as the other detectors
+        default to.
     smoothing_window : int, optional
         Moving-average length in samples. Default is the original's 11
         samples at 1250 Hz scaled to ``sampling_frequency`` and kept odd. A
@@ -1555,7 +1592,17 @@ def Zugaro_ripple_detector(
     kernel = np.ones(window) / window
     power = np.sum(filtered_lfps**2, axis=1)
     smoothed = np.full(len(time), np.nan)
+    # a block shorter than the window cannot be smoothed and is treated as missing
     blocks = _contiguous_valid_blocks(is_valid, time, sampling_frequency)
+    for start, stop in blocks:
+        if stop - start < window:
+            is_valid[start:stop] = False
+    blocks = [(start, stop) for start, stop in blocks if stop - start >= window]
+    if not blocks:
+        raise ValueError(
+            f"No contiguous block of finite samples is as long as the {window}-sample "
+            "smoothing window."
+        )
     for start, stop in blocks:
         smoothed[start:stop] = np.convolve(power[start:stop], kernel, mode="same")
 
@@ -1636,7 +1683,7 @@ def _matlab_percentile(values: NDArray, percent: float) -> float:
 
 def Long_sharp_wave_ripple_detector(
     time: ArrayLike,
-    lfp: ArrayLike,
+    raw_lfps: ArrayLike,
     speed: ArrayLike,
     sampling_frequency: float,
     speed_threshold: float = 4.0,
@@ -1693,7 +1740,7 @@ def Long_sharp_wave_ripple_detector(
     ----------
     time : array_like, shape (n_time,)
         Time values for each sample in seconds.
-    lfp : array_like, shape (n_time, 2)
+    raw_lfps : array_like, shape (n_time, 2)
         **Raw** LFP: column 0 the ripple (pyramidal-layer) channel, column 1
         the sharp-wave (stratum radiatum) channel. No NaN.
     speed : array_like, shape (n_time,)
@@ -1724,7 +1771,10 @@ def Long_sharp_wave_ripple_detector(
     sharp_wave_thresholds, ripple_thresholds : tuple of (float, float), optional
         ``(boundary, peak)`` in local standard deviations. Defaults (0.5, 2.5).
     minimum_separation : float, optional
-        Minimum time from the previous candidate, in seconds. Default 0.050.
+        Minimum time from the previous candidate, in seconds, whether or not
+        that candidate was kept. Two quirks of the original are kept: the
+        last candidate is exempt from the test, and the first is measured
+        from the start of the record. Default 0.050.
     minimum_sharp_wave_duration, maximum_sharp_wave_duration : float, optional
         Sharp-wave duration limits in seconds, applied as inclusive
         round-half-up sample counts (``sample_count_within``). A candidate is
@@ -1732,7 +1782,10 @@ def Long_sharp_wave_ripple_detector(
         minimum, or when the sharp wave exceeds the maximum. Defaults 0.020
         and 0.500.
     minimum_ripple_duration : float, optional
-        Ripple duration minimum in seconds. Default 0.025.
+        Ripple duration minimum in seconds. Default 0.025. The ripple's sample
+        count is the original's, one less than the inclusive count used for
+        the sharp wave, so ``ripple_duration`` is one sample shorter than the
+        span between its two boundary crossings.
     random_state : int or numpy Generator, optional
         Seed for the k-means initialization. Default None.
 
@@ -1757,13 +1810,13 @@ def Long_sharp_wave_ripple_detector(
        https://github.com/ayalab1/neurocode/blob/d166a67ffb73096d8d11b14be6693d96ad63e4ed/SharpWaveRipples/DetectSWR.m
 
     """
-    lfp = np.asarray(lfp, dtype=float)
+    lfp = np.asarray(raw_lfps, dtype=float)
     speed = np.asarray(speed, dtype=float)
     time = np.asarray(time, dtype=float)
     if lfp.ndim != 2 or lfp.shape[1] != 2:
         raise ValueError(
-            "lfp must have exactly two channels, shape (n_time, 2): the ripple channel "
-            f"first and the sharp-wave channel second; got shape {lfp.shape}."
+            "raw_lfps must have exactly two channels, shape (n_time, 2): the ripple "
+            f"channel first and the sharp-wave channel second; got shape {lfp.shape}."
         )
     _validate_array_lengths(time, lfp, speed)
     _validate_time_units(time, sampling_frequency, len(time), stacklevel=3)
@@ -1771,14 +1824,14 @@ def Long_sharp_wave_ripple_detector(
     _validate_duration_limits(minimum_sharp_wave_duration, maximum_sharp_wave_duration)
     if np.any(np.isnan(lfp)) or np.any(np.isnan(speed)):
         raise ValueError(
-            "lfp and speed must not contain NaN: this detector's local statistics need "
-            "contiguous data. Pass a contiguous epoch instead."
+            "raw_lfps and speed must not contain NaN: this detector's local statistics "
+            "need contiguous data. Pass a contiguous epoch instead."
         )
     n_time = len(time)
     slowest_kernel = len(_gaussian_lowpass_fir(sharp_wave_band[0], sampling_frequency))
     if n_time < slowest_kernel:
         raise ValueError(
-            f"lfp must hold at least {slowest_kernel} samples "
+            f"raw_lfps must hold at least {slowest_kernel} samples "
             f"({slowest_kernel / sampling_frequency:.2f} s) for the {sharp_wave_band[0]} Hz "
             f"sharp-wave low-pass, got {n_time}."
         )
@@ -1842,7 +1895,8 @@ def Long_sharp_wave_ripple_detector(
         candidate_sharp[in_range],
         candidate_ripple[in_range],
     )
-    separation = np.diff(np.concatenate([[0.0], candidate_peaks / sampling_frequency]))
+    # time from the previous candidate; the first is measured from the record start
+    separation = np.diff(time[candidate_peaks], prepend=time[0])
 
     sw_boundary, sw_peak = sharp_wave_thresholds
     rp_boundary, rp_peak = ripple_thresholds
@@ -2171,6 +2225,10 @@ def Carey_candidate_detector(
     ):
         raise ValueError("filtered_lfps, multiunit, and speed must not contain NaN.")
     n_time = len(time)
+    if theta_lfp is not None:
+        theta_lfp = np.asarray(theta_lfp, dtype=float)
+        if theta_lfp.shape != (n_time,):
+            raise ValueError(f"theta_lfp must have shape ({n_time},), got {theta_lfp.shape}.")
 
     # ripple score (OldWizard, 'amplitude', 'wizard' kernel), rescaled to mean 1
     envelope = get_envelope(filtered_lfps).mean(axis=1)
@@ -2223,9 +2281,6 @@ def Carey_candidate_detector(
         )
         candidates = candidates[_contained_in_intervals(candidates, low_speed)]
     if len(candidates) and theta_lfp is not None:
-        theta_lfp = np.asarray(theta_lfp, dtype=float)
-        if theta_lfp.shape != (n_time,):
-            raise ValueError(f"theta_lfp must have shape ({n_time},), got {theta_lfp.shape}.")
         b, a = butter(2, np.asarray(theta_band) / (0.5 * sampling_frequency), btype="bandpass")
         theta_envelope = get_envelope(filtfilt(b, a, theta_lfp))
         low_theta = _state_intervals(
