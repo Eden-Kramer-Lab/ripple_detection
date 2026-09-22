@@ -34,9 +34,9 @@ from ripple_detection.detectors import (
     _count_active_units,
     _exclude_long_events,
     _extract_Yu_ripple_events,
-    _find_max_thresh,
     _firfilt,
     _get_event_stats,
+    _max_sustained_zscore,
     _state_intervals,
     _two_threshold_events,
     _zugaro_smoothing_window,
@@ -87,7 +87,7 @@ class TestShvartsmanRippleDetector:
             "start_time",
             "end_time",
             "duration",
-            "max_thresh",
+            "max_sustained_zscore",
             "mean_zscore",
             "median_zscore",
             "max_zscore",
@@ -164,7 +164,7 @@ class TestShvartsmanRippleDetector:
             "start_time",
             "end_time",
             "duration",
-            "max_thresh",
+            "max_sustained_zscore",
             "mean_zscore",
             "median_zscore",
             "max_zscore",
@@ -256,7 +256,7 @@ class TestShvartsmanRippleDetector:
             "start_time",
             "end_time",
             "duration",
-            "max_thresh",
+            "max_sustained_zscore",
             "mean_zscore",
             "median_zscore",
             "max_zscore",
@@ -578,7 +578,7 @@ class TestKayRippleDetector:
             "start_time",
             "end_time",
             "duration",
-            "max_thresh",
+            "max_sustained_zscore",
             "mean_zscore",
             "median_zscore",
             "max_zscore",
@@ -849,9 +849,9 @@ class TestKarlssonRippleDetector:
 
 class TestKarlssonEventStatistics:
     """Per-event statistics reflect the strongest channel, so an event that one
-    channel triggered at 3 SD cannot report a sub-threshold max_thresh."""
+    channel triggered at 3 SD cannot report a sub-threshold max_sustained_zscore."""
 
-    def test_max_thresh_never_below_threshold(self, time_3s, sampling_frequency):
+    def test_max_sustained_zscore_never_below_threshold(self, time_3s, sampling_frequency):
         # ripples on one channel only, four quiet channels
         loud = simulate_LFP(
             time_3s,
@@ -870,7 +870,7 @@ class TestKarlssonEventStatistics:
             time_3s, lfps, speed, sampling_frequency, zscore_threshold=3.0
         )
         assert len(events) >= 2
-        assert np.all(events.max_thresh >= 3.0)
+        assert np.all(events.max_sustained_zscore >= 3.0)
         assert np.all(events.max_zscore >= 3.0)
 
 
@@ -1340,7 +1340,7 @@ class TestYuRippleDetector:
             "start_time",
             "end_time",
             "duration",
-            "max_thresh",
+            "max_sustained_zscore",
             "mean_zscore",
             "max_zscore",
             "speed_at_start",
@@ -1669,7 +1669,7 @@ class TestZugaroRippleDetector:
             "end_time",
             "duration",
             "peak_time",
-            "max_thresh",
+            "max_sustained_zscore",
             "mean_zscore",
             "max_speed",
         ):
@@ -2592,7 +2592,7 @@ class TestFindMaxThresh:
         # minimum duration anywhere in the event is the 23-sample run at 3.2
         time = np.arange(144) / 1500
         data = np.r_[[0.1] * 40, 12.0, [0.1] * 40, [3.2] * 23, [0.1] * 40]
-        assert _find_max_thresh(time, data, 0.015) == 3.2
+        assert _max_sustained_zscore(time, data, 0.015) == 3.2
 
     def test_is_the_largest_threshold_at_which_the_event_still_qualifies(self):
         rng = np.random.default_rng(0)
@@ -2600,20 +2600,20 @@ class TestFindMaxThresh:
         data = rng.normal(size=200)
         n_min = minimum_sample_count(time, 0.020)
         brute = max(data[k : k + n_min].min() for k in range(len(data) - n_min + 1))
-        assert _find_max_thresh(time, data, 0.020) == brute
+        assert _max_sustained_zscore(time, data, 0.020) == brute
 
     """Samples are 10 ms apart unless stated, so a 15 ms minimum is
     round(1.5) = 2 samples and a 35 ms minimum is round(3.5) = 4 samples."""
 
     def test_respects_minimum_duration(self):
-        """max_thresh is the largest value sustained for minimum_duration, so a
+        """max_sustained_zscore is the largest value sustained for minimum_duration, so a
         longer required duration yields a smaller (or equal) result. Peak at
         index 0 -> only rightward expansion."""
         time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
         data = np.array([10.0, 8.0, 6.0, 4.0, 2.0])
-        assert _find_max_thresh(time, data, minimum_duration=0.005) == 10.0  # 1 sample
-        assert _find_max_thresh(time, data, minimum_duration=0.015) == 8.0  # 2 samples
-        assert _find_max_thresh(time, data, minimum_duration=0.035) == 4.0  # 4 samples
+        assert _max_sustained_zscore(time, data, minimum_duration=0.005) == 10.0  # 1 sample
+        assert _max_sustained_zscore(time, data, minimum_duration=0.015) == 8.0  # 2 samples
+        assert _max_sustained_zscore(time, data, minimum_duration=0.035) == 4.0  # 4 samples
 
     def test_mid_peak_expands_both_directions(self):
         """A mid-array peak exercises the leftward-expansion branch and the
@@ -2622,53 +2622,53 @@ class TestFindMaxThresh:
         then steps right twice (3 > 1, 2 > 1) -> indices 1..4 -> min(5, 2)."""
         time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
         data = np.array([1.0, 5.0, 10.0, 3.0, 2.0])
-        assert _find_max_thresh(time, data, minimum_duration=0.015) == 5.0
-        assert _find_max_thresh(time, data, minimum_duration=0.035) == 2.0
+        assert _max_sustained_zscore(time, data, minimum_duration=0.015) == 5.0
+        assert _max_sustained_zscore(time, data, minimum_duration=0.035) == 2.0
 
     def test_peak_at_last_index_expands_left(self):
         """Peak at the last index forces leftward-only expansion."""
         time = np.array([0.0, 0.01, 0.02, 0.03, 0.04])
         data = np.array([2.0, 4.0, 6.0, 8.0, 10.0])
-        assert _find_max_thresh(time, data, minimum_duration=0.015) == 8.0
-        assert _find_max_thresh(time, data, minimum_duration=0.035) == 4.0
+        assert _max_sustained_zscore(time, data, minimum_duration=0.015) == 8.0
+        assert _max_sustained_zscore(time, data, minimum_duration=0.035) == 4.0
 
     def test_all_equal_data(self):
         """A flat plateau returns the (shared) value."""
         time = np.array([0.0, 0.01, 0.02, 0.03])
         data = np.array([5.0, 5.0, 5.0, 5.0])
-        assert _find_max_thresh(time, data, minimum_duration=0.015) == 5.0
+        assert _max_sustained_zscore(time, data, minimum_duration=0.015) == 5.0
 
     def test_two_sample_event_long_enough(self):
         """With 20 ms samples, one sample already sustains 15 ms
         (round(0.75) = 1), so the peak itself is returned."""
         time = np.array([0.0, 0.02])
         data = np.array([10.0, 0.0])
-        assert _find_max_thresh(time, data, minimum_duration=0.015) == 10.0
+        assert _max_sustained_zscore(time, data, minimum_duration=0.015) == 10.0
 
     def test_exact_minimum_duration_does_not_expand_further(self):
         """20 ms at 1000 Hz is exactly 20 samples; the window must not take a
         21st, lower sample because of timestamp round-off."""
         time = np.arange(200, 222) / 1000
         data = np.arange(22.0, 0.0, -1.0)
-        assert _find_max_thresh(time, data, minimum_duration=0.02) == 3.0
+        assert _max_sustained_zscore(time, data, minimum_duration=0.02) == 3.0
 
     def test_short_event_returns_nan(self):
         """An event shorter than minimum_duration cannot sustain the threshold, so
         the value is undefined -> nan (previously ran an index out of bounds)."""
         time = np.array([0.0, 0.001])
         data = np.array([10.0, 0.0])
-        assert np.isnan(_find_max_thresh(time, data, minimum_duration=0.015))
+        assert np.isnan(_max_sustained_zscore(time, data, minimum_duration=0.015))
 
     def test_single_sample_event_returns_nan(self):
         """A one-sample event has no measurable interval, so no positive
         duration is sustained -> nan (no out-of-bounds)."""
         time = np.array([1.0])
         data = np.array([7.0])
-        assert np.isnan(_find_max_thresh(time, data, minimum_duration=0.015))
+        assert np.isnan(_max_sustained_zscore(time, data, minimum_duration=0.015))
 
 
 class TestSampleCountDurationConvention:
-    """Detectors and max_thresh count samples for the minimum duration."""
+    """Detectors and max_sustained_zscore count samples for the minimum duration."""
 
     def test_kay_accepts_a_run_of_round_minimum_samples(self):
         fs = 1500
@@ -2685,41 +2685,43 @@ class TestSampleCountDurationConvention:
         assert any((events.start_time <= time[5000]) & (events.end_time >= time[5022]))
 
     @pytest.mark.parametrize("offset", [0.0, 1000.0])
-    def test_max_thresh_is_finite_for_an_event_of_exactly_minimum_samples(self, offset):
+    def test_max_sustained_zscore_is_finite_for_an_event_of_exactly_minimum_samples(
+        self, offset
+    ):
         fs = 1000
         time = offset + np.arange(15) / fs  # 15 samples = 15 ms at 1000 Hz
         data = np.linspace(2.0, 3.0, 15)
-        assert np.isfinite(_find_max_thresh(time, data, minimum_duration=0.015))
+        assert np.isfinite(_max_sustained_zscore(time, data, minimum_duration=0.015))
 
-    def test_max_thresh_is_nan_below_minimum_samples(self):
+    def test_max_sustained_zscore_is_nan_below_minimum_samples(self):
         fs = 1000
         time = np.arange(14) / fs
         data = np.linspace(2.0, 3.0, 14)
-        assert np.isnan(_find_max_thresh(time, data, minimum_duration=0.015))
+        assert np.isnan(_max_sustained_zscore(time, data, minimum_duration=0.015))
 
 
 class TestMaxThreshMinimumDuration:
     """Karlsson and multiunit_HSE must honor the caller's minimum_duration for
-    max_thresh, not silently fall back to the 15 ms default."""
+    max_sustained_zscore, not silently fall back to the 15 ms default."""
 
     @staticmethod
-    def _spy_on_find_max_thresh():
-        """Patch _find_max_thresh to record the minimum_duration it receives while
+    def _spy_on_max_sustained_zscore():
+        """Patch _max_sustained_zscore to record the minimum_duration it receives while
         still delegating to the real implementation."""
-        real = detectors_module._find_max_thresh
+        real = detectors_module._max_sustained_zscore
         seen: list[float] = []
 
         def spy(time, data, minimum_duration=0.015):
             seen.append(minimum_duration)
             return real(time, data, minimum_duration)
 
-        return patch.object(detectors_module, "_find_max_thresh", spy), seen
+        return patch.object(detectors_module, "_max_sustained_zscore", spy), seen
 
-    def test_karlsson_forwards_minimum_duration_to_max_thresh(
+    def test_karlsson_forwards_minimum_duration_to_max_sustained_zscore(
         self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
     ):
         filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples, 1500)
-        patcher, seen = self._spy_on_find_max_thresh()
+        patcher, seen = self._spy_on_max_sustained_zscore()
         with patcher:
             ripples = Karlsson_ripple_detector(
                 time_3s,
@@ -2729,16 +2731,18 @@ class TestMaxThreshMinimumDuration:
                 minimum_duration=0.005,
             )
         assert len(ripples) > 0
-        # max_thresh must be computed with the caller's 0.005, not the 0.015 default
+        # max_sustained_zscore must be computed with the caller's 0.005, not the 0.015 default
         # (this fails if the minimum_duration argument is dropped from the call).
         assert seen and all(md == 0.005 for md in seen)
 
-    def test_hse_forwards_minimum_duration_to_max_thresh(self, time_3s, sampling_frequency):
+    def test_hse_forwards_minimum_duration_to_max_sustained_zscore(
+        self, time_3s, sampling_frequency
+    ):
         multiunit = np.zeros((len(time_3s), 5))
         idx = int(1.0 * sampling_frequency)
         multiunit[idx : idx + 30, :] = 1
         speed = np.ones(len(time_3s)) * 2.0
-        patcher, seen = self._spy_on_find_max_thresh()
+        patcher, seen = self._spy_on_max_sustained_zscore()
         with patcher:
             hse = multiunit_HSE_detector(
                 time_3s, multiunit, speed, sampling_frequency, minimum_duration=0.005
@@ -2748,7 +2752,7 @@ class TestMaxThreshMinimumDuration:
 
     def test_hse_tiny_minimum_duration_is_bounds_safe(self, time_3s, sampling_frequency):
         # A sharp, few-sample synchrony burst detected with a 1 ms minimum used to
-        # crash inside max_thresh because it fell back to the 15 ms window.
+        # crash inside max_sustained_zscore because it fell back to the 15 ms window.
         multiunit = np.zeros((len(time_3s), 5))
         idx = int(1.0 * sampling_frequency)
         multiunit[idx : idx + 3, :] = 1
@@ -2757,9 +2761,9 @@ class TestMaxThreshMinimumDuration:
             time_3s, multiunit, speed, sampling_frequency, minimum_duration=0.001
         )
         assert len(hse) > 0
-        assert np.all(np.isfinite(hse["max_thresh"].to_numpy()))
+        assert np.all(np.isfinite(hse["max_sustained_zscore"].to_numpy()))
 
-    def test_hse_exact_minimum_duration_has_finite_max_thresh(self):
+    def test_hse_exact_minimum_duration_has_finite_max_sustained_zscore(self):
         """A detected event exactly at the duration boundary has a defined threshold."""
         time = np.arange(1000) / 1000
         multiunit = np.zeros((len(time), 5))
@@ -2777,7 +2781,7 @@ class TestMaxThreshMinimumDuration:
         np.testing.assert_allclose(hse[["start_time", "end_time"]], [[0.2, 0.22]])
         # For a binary plateau occupying p=21/1000 samples, its z-score is
         # (1-p) / sqrt(p*(1-p)) = sqrt(979/21).
-        assert hse["max_thresh"].iloc[0] == pytest.approx(np.sqrt(979 / 21))
+        assert hse["max_sustained_zscore"].iloc[0] == pytest.approx(np.sqrt(979 / 21))
 
 
 class TestNegativeThresholdRejected:
@@ -2911,13 +2915,13 @@ class TestKayConsensusTraceMissingSamples:
 
 
 class TestLongMaxThreshIsFinite:
-    """max_thresh is measured over the reported event, which the sharp wave bounds."""
+    """max_sustained_zscore is measured over the reported event, which the sharp wave bounds."""
 
     FS = 1000
     N_TIME = 40_000
     EVENTS = (7000, 11000, 15500, 19000, 23800, 28000, 31500)
 
-    def test_a_long_ripple_minimum_does_not_make_max_thresh_nan(self):
+    def test_a_long_ripple_minimum_does_not_make_max_sustained_zscore_nan(self):
         # the event spans the sharp wave, so the sustained-value window must use
         # the sharp-wave minimum; using the ripple minimum can exceed the event
         time = np.arange(self.N_TIME) / self.FS
@@ -2931,7 +2935,9 @@ class TestLongMaxThreshIsFinite:
             random_state=0,
         )
         assert len(events) >= 1
-        assert np.isfinite(events.max_thresh).all(), events.max_thresh.to_numpy()
+        assert np.isfinite(events.max_sustained_zscore).all(), (
+            events.max_sustained_zscore.to_numpy()
+        )
 
 
 class TestEventStatisticsShapeValidation:

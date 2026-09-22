@@ -197,8 +197,9 @@ All detectors return a pandas DataFrame with comprehensive event statistics:
 |--------|-------------|
 | `start_time` | Event start time |
 | `end_time` | Event end time |
-| `duration` | Event duration (seconds) |
-| `max_thresh` | Maximum sustained threshold |
+| `duration` | Elapsed time from the first to the last sample (seconds). One sample interval less than `n_samples` spans, so an event of exactly the minimum sample count has a `duration` one interval below `minimum_duration` |
+| `n_samples` | Samples in the event, first to last inclusive; the quantity the duration limits test |
+| `max_sustained_zscore` | The largest z-score sustained for `minimum_duration`: the highest threshold at which the detector would still find the event. Named `max_thresh` before 2.0, when it could fall below the detection threshold |
 | `mean_zscore` | Mean z-score during event |
 | `median_zscore` | Median z-score during event |
 | `max_zscore` | Maximum z-score during event |

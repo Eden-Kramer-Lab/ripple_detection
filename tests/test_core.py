@@ -1453,7 +1453,11 @@ class TestRequireOverlap:
     def test_accepts_and_returns_dataframes(self):
         """Detector output goes straight in and comes back with every column."""
         events = pd.DataFrame(
-            {"start_time": [0.0, 1.0], "end_time": [0.1, 1.1], "max_thresh": [3.0, 4.0]}
+            {
+                "start_time": [0.0, 1.0],
+                "end_time": [0.1, 1.1],
+                "max_sustained_zscore": [3.0, 4.0],
+            }
         )
         reference = pd.DataFrame({"start_time": [1.05], "end_time": [1.5]})
 
@@ -1461,7 +1465,7 @@ class TestRequireOverlap:
 
         assert isinstance(kept, pd.DataFrame)
         assert list(kept.index) == [1]
-        assert list(kept.max_thresh) == [4.0]
+        assert list(kept.max_sustained_zscore) == [4.0]
 
     def test_empty_reference_keeps_nothing(self):
         events = np.array([(0.0, 0.1)])

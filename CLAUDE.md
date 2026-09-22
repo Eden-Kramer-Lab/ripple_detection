@@ -217,7 +217,7 @@ Alternative: `ripple_bandpass_filter()` can generate filters at arbitrary sampli
 All detectors return rich event statistics via `_get_event_stats()`:
 
 - Temporal: start_time, end_time, duration
-- Z-score metrics: mean, median, max, min, max_thresh (max threshold sustained for minimum duration)
+- Z-score metrics: mean, median, max, min, max_sustained_zscore (largest z-score sustained for the minimum duration)
 - Signal metrics: area (integral), total_energy (integral of squared signal)
 - Speed metrics: speed at start/end, max/min/median/mean speed during event
 

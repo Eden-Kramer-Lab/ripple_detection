@@ -1141,8 +1141,10 @@ def Kay_ripple_detector(
     -------
     ripple_times : pd.DataFrame
         DataFrame with one row per detected ripple, containing:
-        - start_time, end_time, duration
-        - max_thresh: maximum sustained z-score
+        - start_time, end_time, duration, n_samples
+        - max_sustained_zscore: the largest z-score sustained for
+          ``minimum_duration``, i.e. the highest threshold that would still
+          detect the event
         - mean_zscore, median_zscore, max_zscore, min_zscore
         - area: integral of z-score
         - total_energy: integral of squared z-score
@@ -1305,7 +1307,7 @@ def Yu_ripple_detector(
     ripple_times : pd.DataFrame
         One row per event, indexed by ``event_number``, with the columns of
         the other detectors (``start_time``, ``end_time``, ``duration``,
-        ``max_thresh``, z-score and speed statistics, ``clipped_start`` and
+        ``max_sustained_zscore``, z-score and speed statistics, ``clipped_start`` and
         ``clipped_end``) plus ``n_suprathreshold_samples`` (longest run at or
         above the threshold) and ``detection_threshold_zscore`` (the threshold
         in the normalized units the statistics are reported in).
@@ -1319,8 +1321,8 @@ def Yu_ripple_detector(
 
     Notes
     -----
-    ``max_thresh`` uses the same sample-count duration convention as event
-    selection, so an event's ``max_thresh`` is never undefined.
+    ``max_sustained_zscore`` uses the same sample-count duration convention as event
+    selection, so an event's ``max_sustained_zscore`` is never undefined.
 
     References
     ----------
@@ -2482,9 +2484,9 @@ def Karlsson_ripple_detector(
     ripple_times : pd.DataFrame
         DataFrame with detected ripples and comprehensive statistics (see
         Kay_ripple_detector for column descriptions). The z-score statistics
-        (``max_thresh``, ``mean_zscore``, ``max_zscore``, ...) are computed on
+        (``max_sustained_zscore``, ``mean_zscore``, ``max_zscore``, ...) are computed on
         the elementwise maximum across channels of the per-channel z-scores,
-        i.e. the strongest tetrode at each sample, so ``max_thresh`` is at
+        i.e. the strongest tetrode at each sample, so ``max_sustained_zscore`` is at
         least ``zscore_threshold`` for every event.
 
         Returns empty DataFrame if no ripples detected. If this occurs, try:
@@ -2538,7 +2540,7 @@ def Karlsson_ripple_detector(
     ripple_times, _ = _exclude_long_events(ripple_times, time, maximum_duration)
 
     # statistics on the strongest channel at each sample, so an event that one
-    # channel triggered cannot report a sub-threshold max_thresh
+    # channel triggered cannot report a sub-threshold max_sustained_zscore
     return _get_event_stats(
         ripple_times, time, normalized.max(axis=1), speed, minimum_duration, blocks=blocks
     )
@@ -2862,7 +2864,7 @@ def multiunit_HSE_detector(
     return events
 
 
-def _find_max_thresh(
+def _max_sustained_zscore(
     time: np.ndarray, data: np.ndarray, minimum_duration: float = 0.015
 ) -> float:
     """Find the largest value sustained for a minimum duration anywhere in the event.
@@ -2871,7 +2873,7 @@ def _find_max_thresh(
     maximum, over every window of ``minimum_sample_count(time, minimum_duration)``
     consecutive samples, of that window's minimum. The sample-count convention
     matches event detection, so an event detected at ``zscore_threshold`` has
-    ``max_thresh >= zscore_threshold``. This is not the statistic of the Frank
+    ``max_sustained_zscore >= zscore_threshold``. This is not the statistic of the Frank
     lab ``extractevents`` routine, which takes a window of the minimum
     duration centered on the peak and reports the lower of its two ends; the
     two differ by a few tenths of a standard deviation on typical events.
@@ -2884,7 +2886,7 @@ def _find_max_thresh(
 
     Returns
     -------
-    max_thresh : float
+    max_sustained_zscore : float
         The largest value sustained for ``minimum_duration`` within the event.
         ``nan`` if the event holds fewer samples than the minimum (the sustained
         value is then undefined). Most detectors never produce such an event,
@@ -2930,7 +2932,7 @@ def _get_event_stats(
         Time values for each sample, increasing.
     zscore_metric : array_like, shape (n_time,) or (n_time, n_channels)
         Signal the per-event statistics (mean/median/max/min z-score, area,
-        total_energy, max_thresh) are computed from. Its exact meaning depends on
+        total_energy, max_sustained_zscore) are computed from. Its exact meaning depends on
         the caller -- e.g. the consensus trace for Kay, the per-channel maximum for
         Karlsson, or the multiunit firing rate for multiunit_HSE. When participants
         is None, pass a single 1-D trace of shape (n_time,). When participants is
@@ -2939,7 +2941,7 @@ def _get_event_stats(
     speed : array_like, shape (n_time,)
         Animal's speed at each time point.
     minimum_duration : float, optional
-        Minimum duration for max_thresh calculation. Default is 0.015 (15 ms).
+        Minimum duration for max_sustained_zscore calculation. Default is 0.015 (15 ms).
     participants : array_like of tuple, shape (n_events,), optional
         Channels that participate in each event; z-score metrics are
         averaged over these channels. Used by Shvartsman_ripple_detector.
@@ -2961,9 +2963,15 @@ def _get_event_stats(
     event_stats : pd.DataFrame
         One row per event, indexed by ``event_number`` from 1, with columns:
         - start_time, end_time: Event boundaries
-        - duration: Event duration (end - start)
-        - max_thresh: Largest value sustained for minimum_duration (NaN for an
-            event holding fewer samples than the minimum; only
+        - duration: Event duration (end - start), the elapsed time between the
+            first and last sample, one sample interval less than n_samples
+            spans; the duration limits are sample counts, so an event of
+            exactly the minimum count has duration one interval below
+            minimum_duration
+        - n_samples: Number of samples in the event, first to last inclusive;
+            the quantity the duration limits test
+        - max_sustained_zscore: Largest value sustained for minimum_duration
+            (NaN for an event holding fewer samples than the minimum; only
             ``Long_sharp_wave_ripple_detector`` produces one)
         - mean_zscore, median_zscore, max_zscore, min_zscore: Z-score statistics
         - area: Integral of z-score over event duration
@@ -3011,7 +3019,8 @@ def _get_event_stats(
                 start_time,
                 end_time,
                 end_time - start_time,
-                _find_max_thresh(event_time, z, minimum_duration),
+                b - a,
+                _max_sustained_zscore(event_time, z, minimum_duration),
                 z.mean(),
                 np.median(z),
                 z.max(),
@@ -3031,7 +3040,8 @@ def _get_event_stats(
         "start_time",
         "end_time",
         "duration",
-        "max_thresh",
+        "n_samples",
+        "max_sustained_zscore",
         "mean_zscore",
         "median_zscore",
         "max_zscore",
@@ -3048,6 +3058,7 @@ def _get_event_stats(
     values = np.asarray(rows, dtype=float).reshape(-1, len(columns))
     index = pd.Index(np.arange(len(events)) + 1, name="event_number")
     event_stats = pd.DataFrame(dict(zip(columns, values.T, strict=True)), index=index)
+    event_stats["n_samples"] = event_stats["n_samples"].astype(int)
 
     if clipped is None:
         if blocks is None:
