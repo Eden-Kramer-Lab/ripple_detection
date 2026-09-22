@@ -4113,6 +4113,16 @@ class TestRemainingErrorPaths:
                 theta_lfp=np.full(5000, np.nan),
             )
 
+    def test_kay_consensus_treats_an_infinite_sample_as_missing(self):
+        lfps = np.random.default_rng(0).standard_normal((3000, 2))
+        with_inf, with_nan = lfps.copy(), lfps.copy()
+        with_inf[1500, 1] = np.inf
+        with_nan[1500, 1] = np.nan
+        np.testing.assert_array_equal(
+            get_Kay_ripple_consensus_trace(with_inf, self.FS),
+            get_Kay_ripple_consensus_trace(with_nan, self.FS),
+        )
+
     def test_yu_consensus_of_all_missing_samples_raises(self):
         with pytest.raises(ValueError, match="No sample has finite values"):
             get_Yu_ripple_consensus_trace(np.full((100, 2), np.nan), self.FS)

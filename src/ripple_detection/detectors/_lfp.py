@@ -9,6 +9,7 @@ import pandas as pd
 from numpy.typing import ArrayLike
 
 from ripple_detection.core import (
+    BoolArray,
     FloatArray,
     IntArray,
     _is_immobile_at_endpoints,
@@ -27,7 +28,6 @@ from ripple_detection.core import (
 )
 from ripple_detection.detectors._blocks import (
     _contiguous_valid_blocks,
-    _mask_invalid,
     _normalization_mask_over_valid,
     _reject_flat_channels,
     _smoothed_envelope,
@@ -67,9 +67,9 @@ def get_Kay_ripple_consensus_trace(
     removed the doubled-frequency term, so the events are the same after the
     z-score. The envelope is what the Frank lab code uses.
 
-    Rows holding a missing value in any channel are excluded, and each
-    contiguous run of valid rows is processed on its own, so no envelope or
-    smoothing window spans a gap.
+    Rows holding NaN or infinity in any channel are missing and returned as
+    NaN, and each contiguous run of valid rows is processed on its own, so no
+    envelope or smoothing window spans a gap.
 
     Parameters
     ----------
@@ -102,19 +102,26 @@ def get_Kay_ripple_consensus_trace(
     # Cast to float so integer input is not truncated and the squared envelope
     # cannot overflow before the square root.
     ripple_filtered_lfps = np.asarray(ripple_filtered_lfps, dtype=float)
-    ripple_consensus_trace = np.full_like(ripple_filtered_lfps, np.nan)
-    not_null = np.all(pd.notna(ripple_filtered_lfps), axis=1)
-
+    is_valid = np.all(np.isfinite(ripple_filtered_lfps), axis=1)
     time_array = None if time is None else np.asarray(time, dtype=float)
-    for start, stop in _contiguous_valid_blocks(not_null, time_array):
-        block = ripple_filtered_lfps[start:stop]
-        ripple_consensus_trace[start:stop] = get_envelope(block)
+    blocks = _contiguous_valid_blocks(is_valid, time_array)
+    return _kay_consensus(ripple_filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
 
-    summed_power = np.sum(ripple_consensus_trace**2, axis=1)
-    smoothed = np.full(len(summed_power), np.nan)
-    for start, stop in _contiguous_valid_blocks(not_null, time_array):
+
+def _kay_consensus(
+    filtered_lfps: FloatArray,
+    blocks: list[tuple[int, int]],
+    sampling_frequency: float,
+    smoothing_sigma: float,
+) -> FloatArray:
+    """``sqrt(gaussian_smooth(sum(envelope ** 2)))`` within each block, NaN
+    outside every block. The detector passes its own blocks, so the LFP is
+    neither copied nor searched for gaps a second time."""
+    smoothed = np.full(len(filtered_lfps), np.nan)
+    for start, stop in blocks:
+        summed_power = np.sum(get_envelope(filtered_lfps[start:stop]) ** 2, axis=1)
         smoothed[start:stop] = gaussian_smooth(
-            summed_power[start:stop], smoothing_sigma, sampling_frequency
+            summed_power, smoothing_sigma, sampling_frequency
         )
     return np.asarray(np.sqrt(smoothed), dtype=float)
 
@@ -194,12 +201,28 @@ def get_Yu_ripple_consensus_trace(
     if not np.any(is_valid):
         msg = "No sample has finite values in every channel."
         raise ValueError(msg)
+    return _yu_consensus(
+        ripple_filtered_lfps,
+        is_valid,
+        _contiguous_valid_blocks(is_valid, time),
+        sampling_frequency,
+        smoothing_sigma,
+        zscore_per_channel,
+    )
 
-    smoothed = np.full_like(ripple_filtered_lfps, np.nan)
-    for start, stop in _contiguous_valid_blocks(is_valid, time):
-        envelope = get_envelope(ripple_filtered_lfps[start:stop])
-        smoothed[start:stop] = gaussian_smooth(envelope, smoothing_sigma, sampling_frequency)
 
+def _yu_consensus(
+    filtered_lfps: FloatArray,
+    is_valid: BoolArray,
+    blocks: list[tuple[int, int]],
+    sampling_frequency: float,
+    smoothing_sigma: float,
+    zscore_per_channel: bool,
+) -> FloatArray:
+    """The median across channels of the smoothed, optionally z-scored,
+    envelopes within ``blocks``; NaN outside them. The z-score statistics
+    pool the ``is_valid`` samples."""
+    smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     if zscore_per_channel:
         valid_rows = smoothed[is_valid]
         mean = valid_rows.mean(axis=0, keepdims=True)
@@ -217,7 +240,7 @@ def get_Yu_ripple_consensus_trace(
             raise ValueError(msg)
         smoothed = (smoothed - mean) / std
 
-    consensus_trace = np.full(n_time, np.nan)
+    consensus_trace = np.full(len(filtered_lfps), np.nan)
     consensus_trace[is_valid] = np.median(smoothed[is_valid], axis=1)
     return consensus_trace
 
@@ -715,12 +738,7 @@ def Kay_ripple_detector(
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
     _reject_flat_channels(filtered_lfps, is_valid, "filtered_lfps")
 
-    consensus = get_Kay_ripple_consensus_trace(
-        _mask_invalid(filtered_lfps, is_valid),
-        sampling_frequency,
-        smoothing_sigma=smoothing_sigma,
-        time=time,
-    )
+    consensus = _kay_consensus(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     return _detect_from_trace(
         consensus,
         time,
@@ -860,12 +878,13 @@ def Yu_ripple_detector(
     )
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
 
-    consensus = get_Yu_ripple_consensus_trace(
-        _mask_invalid(filtered_lfps, is_valid),
+    consensus = _yu_consensus(
+        filtered_lfps,
+        is_valid,
+        blocks,
         sampling_frequency,
-        smoothing_sigma=smoothing_sigma,
-        zscore_per_channel=zscore_per_channel,
-        time=time,
+        smoothing_sigma,
+        zscore_per_channel,
     )
 
     if normalization_mask is None:
