@@ -16,8 +16,6 @@ from ripple_detection.core import (
     _is_immobile_at_endpoints,
     _runs_extended_to_mean,
     estimate_noise_threshold,
-    exclude_close_events,
-    exclude_movement,
     exclude_movement_by_majority,
     gaussian_smooth,
     get_envelope,
@@ -37,7 +35,7 @@ from ripple_detection.detectors._blocks import (
 )
 from ripple_detection.detectors._events import (
     _detect_from_trace,
-    _exclude_long_events,
+    _finish_events,
     _get_event_stats,
 )
 from ripple_detection.detectors._validation import (
@@ -551,35 +549,30 @@ def Shvartsman_ripple_detector(
     participation_mask = (
         np.asarray([len(interval[2]) for interval in merged_candidates]) >= n_elecs_thresh
     )
-    candidate_bounds = merged_candidates[participation_mask, :2]
-
-    candidate_bounds, included_ripple_inds = exclude_movement_by_majority(
-        candidate_bounds, speed, time, speed_threshold=speed_threshold
+    candidate_bounds = np.asarray(
+        merged_candidates[participation_mask, :2], dtype=float
+    ).reshape(-1, 2)
+    keep = np.zeros(len(candidate_bounds), dtype=bool)
+    keep[exclude_movement_by_majority(candidate_bounds, speed, time, speed_threshold)[1]] = (
+        True
     )
-    ripple_times, included_ripple_inds = exclude_close_events(
-        candidate_bounds, close_ripple_threshold, included_ripple_inds
+    ripple_times, kept = _finish_events(
+        candidate_bounds, keep, time, close_ripple_threshold, maximum_duration
     )
-    # Keep participant metadata aligned through movement and proximity exclusion.
-    participant_sets = merged_candidates[participation_mask, 2][included_ripple_inds]
-    ripple_times, keep = _exclude_long_events(ripple_times, time, maximum_duration)
-    participant_sets = participant_sets[keep]
     # sorted tuples rather than sets: deterministic, hashable, and they survive
     # JSON, CSV and a DynamicTable
+    participant_sets = merged_candidates[participation_mask, 2][kept]
     participants = np.empty(len(participant_sets), dtype=object)
     for index, channels in enumerate(participant_sets):
         participants[index] = tuple(sorted(channels))
-
-    n_participants = np.array([len(p) for p in participants], dtype=int)
     return _get_event_stats(
         ripple_times,
         time,
         normalized,
         speed,
         minimum_duration,
-        participants,
-        n_participants,
-        n_participants / n_elecs,
-        blocks=blocks,
+        blocks,
+        participants=participants,
     )
 
 
@@ -937,20 +930,12 @@ def Yu_ripple_detector(
     event_times: FloatArray = np.concatenate(event_time_blocks)
     n_suprathreshold: IntArray = np.concatenate(n_suprathreshold_blocks)
 
-    # the per-event count is filtered alongside the events at each step
     keep = _is_immobile_at_endpoints(event_times, speed, time, speed_threshold)
-    event_times, n_suprathreshold = event_times[keep], n_suprathreshold[keep]
-    event_times, kept = exclude_close_events(
-        event_times, close_ripple_threshold, included_ripple_inds=np.arange(len(event_times))
+    event_times, kept = _finish_events(
+        event_times, keep, time, close_ripple_threshold, maximum_duration
     )
-    n_suprathreshold = n_suprathreshold[kept]
-    event_times, keep = _exclude_long_events(event_times, time, maximum_duration)
-    n_suprathreshold = n_suprathreshold[keep]
-
-    events = _get_event_stats(
-        event_times, time, normalized, speed, minimum_duration=minimum_duration, blocks=blocks
-    )
-    events["n_suprathreshold_samples"] = n_suprathreshold
+    events = _get_event_stats(event_times, time, normalized, speed, minimum_duration, blocks)
+    events["n_suprathreshold_samples"] = n_suprathreshold[kept]
     events["detection_threshold_zscore"] = threshold_zscore
     return events
 
@@ -1089,24 +1074,27 @@ def Karlsson_ripple_detector(
     normalized = normalize_signal(
         smoothed, method=normalization_method, normalization_mask=mask
     )
-    candidate_ripple_times = list(
-        merge_overlapping_ranges(
-            chain.from_iterable(
-                _threshold_blocks(channel, time, blocks, minimum_duration, zscore_threshold)
-                for channel in normalized.T
+    candidate_ripple_times = np.asarray(
+        list(
+            merge_overlapping_ranges(
+                chain.from_iterable(
+                    _threshold_blocks(
+                        channel, time, blocks, minimum_duration, zscore_threshold
+                    )
+                    for channel in normalized.T
+                )
             )
-        )
+        ),
+        dtype=float,
+    ).reshape(-1, 2)
+    keep = _is_immobile_at_endpoints(candidate_ripple_times, speed, time, speed_threshold)
+    ripple_times, _ = _finish_events(
+        candidate_ripple_times, keep, time, close_ripple_threshold, maximum_duration
     )
-    ripple_times = exclude_movement(
-        candidate_ripple_times, speed, time, speed_threshold=speed_threshold
-    )
-    ripple_times = exclude_close_events(ripple_times, close_ripple_threshold)
-    ripple_times, _ = _exclude_long_events(ripple_times, time, maximum_duration)
-
     # statistics on the strongest channel at each sample, so an event that one
     # channel triggered cannot report a sub-threshold max_sustained_zscore
     return _get_event_stats(
-        ripple_times, time, normalized.max(axis=1), speed, minimum_duration, blocks=blocks
+        ripple_times, time, normalized.max(axis=1), speed, minimum_duration, blocks
     )
 
 

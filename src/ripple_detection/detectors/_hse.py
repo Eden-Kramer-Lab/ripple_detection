@@ -5,9 +5,8 @@ import pandas as pd
 from numpy.typing import ArrayLike
 
 from ripple_detection.core import (
-    FloatArray,
-    IntArray,
     _check_non_negative,
+    _is_immobile_at_endpoints,
     get_multiunit_population_firing_rate,
     nearest_sample_index,
 )
@@ -16,7 +15,9 @@ from ripple_detection.detectors._blocks import (
 )
 from ripple_detection.detectors._events import (
     _count_active_units,
-    _detect_from_trace,
+    _finish_events,
+    _get_event_stats,
+    _threshold_trace,
 )
 from ripple_detection.detectors._validation import (
     _check_finite_non_negative,
@@ -186,30 +187,31 @@ def multiunit_HSE_detector(
             multiunit[start:stop], sampling_frequency, smoothing_sigma
         )
 
-    def active_unit_counts(event_times: FloatArray) -> IntArray:
-        first = nearest_sample_index(time, event_times[:, 0])
-        last = nearest_sample_index(time, event_times[:, 1])
-        return _count_active_units(multiunit, np.column_stack([first, last]))
-
-    events = _detect_from_trace(
+    normalized, candidates = _threshold_trace(
         firing_rate,
         time,
-        speed,
         is_valid,
         blocks,
         minimum_duration=minimum_duration,
         zscore_threshold=zscore_threshold,
-        speed_threshold=speed_threshold,
-        close_event_threshold=close_event_threshold,
-        maximum_duration=maximum_duration,
         normalization_method=normalization_method,
         normalization_mask=normalization_mask,
-        # before the close-event step, so a rejected event suppresses no neighbour
-        keep_candidates=lambda event_times: (
-            active_unit_counts(event_times) >= minimum_active_units
+    )
+    n_active = _count_active_units(
+        multiunit,
+        np.column_stack(
+            [
+                nearest_sample_index(time, candidates[:, 0]),
+                nearest_sample_index(time, candidates[:, 1]),
+            ]
         ),
     )
-    events["n_active_units"] = active_unit_counts(
-        events[["start_time", "end_time"]].to_numpy()
+    keep = _is_immobile_at_endpoints(candidates, speed, time, speed_threshold) & (
+        n_active >= minimum_active_units
     )
+    event_times, kept = _finish_events(
+        candidates, keep, time, close_event_threshold, maximum_duration
+    )
+    events = _get_event_stats(event_times, time, normalized, speed, minimum_duration, blocks)
+    events["n_active_units"] = n_active[kept]
     return events

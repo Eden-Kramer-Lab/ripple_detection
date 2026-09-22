@@ -1,8 +1,6 @@
 """From candidate events to the result: duration ceiling, the shared detection
 tail, active-unit counts, and the per-event statistics every detector reports."""
 
-from collections.abc import Callable
-
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
@@ -12,8 +10,8 @@ from ripple_detection.core import (
     BoolArray,
     FloatArray,
     IntArray,
+    _is_immobile_at_endpoints,
     exclude_close_events,
-    exclude_movement,
     minimum_sample_count,
     nearest_sample_index,
     normalize_signal,
@@ -73,6 +71,75 @@ def _exclude_long_events(
     return events[keep], keep
 
 
+def _threshold_trace(
+    trace: FloatArray,
+    time: FloatArray,
+    is_valid: BoolArray,
+    blocks: list[tuple[int, int]],
+    *,
+    minimum_duration: float,
+    zscore_threshold: float,
+    normalization_method: str = "zscore",
+    normalization_mask: ArrayLike | None = None,
+) -> tuple[FloatArray, FloatArray]:
+    """Normalize one detection trace over the valid samples and threshold it.
+
+    Within each block, the runs at or above ``zscore_threshold`` that last
+    ``minimum_duration``, each extended to the normalization center.
+
+    Returns
+    -------
+    normalized : ndarray, shape (n_time,)
+    candidate_times : ndarray, shape (n_candidates, 2)
+
+    """
+    mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
+    normalized = normalize_signal(trace, method=normalization_method, normalization_mask=mask)
+    candidates = _threshold_blocks(
+        normalized, time, blocks, minimum_duration, zscore_threshold
+    )
+    return normalized, np.asarray(candidates, dtype=float).reshape(-1, 2)
+
+
+def _finish_events(
+    event_times: FloatArray,
+    keep: BoolArray,
+    time: FloatArray,
+    close_event_threshold: float,
+    maximum_duration: float | None,
+) -> tuple[FloatArray, IntArray]:
+    """The last steps every detector but Zugaro, Long and Carey shares, in order.
+
+    First the candidate criteria, given as ``keep`` (the speed rule, and a
+    detector's own such as the active-unit count), then the proximity rule,
+    then the duration ceiling. Every criterion runs before the proximity rule,
+    so an event that fails one cannot suppress its neighbour and then vanish;
+    the ceiling runs after it, deliberately (see ``_exclude_long_events``).
+
+    Parameters
+    ----------
+    event_times : ndarray, shape (n_candidates, 2)
+    keep : ndarray of bool, shape (n_candidates,)
+    time : ndarray, shape (n_time,)
+    close_event_threshold : float
+    maximum_duration : float or None
+
+    Returns
+    -------
+    event_times : ndarray, shape (n_events, 2)
+    indices : ndarray of int, shape (n_events,)
+        Position of each kept event in the input, for arrays that run
+        alongside the candidates.
+
+    """
+    indices = np.flatnonzero(keep)
+    kept, indices = exclude_close_events(
+        event_times[indices], close_event_threshold, included_ripple_inds=indices
+    )
+    kept, within = _exclude_long_events(kept, time, maximum_duration)
+    return kept, indices[within]
+
+
 def _detect_from_trace(
     trace: FloatArray,
     time: FloatArray,
@@ -87,43 +154,22 @@ def _detect_from_trace(
     maximum_duration: float | None = None,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
-    keep_candidates: Callable[[FloatArray], BoolArray] | None = None,
 ) -> pd.DataFrame:
-    """Normalize one detection trace, threshold it, and summarize the events.
-
-    The shared tail of every detector that thresholds a single trace. It
-    normalizes the trace over the valid samples. Within each block it takes
-    the runs at or above ``zscore_threshold`` that last ``minimum_duration``
-    and extends each to the normalization center. It drops events whose first
-    or last sample exceeds ``speed_threshold``, then those ``keep_candidates``
-    rejects, then events too close to the last retained event, then events
-    longer than ``maximum_duration``. It then computes the per-event
-    statistics, flagging events cut off by a block edge.
-
-    A candidate criterion goes through ``keep_candidates`` rather than after
-    this function, so an event it rejects cannot suppress a neighbour in the
-    close-event step and then disappear itself.
+    """Threshold one trace, apply the endpoint speed rule and the shared last
+    steps, and summarize the events: the whole of Kay and Roumis after their
+    trace is formed.
 
     Parameters
     ----------
     trace : ndarray, shape (n_time,)
         The unnormalized detection trace, NaN outside the valid blocks.
-    time : ndarray, shape (n_time,)
-        Sample timestamps in seconds.
-    speed : ndarray, shape (n_time,)
-        Speed in cm/s.
+    time, speed : ndarray, shape (n_time,)
     is_valid : ndarray of bool, shape (n_time,)
     blocks : list of (start, stop)
         From ``_valid_blocks``.
-    minimum_duration, zscore_threshold, speed_threshold, close_event_threshold : float
+    minimum_duration, zscore_threshold, speed_threshold, close_event_threshold,
+    maximum_duration, normalization_method, normalization_mask
         As in the public detectors.
-    maximum_duration : float, optional
-        As in the public detectors. Default is None (no upper limit).
-    normalization_method, normalization_mask
-        Passed to ``normalize_signal``.
-    keep_candidates : callable, optional
-        Takes the ``(n_events, 2)`` event times left by the speed rule and
-        returns a bool mask of those to keep. Default None keeps them all.
 
     Returns
     -------
@@ -131,21 +177,21 @@ def _detect_from_trace(
         One row per event, indexed by ``event_number``.
 
     """
-    mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
-    normalized = normalize_signal(trace, method=normalization_method, normalization_mask=mask)
-    candidate_times = _threshold_blocks(
-        normalized, time, blocks, minimum_duration, zscore_threshold
+    normalized, candidates = _threshold_trace(
+        trace,
+        time,
+        is_valid,
+        blocks,
+        minimum_duration=minimum_duration,
+        zscore_threshold=zscore_threshold,
+        normalization_method=normalization_method,
+        normalization_mask=normalization_mask,
     )
-    event_times = exclude_movement(
-        candidate_times, speed, time, speed_threshold=speed_threshold
+    keep = _is_immobile_at_endpoints(candidates, speed, time, speed_threshold)
+    event_times, _ = _finish_events(
+        candidates, keep, time, close_event_threshold, maximum_duration
     )
-    if keep_candidates is not None:
-        event_times = event_times[keep_candidates(event_times)]
-    event_times = exclude_close_events(event_times, close_event_threshold)
-    event_times, _ = _exclude_long_events(event_times, time, maximum_duration)
-    return _get_event_stats(
-        event_times, time, normalized, speed, minimum_duration, blocks=blocks
-    )
+    return _get_event_stats(event_times, time, normalized, speed, minimum_duration, blocks)
 
 
 def _count_active_units(multiunit: FloatArray, event_bounds: ArrayLike) -> IntArray:
@@ -245,11 +291,10 @@ def _get_event_stats(
     time: ArrayLike,
     zscore_metric: ArrayLike,
     speed: ArrayLike,
-    minimum_duration: float = 0.015,
+    minimum_duration: float,
+    blocks: list[tuple[int, int]],
+    *,
     participants: ArrayLike | None = None,
-    n_participants: ArrayLike | None = None,
-    frac_participants: ArrayLike | None = None,
-    blocks: list[tuple[int, int]] | None = None,
     clipped: BoolArray | None = None,
 ) -> pd.DataFrame:
     """Compute comprehensive statistics for detected events.
@@ -275,18 +320,15 @@ def _get_event_stats(
     speed : array_like, shape (n_time,)
         Animal's speed at each time point.
     minimum_duration : float, optional
-        Minimum duration for max_sustained_zscore calculation. Default is 0.015 (15 ms).
+        Minimum duration for the max_sustained_zscore calculation.
+    blocks : list of (start, stop)
+        The valid blocks the events were found in (``_valid_blocks``), for
+        the ``clipped_start`` and ``clipped_end`` flags.
     participants : array_like of tuple, shape (n_events,), optional
         Channels that participate in each event; z-score metrics are
-        averaged over these channels. Used by Shvartsman_ripple_detector.
-    n_participants : array_like, shape (n_events,), optional
-        Number of distinct participating channels per event.
-    frac_participants : array_like, shape (n_events,), optional
-        ``n_participants`` divided by the total channel count, per event.
-    blocks : list of (start, stop), optional
-        The valid blocks the events were found in (``_valid_blocks``), for
-        the ``clipped_start`` and ``clipped_end`` flags. Default is None,
-        one block spanning the whole recording.
+        averaged over these channels, and ``n_participants`` and
+        ``frac_participants`` (of the channels in ``zscore_metric``) are
+        reported. Used by Shvartsman_ripple_detector.
     clipped : ndarray of bool, shape (n_events, 2), optional
         Flags to report instead of the ones derived from ``blocks``, for a
         detector whose segmentation knows better whether an event was cut
@@ -401,8 +443,6 @@ def _get_event_stats(
     event_stats["n_samples"] = event_stats["n_samples"].astype(int)
 
     if clipped is None:
-        if blocks is None:
-            blocks = [(0, len(time_arr))]
         block_starts = np.array([start for start, _ in blocks], dtype=int)
         block_stops = np.array([stop for _, stop in blocks], dtype=int)
         which = np.clip(np.searchsorted(block_starts, first, side="right") - 1, 0, None)
@@ -410,8 +450,11 @@ def _get_event_stats(
     clipped = np.asarray(clipped, dtype=bool).reshape(-1, 2)
     event_stats["clipped_start"] = clipped[:, 0]
     event_stats["clipped_end"] = clipped[:, 1]
-    if participants is not None:
+    if participant_channels is not None:
+        n_participants = np.array(
+            [len(channels) for channels in participant_channels], dtype=int
+        )
         event_stats["participants"] = participants
         event_stats["n_participants"] = n_participants
-        event_stats["frac_participants"] = frac_participants
+        event_stats["frac_participants"] = n_participants / metric.shape[1]
     return event_stats

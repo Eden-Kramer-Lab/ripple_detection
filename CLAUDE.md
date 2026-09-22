@@ -199,7 +199,7 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
 
 ### Detection Pipeline Architecture
 
-Kay, Roumis and the HSE detector share one pipeline whose tail is `_detect_from_trace`; Karlsson and Shvartsman run the same steps on each channel and merge the per-channel events:
+Kay, Roumis and the HSE detector threshold one trace (`_threshold_trace`; Kay and Roumis through `_detect_from_trace`); Karlsson and Shvartsman run the same steps on each channel and merge the per-channel events. Those five and Yu end in `_finish_events`: every candidate criterion (speed, HSE's active units) before the proximity rule, the duration ceiling after it:
 
 1. **Preprocessing**: Validate shapes, units and time order; mark samples with NaN in any signal as missing (NaN speed is unknown speed, handled by the movement rules, and splits nothing) and split the rest into contiguous blocks (`_valid_blocks`), ending a block also wherever the timestamp step exceeds 1.5 times the median step
 2. **Signal Transformation**: Hilbert envelope and Gaussian smoothing within each contiguous block (`_smoothed_envelope`); combine channels (Kay: consensus trace; Karlsson and Shvartsman: per channel; Roumis: mean; HSE: population rate)

@@ -3090,13 +3090,21 @@ class TestEventStatisticsShapeValidation:
     def test_two_dimensional_metric_without_participants_raises(self):
         time, events, speed = self._inputs()
         with pytest.raises(ValueError, match=r"must have shape \(n_time,\)"):
-            _get_event_stats(events, time, np.zeros((1000, 3)).tolist(), speed, 0.015)
+            _get_event_stats(
+                events, time, np.zeros((1000, 3)).tolist(), speed, 0.015, [(0, 1000)]
+            )
 
     def test_one_dimensional_metric_with_participants_raises(self):
         time, events, speed = self._inputs()
         with pytest.raises(ValueError, match=r"\(n_time, n_channels\)"):
             _get_event_stats(
-                events, time, np.zeros(1000).tolist(), speed, 0.015, participants=[{0}]
+                events,
+                time,
+                np.zeros(1000).tolist(),
+                speed,
+                0.015,
+                [(0, 1000)],
+                participants=[{0}],
             )
 
 
