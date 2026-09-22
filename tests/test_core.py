@@ -1608,12 +1608,26 @@ def test_merge_close_events_rejects_a_flat_array_of_the_wrong_length():
         merge_close_events(np.array([0.0, 1.0, 2.0]), 0.05)
 
 
-def test_transition_width_raises_where_the_shipped_kernel_is_used():
-    """A silently ignored keyword would give the caller the wrong filter."""
+def test_the_default_band_given_explicitly_is_the_shipped_kernel():
+    """band=(150, 250) at 1500 Hz is the default band, so it gets the kernel
+    the default gets, not a different design that differs by up to 0.8 SD."""
     signal = np.random.default_rng(0).normal(size=4000)
 
-    with pytest.raises(ValueError, match="transition_width"):
-        filter_ripple_band(signal, 1500.0, transition_width=10.0)
+    explicit = filter_ripple_band(signal, 1500.0, band=(150.0, 250.0))
+
+    assert np.array_equal(explicit, filter_ripple_band(signal, 1500.0))
+
+
+def test_a_transition_width_at_1500_hz_designs_a_filter_with_that_width():
+    """The shipped kernel is a fixed design; asking for a width means asking
+    for a designed filter, the same one any other rate would get."""
+    signal = np.random.default_rng(0).normal(size=4000)
+
+    designed = filter_ripple_band(signal, 1500.0, transition_width=25.0)
+    kernel, _ = ripple_bandpass_filter(1500.0, transition_width=25.0)
+
+    assert not np.array_equal(designed, filter_ripple_band(signal, 1500.0))
+    assert np.allclose(designed, filtfilt(kernel, 1.0, signal, padlen=len(kernel) - 1))
 
 
 def test_transition_width_applies_without_a_band_at_other_rates():

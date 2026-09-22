@@ -128,6 +128,11 @@ raises on zero rows; that is hdmf's, not this package's.
 
 ### Changed
 
+- `filter_ripple_band` treats `band=(150, 250)` as the default band, so at
+  1500 Hz it uses the shipped kernel as `band=None` does; before, naming the
+  default band designed a different filter whose output differed by up to
+  0.8 SD. `transition_width` now defaults to None, and giving a width at
+  1500 Hz designs a filter with that width instead of raising.
 - `filter_ripple_band` filters any run of present samples at least as long
   as its kernel: 318 samples (212 ms) at 1500 Hz, where it needed 955. It
   passes `filtfilt` a pad of one less than the tap count, which for an FIR

@@ -255,16 +255,17 @@ def filter_ripple_band(
     data: ArrayLike,
     sampling_frequency: float,
     band: tuple[float, float] | None = None,
-    transition_width: float = DEFAULT_TRANSITION_WIDTH,
+    transition_width: float | None = None,
 ) -> FloatArray:
     """Bandpass filter signal(s) to the ripple band, 150-250 Hz by default.
 
-    At 1500 Hz with the default band, the pre-computed 318-tap FIR kernel
-    shipped with the package is used. At any other rate, or for any other
-    band, an FIR is designed for that rate with ``ripple_bandpass_filter``,
-    so the passband is the same in hertz regardless of the sampling rate. The
-    filter is applied forward and backward (``filtfilt``) for zero phase
-    distortion.
+    At 1500 Hz with the default band and no ``transition_width``, the
+    pre-computed 318-tap FIR kernel shipped with the package is used, whether
+    the band is left as None or given as ``(150, 250)``. At any other rate,
+    for any other band, or when a ``transition_width`` is given, an FIR is
+    designed for that rate with ``ripple_bandpass_filter``, so the passband is
+    the same in hertz regardless of the sampling rate. The filter is applied
+    forward and backward (``filtfilt``) for zero phase distortion.
 
     A row holding NaN in any channel is missing. Each contiguous run of
     present rows is filtered on its own, so the filter never sees the step
@@ -280,12 +281,16 @@ def filter_ripple_band(
     sampling_frequency : float
         Sampling rate of the input data in Hz.
     band : tuple of (float, float), optional
-        Passband edges in Hz. Default is None, which uses the 150-250 Hz
-        design.
+        Passband edges in Hz. Default is None, the 150-250 Hz band; giving
+        ``(150, 250)`` is the same as None.
     transition_width : float, optional
         Width in Hz of the transition on each side of the passband. Default is
-        25.0. The shipped kernel is a fixed design, so a value other than the
-        default raises when that kernel would be used.
+        None: a designed filter gets 25 Hz, and at 1500 Hz with the default
+        band the shipped kernel, whose transitions are 10 Hz, is used. Giving
+        a width always designs a filter with that width, so
+        ``transition_width=25.0`` at 1500 Hz is a different filter from the
+        default (155 taps and 48 dB against the kernel's 318 taps and 40 dB;
+        their outputs differ by up to 0.8 SD).
 
     Returns
     -------
@@ -298,9 +303,8 @@ def filter_ripple_band(
     ValueError
         If the sampling rate cannot represent the band, that is, the upper
         edge plus the transition band reaches the Nyquist frequency (from
-        ``ripple_bandpass_filter``). If `transition_width` is changed where
-        the fixed shipped kernel would be used, since it cannot retune that
-        kernel. And if no run of present rows is long enough to filter.
+        ``ripple_bandpass_filter``), or if no run of present rows is long
+        enough to filter.
 
     Warns
     -----
@@ -322,18 +326,20 @@ def filter_ripple_band(
     """
     SHIPPED_KERNEL_SAMPLING_FREQUENCY = 1500.0
 
-    if band is None and np.isclose(sampling_frequency, SHIPPED_KERNEL_SAMPLING_FREQUENCY):
-        if transition_width != DEFAULT_TRANSITION_WIDTH:
-            msg = (
-                f"transition_width={transition_width} cannot apply here: with the default "
-                "band and 1500 Hz data the shipped kernel is used, and it is a fixed "
-                "design. Pass `band` to design a filter instead."
-            )
-            raise ValueError(msg)
+    default_band = band is None or tuple(float(edge) for edge in band) == DEFAULT_RIPPLE_BAND
+    if (
+        default_band
+        and transition_width is None
+        and np.isclose(sampling_frequency, SHIPPED_KERNEL_SAMPLING_FREQUENCY)
+    ):
         filter_numerator, filter_denominator = _get_ripplefilter_kernel()
     else:
         filter_numerator, filter_denominator = ripple_bandpass_filter(
-            sampling_frequency, band=band, transition_width=transition_width
+            sampling_frequency,
+            band=band,
+            transition_width=(
+                DEFAULT_TRANSITION_WIDTH if transition_width is None else transition_width
+            ),
         )
 
     data_array = np.asarray(data, dtype=float)
