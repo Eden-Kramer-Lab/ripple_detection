@@ -35,7 +35,7 @@ class TestFilterRippleBandProperties:
     def test_filter_preserves_shape(self, data):
         """Filtering should preserve the shape of the input."""
         data_2d = data.reshape(-1, 1)
-        filtered = filter_ripple_band(data_2d)
+        filtered = filter_ripple_band(data_2d, 1500)
         assert filtered.shape == data_2d.shape
 
     @given(n_samples=st.integers(min_value=2000, max_value=5000))
@@ -44,7 +44,7 @@ class TestFilterRippleBandProperties:
         """Filtering should work with multiple channels."""
         rng = np.random.default_rng(42)
         data = rng.standard_normal((n_samples, 3))
-        filtered = filter_ripple_band(data)
+        filtered = filter_ripple_band(data, 1500)
         assert filtered.shape == data.shape
 
     @given(
@@ -60,7 +60,7 @@ class TestFilterRippleBandProperties:
     def test_filter_output_finite(self, data):
         """Filtered output should always be finite."""
         data_2d = data.reshape(-1, 1)
-        filtered = filter_ripple_band(data_2d)
+        filtered = filter_ripple_band(data_2d, 1500)
         assert np.all(np.isfinite(filtered))
 
 

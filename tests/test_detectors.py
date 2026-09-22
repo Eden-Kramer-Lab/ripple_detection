@@ -47,7 +47,7 @@ class TestShvartsmanRippleDetector:
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
         """Test Shvartsman detector with single LFP channel containing ripples."""
-        filtered_lfps = filter_ripple_band(single_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
         ripples = Shvartsman_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -64,7 +64,7 @@ class TestShvartsmanRippleDetector:
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
         """Test Shvartsman detector with single LFP channel containing ripples, with participation_threshold=0."""
-        filtered_lfps = filter_ripple_band(single_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
         ripples = Shvartsman_ripple_detector(
             time_3s,
             filtered_lfps,
@@ -128,7 +128,7 @@ class TestShvartsmanRippleDetector:
         self, time_3s, dual_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
         """Test Shvartsman detector with two LFP channels with non-overlapping ripples."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples, 1500)
         ripples = Shvartsman_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -145,7 +145,7 @@ class TestShvartsmanRippleDetector:
         self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
     ):
         """Test Shvartsman detector with two LFP channels with non-overlapping ripples."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples, 1500)
         ripples = Shvartsman_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -206,7 +206,7 @@ class TestShvartsmanRippleDetector:
         50 ms apart, but their full zero-crossing-extended ripples overlap, so they
         co-occur: both channels participate and the default 2-channel cutoff detects
         them."""
-        filtered_lfps = filter_ripple_band(dual_lfp_close_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_close_ripples, 1500)
 
         ripples = Shvartsman_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
@@ -220,7 +220,7 @@ class TestShvartsmanRippleDetector:
         self, time_3s, multi_lfp_sparse_ripples, stationary_speed, sampling_frequency
     ):
         """Test Shvartsman detector with many LFP channels with a subset having non-overlapping ripples."""
-        filtered_lfps = filter_ripple_band(multi_lfp_sparse_ripples)
+        filtered_lfps = filter_ripple_band(multi_lfp_sparse_ripples, 1500)
         ripples = Shvartsman_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -237,7 +237,7 @@ class TestShvartsmanRippleDetector:
         self, time_3s, multi_lfp_sparse_cooccur_ripples, stationary_speed, sampling_frequency
     ):
         """Test Shvartsman detector with many LFP channels with a subset having co-occurring ripples."""
-        filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples)
+        filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples, 1500)
         ripples = Shvartsman_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -305,7 +305,7 @@ class TestShvartsmanRippleDetector:
 
     def test_no_ripples(self, time_3s, lfp_no_ripples, stationary_speed, sampling_frequency):
         """Test with noise-only signal (no ripples)."""
-        filtered_lfps = filter_ripple_band(lfp_no_ripples)
+        filtered_lfps = filter_ripple_band(lfp_no_ripples, 1500)
         ripples = Shvartsman_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -325,7 +325,7 @@ class TestShvartsmanRippleDetector:
     ):
         """Test that if all events occur during movement, all are excluded and proper format is returned."""
         # Detect with movement after t=1.5s
-        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples, 1500)
 
         ripples_movement = Shvartsman_ripple_detector(
             time_3s,
@@ -348,7 +348,7 @@ class TestShvartsmanRippleDetector:
     ):
         """Test that if all but one events occur during movement, all but one are excluded and proper format is returned."""
         # Detect with movement after t=1.5s
-        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples, 1500)
 
         ripples_movement = Shvartsman_ripple_detector(
             time_3s,
@@ -370,7 +370,7 @@ class TestShvartsmanRippleDetector:
         self, time_3s, dual_lfp_with_cooccur_ripples, speed_with_movement, sampling_frequency
     ):
         """Test that ripples during movement are excluded."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples, 1500)
 
         # Detect with stationary speed
         ripples_stationary = Shvartsman_ripple_detector(
@@ -407,7 +407,7 @@ class TestShvartsmanRippleDetector:
         sampling_frequency,
     ):
         """Test that very short ripples are not detected."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_short_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_short_ripples, 1500)
 
         ripples = Shvartsman_ripple_detector(
             time_3s,
@@ -426,7 +426,7 @@ class TestShvartsmanRippleDetector:
         self, time_3s, multi_lfp_sparse_cooccur_ripples, stationary_speed, sampling_frequency
     ):
         """Test effect of z-score threshold parameter."""
-        filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples)
+        filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples, 1500)
 
         # Low threshold - should detect more events
         ripples_low = Shvartsman_ripple_detector(
@@ -458,7 +458,7 @@ class TestShvartsmanRippleDetector:
         sampling_frequency,
     ):
         """Test exclusion of ripples that occur too close together."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_close_cooccur_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_close_cooccur_ripples, 1500)
 
         # No exclusion
         ripples_no_exclusion = Shvartsman_ripple_detector(
@@ -486,7 +486,7 @@ class TestShvartsmanRippleDetector:
         self, time_3s, multi_lfp_sparse_cooccur_ripples, stationary_speed, sampling_frequency
     ):
         """Manual normalization with valid per-channel baselines/deviations detects ripples."""
-        filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples)
+        filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples, 1500)
         # precompute per-channel baseline/deviation of the smoothed envelope
         # (mirrors supplying day-level stats)
         env = gaussian_smooth(
@@ -509,7 +509,7 @@ class TestShvartsmanRippleDetector:
         self, time_3s, multi_lfp_sparse_cooccur_ripples, stationary_speed, sampling_frequency
     ):
         """Test Shvartsman detector with manual normalization indicated but no baseline values passed in."""
-        filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples)
+        filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples, 1500)
         with pytest.raises(ValueError):
             Shvartsman_ripple_detector(
                 time_3s,
@@ -523,7 +523,7 @@ class TestShvartsmanRippleDetector:
         self, time_3s, multi_lfp_sparse_cooccur_ripples, stationary_speed, sampling_frequency
     ):
         """Test Shvartsman detector with manual normalization indicated but mismatched elec_baselines and elec_deviations lengths."""
-        filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples)
+        filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples, 1500)
         with pytest.raises(ValueError):
             Shvartsman_ripple_detector(
                 time_3s,
@@ -539,7 +539,7 @@ class TestShvartsmanRippleDetector:
         self, time_3s, multi_lfp_sparse_cooccur_ripples, stationary_speed, sampling_frequency
     ):
         """Test Shvartsman detector with manual normalization indicated but mismatched elec_baselines and filtered_lfp lengths."""
-        filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples)
+        filtered_lfps = filter_ripple_band(multi_lfp_sparse_cooccur_ripples, 1500)
         with pytest.raises(ValueError):
             Shvartsman_ripple_detector(
                 time_3s,
@@ -559,7 +559,7 @@ class TestKayRippleDetector:
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
         """Test Kay detector with single LFP channel containing ripples."""
-        filtered_lfps = filter_ripple_band(single_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
         ripples = Kay_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -611,7 +611,7 @@ class TestKayRippleDetector:
         self, time_3s, dual_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
         """Test Kay detector with two LFP channels."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples, 1500)
         ripples = Kay_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -627,7 +627,7 @@ class TestKayRippleDetector:
         self, time_3s, dual_lfp_close_ripples, stationary_speed, sampling_frequency
     ):
         """Test detection of closely spaced ripples."""
-        filtered_lfps = filter_ripple_band(dual_lfp_close_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_close_ripples, 1500)
         ripples = Kay_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -639,7 +639,7 @@ class TestKayRippleDetector:
         self, time_3s, multi_lfp_sparse_ripples, stationary_speed, sampling_frequency
     ):
         """Test with many channels but ripples only in subset."""
-        filtered_lfps = filter_ripple_band(multi_lfp_sparse_ripples)
+        filtered_lfps = filter_ripple_band(multi_lfp_sparse_ripples, 1500)
         ripples = Kay_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -650,7 +650,7 @@ class TestKayRippleDetector:
 
     def test_no_ripples(self, time_3s, lfp_no_ripples, stationary_speed, sampling_frequency):
         """Test with noise-only signal (no ripples)."""
-        filtered_lfps = filter_ripple_band(lfp_no_ripples)
+        filtered_lfps = filter_ripple_band(lfp_no_ripples, 1500)
         ripples = Kay_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -665,7 +665,7 @@ class TestKayRippleDetector:
         self, time_3s, dual_lfp_with_ripples, speed_with_movement, sampling_frequency
     ):
         """Test that ripples during movement are excluded."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples, 1500)
 
         # Detect with stationary speed
         ripples_stationary = Kay_ripple_detector(
@@ -698,7 +698,7 @@ class TestKayRippleDetector:
         self, time_3s, lfp_short_duration_ripples, stationary_speed, sampling_frequency
     ):
         """Test that very short ripples are not detected."""
-        filtered_lfps = filter_ripple_band(lfp_short_duration_ripples)
+        filtered_lfps = filter_ripple_band(lfp_short_duration_ripples, 1500)
 
         ripples = Kay_ripple_detector(
             time_3s,
@@ -717,7 +717,7 @@ class TestKayRippleDetector:
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
         """Test effect of z-score threshold parameter."""
-        filtered_lfps = filter_ripple_band(single_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
 
         # Low threshold - should detect more events
         ripples_low = Kay_ripple_detector(
@@ -745,7 +745,7 @@ class TestKayRippleDetector:
         self, time_3s, dual_lfp_close_ripples, stationary_speed, sampling_frequency
     ):
         """Test exclusion of ripples that occur too close together."""
-        filtered_lfps = filter_ripple_band(dual_lfp_close_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_close_ripples, 1500)
 
         # No exclusion
         ripples_no_exclusion = Kay_ripple_detector(
@@ -776,7 +776,7 @@ class TestKarlssonRippleDetector:
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
         """Test Karlsson detector with single LFP channel."""
-        filtered_lfps = filter_ripple_band(single_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
         ripples = Karlsson_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -793,7 +793,7 @@ class TestKarlssonRippleDetector:
         self, time_3s, dual_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
         """Test that Karlsson detector merges overlapping ripples from multiple channels."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples, 1500)
         ripples = Karlsson_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -809,7 +809,7 @@ class TestKarlssonRippleDetector:
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
         """Test Karlsson detector with different z-score thresholds."""
-        filtered_lfps = filter_ripple_band(single_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
 
         # Karlsson uses default threshold of 3.0
         ripples_default = Karlsson_ripple_detector(
@@ -832,7 +832,7 @@ class TestKarlssonRippleDetector:
 
     def test_no_ripples(self, time_3s, lfp_no_ripples, stationary_speed, sampling_frequency):
         """Test Karlsson detector with noise-only signal."""
-        filtered_lfps = filter_ripple_band(lfp_no_ripples)
+        filtered_lfps = filter_ripple_band(lfp_no_ripples, 1500)
         ripples = Karlsson_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -859,7 +859,7 @@ class TestKarlssonEventStatistics:
             simulate_LFP(time_3s, ripple_times=[], noise_amplitude=1.3, random_state=s)
             for s in (2, 3, 4, 5)
         ]
-        lfps = filter_ripple_band(np.column_stack([loud, *quiet]))
+        lfps = filter_ripple_band(np.column_stack([loud, *quiet]), 1500)
         speed = np.full(len(time_3s), 2.0)
         events = Karlsson_ripple_detector(
             time_3s, lfps, speed, sampling_frequency, zscore_threshold=3.0
@@ -876,7 +876,7 @@ class TestRoumisRippleDetector:
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
         """Test Roumis detector with single LFP channel."""
-        filtered_lfps = filter_ripple_band(single_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
         ripples = Roumis_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -892,7 +892,7 @@ class TestRoumisRippleDetector:
         self, time_3s, dual_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
         """Test Roumis detector with two channels."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples, 1500)
         ripples = Roumis_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -1026,7 +1026,7 @@ class TestKayConsensusTrace:
 
     def test_consensus_trace_shape(self, time_3s, dual_lfp_with_ripples, sampling_frequency):
         """Test that consensus trace has correct shape."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples, 1500)
         consensus = get_Kay_ripple_consensus_trace(
             filtered_lfps, sampling_frequency, smoothing_sigma=0.004
         )
@@ -1038,7 +1038,7 @@ class TestKayConsensusTrace:
         self, time_3s, dual_lfp_with_ripples, sampling_frequency
     ):
         """Test that consensus trace values are non-negative (it's a magnitude)."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples, 1500)
         consensus = get_Kay_ripple_consensus_trace(
             filtered_lfps, sampling_frequency, smoothing_sigma=0.004
         )
@@ -1081,7 +1081,7 @@ class TestYuConsensusTrace:
             )
             for s in (11, 12, 13)
         ]
-        return filter_ripple_band(np.column_stack(lfps))
+        return filter_ripple_band(np.column_stack(lfps), 1500)
 
     def test_shape_and_finite_on_clean_input(self, time_3s, triple_lfp, sampling_frequency):
         consensus = get_Yu_ripple_consensus_trace(triple_lfp, sampling_frequency)
@@ -1165,7 +1165,7 @@ class TestYuConsensusTrace:
             ripple_amplitude=6.0,
             random_state=25,
         )
-        lfps = filter_ripple_band(np.column_stack([*quiet, loud]))
+        lfps = filter_ripple_band(np.column_stack([*quiet, loud]), 1500)
         yu = get_Yu_ripple_consensus_trace(lfps, sampling_frequency)
         kay = get_Kay_ripple_consensus_trace(lfps, sampling_frequency)
         window = (time_3s > 1.45) & (time_3s < 1.55)
@@ -1478,7 +1478,8 @@ class TestYuRippleDetector:
                     )
                     for seed in (1, 2, 3, 4)
                 ]
-            )
+            ),
+            fs,
         )
         events = Yu_ripple_detector(time, lfps, np.full(len(time), 2.0), fs)
         hits = [any((events.start_time <= t) & (events.end_time >= t)) for t in planted]
@@ -1494,7 +1495,8 @@ class TestYuRippleDetector:
                     simulate_LFP(time, ripple_times=[], noise_amplitude=1.2, random_state=seed)
                     for seed in (1, 2, 3, 4)
                 ]
-            )
+            ),
+            fs,
         )
         events = Yu_ripple_detector(time, lfps, np.full(len(time), 2.0), fs)
         assert len(events) <= 3
@@ -1520,7 +1522,8 @@ class TestYuRippleDetector:
                     )
                     for seed in (1, 2, 3, 4)
                 ]
-            )
+            ),
+            fs,
         )
         with pytest.raises(ValueError, match="above the immobility mean"):
             Yu_ripple_detector(time, lfps, np.full(len(time), 2.0), fs)
@@ -2173,7 +2176,7 @@ class TestDetectorErrorHandling:
         # Insert some NaN values
         lfp_with_nan[100:200, 0] = np.nan
 
-        filtered_lfps = filter_ripple_band(lfp_with_nan)
+        filtered_lfps = filter_ripple_band(lfp_with_nan, 1500)
         ripples = Kay_ripple_detector(
             time_3s, filtered_lfps, stationary_speed, sampling_frequency
         )
@@ -2188,7 +2191,7 @@ class TestDetectorErrorHandling:
         speed_with_nan = stationary_speed.copy()
         speed_with_nan[100:200] = np.nan
 
-        filtered_lfps = filter_ripple_band(single_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
         ripples = Kay_ripple_detector(
             time_3s, filtered_lfps, speed_with_nan, sampling_frequency
         )
@@ -2202,7 +2205,7 @@ class TestDetectorErrorHandling:
         """Integer LFP input is cast to float, not truncated, through the pipeline."""
         lfp_int = np.round(dual_lfp_with_cooccur_ripples * 100).astype(np.int32)
 
-        filtered = filter_ripple_band(lfp_int)
+        filtered = filter_ripple_band(lfp_int, 1500)
         # Before the fix, filter output kept the integer dtype (truncated values).
         assert np.issubdtype(filtered.dtype, np.floating)
 
@@ -2216,7 +2219,7 @@ class TestDetectorErrorHandling:
         self, time_3s, dual_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
         """normalization_mask stays position-aligned after NaN rows are removed."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples, 1500)
         filtered_lfps[100:150, :] = np.nan
 
         # A mask with genuine False entries (not coinciding with the NaN rows),
@@ -2255,7 +2258,7 @@ class TestDetectorErrorHandling:
     ):
         """An all-False normalization_mask raises rather than silently returning
         an empty result from a degenerate normalization."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples, 1500)
         normalization_mask = np.zeros(len(time_3s), dtype=bool)
 
         with pytest.raises(ValueError, match="selects no samples"):
@@ -2271,7 +2274,7 @@ class TestDetectorErrorHandling:
         self, time_3s, dual_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
         """A normalization_mask whose length doesn't match the data raises."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_ripples, 1500)
         with pytest.raises(ValueError, match="normalization_mask length"):
             Kay_ripple_detector(
                 time_3s,
@@ -2285,7 +2288,7 @@ class TestDetectorErrorHandling:
         self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
     ):
         """A NaN baseline has no scale, so the detector raises and names the channel."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples, 1500)
         n_channels = filtered_lfps.shape[1]
         baselines = np.zeros(n_channels)
         baselines[1] = np.nan  # degenerate channel
@@ -2306,7 +2309,7 @@ class TestDetectorErrorHandling:
         self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
     ):
         """normalization_mask cannot be combined with manual normalization."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples, 1500)
         env = gaussian_smooth(
             get_envelope(filtered_lfps), sigma=0.004, sampling_frequency=sampling_frequency
         )
@@ -2327,7 +2330,7 @@ class TestDetectorErrorHandling:
         # Create speed array with different length
         speed_short = np.ones(len(time_3s) // 2)
 
-        filtered_lfps = filter_ripple_band(single_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
 
         # This should either handle gracefully or raise appropriate error
         try:
@@ -2376,7 +2379,7 @@ class TestShvartsmanParticipationSemantics:
                 for center, seed in [(1.1, 5), (1.15, 6), (1.2, 7)]
             ]
         )
-        filtered = filter_ripple_band(lfps)
+        filtered = filter_ripple_band(lfps, 1500)
         individual = [
             Karlsson_ripple_detector(
                 time_3s, filtered[:, [channel]], stationary_speed, sampling_frequency
@@ -2427,7 +2430,7 @@ class TestShvartsmanParticipationSemantics:
         ch2 = simulate_LFP(
             time_3s, [1.1], noise_amplitude=1.2, ripple_amplitude=1.5, random_state=2
         )
-        filtered = filter_ripple_band(np.column_stack([ch0, ch1, ch2]))
+        filtered = filter_ripple_band(np.column_stack([ch0, ch1, ch2]), 1500)
 
         # Sanity: with no movement both events survive with differing participation.
         both = Shvartsman_ripple_detector(
@@ -2463,7 +2466,7 @@ class TestShvartsmanParticipationSemantics:
         """A fractional participation_threshold is a fraction of channels, and 1.0
         means *all* channels (not one)."""
         # The two channels ripple at separate times, so each event has only 1 of 2.
-        filtered_sep = filter_ripple_band(dual_lfp_with_ripples)
+        filtered_sep = filter_ripple_band(dual_lfp_with_ripples, 1500)
         # 1.0 requires both channels in one event -> excluded (each has one).
         assert Shvartsman_ripple_detector(
             time_3s,
@@ -2482,7 +2485,7 @@ class TestShvartsmanParticipationSemantics:
         ).empty
 
         # Co-occurring ripples involve both channels, so 1.0 (all 2) detects them.
-        filtered_co = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        filtered_co = filter_ripple_band(dual_lfp_with_cooccur_ripples, 1500)
         assert not Shvartsman_ripple_detector(
             time_3s,
             filtered_co,
@@ -2496,7 +2499,7 @@ class TestShvartsmanParticipationSemantics:
     ):
         """A constant channel has no scale. Rather than zero it and let it dilute
         frac_participants, the detector raises and names it."""
-        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples, 1500)
         filtered_lfps[:, 1] = 0.0
 
         with pytest.raises(ValueError, match=r"channel\(s\) \[1\]"):
@@ -2635,7 +2638,7 @@ class TestMaxThreshMinimumDuration:
     def test_karlsson_forwards_minimum_duration_to_max_thresh(
         self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency
     ):
-        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples)
+        filtered_lfps = filter_ripple_band(dual_lfp_with_cooccur_ripples, 1500)
         patcher, seen = self._spy_on_find_max_thresh()
         with patcher:
             ripples = Karlsson_ripple_detector(
@@ -2703,7 +2706,7 @@ class TestNegativeThresholdRejected:
     def test_kay_rejects_a_negative_threshold(
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
-        filtered_lfps = filter_ripple_band(single_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
         with pytest.raises(ValueError, match="non-negative"):
             Kay_ripple_detector(
                 time_3s,
@@ -2767,7 +2770,7 @@ class TestShvartsmanManualNormalizationValidation:
     def test_normalization_arguments_are_rejected_under_manual_normalization(
         self, time_3s, single_lfp_with_ripples, stationary_speed, sampling_frequency
     ):
-        filtered_lfps = filter_ripple_band(single_lfp_with_ripples)
+        filtered_lfps = filter_ripple_band(single_lfp_with_ripples, 1500)
         with pytest.raises(ValueError, match="manual_normalization"):
             Shvartsman_ripple_detector(
                 time_3s,

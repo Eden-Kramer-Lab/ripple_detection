@@ -91,7 +91,7 @@ class TestKayDetectorSnapshots:
     def test_kay_single_channel_output(self, snapshot, test_lfp_data):
         """Test Kay detector output structure and values remain consistent."""
         time, lfp = test_lfp_data
-        filtered_lfp = filter_ripple_band(lfp)
+        filtered_lfp = filter_ripple_band(lfp, 1500)
         speed = np.ones(len(time)) * 2.0
 
         ripples = Kay_ripple_detector(
@@ -121,7 +121,7 @@ class TestKayDetectorSnapshots:
     def test_kay_multichannel_output(self, snapshot, test_multichannel_lfp_data):
         """Test Kay detector with multiple channels."""
         time, lfps = test_multichannel_lfp_data
-        filtered_lfps = filter_ripple_band(lfps)
+        filtered_lfps = filter_ripple_band(lfps, 1500)
         speed = np.ones(len(time)) * 2.0
 
         ripples = Kay_ripple_detector(
@@ -151,7 +151,7 @@ class TestKarlssonDetectorSnapshots:
     def test_karlsson_single_channel_output(self, snapshot, test_lfp_data):
         """Test Karlsson detector output consistency."""
         time, lfp = test_lfp_data
-        filtered_lfp = filter_ripple_band(lfp)
+        filtered_lfp = filter_ripple_band(lfp, 1500)
         speed = np.ones(len(time)) * 2.0
 
         ripples = Karlsson_ripple_detector(
@@ -174,7 +174,7 @@ class TestKarlssonDetectorSnapshots:
     def test_karlsson_multichannel_merging(self, snapshot, test_multichannel_lfp_data):
         """Test Karlsson detector merges overlapping events from different channels."""
         time, lfps = test_multichannel_lfp_data
-        filtered_lfps = filter_ripple_band(lfps)
+        filtered_lfps = filter_ripple_band(lfps, 1500)
         speed = np.ones(len(time)) * 2.0
 
         ripples = Karlsson_ripple_detector(
@@ -205,7 +205,7 @@ class TestRoumisDetectorSnapshots:
     def test_roumis_output(self, snapshot, test_multichannel_lfp_data):
         """Test Roumis detector output consistency."""
         time, lfps = test_multichannel_lfp_data
-        filtered_lfps = filter_ripple_band(lfps)
+        filtered_lfps = filter_ripple_band(lfps, 1500)
         speed = np.ones(len(time)) * 2.0
 
         ripples = Roumis_ripple_detector(
@@ -265,7 +265,7 @@ class TestDetectorComparison:
     def test_detector_comparison(self, snapshot, test_multichannel_lfp_data):
         """Compare outputs of different detectors on same data."""
         time, lfps = test_multichannel_lfp_data
-        filtered_lfps = filter_ripple_band(lfps)
+        filtered_lfps = filter_ripple_band(lfps, 1500)
         speed = np.ones(len(time)) * 2.0
 
         # Run all three ripple detectors
@@ -298,7 +298,7 @@ class TestRegressionPrevention:
 
         # Pure noise, no ripples
         lfp = rng.standard_normal((len(time), 1)) * 0.5
-        filtered_lfp = filter_ripple_band(lfp)
+        filtered_lfp = filter_ripple_band(lfp, 1500)
         speed = np.ones(len(time)) * 2.0
 
         ripples = Kay_ripple_detector(
@@ -326,7 +326,7 @@ class TestRegressionPrevention:
             random_state=42,
         )[:, np.newaxis]
 
-        filtered_lfp = filter_ripple_band(lfp)
+        filtered_lfp = filter_ripple_band(lfp, 1500)
         speed = np.ones(len(time)) * 2.0
 
         ripples = Kay_ripple_detector(

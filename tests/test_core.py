@@ -5,7 +5,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import pytest
-from scipy.signal import freqz
+from scipy.signal import filtfilt, freqz
 from scipy.stats import zscore
 
 from ripple_detection.core import (
@@ -247,7 +247,7 @@ class TestFilterRippleBand:
         lfp2 = simulate_LFP(time, [1.2], noise_amplitude=1.2, ripple_amplitude=1.5)
         multi_channel = np.column_stack([lfp1, lfp2])
 
-        filtered = filter_ripple_band(multi_channel)
+        filtered = filter_ripple_band(multi_channel, 1500)
 
         assert filtered.shape == multi_channel.shape
         assert not np.all(np.isnan(filtered)), "Filtered signal should contain valid data"
@@ -288,13 +288,11 @@ class TestFilterRippleBandSamplingRate:
         assert in_gain > 0.5  # passband
         assert 10 * np.log10(out_gain / in_gain) < -30  # at least 30 dB down
 
-    def test_1500_hz_matches_the_shipped_kernel(self):
+    def test_1500_hz_uses_the_shipped_kernel(self):
         _, x = self._tones(1500)
-        np.testing.assert_allclose(
-            filter_ripple_band(x, sampling_frequency=1500),
-            filter_ripple_band(x),
-            rtol=0,
-            atol=0,
+        kernel, _ = _get_ripplefilter_kernel()
+        np.testing.assert_array_equal(
+            filter_ripple_band(x, sampling_frequency=1500), filtfilt(kernel, 1, x)
         )
 
     def test_rate_too_low_for_the_band_raises(self):
@@ -304,10 +302,29 @@ class TestFilterRippleBandSamplingRate:
 
     def test_nan_rows_are_preserved(self):
         _, x = self._tones(2000)
-        x[100:150] = np.nan
+        x[1000:1050] = np.nan
         y = filter_ripple_band(x, sampling_frequency=2000)
-        assert np.all(np.isnan(y[100:150]))
-        assert np.all(np.isfinite(np.delete(y, np.arange(100, 150))))
+        assert np.all(np.isnan(y[1000:1050]))
+        assert np.all(np.isfinite(np.delete(y, np.arange(1000, 1050))))
+
+    def test_each_side_of_a_gap_is_filtered_on_its_own(self):
+        """A DC step across the gap must not leak a transient into either side."""
+        rng = np.random.default_rng(0)
+        x = rng.normal(size=6000)
+        x[:2000] += 50.0  # a large offset on one side only
+        x[2000:2500] = np.nan
+        y = filter_ripple_band(x, sampling_frequency=1500)
+        np.testing.assert_array_equal(y[:2000], filter_ripple_band(x[:2000], 1500))
+        np.testing.assert_array_equal(y[2500:], filter_ripple_band(x[2500:], 1500))
+
+    def test_a_run_too_short_to_filter_is_nan_with_a_warning(self):
+        x = np.random.default_rng(0).normal(size=6000)
+        x[2000:2010] = np.nan
+        x[2100:2110] = np.nan  # leaves a 90-sample run between the gaps
+        with pytest.warns(UserWarning, match="shorter than"):
+            y = filter_ripple_band(x, sampling_frequency=1500)
+        assert np.all(np.isnan(y[2000:2110]))
+        assert np.all(np.isfinite(y[:2000])) and np.all(np.isfinite(y[2110:]))
 
 
 class TestGetEnvelope:
@@ -520,16 +537,9 @@ class TestCoreErrorHandling:
     """Test error handling for core functions."""
 
     def test_filter_ripple_band_empty_array(self):
-        """Test filtering with empty array."""
-        # Empty array will raise ValueError, which is expected
-        empty_array = np.array([])
-        try:
-            filtered = filter_ripple_band(empty_array)
-            # If it succeeds, check shape
-            assert filtered.shape == empty_array.shape
-        except ValueError:
-            # Expected for empty input
-            pass
+        """An empty array has no run long enough to filter."""
+        with pytest.raises(ValueError, match="too short"):
+            filter_ripple_band(np.array([]), 1500)
 
     def test_get_envelope_empty_array(self):
         """Test envelope extraction with empty array."""
@@ -1159,13 +1169,13 @@ class TestFilterRippleBandLengthGuard:
     def test_shortest_accepted_signal_filters_without_a_scipy_error(self):
         kernel, _ = _get_ripplefilter_kernel()
         shortest = 3 * len(kernel) + 1
-        filtered = filter_ripple_band(np.random.default_rng(0).normal(size=shortest))
+        filtered = filter_ripple_band(np.random.default_rng(0).normal(size=shortest), 1500)
         assert np.isfinite(filtered).all()
 
     def test_one_sample_shorter_raises_this_package_s_error(self):
         kernel, _ = _get_ripplefilter_kernel()
         with pytest.raises(ValueError, match="samples"):
-            filter_ripple_band(np.random.default_rng(0).normal(size=3 * len(kernel)))
+            filter_ripple_band(np.random.default_rng(0).normal(size=3 * len(kernel)), 1500)
 
 
 class TestExcludeCloseEventsChaining:
@@ -1364,11 +1374,6 @@ class TestCustomFrequencyBand:
 
         assert wide.std() > 0.5
         assert default.std() < 0.1
-
-    def test_band_needs_a_sampling_frequency(self):
-        """The shipped 1500 Hz kernel cannot be redesigned."""
-        with pytest.raises(ValueError, match="sampling_frequency"):
-            filter_ripple_band(np.zeros(4000), band=(80.0, 250.0))
 
     def test_band_at_1500_hz_bypasses_the_shipped_kernel(self):
         """A custom band is designed even at the shipped kernel's rate."""
@@ -1613,8 +1618,6 @@ def test_transition_width_raises_where_the_shipped_kernel_is_used():
 
     with pytest.raises(ValueError, match="transition_width"):
         filter_ripple_band(signal, 1500.0, transition_width=10.0)
-    with pytest.raises(ValueError, match="transition_width"):
-        filter_ripple_band(signal, transition_width=10.0)
 
 
 def test_transition_width_applies_without_a_band_at_other_rates():

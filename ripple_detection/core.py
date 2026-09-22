@@ -224,35 +224,36 @@ def segment_boolean_series(
 
 def filter_ripple_band(
     data: ArrayLike,
-    sampling_frequency: float | None = None,
+    sampling_frequency: float,
     band: tuple[float, float] | None = None,
     transition_width: float = DEFAULT_TRANSITION_WIDTH,
 ) -> NDArray:
     """Bandpass filter signal(s) to the ripple band, 150-250 Hz by default.
 
-    At 1500 Hz (or when no rate is given) the pre-computed 318-tap FIR kernel
-    shipped with the package is used. At any other rate an FIR is designed for
-    that rate with ``ripple_bandpass_filter``, so the passband is the same in
-    hertz regardless of the sampling rate. Passing `band` designs the filter
-    at any rate, including 1500 Hz, since the shipped kernel is fixed. The
+    At 1500 Hz with the default band, the pre-computed 318-tap FIR kernel
+    shipped with the package is used. At any other rate, or for any other
+    band, an FIR is designed for that rate with ``ripple_bandpass_filter``,
+    so the passband is the same in hertz regardless of the sampling rate. The
     filter is applied forward and backward (``filtfilt``) for zero phase
     distortion.
 
-    NaN samples are removed before filtering and restored at their original
-    positions afterwards; the samples on either side of a NaN run are
-    therefore filtered as if adjacent.
+    A row holding NaN in any channel is missing. Each contiguous run of
+    present rows is filtered on its own, so the filter never sees the step
+    between the two sides of a gap. Stitching the sides together instead
+    produces a transient at the join that a detector then reads as a
+    high-power event spanning the gap. A run shorter than ``filtfilt`` needs,
+    one more than three times the tap count, cannot be filtered and is
+    returned as NaN with a warning.
 
     Parameters
     ----------
     data : array_like, shape (n_time,) or (n_time, n_channels)
         Input signal(s) to be filtered. Can be 1D or 2D.
-    sampling_frequency : float, optional
-        Sampling rate of the input data in Hz. Default is None, which assumes
-        1500 Hz and uses the shipped kernel.
+    sampling_frequency : float
+        Sampling rate of the input data in Hz.
     band : tuple of (float, float), optional
         Passband edges in Hz. Default is None, which uses the 150-250 Hz
-        design. A custom band needs `sampling_frequency`, because the shipped
-        kernel is fixed.
+        design.
     transition_width : float, optional
         Width in Hz of the transition on each side of the passband. Default is
         25.0. The shipped kernel is a fixed design, so a value other than the
@@ -261,20 +262,23 @@ def filter_ripple_band(
     Returns
     -------
     filtered_data : ndarray, shape (n_time,) or (n_time, n_channels)
-        Bandpass filtered signal in the ripple band. NaN values are preserved
-        at their original locations.
+        Bandpass filtered signal in the ripple band. Missing rows, and runs
+        too short to filter, are NaN.
 
     Raises
     ------
     ValueError
-        If the sampling rate cannot represent the default band, that is, the
-        Nyquist frequency is at or below 275 Hz, the 250 Hz upper edge plus
-        the 25 Hz transition band. If `band` is given without a
-        `sampling_frequency`, or `transition_width` is changed where the fixed
-        shipped kernel would be used, since neither can retune that kernel. If
-        the band itself is unusable, from `ripple_bandpass_filter`. And if the
-        signal holds fewer non-NaN samples than ``filtfilt`` needs, which is
-        one more than three times the tap count.
+        If the sampling rate cannot represent the band, that is, the upper
+        edge plus the transition band reaches the Nyquist frequency (from
+        ``ripple_bandpass_filter``). If `transition_width` is changed where
+        the fixed shipped kernel would be used, since it cannot retune that
+        kernel. And if no run of present rows is long enough to filter.
+
+    Warns
+    -----
+    UserWarning
+        If some run of present rows is too short to filter and is returned as
+        NaN.
 
     See Also
     --------
@@ -289,58 +293,53 @@ def filter_ripple_band(
 
     """
     SHIPPED_KERNEL_SAMPLING_FREQUENCY = 1500.0
-    MINIMUM_NYQUIST = 250.0 + 25.0  # upper band edge plus the transition band
 
-    if band is not None:
-        if sampling_frequency is None:
-            raise ValueError(
-                "A custom band needs a sampling_frequency: the shipped kernel is a fixed "
-                "150-250 Hz design for 1500 Hz data and cannot be retuned."
-            )
-        filter_numerator, filter_denominator = ripple_bandpass_filter(
-            sampling_frequency, band=band, transition_width=transition_width
-        )
-    elif sampling_frequency is None or np.isclose(
-        sampling_frequency, SHIPPED_KERNEL_SAMPLING_FREQUENCY
-    ):
+    if band is None and np.isclose(sampling_frequency, SHIPPED_KERNEL_SAMPLING_FREQUENCY):
         if transition_width != DEFAULT_TRANSITION_WIDTH:
             raise ValueError(
-                f"transition_width={transition_width} cannot apply here: with no band and "
-                "1500 Hz data the shipped kernel is used, and it is a fixed design. Pass "
-                "`band` to design a filter instead."
+                f"transition_width={transition_width} cannot apply here: with the default "
+                "band and 1500 Hz data the shipped kernel is used, and it is a fixed "
+                "design. Pass `band` to design a filter instead."
             )
         filter_numerator, filter_denominator = _get_ripplefilter_kernel()
     else:
-        if 0.5 * sampling_frequency <= MINIMUM_NYQUIST:
-            raise ValueError(
-                f"Sampling frequency {sampling_frequency} Hz has a Nyquist frequency of "
-                f"{0.5 * sampling_frequency} Hz, which cannot represent the 150-250 Hz "
-                f"ripple band with its 25 Hz transition band (need > {2 * MINIMUM_NYQUIST} Hz)."
-            )
         filter_numerator, filter_denominator = ripple_bandpass_filter(
-            sampling_frequency, transition_width=transition_width
+            sampling_frequency,
+            band=DEFAULT_RIPPLE_BAND if band is None else band,
+            transition_width=transition_width,
         )
 
     data_array = np.asarray(data, dtype=float)
-    if data_array.ndim > 1:
-        is_nan = np.any(np.isnan(data_array), axis=-1)
-    else:
-        is_nan = np.isnan(data_array)
-
-    non_nan_length = np.sum(~is_nan)
+    is_present = (
+        ~np.isnan(data_array).any(axis=-1) if data_array.ndim > 1 else ~np.isnan(data_array)
+    )
     # filtfilt needs strictly more samples than its padlen of 3 x the taps
     min_required_length = 3 * len(filter_numerator) + 1
-    if non_nan_length < min_required_length:
+    runs = _boolean_run_bounds(is_present)
+    long_enough = (runs[:, 1] - runs[:, 0]) >= min_required_length
+    if not np.any(long_enough):
+        longest = int((runs[:, 1] - runs[:, 0]).max()) if len(runs) else 0
         raise ValueError(
-            f"Signal too short for filtering: {non_nan_length} non-NaN samples, "
-            f"but at least {min_required_length} are needed (3 x filter length "
-            f"{len(filter_numerator)})."
+            f"Signal too short for filtering: the longest run of non-NaN samples holds "
+            f"{longest}, but at least {min_required_length} are needed (one more than "
+            f"3 x filter length {len(filter_numerator)})."
+        )
+    if not np.all(long_enough):
+        short = runs[~long_enough]
+        warnings.warn(
+            f"{len(short)} run(s) of non-NaN samples shorter than the {min_required_length} "
+            "samples the filter needs are returned as NaN (sample ranges "
+            f"{[(int(a), int(b)) for a, b in short[:5]]}{', ...' if len(short) > 5 else ''}). "
+            "Interpolate short gaps before filtering if those samples matter.",
+            UserWarning,
+            stacklevel=2,
         )
 
     filtered_data = np.full_like(data_array, np.nan)
-    filtered_data[~is_nan] = filtfilt(
-        filter_numerator, filter_denominator, data_array[~is_nan], axis=0
-    )
+    for start, stop in runs[long_enough]:
+        filtered_data[start:stop] = filtfilt(
+            filter_numerator, filter_denominator, data_array[start:stop], axis=0
+        )
     return filtered_data
 
 
