@@ -319,7 +319,11 @@ def get_Kay_ripple_consensus_trace(
 
     Combines multiple LFP channels into a single consensus trace, following
     Kay et al. 2016: ``sqrt(gaussian_smooth(sum(envelope ** 2)))``. The
-    smoothing sits between the sum and the square root.
+    smoothing sits between the sum and the square root. The paper's text
+    squares the filtered signal itself, not its Hilbert envelope; the two
+    traces differ by a constant factor of sqrt(2) once the 4 ms smoothing has
+    removed the doubled-frequency term, so the events are the same after the
+    z-score. The envelope is what the Frank lab code uses.
 
     Rows holding a missing value in any channel are excluded, and each
     contiguous run of valid rows is processed on its own, so no envelope or
@@ -342,7 +346,7 @@ def get_Kay_ripple_consensus_trace(
     Returns
     -------
     consensus_trace : ndarray, shape (n_time,)
-        Combined consensus trace computed as sqrt(sum(envelope^2)).
+        ``sqrt(gaussian_smooth(sum(envelope ** 2)))`` per sample.
 
     References
     ----------
@@ -573,8 +577,6 @@ def _extract_Yu_ripple_events(
         contiguous block with no missing samples.
     time : ndarray, shape (n_time,)
         Native timestamps of the block's samples, in seconds.
-    sampling_frequency : float
-        Sampling rate in Hz.
     minimum_duration : float
         Minimum time the trace must stay at or above ``threshold``, in
         seconds; converted to a sample count with round-half-up.
@@ -786,7 +788,7 @@ def Shvartsman_ripple_detector(
     Unpublished variant contributed by Gabrielle Shvartsman (2026, pull
     request #11); it has no paper of its own. The participation rule requires
     ``participation_threshold`` channels (a count, default 2) to detect the
-    ripple, so a single-channel input never produces an event.
+    ripple, so at the default a single-channel input never produces an event.
 
     """
     if manual_normalization and (
@@ -1130,7 +1132,8 @@ def Kay_ripple_detector(
     >>>
     >>> # Step 3: Detect ripples
     >>> ripples = Kay_ripple_detector(time, filtered_lfps, speed, sampling_frequency=1500)
-    >>> print(f"Detected {len(ripples)} ripple events")
+    >>> "start_time" in ripples.columns
+    True
 
     References
     ----------
@@ -1236,7 +1239,7 @@ def Yu_ripple_detector(
         within this time of the previous event's end is dropped. Default is
         0.0 (no exclusion).
     normalization_mask : array_like, shape (n_time,), optional
-        Boolean mask selecting the noise sample instead of ``speed <
+        Boolean mask selecting the noise sample instead of ``speed <=
         speed_threshold``. Cannot be combined with ``normalization_time_range``.
     normalization_time_range : tuple of (float, float), optional
         Time range selecting the noise sample instead of the speed rule.
@@ -1403,7 +1406,7 @@ def _two_threshold_events(
     Follows the segmentation rule of FMAToolbox ``FindRipples``:
 
     1. Candidate events are runs strictly above ``low_threshold``. An event
-       starts at the last sample *below* the threshold before the run and
+       starts at the last sample *at or below* the threshold before the run and
        ends at the run's last sample, as the original's ``diff``-based
        crossing search does. A run touching the first or last sample has no
        paired crossing and is discarded.
@@ -1761,7 +1764,7 @@ def Long_sharp_wave_ripple_detector(
     apply. Event bounds are the sharp-wave bounds.
 
     Reimplemented from the algorithm as read. The source states no license.
-    Four departures, each documented below. ``random_state`` seeds the
+    Five departures, each documented below. ``random_state`` seeds the
     k-means, where MATLAB's is unseeded. A candidate whose local window holds
     no sample below the boundary threshold is rejected, where the original
     errors. The package's endpoint speed rule is applied afterwards. NaN input
@@ -2141,8 +2144,9 @@ def Carey_candidate_detector(
       units; a slow baseline (the sum capped at ``baseline_cap`` units'
       worth, smoothed with a 125 ms SD Gaussian) and one unit's cap are
       subtracted; divided by the mean and floored at zero.
-    - **Joint score**: ``sqrt(ripple * multiunit)``, rescaled to mean 0.5 and
-      z-scored. This combination is asymmetric. The multiunit score is
+    - **Joint score**: ``sqrt(ripple * multiunit)``, z-scored. The original
+      first rescales it to mean 0.5, a positive factor the z-score removes,
+      so that step is omitted. This combination is asymmetric. The multiunit score is
       floored at zero, so a ripple without a population burst cannot be a
       candidate. The ripple score is an envelope rescaled to mean 1 and is
       never zero, so a burst without a ripple can be. The joint score is
@@ -2179,7 +2183,7 @@ def Carey_candidate_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Speed below which the animal is considered stopped. Default is 4.0.
+        Speed at or below which the animal is considered stopped. Default is 4.0.
     edge_threshold, peak_threshold : float, optional
         Boundary and peak thresholds on the z-scored joint score. Defaults 1
         and 3 (the original's ``DetectorThreshold`` and ``DetectorThreshold2``).
@@ -2603,8 +2607,9 @@ def Roumis_ripple_detector(
     References
     ----------
     Unpublished Frank-lab variant contributed by Demetris Roumis (2017); it has
-    no paper of its own. It averages each channel's smoothed envelope before
-    z-scoring, between Kay's consensus trace and Karlsson's per-channel rule.
+    no paper of its own. It averages across channels the square root of each
+    channel's smoothed squared envelope, then z-scores, between Kay's
+    consensus trace and Karlsson's per-channel rule.
 
     """
     _validate_duration_limits(minimum_duration, maximum_duration)
@@ -2686,9 +2691,10 @@ def multiunit_HSE_detector(
     sampling_frequency : float
         Sampling rate in Hz.
     speed_threshold : float, optional
-        Maximum speed (in cm/s) for event detection. Events during movement
-        (speed > threshold) are excluded. Default is 4.0 cm/s, which corresponds
-        to immobility/slow movement in rodents.
+        Maximum speed (in cm/s) for event detection. An event is kept only if
+        the speed at its first and last sample is at or below this value
+        (``exclude_movement``); speed inside the event is not tested. Default
+        is 4.0 cm/s, which corresponds to immobility/slow movement in rodents.
 
         **Important**: Ensure your speed data is in cm/s. If using m/s, multiply
         by 100. To disable movement exclusion, set to a very large value (e.g., 1e6).
@@ -2837,7 +2843,10 @@ def _find_max_thresh(
     maximum, over every window of ``minimum_sample_count(time, minimum_duration)``
     consecutive samples, of that window's minimum. The sample-count convention
     matches event detection, so an event detected at ``zscore_threshold`` has
-    ``max_thresh >= zscore_threshold``.
+    ``max_thresh >= zscore_threshold``. This is not the statistic of the Frank
+    lab ``extractevents`` routine, which takes a window of the minimum
+    duration centered on the peak and reports the lower of its two ends; the
+    two differ by a few tenths of a standard deviation on typical events.
 
     Parameters
     ----------

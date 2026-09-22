@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`ripple_detection` is a Python package for detecting sharp-wave ripple events (150-250 Hz) from local field potentials (LFPs) in neuroscience research. It implements detection algorithms from Karlsson et al. 2009 and Kay et al. 2016, along with other variants.
+`ripple_detection` is a Python package for detecting sharp-wave ripple events (150-250 Hz) from local field potentials (LFPs) in neuroscience research. It implements detection algorithms from Karlsson & Frank 2009, Kay et al. 2016, Yu et al. 2017, Carey et al. 2019, FMAToolbox and buzcode, along with unpublished lab variants.
 
 ## Development Commands
 
@@ -26,7 +26,7 @@ pip install -e .
 ### Testing
 
 ```bash
-# Run all tests with coverage (93% coverage achieved!)
+# Run all tests with coverage
 pytest --cov=ripple_detection tests/
 
 # Run specific test module
@@ -138,7 +138,7 @@ git push origin vX.Y.Z
 
 ### Core Module Structure
 
-The package is organized into three main modules:
+The package is organized into five modules:
 
 1. **[ripple_detection/core.py](ripple_detection/core.py)** - Low-level signal processing utilities
    - Bandpass filtering for ripple band (150-250 Hz)
@@ -150,13 +150,13 @@ The package is organized into three main modules:
 
 2. **[ripple_detection/detectors.py](ripple_detection/detectors.py)** - High-level detection algorithms
    - `Kay_ripple_detector` - Multi-channel consensus approach (Kay et al. 2016)
-   - `Karlsson_ripple_detector` - Per-channel detection with merging (Karlsson et al. 2009)
+   - `Karlsson_ripple_detector` - Per-channel detection with merging (Karlsson & Frank 2009)
    - `Roumis_ripple_detector` - Per-channel envelopes averaged (Frank-lab variant, unpublished)
    - `Shvartsman_ripple_detector` - Per-channel detection requiring a minimum number of participating channels (unpublished)
    - `Yu_ripple_detector` - Median consensus with a data-driven noise-percentile threshold (Yu et al. 2017)
    - `Zugaro_ripple_detector` - FMAToolbox `FindRipples` two-threshold rule
    - `Long_sharp_wave_ripple_detector` - Sharp wave + ripple power on two raw channels, k-means split (Long, `DetectSWR`)
-   - `Carey_candidate_detector` - Joint ripple-power × multiunit score (Carey, Tank & van der Meer 2019)
+   - `Carey_candidate_detector` - Joint ripple-power × multiunit score (Carey, Tanaka & van der Meer 2019)
    - `multiunit_HSE_detector` - Multiunit High Synchrony Event detector (spikes only)
    - The README's "Choosing a detector" table is the reference for how their conventions differ
    - All detectors return pandas DataFrames with event statistics
@@ -166,21 +166,28 @@ The package is organized into three main modules:
    - Multiple noise types (white, pink, brown)
    - Used for testing and validation
 
+4. **[ripple_detection/registry.py](ripple_detection/registry.py)** - `DETECTORS`, `get_detector`, `DetectorSpec`
+   - Resolves a detector by name and says which signal kind it takes (`RIPPLE_BAND_LFP`, `RAW_LFP_PAIR`, `MULTIUNIT`)
+   - For pipelines that store a detector's name rather than importing it
+
+5. **[ripple_detection/literature.py](ripple_detection/literature.py)** - `load_literature_parameters`
+   - The survey of detection parameters from 57 replay papers, shipped as `data/literature_detection_parameters.csv`
+   - The README's "Published parameter values" table is computed from it
+
 ### Detection Pipeline Architecture
 
-All ripple detectors follow a common pipeline:
+Kay, Karlsson, Roumis, Shvartsman and the HSE detector share one pipeline; `_detect_from_trace` is its tail:
 
-1. **Preprocessing**: Remove NaN values, align time/speed/LFP data
-2. **Signal Transformation**:
-   - Apply Hilbert transform to get envelope (instantaneous amplitude)
-   - Gaussian smoothing with configurable sigma
-   - Combine signals (varies by detector - Kay uses consensus trace, Karlsson uses per-channel)
-3. **Normalization**: Z-score the transformed signal
-4. **Threshold Detection**: Find segments above z-score threshold that persist for minimum duration
-5. **Extension to Mean**: Extend threshold crossings to where signal crosses mean
-6. **Movement Exclusion**: Remove events where animal speed exceeds threshold
-7. **Post-processing**: Exclude events too close together, calculate statistics
-8. **Output**: Return DataFrame with event times and comprehensive statistics (duration, max_thresh, mean/median/max/min z-score, area, total_energy, speed metrics)
+1. **Preprocessing**: Validate shapes, units and time order; drop rows with NaN in the signal or speed (the HSE detector raises instead)
+2. **Signal Transformation**: Hilbert envelope and Gaussian smoothing within each contiguous block (`_smoothed_envelope`); combine channels (Kay: consensus trace; Karlsson and Shvartsman: per channel; Roumis: mean; HSE: population rate)
+3. **Normalization**: Z-score (or median/MAD) the trace; a zero or undefined scale raises
+4. **Threshold Detection**: Runs at or above the threshold for at least `minimum_sample_count` samples
+5. **Extension to Mean**: Extend each run to where the trace returns to the mean
+6. **Movement Exclusion**: Speed at the first and last sample at or below `speed_threshold` (Shvartsman: majority of samples)
+7. **Post-processing**: Drop close events, then over-long events; compute statistics with `_get_event_stats`
+8. **Output**: DataFrame indexed by `event_number` with the columns listed under "Output Format" in the README
+
+Yu and Zugaro process each contiguous block separately and use their own segmentation rules; Long and Carey raise on NaN and segment with two thresholds. See each docstring.
 
 ### Key Algorithm Differences
 
@@ -192,7 +199,7 @@ All ripple detectors follow a common pipeline:
 - **Long detector**: Raw two-channel input; sharp-wave difference and ripple power clustered by k-means with local statistics
 - **Carey detector**: Geometric mean of a ripple-power score and a capped multiunit score; whole event inside a low-speed interval
 - **HSE detector**: Z-scored smoothed population spike rate, no LFP
-- Missing-sample policy differs (row-drop and stitch; block-wise; raise) and is stated in each docstring's Notes
+- Missing-sample policy differs (rows dropped, transform per block, threshold across; fully block-wise; raise) and is stated in each docstring's Notes
 
 ### Pre-computed Filter
 
@@ -216,47 +223,21 @@ All detectors return rich event statistics via `_get_event_stats()`:
 
 ## Testing Strategy
 
-**Test Coverage: 93%** (100% on core and detector modules)
+**Test Coverage: 97%** (core and detector modules each 97%; registry, literature and simulate 100%)
 
-The test suite is organized into six modules:
+The suite has one shared fixture module and eight test modules:
 
-1. **[tests/conftest.py](tests/conftest.py)** - Shared pytest fixtures
-   - 15+ fixtures providing reusable test data
-   - LFP simulations with various ripple patterns
-   - Speed data (stationary and movement scenarios)
-   - Multiunit spike train data
-   - Edge cases (no ripples, short duration, close ripples)
+1. **[tests/conftest.py](tests/conftest.py)** - Shared pytest fixtures: 1500 Hz LFP simulations with various ripple patterns, speed data (stationary and moving), multiunit spike trains, edge cases
+2. **[tests/test_core.py](tests/test_core.py)** - Core signal processing: segmentation, extension, merging, the duration and gap boundary rules, normalization (including the degenerate-scale errors), filtering at several rates and across NaN gaps, envelope, smoothing, the Yu noise-threshold estimator
+3. **[tests/test_detectors.py](tests/test_detectors.py)** - One test class per detector plus shared classes for error handling, participation, duration and speed conventions, exclusion order, time ordering, and block-wise processing; the newer tests build inputs with `_synthetic_ripple_band`, `_synthetic_two_channel_lfp` and `_synthetic_joint_inputs` at 1000 Hz
+4. **[tests/test_simulate.py](tests/test_simulate.py)** - Noise spectra, embedded ripples, per-ripple ranges, `ripple_snr`, and the inputs that used to give an all-NaN signal
+5. **[tests/test_properties.py](tests/test_properties.py)** - Hypothesis-driven invariants for the signal-processing functions
+6. **[tests/test_snapshots.py](tests/test_snapshots.py)** - Regression snapshots of detector output on fixed simulated data
+7. **[tests/test_public_api.py](tests/test_public_api.py)** - Pins `__all__`
+8. **[tests/test_registry.py](tests/test_registry.py)** - Every exported detector is registered; each spec matches its signature by kind and position
+9. **[tests/test_literature.py](tests/test_literature.py)** - The shipped survey loads with the documented shape and types
 
-2. **[tests/test_core.py](tests/test_core.py)** - Core signal processing (70 tests, 100% coverage)
-   - Boolean series segmentation (start/end time extraction)
-   - Interval finding and extension
-   - Overlapping range merging
-   - Z-score thresholding and movement exclusion
-   - Signal normalization (z-score and median/MAD methods)
-   - Ripple band filtering
-   - Hilbert transform envelope extraction
-   - Gaussian smoothing
-   - Multiunit population firing rate
-   - Error handling for edge cases
-
-3. **[tests/test_detectors.py](tests/test_detectors.py)** - Detector behavior and conventions, one test class per detector plus shared error-handling, participation, and duration-convention classes; `tests/test_public_api.py` pins the exported names
-4. **[tests/test_simulate.py](tests/test_simulate.py)** - Simulation module (36 tests, 100% coverage)
-   - Time array generation
-   - Noise generation (white, pink, brown) with frequency analysis
-   - LFP simulation with embedded ripples
-   - Parameter validation (amplitude, duration, noise types)
-   - Statistical validation and power spectrum analysis
-   - Error handling for edge cases
-
-5. **[tests/test_properties.py](tests/test_properties.py)** - Property-based tests (23 tests)
-   - Hypothesis-driven tests for signal processing functions
-   - Tests invariants and properties across parameter ranges
-
-6. **[tests/test_snapshots.py](tests/test_snapshots.py)** - Snapshot/regression tests (9 tests)
-   - Detector output consistency tests
-   - Prevents regression in detector behavior
-
-**Test Execution**: 163 tests (157 passed, 6 skipped) in ~2 seconds
+**Test Execution**: about 580 tests in ~11 seconds (`pytest --collect-only -q | tail -1` for the current count)
 
 The package also validates that example notebooks run without errors in CI.
 
@@ -307,7 +288,7 @@ The package also validates that example notebooks run without errors in CI.
 - Numpy Docstrings for all public functions and classes using numpy docstring best practices
 - Uses f-strings for formatting
 - Modular functions with single responsibility
-- Comprehensive test coverage: 93% overall, 100% on core and detector modules
+- Comprehensive test coverage: 97% overall
 - **Code quality tools**: Ruff (formatting and linting), Mypy (type checking)
 - Continuous integration with GitHub Actions (tests on Python 3.10, 3.11, 3.12, 3.13)
 
@@ -329,7 +310,7 @@ All code quality tools are configured in [pyproject.toml](pyproject.toml):
 **Ruff** (`[tool.ruff]` and `[tool.ruff.lint]`) — the single formatter and linter:
 - Line length: 95
 - Target: Python 3.10
-- Enabled checks: pycodestyle (E/W), pyflakes (F), isort (I), flake8-bugbear (B), comprehensions (C4), pyupgrade (UP)
+- Enabled checks: pycodestyle (E/W), pyflakes (F), isort (I), flake8-bugbear (B), comprehensions (C4), pyupgrade (UP), NumPy (NPY), pandas-vet (PD), Ruff-specific (RUF)
 - Ignores E501 (line too long) since `ruff format` handles wrapping
 
 **Mypy** (`[tool.mypy]`):

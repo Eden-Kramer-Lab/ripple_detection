@@ -58,8 +58,9 @@ def ripple_bandpass_filter(
     Notes
     -----
     A 150-250 Hz equiripple FIR with 25 Hz transition bands, designed for
-    about 45 dB of stopband attenuation. Measured passband and stopband error
-    is about 0.004 at rates from 600 Hz to 30 kHz.
+    about 45 dB of stopband attenuation. The measured passband and stopband
+    error is about 0.004 (48 dB) at 1500-2000 Hz, rising to 0.009 (41 dB) at
+    30 kHz, and smaller at low rates, where the 101-tap minimum dominates.
 
     """
     STOPBAND_ATTENUATION_DB = 45.0
@@ -880,7 +881,7 @@ def normalize_signal(
     normalization_mask : array_like, shape (n_time,), optional
         Boolean mask specifying which samples to use for computing normalization
         statistics. True indicates samples to include. For example, use
-        `speed < speed_threshold` to compute statistics only during immobility.
+        `speed <= speed_threshold` to compute statistics only during immobility.
         Cannot be used with `normalization_time_range`. Default is None (use all data).
     normalization_time_range : tuple of (float, float), optional
         Time range (start_time, end_time) for computing normalization statistics.
@@ -914,7 +915,11 @@ def normalize_signal(
 
     where MAD is the median absolute deviation from the median.
 
-    Both methods ignore NaN samples when computing the statistics.
+    Both methods ignore NaN samples when computing the statistics. The
+    standard deviation is the population one (``ddof=0``); MATLAB's ``std``,
+    which the original implementations use, divides by ``n - 1``. On a
+    recording of any length the difference is far below 1e-5 of a standard
+    deviation.
 
     The MAD is the median of the absolute deviations from the median, so it is
     zero, or nearly so, whenever more than half the samples tie at the median.
@@ -1046,7 +1051,7 @@ def threshold_by_zscore(
 ) -> list[tuple[float, float]]:
     """Find time segments where z-scored data exceeds a threshold.
 
-    Identifies segments where the z-scored signal exceeds the specified
+    Identifies segments where the z-scored signal is at or above the
     threshold for at least the minimum duration, then extends these segments
     to where the signal crosses zero (the mean of z-scored data).
 
@@ -1461,7 +1466,11 @@ YU_HISTOGRAM_EDGES = np.round(np.arange(-10.0, 50.0 + 0.005, 0.01), 6)
 Bin edges from -10 to 50 in steps of 0.01, in the units of the consensus trace
 (the median of per-tetrode z-scored envelopes). Transliterated from
 ``histbins = -10:0.01:50`` in ``jy_variableripthreshold_corecalculation.m``
-(Frank lab, unpublished; not in a public repository).
+(Frank lab, unpublished; not in a public repository). The pipeline that calls
+it, ``DFFunctions/AG_extractRipplesJY.m`` in
+https://github.com/droumis/FFPhy/tree/fce2048/DFFunctions, is public and shows
+the per-tetrode z-score, the median, and the immobility noise sample this
+package reproduces.
 """
 
 YU_MODE_SMOOTHING_WINDOW = 11
@@ -1552,10 +1561,12 @@ def estimate_noise_threshold(
     Raises
     ------
     ValueError
-        In any of four cases: more than 0.1 % of samples fall outside the
-        grid; the mode lies on the first or last bin; there are too few
-        samples to resolve the requested percentile; or the crossing lands on
-        the last mirrored bin, which leaves "one bin past" undefined.
+        If ``histogram_edges`` is not strictly increasing, ``percentile`` is
+        not in (0, 100), or ``values`` is empty. And on the data: if more than
+        0.1 % of samples fall outside the grid; the mode lies on the first or
+        last bin; there are too few samples to resolve the requested
+        percentile; or the crossing lands on the last mirrored bin, which
+        leaves "one bin past" undefined.
 
     Warns
     -----
@@ -1565,8 +1576,8 @@ def estimate_noise_threshold(
     Notes
     -----
     The mirrored distribution has an upper bound of ``2m - min(values)``. The
-    returned threshold therefore cannot exceed about twice the distance from
-    the mode to the smallest sample, whatever the true noise tail does. This
+    returned threshold therefore cannot exceed the mode plus the width of the
+    left flank, ``2m - min(values)``, whatever the true noise tail does. This
     bound comes from the published method, not from this implementation.
 
     The threshold therefore lies above the sample mean only when the left
@@ -1692,9 +1703,9 @@ def get_multiunit_population_firing_rate(
         Spike indicator matrix. Can be binary (0/1) or spike counts per bin.
     sampling_frequency : float
         Number of samples per second.
-    smoothing_sigma : float or np.timedelta
-        Amount to smooth the firing rate over time. The default is
-        given assuming time is in units of seconds.
+    smoothing_sigma : float
+        Standard deviation of the Gaussian smoothing kernel in seconds.
+        Default is 0.015.
 
 
     Returns

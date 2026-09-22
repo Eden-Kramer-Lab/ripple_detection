@@ -305,7 +305,7 @@ from ripple_detection import ripple_bandpass_filter
 from scipy.signal import filtfilt
 
 filter_num, filter_denom = ripple_bandpass_filter(sampling_frequency)
-filtered_lfps = filtfilt(filter_num, filter_denom, raw_lfps, axis=0)
+filtered_lfps = filtfilt(filter_num, filter_denom, LFPs, axis=0)  # LFPs from Basic Usage
 ```
 
 #### No ripples detected (empty DataFrame)
@@ -334,9 +334,9 @@ ripples = Kay_ripple_detector(
 | `speed_threshold` | 4.0 cm/s | Maximum speed for ripple detection | Increase if too many events excluded during slow movement |
 | `minimum_duration` (and every other duration limit) | 0.015 s (Kay, Karlsson, Roumis, Shvartsman, HSE)<br>0.020 s (Yu, Zugaro, Carey) | Converted to a sample count with `minimum_sample_count` (round half up from the median timestamp step); an event qualifies when its sample count is at least the minimum and at most any maximum, both inclusive (`sample_count_within`) | Decrease for shorter events; increase for stricter detection |
 | `zscore_threshold` | 2.0 (Kay, Roumis, HSE)<br>3.0 (Karlsson, Shvartsman) | Detection sensitivity | Decrease for more detections; increase for fewer, higher-confidence events |
-| `smoothing_sigma` | 0.004 s on the LFP detectors, 0.015 s on `multiunit_HSE_detector` | Width of the Gaussian smoothing kernel | Rarely needs adjustment; increase for noisier data |
+| `smoothing_sigma` | 0.004 s on Kay, Karlsson, Roumis, Shvartsman and Yu; 0.010 s on Carey (`ripple_smoothing_sigma`); 0.015 s on `multiunit_HSE_detector`. Zugaro uses a moving average (`smoothing_window`), Long its own low-pass kernels | Width of the Gaussian smoothing kernel | Rarely needs adjustment; increase for noisier data |
 | `percentile` | 99.99 (Yu) | Percentile of the mirrored immobility-noise distribution used as the threshold | Lower for more detections; the threshold is estimated per call, so it adapts to each recording |
-| `close_ripple_threshold` (`close_event_threshold` on the HSE detector) | 0.0 s | Events closer than this are treated as one: the later event is dropped | Raise (e.g. 0.05) to suppress fragments; Zugaro merges instead via `minimum_inter_ripple_interval` |
+| `close_ripple_threshold` (`close_event_threshold` on the HSE detector) | 0.0 s | The later of two events closer than this is dropped | Raise (e.g. 0.05) to suppress fragments; Zugaro merges instead via `minimum_inter_ripple_interval` |
 | `maximum_duration` | `None` (no limit; `Zugaro` 0.100 s, `Long` 0.500 s for the sharp wave) | Longest allowed event, applied to the event as reported rather than to the run above threshold. A sample count like the minimum, so the ceiling is one sample shorter in elapsed time than the value given | Published limits run from a few hundred milliseconds to a couple of seconds |
 | `minimum_active_units` | 0 on `multiunit_HSE_detector` (no criterion), 5 on `Carey_candidate_detector` | Units with at least one spike inside the event; every event reports `n_active_units` | Published criteria are most often around five units |
 | `band`, `transition_width` on `filter_ripple_band` | `None`, meaning 150-250 Hz, and 25.0 Hz | Passband of the designed filter. A custom band needs a `sampling_frequency`, since the shipped 1500 Hz kernel is fixed | Published bands run from about 80-180 Hz at the lower edge to 200-300 Hz at the upper |
@@ -362,15 +362,15 @@ parameters.loc[parameters["Spike sorting"] == "Clusterless", ["First Author", "Y
 
 | Parameter | Papers | Published range | Median | Most common | Package default |
 |---|---|---|---|---|---|
-| `zscore_threshold` (ripple) | 27 | 1-8 SD | 3 SD | 3, 2, 4 | 2.0 Kay/Roumis, 3.0 Karlsson/Shvartsman |
+| `zscore_threshold` (ripple) | 27 | 1-8 SD | 3 SD | 3, 2, then 4 and 8 tied | 2.0 Kay/Roumis, 3.0 Karlsson/Shvartsman |
 | `zscore_threshold` (multiunit) | 27 | 2-4 SD | 3 SD | 3, 2, 4 | 2.0 |
 | ripple band | 30 | 80-180 Hz low, 200-300 Hz high | 150-250 Hz | 150-250 Hz (17 papers) | 150-250 Hz |
-| `smoothing_sigma` (ripple) | 18 | 4-100 ms | 12.5 ms | 4, 12.5, 15 | 4 ms |
+| `smoothing_sigma` (ripple) | 18 | 4-100 ms | 12.5 ms | 4, 12.5, 15 | 4 ms; 10 ms on Carey |
 | `smoothing_sigma` (multiunit) | 28 | 5-30 ms | 15 ms | 15, 10, 5 | 15 ms |
 | `speed_threshold` | 42 | 0.05-10 cm/s | 5 cm/s | 5, 4, 2 | 4 cm/s |
-| `minimum_duration` | 41 | 15-100 ms | 50 ms | 50, 100, 15 | 15 ms, 20 ms on Yu/Zugaro/Carey |
-| `maximum_duration` | 25 | 400-2000 ms | 600 ms | 500, 2000, 750 | none, except Zugaro 100 ms |
-| merge or drop gap | 14 | 20-100 ms | 50 ms | 50, 20, 40 | 0 (no exclusion) |
+| `minimum_duration` | 41 | 15-100 ms | 50 ms | 50, 100, then 15 and 40 tied | 15 ms, 20 ms on Yu/Zugaro/Carey |
+| `maximum_duration` | 25 | 400-2000 ms | 600 ms | 500, 2000, 750 | none, except Zugaro 100 ms and Long 500 ms (sharp wave) |
+| merge or drop gap | 14 | 20-100 ms | 50 ms | 50, then 20, 40 and 100 tied | 0 (no exclusion); Zugaro merges within 30 ms, Long drops within 50 ms |
 | `minimum_active_units` | 27 | 3-10 units | 5 units | 5, 4, 3 | 0 on the burst detector, 5 on Carey |
 | channels required | 27 | 13 papers use one, 10 more than one, 4 a small number | one | one | one is enough; Kay, Roumis and Zugaro pool all, Long needs two |
 
@@ -384,8 +384,9 @@ Three cautions before treating this as a recipe:
   the median is a defensible sensitivity check, not an extreme one.
 - **Some published speed values restrict analysis rather than detection**, so that row
   overstates how many papers gate detection on speed. `minimum_duration` also means
-  different things across papers: here it is the run above threshold, while many papers
-  report the duration of the final event.
+  different things across papers: on Kay, Karlsson, Roumis, Shvartsman, Yu and the HSE
+  detector it is the run above threshold, before the extension to the mean; on Zugaro,
+  Carey and Long it is the event as reported, as in many papers.
 
 ### Getting Help
 

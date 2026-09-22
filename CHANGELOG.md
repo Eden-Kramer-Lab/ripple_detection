@@ -8,10 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.0.0] - 2026-09-21
 
 Detection results change. The same recording gives different events, so upgrade
-deliberately and detect again. No name was removed and no parameter changed
-position, so the calls in your code still work. Nine signatures gained
-parameters at the end. Pin `ripple-detection>=2,<3` and record the version
-with the events that you detect. Entries marked **Breaking** change the results.
+deliberately and detect again. Two calls need editing: `filter_ripple_band` now
+requires `sampling_frequency`, and `multiunit_HSE_detector` lost one deprecated
+parameter (see Removed). Every other name and position is unchanged; nine
+signatures gained parameters at the end. Inputs that used to give a wrong or
+empty result now raise (see Fixed). Pin `ripple-detection>=2,<3` and record the
+version with the events that you detect. Entries marked **Breaking** change the
+results.
 
 ### Added
 
@@ -20,15 +23,16 @@ with the events that you detect. Entries marked **Breaking** change the results.
 - `Zugaro_ripple_detector`, the `FindRipples` algorithm of FMAToolbox. The
   bounds are at 2 SD and the peak must go above 5 SD.
 - `Long_sharp_wave_ripple_detector`, the two-channel detector of J. D. Long II.
-  It takes **raw** LFP from a pyramidal-layer channel and a stratum radiatum
-  channel.
+  Its signal parameter is `raw_lfps`: **raw** LFP from a pyramidal-layer channel
+  and a stratum radiatum channel.
 - `Carey_candidate_detector`, the candidate detector of Carey, Tanaka & van der
   Meer 2019. It combines a ripple score and a multiunit score.
 - `Shvartsman_ripple_detector`, an unpublished laboratory variant. It keeps an
   event when at least `participation_threshold` channels detect it, and reports
   which channels took part.
-- `maximum_duration` on the seven detectors that had no ceiling. It limits the
-  event as the detector reports it, not the run above the threshold.
+- `maximum_duration` on every detector without a ceiling of its own (Zugaro and
+  Long have theirs; Zugaro's now accepts `None`). It limits the event as the
+  detector reports it, not the run above the threshold.
 - `minimum_active_units` on `multiunit_HSE_detector`. Each event now reports
   `n_active_units`, the count of units with a spike in the event.
 - `band` and `transition_width` on `filter_ripple_band` and
@@ -40,14 +44,20 @@ with the events that you detect. Entries marked **Breaking** change the results.
 - `DETECTORS` and `get_detector`, which resolve a detector by name and give the
   signals that it takes. A pipeline that holds a detector by name does not need
   its own list. The signal names `RIPPLE_BAND_LFP`, `RAW_LFP_PAIR` and
-  `MULTIUNIT` are exported, so a caller can check `spec.inputs` against them.
+  `MULTIUNIT` are exported, typed as the `Literal` `SignalKind`, so a caller can
+  check `spec.inputs` against them.
 - `load_literature_parameters`, the survey of detection parameters in 57 papers
   that decode replay content.
 - `ripple_snr`, `random_state` and ranges for `ripple_frequency` and
   `ripple_duration` on `simulate_LFP`. The default call gives the same output as
   before.
-- The package root now exports `minimum_sample_count`, `sample_count_within`,
-  `nearest_sample_index`, `ripple_bandpass_filter` and `exclude_close_events`.
+- The package root now exports the helpers the detectors are built from:
+  `get_envelope`, `gaussian_smooth`, `ripple_bandpass_filter`,
+  `normalize_signal_manually`, `estimate_noise_threshold`,
+  `get_Kay_ripple_consensus_trace`, `get_Yu_ripple_consensus_trace`,
+  `exclude_movement`, `exclude_close_events`, `minimum_sample_count`,
+  `sample_count_within`, `nearest_sample_index`, `DEFAULT_RIPPLE_BAND`,
+  `DEFAULT_TRANSITION_WIDTH`, `simulate_LFP` and `simulate_time`.
 - README: tables for the choice of detector, for published parameter values, and
   for tools that this package does not implement.
 
@@ -59,10 +69,34 @@ with the events that you detect. Entries marked **Breaking** change the results.
   events at a `zscore_threshold` of 2.0 to 2.5. Kay gives 25 % more and
   Karlsson 20 % more.
 - **Breaking.** All detectors use one duration rule: inclusive sample counts,
-  rounded half up. Zugaro and Carey compared elapsed time, and Long rounded down.
+  rounded half up.
 - **Breaking.** Immobility is `speed <= speed_threshold` in all detectors.
-- **Breaking.** A duration ceiling below the minimum raises an error. Zugaro and
-  Long gave an empty result.
+- **Breaking.** A duration ceiling below the minimum raises an error.
+- **Breaking.** `filter_ripple_band` requires `sampling_frequency`. Its default
+  of 1500 Hz applied the shipped kernel to data at any rate, so 1000 Hz data was
+  filtered to 97-170 Hz and gave twice the events, and nothing downstream could
+  tell. It also filters each run of non-NaN samples on its own. Before, it
+  stitched the runs together, and the step between the two sides of a gap rang
+  through the filter: on noise with no ripples and a 5 s gap, the Kay detector
+  reported a 5 s event with a z-score near 10. A run too short to filter is
+  returned as NaN with a warning.
+- **Breaking.** A zero or undefined normalization scale raises and names the
+  channel. `normalize_signal` used to return NaN for a constant trace, zeros
+  for a masked constant trace, and for a constant channel divided by 1.0, which
+  reported that channel's raw values as z-scores: under `median_mad`, one
+  partly-disconnected channel fabricated a 9 s event with `max_thresh` of
+  32000. `normalize_signal_manually` raises instead of zeroing the channel with
+  a warning. Drop a dead channel before detecting.
+- **Breaking.** `exclude_close_events`, `exclude_movement` and
+  `exclude_movement_by_majority` return arrays of shape `(n, 2)`, and an
+  integer index array, never a bare list.
+- The Kay, Karlsson, Roumis and Shvartsman detectors compute the envelope and
+  the smoothing within each contiguous block of the samples that remain after
+  NaN rows are dropped, so neither spans a gap. The threshold test still treats
+  the blocks as adjacent. Output on data without gaps does not change.
+- Per-event statistics are found by bisection on the timestamps. They took
+  5.5 s for half an hour of 1500 Hz data with 500 events, and minutes for a
+  day; they take 0.03 s. The values do not change.
 - `Karlsson_ripple_detector` calculates its per-event z-score statistics on the
   maximum across channels, not on the mean. The events and their bounds do not
   change.
@@ -98,14 +132,33 @@ with the events that you detect. Entries marked **Breaking** change the results.
 - **Breaking.** `max_thresh` is now the largest threshold at which the detector
   would still find the event. Before, it could fall below `zscore_threshold`,
   and on noise every Karlsson event did, down to -0.16.
-- **Breaking.** `Kay_ripple_detector` returns an empty result for an all-NaN
-  input. Before, it raised an error. The other detectors still raise.
-- These inputs now raise a clear error. Before, they gave an empty result, or
-  failed with a message about something else:
-  - a normalization mask that selects no samples, in any detector;
-  - an all-NaN series or a negative threshold, in `segment_boolean_series` and
-    `threshold_by_zscore`;
-  - `multiunit` data of the wrong shape, which raised an `AxisError` before.
+- These inputs now raise a clear error. Before, they gave a wrong or empty
+  result, or failed with a message about something else:
+  - time that is not increasing, in every detector: the event and speed
+    lookups bisect the timestamps and returned plausible events on unsorted
+    time;
+  - timestamps that mostly repeat: the median step was zero, the minimum
+    duration became one sample, and every single-sample crossing was an event;
+  - an input whose every sample holds a NaN, in every detector;
+  - a normalization mask that selects no samples, or is not boolean (a
+    forgotten comparison made every nonzero speed count as immobile);
+  - a series holding NaN, or a negative threshold, in `segment_boolean_series`
+    and `threshold_by_zscore`;
+  - `multiunit` data of the wrong shape, which raised an `AxisError` before;
+  - a Carey multiunit score that never rises above its baseline, which z-scored
+    to NaN and returned no events;
+  - in `simulate_LFP`, a ripple time outside `time`, a non-positive duration,
+    or a frequency outside the Nyquist range, each of which returned an
+    all-NaN, empty or aliased signal.
+- The detectors warn when removing NaN rows changes the median time step by
+  more than a fifth, as speed sampled at half the LFP rate does, since the
+  smoothing then assumes a rate the data no longer has.
+- `Zugaro_ripple_detector` crashed with a broadcast error when a block of
+  finite samples was shorter than its smoothing window. Such a block is treated
+  as missing.
+- `Carey_candidate_detector` validates `theta_lfp` before detecting, not only
+  when a candidate survives.
+- `nearest_sample_index` returned -1 for a one-sample time array.
 - `get_Kay_ripple_consensus_trace` no longer smooths across a gap when you give
   it `time`. It then operates on each continuous block. `Yu_ripple_detector`
   passes `time`. `Kay_ripple_detector` does not: it removes the rows that hold
