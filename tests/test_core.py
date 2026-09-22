@@ -9,8 +9,6 @@ from scipy.signal import filtfilt, freqz
 from scipy.stats import median_abs_deviation, zscore
 
 from ripple_detection.core import (
-    _extend_segment,
-    _find_containing_interval,
     _get_ripplefilter_kernel,
     estimate_noise_threshold,
     exclude_close_events,
@@ -113,33 +111,36 @@ class TestSegmentDurationCountsSamples:
         assert len(segment_boolean_series(series, 0.015)) == 0
 
 
-@pytest.mark.parametrize(
-    ("interval_candidates", "target_interval", "expected_interval"),
-    [
-        ([(1, 2), (5, 7)], (6, 7), (5, 7)),
-        ([(1, 2), (5, 7)], (1, 2), (1, 2)),
-        ([(1, 2), (5, 7), (20, 30)], (5, 6), (5, 7)),
-        ([(1, 2), (5, 7), (20, 30)], (24, 26), (20, 30)),
-    ],
-)
-def test_find_containing_interval(interval_candidates, target_interval, expected_interval):
-    test_interval = _find_containing_interval(interval_candidates, target_interval)
-    assert np.all(test_interval == expected_interval)
+def _reference_threshold_to_mean(values, n_min, threshold):
+    """Slow reference: walk out from each long enough run above threshold to
+    the samples above zero, one event per containing run."""
+    events = set()
+    start = 0
+    while start < len(values):
+        if values[start] < threshold:
+            start += 1
+            continue
+        stop = start
+        while stop < len(values) and values[stop] >= threshold:
+            stop += 1
+        if stop - start >= n_min:
+            left, right = start, stop - 1
+            while left > 0 and values[left - 1] >= 0:
+                left -= 1
+            while right < len(values) - 1 and values[right + 1] >= 0:
+                right += 1
+            events.add((left, right))
+        start = stop
+    return sorted(events)
 
 
-@pytest.mark.parametrize(
-    ("interval_candidates", "target_intervals", "expected_intervals"),
-    [
-        ([(1, 2), (5, 7)], [(6, 7)], [(5, 7)]),
-        ([(1, 2), (5, 7)], [(1, 2)], [(1, 2)]),
-        ([(1, 2), (5, 7), (20, 30)], [(5, 6)], [(5, 7)]),
-        ([(1, 2), (5, 7), (20, 30)], [(24, 26), (6, 7)], [(20, 30), (5, 7)]),
-        ([(1, 2), (5, 7), (20, 30)], [(24, 26), (27, 28)], [(20, 30)]),
-    ],
-)
-def test__extend_segment(interval_candidates, target_intervals, expected_intervals):
-    test_intervals = _extend_segment(target_intervals, interval_candidates)
-    assert np.all(test_intervals == expected_intervals)
+@pytest.mark.parametrize("seed", range(20))
+def test_threshold_by_zscore_matches_a_slow_reference(seed):
+    rng = np.random.default_rng(seed)
+    values = np.convolve(rng.standard_normal(3000), np.ones(15) / 4, mode="same")
+    time = np.arange(3000) / 1000.0
+    expected = [(time[a], time[b]) for a, b in _reference_threshold_to_mean(values, 15, 1.5)]
+    assert threshold_by_zscore(values, time, 0.015, 1.5) == expected
 
 
 @pytest.mark.parametrize(
@@ -1719,6 +1720,15 @@ class TestEndpointSpeedRule:
 
 
 class TestHelperErrorPaths:
+    def test_a_threshold_run_leaving_the_mean_run_raises(self):
+        time = np.arange(100) / 1000.0
+        is_above_mean = np.zeros(100, dtype=bool)
+        is_above_mean[10:30] = True
+        is_above_threshold = np.zeros(100, dtype=bool)
+        is_above_threshold[20:50] = True
+        with pytest.raises(ValueError, match="not inside a run above the mean"):
+            extend_threshold_to_mean(is_above_mean, is_above_threshold, time, 0.01)
+
     def test_threshold_by_zscore_rejects_a_negative_threshold(self):
         with pytest.raises(ValueError, match="must be non-negative"):
             threshold_by_zscore(np.zeros(100), np.arange(100) / 1000.0, 0.015, -1.0)
@@ -1730,14 +1740,6 @@ class TestHelperErrorPaths:
 
     def test_nearest_sample_of_a_single_timestamp_is_it(self):
         np.testing.assert_array_equal(nearest_sample_index([2.0], [0.0, 5.0]), [0, 0])
-
-    def test_containing_interval_must_start_before_and_cover_the_target(self):
-        intervals = [(1.0, 2.0), (3.0, 4.0)]
-        assert _find_containing_interval(intervals, (3.2, 3.5)) == (3.0, 4.0)
-        with pytest.raises(ValueError, match="No candidate interval starts"):
-            _find_containing_interval(intervals, (0.5, 0.6))
-        with pytest.raises(ValueError, match="does not contain"):
-            _find_containing_interval(intervals, (1.5, 2.5))
 
 
 class TestCloseEventGap:

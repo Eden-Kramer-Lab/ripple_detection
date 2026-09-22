@@ -440,15 +440,64 @@ def extend_threshold_to_mean(
         extended to mean crossings.
 
     """
-    is_above_threshold = pd.Series(is_above_threshold, index=time)
-    is_above_mean = pd.Series(is_above_mean, index=time)
-    above_mean_segments = segment_boolean_series(
-        is_above_mean, minimum_duration=minimum_duration
+    time = np.asarray(time)
+    bounds, _ = _runs_extended_to_mean(
+        np.asarray(is_above_mean, dtype=bool),
+        np.asarray(is_above_threshold, dtype=bool),
+        minimum_sample_count(time, minimum_duration),
     )
-    above_threshold_segments = segment_boolean_series(
-        is_above_threshold, minimum_duration=minimum_duration
-    )
-    return sorted(_extend_segment(above_threshold_segments, above_mean_segments))
+    return [(time[start], time[stop - 1]) for start, stop in bounds]
+
+
+def _runs_extended_to_mean(
+    is_above_mean: BoolArray, is_above_threshold: BoolArray, n_min: int
+) -> tuple[IntArray, IntArray]:
+    """The above-mean runs that contain an above-threshold run of ``n_min``
+    samples or more.
+
+    Parameters
+    ----------
+    is_above_mean, is_above_threshold : ndarray of bool, shape (n_time,)
+    n_min : int
+        Fewest consecutive above-threshold samples that make a candidate.
+
+    Returns
+    -------
+    bounds : ndarray of int, shape (n_events, 2)
+        Half-open ``[start, stop)`` sample bounds of each containing above-mean
+        run, in order, once however many candidates it holds.
+    longest : ndarray of int, shape (n_events,)
+        Sample count of the longest candidate inside each.
+
+    Raises
+    ------
+    ValueError
+        If a candidate is not inside an above-mean run, which the masks of a
+        non-negative threshold on one trace rule out.
+
+    """
+    candidates = _boolean_run_bounds(is_above_threshold)
+    candidates = candidates[(candidates[:, 1] - candidates[:, 0]) >= n_min]
+    if len(candidates) == 0:
+        return np.empty((0, 2), dtype=int), np.empty(0, dtype=int)
+    above_mean = _boolean_run_bounds(is_above_mean)
+    # the above-mean run starting at or before each candidate, by bisection
+    containing = np.searchsorted(above_mean[:, 0], candidates[:, 0], side="right") - 1
+    if containing[0] < 0:
+        msg = (
+            f"No candidate interval starts at or before sample {candidates[0, 0]}, so "
+            "none can contain the run above threshold."
+        )
+        raise ValueError(msg)
+    outside = candidates[:, 1] > above_mean[containing, 1]
+    if np.any(outside):
+        run = candidates[np.flatnonzero(outside)[0]]
+        msg = f"The run above threshold at samples {tuple(run)} is not inside a run above the mean."
+        raise ValueError(msg)
+    runs, which = np.unique(containing, return_inverse=True)
+    longest = np.zeros(len(runs), dtype=int)
+    np.maximum.at(longest, which, candidates[:, 1] - candidates[:, 0])
+    return above_mean[runs], longest
 
 
 def nearest_sample_index(time: ArrayLike, query_times: ArrayLike) -> FloatArray:
@@ -665,76 +714,6 @@ def exclude_movement_by_majority(
     )
     keep = (n_known > 0) & (fraction >= majority_threshold)
     return events[keep], np.flatnonzero(keep)
-
-
-def _find_containing_interval(
-    interval_candidates: list[tuple[float, float]], target_interval: tuple[float, float]
-) -> tuple[float, float]:
-    """Find the interval that contains the target interval.
-
-    Identifies which candidate interval contains the target interval by finding
-    the candidate with the closest start time that precedes the target start.
-    Assumes one candidate interval contains the target (e.g., segments above
-    mean contain segments above threshold).
-
-    Parameters
-    ----------
-    interval_candidates : list of tuple
-        List of (start, end) tuples representing candidate intervals.
-    target_interval : tuple
-        (start, end) tuple representing the target interval to be contained.
-
-    Returns
-    -------
-    containing_interval : tuple
-        The (start, end) tuple from candidates that contains the target.
-
-    """
-    if len(interval_candidates) == 0:
-        msg = f"No candidate interval exists, so none can contain {tuple(target_interval)}."
-        raise ValueError(msg)
-    candidate_start_times = np.asarray(interval_candidates)[:, 0]
-    starts_at_or_before = np.flatnonzero(candidate_start_times <= target_interval[0])
-    if starts_at_or_before.size == 0:
-        msg = (
-            f"No candidate interval starts at or before {target_interval[0]}, so "
-            "none can contain the target interval."
-        )
-        raise ValueError(msg)
-    containing = interval_candidates[int(np.max(starts_at_or_before))]
-    if containing[1] < target_interval[1]:
-        msg = (
-            f"The nearest preceding interval {containing} does not contain the "
-            f"target interval {tuple(target_interval)}."
-        )
-        raise ValueError(msg)
-    return containing
-
-
-def _extend_segment(
-    segments_to_extend: list[tuple[float, float]],
-    containing_segments: list[tuple[float, float]],
-) -> list[tuple[float, float]]:
-    """Extends the boundaries of a segment if it is a subset of one of the
-    containing segments.
-
-    Parameters
-    ----------
-    segments_to_extend : list of 2-element tuples
-        Elements are the start and end times
-    containing_segments : list of 2-element tuples
-        Elements are the start and end times
-
-    Returns
-    -------
-    extended_segments : list of 2-element tuples
-
-    """
-    segments = [
-        _find_containing_interval(containing_segments, segment)
-        for segment in segments_to_extend
-    ]
-    return list(set(segments))  # remove duplicate segments
 
 
 def get_envelope(data: ArrayLike, axis: int = 0) -> FloatArray:
@@ -1139,11 +1118,8 @@ def threshold_by_zscore(
         )
         raise ValueError(msg)
     zscored = np.asarray(zscored_data, dtype=float)
-    is_above_mean = zscored >= 0
-    is_above_threshold = zscored >= zscore_threshold
-
     return extend_threshold_to_mean(
-        is_above_mean, is_above_threshold, time, minimum_duration=minimum_duration
+        zscored >= 0, zscored >= zscore_threshold, time, minimum_duration=minimum_duration
     )
 
 

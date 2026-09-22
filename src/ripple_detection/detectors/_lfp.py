@@ -11,8 +11,8 @@ from numpy.typing import ArrayLike
 from ripple_detection.core import (
     FloatArray,
     IntArray,
-    _boolean_run_bounds,
     _is_immobile_at_endpoints,
+    _runs_extended_to_mean,
     estimate_noise_threshold,
     exclude_close_events,
     exclude_movement,
@@ -273,25 +273,11 @@ def _extract_Yu_ripple_events(
         raise ValueError(msg)
     trace = np.asarray(trace, dtype=float)
     time = np.asarray(time, dtype=float)
-    n_min = minimum_sample_count(time, minimum_duration)
-
-    supra_runs = _boolean_run_bounds(trace >= threshold)
-    supra_runs = supra_runs[(supra_runs[:, 1] - supra_runs[:, 0]) >= n_min]
-    if len(supra_runs) == 0:
-        return np.empty((0, 2)), np.empty(0, dtype=int)
-
-    above_zero_runs = _boolean_run_bounds(trace >= 0)
-    # the above-zero run containing each qualifying run's first sample
-    containing = np.searchsorted(above_zero_runs[:, 0], supra_runs[:, 0], side="right") - 1
-    run_lengths = supra_runs[:, 1] - supra_runs[:, 0]
-
-    event_times = []
-    n_suprathreshold = []
-    for run_index in np.unique(containing):
-        start, stop = above_zero_runs[run_index]
-        event_times.append((time[start], time[stop - 1]))
-        n_suprathreshold.append(int(run_lengths[containing == run_index].max()))
-    return np.asarray(event_times, dtype=float), np.asarray(n_suprathreshold, dtype=int)
+    bounds, n_suprathreshold = _runs_extended_to_mean(
+        trace >= 0, trace >= threshold, minimum_sample_count(time, minimum_duration)
+    )
+    event_times = np.column_stack([time[bounds[:, 0]], time[bounds[:, 1] - 1]])
+    return np.asarray(event_times, dtype=float).reshape(-1, 2), n_suprathreshold
 
 
 def Shvartsman_ripple_detector(
