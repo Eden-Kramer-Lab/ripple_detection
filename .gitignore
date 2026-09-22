@@ -105,3 +105,4 @@ ENV/
 
 # Auto-generated version file
 src/ripple_detection/_version.py
+ripple_detection/_version.py
