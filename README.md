@@ -179,9 +179,13 @@ ripple-band LFP almost none, and spike counts are non-negative whole numbers.
 
 ```python
 spec = get_detector("Long_sharp_wave_ripple_detector")
-spec.check_inputs(filtered_lfps, sampling_frequency=sampling_frequency)
-# ValueError: Long_sharp_wave_ripple_detector takes raw_lfp_pair as signal 1,
-# unfiltered LFP, but channel(s) hold only 0%, 0% ... looks band-pass filtered.
+try:
+    spec.check_inputs(filtered_lfps[:, :2], sampling_frequency=sampling_frequency)
+except ValueError as error:
+    print(error)
+# Long_sharp_wave_ripple_detector takes raw_lfp_pair as signal 1, unfiltered LFP,
+# but channel(s) hold only 0%, 0% of their variance below 100 Hz, which looks
+# band-pass filtered. Pass the raw signal; this detector filters it itself.
 ```
 
 ## Output Format
