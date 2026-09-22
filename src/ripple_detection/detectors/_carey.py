@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
 from scipy.ndimage import convolve1d, gaussian_filter1d
-from scipy.signal import butter, sosfiltfilt
+from scipy.signal import butter, oaconvolve, sosfiltfilt
 
 from ripple_detection.core import (
     BoolArray,
@@ -72,6 +72,31 @@ def _contained_in_intervals(event_bounds: IntArray, intervals: IntArray) -> Bool
         event_bounds[:, [1]] <= intervals[:, 1]
     )
     return np.asarray(inside.any(axis=1), dtype=bool)
+
+
+_SPIKE_COST_RATIO = 20_000
+"""Adding the kernel at one spike costs about as much as 20,000 samples times
+taps of direct convolution (3.6 us against 0.18 ns, measured at 1500 Hz)."""
+
+
+def _convolve_spikes(counts: FloatArray, kernel: FloatArray) -> FloatArray:
+    """``convolve1d(counts, kernel, mode="constant")`` for an odd symmetric kernel.
+
+    A spike train is mostly zeros, so when adding the kernel at each spike
+    is cheaper than convolving every sample, that is what this does: seven
+    times faster for 100 units at a few hertz, sampled at 1500 Hz. The sum
+    at a sample reached by two spikes is taken in a different order than the
+    direct convolution's, so the two agree to rounding (1e-16), not bit for
+    bit. Dense trains are convolved directly.
+    """
+    spikes = np.flatnonzero(counts)
+    if len(spikes) * _SPIKE_COST_RATIO >= len(counts) * len(kernel):
+        return np.asarray(convolve1d(counts, kernel, mode="constant"), dtype=float)
+    radius = len(kernel) // 2
+    padded = np.zeros(len(counts) + 2 * radius)
+    for spike in spikes:
+        padded[spike : spike + len(kernel)] += counts[spike] * kernel
+    return padded[radius : radius + len(counts)]
 
 
 def _theta_envelope(
@@ -323,14 +348,16 @@ def Carey_candidate_detector(
     summed = np.full(n_time, np.nan)
     baseline = np.full(n_time, np.nan)
     for start, stop in blocks:
-        # convolve1d with zero padding equals np.convolve(..., "same") for these
-        # odd symmetric kernels, and also works on a block shorter than the kernel
+        # zero padding at the block edges, as np.convolve(..., "same") pads, for
+        # these odd symmetric kernels; a block shorter than a kernel works too
         block_sum = np.zeros(stop - start)
         for unit in multiunit[start:stop].T:
-            block_sum += np.minimum(convolve1d(unit, spike_kernel, mode="constant"), cap)
+            block_sum += np.minimum(_convolve_spikes(unit, spike_kernel), cap)
         summed[start:stop] = block_sum
-        baseline[start:stop] = convolve1d(
-            np.minimum(baseline_cap * cap, block_sum), baseline_kernel, mode="constant"
+        # FFT convolution: the 250 ms baseline kernel has thousands of taps,
+        # and the capped sum is dense (equal to convolve1d to rounding, 1e-15)
+        baseline[start:stop] = oaconvolve(
+            np.minimum(baseline_cap * cap, block_sum), baseline_kernel, mode="same"
         )
     mean_summed = np.nanmean(summed)
     if mean_summed <= 0:

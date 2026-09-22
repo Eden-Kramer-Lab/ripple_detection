@@ -38,6 +38,7 @@ from ripple_detection.detectors import _events as events_module
 from ripple_detection.detectors._blocks import _contiguous_valid_blocks
 from ripple_detection.detectors._carey import (
     _contained_in_intervals,
+    _convolve_spikes,
     _state_intervals,
     _theta_envelope,
 )
@@ -4096,6 +4097,25 @@ class TestInputContents:
         filtered = filter_ripple_band(raw, sampling_frequency=1500)
         assert np.isnan(filtered[3000]).all()
         assert np.isfinite(np.delete(filtered, 3000, axis=0)).all()
+
+
+class TestSparseSpikeConvolution:
+    @pytest.mark.parametrize(
+        ("rate", "taps"), [(0.002, 301), (0.2, 301), (0.002, 6001), (0.0, 301)]
+    )
+    def test_equals_the_direct_convolution_to_rounding(self, rate, taps):
+        from scipy.ndimage import convolve1d
+
+        rng = np.random.default_rng(0)
+        counts = rng.poisson(rate, 50_000).astype(float)
+        counts[:3] = 2.0  # spikes at the edge, where the kernel runs off the data
+        kernel = np.exp(-0.5 * np.linspace(-5, 5, taps) ** 2)
+        np.testing.assert_allclose(
+            _convolve_spikes(counts, kernel),
+            convolve1d(counts, kernel, mode="constant"),
+            rtol=0,
+            atol=1e-12,
+        )
 
 
 class TestRemainingErrorPaths:
