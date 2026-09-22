@@ -1720,6 +1720,15 @@ def noise_threshold_diagnostics(
     )
 
 
+def _unit_area_gaussian(sigma_samples: float, n_sd: float) -> NDArray:
+    """Unit-area Gaussian kernel truncated at ``n_sd`` standard deviations
+    (vandermeerlab ``gausskernel(R, S)`` with ``R = n_sd * S``)."""
+    radius = int(np.ceil(n_sd * sigma_samples))
+    x = np.arange(-radius, radius + 1)
+    kernel = np.exp(-(x**2) / (2.0 * sigma_samples**2))
+    return kernel / kernel.sum()
+
+
 def get_multiunit_population_firing_rate(
     multiunit: ArrayLike, sampling_frequency: float, smoothing_sigma: float = 0.015
 ) -> NDArray:

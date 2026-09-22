@@ -169,6 +169,11 @@ raises on zero rows; that is hdmf's, not this package's.
 - Per-event statistics are found by bisection on the timestamps. They took
   5.5 s for half an hour of 1500 Hz data with 500 events, and minutes for a
   day; they take 0.03 s. The values do not change.
+- `ripple_detection.detectors` is a package of eight modules rather than one
+  file of 3000 lines: validation, the missing-sample blocks, the shared event
+  tail and statistics, the envelope-based detectors, and one module each for
+  Zugaro, Long, Carey and the HSE detector. Every public name is still
+  importable from `ripple_detection.detectors` and from the package root.
 - Ruff replaces black as the formatter and is now the only linter.
 - Documentation. Each reference has a DOI that CrossRef resolved. Each link to
   laboratory code gives a file at a commit, and states its license. Each

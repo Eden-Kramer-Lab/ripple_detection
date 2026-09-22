@@ -143,7 +143,7 @@ git push origin vX.Y.Z
 
 ### Core Module Structure
 
-The package is organized into five modules:
+The package is organized into five modules, one of them a package:
 
 1. **[ripple_detection/core.py](ripple_detection/core.py)** - Low-level signal processing utilities
    - Bandpass filtering for ripple band (150-250 Hz)
@@ -153,16 +153,15 @@ The package is organized into five modules:
    - Movement exclusion based on speed
    - Utility functions for time series segmentation
 
-2. **[ripple_detection/detectors.py](ripple_detection/detectors.py)** - High-level detection algorithms
-   - `Kay_ripple_detector` - Multi-channel consensus approach (Kay et al. 2016)
-   - `Karlsson_ripple_detector` - Per-channel detection with merging (Karlsson & Frank 2009)
-   - `Roumis_ripple_detector` - Per-channel envelopes averaged (Frank-lab variant, unpublished)
-   - `Shvartsman_ripple_detector` - Per-channel detection requiring a minimum number of participating channels (unpublished)
-   - `Yu_ripple_detector` - Median consensus with a data-driven noise-percentile threshold (Yu et al. 2017)
-   - `Zugaro_ripple_detector` - FMAToolbox `FindRipples` two-threshold rule
-   - `Long_sharp_wave_ripple_detector` - Sharp wave + ripple power on two raw channels, k-means split (Long, `DetectSWR`)
-   - `Carey_candidate_detector` - Joint ripple-power × multiunit score (Carey, Tanaka & van der Meer 2019)
-   - `multiunit_HSE_detector` - Multiunit High Synchrony Event detector (spikes only)
+2. **[ripple_detection/detectors/](ripple_detection/detectors/)** - High-level detection algorithms, a package whose `__init__` re-exports the public names so `from ripple_detection.detectors import Kay_ripple_detector` still works
+   - `_validation.py` - shape, length, unit and duration-limit checks
+   - `_blocks.py` - the missing-sample policy: valid samples, contiguous blocks, block-wise transforms and threshold tests
+   - `_events.py` - the shared detection tail, duration ceiling, active-unit counts, and `_get_event_stats`
+   - `_lfp.py` - `Kay_ripple_detector` (Kay et al. 2016), `Karlsson_ripple_detector` (Karlsson & Frank 2009), `Roumis_ripple_detector` (Frank-lab variant, unpublished), `Shvartsman_ripple_detector` (unpublished), `Yu_ripple_detector` (Yu et al. 2017), and the two consensus traces
+   - `_zugaro.py` - `Zugaro_ripple_detector`, the FMAToolbox `FindRipples` two-threshold rule
+   - `_long.py` - `Long_sharp_wave_ripple_detector`, sharp wave + ripple power on two raw channels, k-means split (Long, `DetectSWR`)
+   - `_carey.py` - `Carey_candidate_detector`, joint ripple-power × multiunit score (Carey, Tanaka & van der Meer 2019)
+   - `_hse.py` - `multiunit_HSE_detector`, multiunit High Synchrony Events (spikes only)
    - The README's "Choosing a detector" table is the reference for how their conventions differ
    - All detectors return pandas DataFrames with event statistics
 

@@ -12,7 +12,6 @@ from _synthetic import (
     _synthetic_two_channel_lfp,
 )
 
-import ripple_detection.detectors as detectors_module
 from ripple_detection import (
     Carey_candidate_detector,
     Karlsson_ripple_detector,
@@ -30,20 +29,21 @@ from ripple_detection.core import (
 )
 from ripple_detection.detectors import (
     Roumis_ripple_detector,
-    _contained_in_intervals,
-    _count_active_units,
-    _exclude_long_events,
-    _extract_Yu_ripple_events,
-    _firfilt,
-    _get_event_stats,
-    _max_sustained_zscore,
-    _state_intervals,
-    _two_threshold_events,
-    _zugaro_smoothing_window,
     get_Kay_ripple_consensus_trace,
     get_Yu_ripple_consensus_trace,
     multiunit_HSE_detector,
 )
+from ripple_detection.detectors import _events as events_module
+from ripple_detection.detectors._carey import _contained_in_intervals, _state_intervals
+from ripple_detection.detectors._events import (
+    _count_active_units,
+    _exclude_long_events,
+    _get_event_stats,
+    _max_sustained_zscore,
+)
+from ripple_detection.detectors._lfp import _extract_Yu_ripple_events
+from ripple_detection.detectors._long import _firfilt
+from ripple_detection.detectors._zugaro import _two_threshold_events, _zugaro_smoothing_window
 from ripple_detection.simulate import simulate_LFP
 
 
@@ -2738,14 +2738,14 @@ class TestMaxThreshMinimumDuration:
     def _spy_on_max_sustained_zscore():
         """Patch _max_sustained_zscore to record the minimum_duration it receives while
         still delegating to the real implementation."""
-        real = detectors_module._max_sustained_zscore
+        real = events_module._max_sustained_zscore
         seen: list[float] = []
 
         def spy(time, data, minimum_duration=0.015):
             seen.append(minimum_duration)
             return real(time, data, minimum_duration)
 
-        return patch.object(detectors_module, "_max_sustained_zscore", spy), seen
+        return patch.object(events_module, "_max_sustained_zscore", spy), seen
 
     def test_karlsson_forwards_minimum_duration_to_max_sustained_zscore(
         self, time_3s, dual_lfp_with_cooccur_ripples, stationary_speed, sampling_frequency

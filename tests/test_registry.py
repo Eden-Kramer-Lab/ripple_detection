@@ -24,8 +24,9 @@ def _exported_detectors():
         name
         for name in ripple_detection.__all__
         if name.endswith("_detector")
-        and getattr(getattr(ripple_detection, name), "__module__", "")
-        == "ripple_detection.detectors"
+        and getattr(getattr(ripple_detection, name), "__module__", "").startswith(
+            "ripple_detection.detectors"
+        )
     }
 
 
