@@ -1493,7 +1493,12 @@ it, ``DFFunctions/AG_extractRipplesJY.m`` in
 https://github.com/droumis/FFPhy/tree/fce2048/DFFunctions, is public and shows
 the per-tetrode z-score, the median, and the immobility noise sample this
 package reproduces.
+
+Read-only, because ``NoiseThresholdDiagnostics.histogram_edges`` hands this
+array to the caller, and a change made there in place would move every later
+threshold estimate.
 """
+YU_HISTOGRAM_EDGES.flags.writeable = False
 
 YU_MODE_SMOOTHING_WINDOW = 11
 """Moving-average window (in bins) used to locate the histogram mode."""

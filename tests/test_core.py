@@ -970,6 +970,11 @@ class TestEstimateNoiseThreshold:
         )
         assert diag.flank_ratio == pytest.approx(expected_ratio)
 
+    def test_the_default_grid_cannot_be_changed_through_the_diagnostics(self):
+        diag = noise_threshold_diagnostics(np.random.default_rng(2).normal(-1.0, 0.5, 100_000))
+        with pytest.raises(ValueError, match="read-only"):
+            diag.histogram_edges[:] -= 1.0
+
     def test_flank_ratio_is_infinite_when_mean_is_at_or_below_the_mode(self):
         # left-skewed sample: the mode lies above the mean, so the mirrored
         # distribution trivially reaches past the mean
