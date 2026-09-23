@@ -359,7 +359,7 @@ lfp = simulate_LFP(
     ripple_snr=5,                  # ripple peak = 5 x ripple-band noise SD
     ripple_frequency=(150, 250),   # drawn per ripple
     ripple_duration=(0.04, 0.12),  # drawn per ripple, seconds
-    random_state=0,
+    rng=0,
 )
 ```
 
@@ -371,7 +371,7 @@ ground truth:
 ```python
 from ripple_detection import filter_ripple_band, Kay_ripple_detector, simulate_session
 
-session = simulate_session(time, [2.0, 5.0, 8.0], n_channels=4, n_units=20, ripple_snr=4, random_state=0)
+session = simulate_session(time, [2.0, 5.0, 8.0], n_channels=4, n_units=20, ripple_snr=4, rng=0)
 filtered = filter_ripple_band(session.lfps, sampling_frequency=session.sampling_frequency)
 events = Kay_ripple_detector(session.time, filtered, session.speed, session.sampling_frequency)
 session.ripple_windows      # (n_ripples, 2): the interval each event should overlap

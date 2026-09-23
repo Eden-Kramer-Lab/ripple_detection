@@ -889,10 +889,10 @@ class TestKarlssonEventStatistics:
             ripple_times=[1.0, 2.0],
             noise_amplitude=1.3,
             ripple_snr=6.0,
-            random_state=1,
+            rng=1,
         )
         quiet = [
-            simulate_LFP(time_3s, ripple_times=[], noise_amplitude=1.3, random_state=s)
+            simulate_LFP(time_3s, ripple_times=[], noise_amplitude=1.3, rng=s)
             for s in (2, 3, 4, 5)
         ]
         lfps = filter_ripple_band(np.column_stack([loud, *quiet]), 1500)
@@ -1113,7 +1113,7 @@ class TestYuConsensusTrace:
                 ripple_times=[1.1],
                 noise_amplitude=1.2,
                 ripple_amplitude=1.5,
-                random_state=s,
+                rng=s,
             )
             for s in (11, 12, 13)
         ]
@@ -1190,7 +1190,7 @@ class TestYuConsensusTrace:
                 ripple_times=[],
                 noise_amplitude=1.2,
                 ripple_amplitude=1.5,
-                random_state=s,
+                rng=s,
             )
             for s in (21, 22, 23, 24)
         ]
@@ -1199,7 +1199,7 @@ class TestYuConsensusTrace:
             ripple_times=[1.5],
             noise_amplitude=1.2,
             ripple_amplitude=6.0,
-            random_state=25,
+            rng=25,
         )
         lfps = filter_ripple_band(np.column_stack([*quiet, loud]), 1500)
         yu = get_Yu_ripple_consensus_trace(lfps, sampling_frequency)
@@ -1502,7 +1502,7 @@ class TestYuRippleDetector:
                         ripple_times=planted,
                         noise_amplitude=1.2,
                         ripple_snr=5.0,
-                        random_state=seed,
+                        rng=seed,
                     )
                     for seed in (1, 2, 3, 4)
                 ]
@@ -1524,7 +1524,7 @@ class TestYuRippleDetector:
         lfps = filter_ripple_band(
             np.column_stack(
                 [
-                    simulate_LFP(time, ripple_times=[], noise_amplitude=1.2, random_state=seed)
+                    simulate_LFP(time, ripple_times=[], noise_amplitude=1.2, rng=seed)
                     for seed in (1, 2, 3, 4)
                 ]
             ),
@@ -1552,7 +1552,7 @@ class TestYuRippleDetector:
                         noise_type="brown",
                         noise_amplitude=1.2,
                         ripple_amplitude=1.5,
-                        random_state=seed,
+                        rng=seed,
                     )
                     for seed in (1, 2, 3, 4)
                 ]
@@ -1873,9 +1873,7 @@ class TestLongSharpWaveRippleDetector:
 
     def test_recovers_planted_sharp_wave_ripples(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
-        events = Long_sharp_wave_ripple_detector(
-            time, lfp, stationary, self.FS, random_state=0
-        )
+        events = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=0)
         hits = [
             any((events.start_time <= time[c]) & (events.end_time >= time[c]))
             for c in self.EVENTS
@@ -1887,9 +1885,7 @@ class TestLongSharpWaveRippleDetector:
 
     def test_ripple_without_sharp_wave_is_not_detected(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS, sharp_wave=False)
-        events = Long_sharp_wave_ripple_detector(
-            time, lfp, stationary, self.FS, random_state=0
-        )
+        events = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=0)
         hits = [
             any((events.start_time <= time[c]) & (events.end_time >= time[c]))
             for c in self.EVENTS
@@ -1898,9 +1894,7 @@ class TestLongSharpWaveRippleDetector:
 
     def test_sharp_wave_without_ripple_is_not_detected(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS, ripple=False)
-        events = Long_sharp_wave_ripple_detector(
-            time, lfp, stationary, self.FS, random_state=0
-        )
+        events = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=0)
         hits = [
             any((events.start_time <= time[c]) & (events.end_time >= time[c]))
             for c in self.EVENTS
@@ -1912,23 +1906,28 @@ class TestLongSharpWaveRippleDetector:
     ):
         edge_events = [2000, 38000, *self.EVENTS]
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, edge_events)
-        events = Long_sharp_wave_ripple_detector(
-            time, lfp, stationary, self.FS, random_state=0
-        )
+        events = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=0)
         assert np.all(events.peak_time >= 5.0)
         assert np.all(events.peak_time <= time[-1] - 5.0)
 
     def test_seeded_clustering_is_reproducible(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
-        a = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, random_state=3)
-        b = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, random_state=3)
+        a = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=3)
+        b = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=3)
         pd.testing.assert_frame_equal(a, b)
+
+    def test_a_random_state_instance_is_refused(self, time, stationary):
+        """As the simulators refuse one: default_rng would accept it and draw a
+        different stream than the seed it was made from."""
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        with pytest.raises(TypeError, match="not a RandomState"):
+            Long_sharp_wave_ripple_detector(
+                time, lfp, stationary, self.FS, rng=np.random.RandomState(0)
+            )
 
     def test_output_columns(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
-        events = Long_sharp_wave_ripple_detector(
-            time, lfp, stationary, self.FS, random_state=0
-        )
+        events = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=0)
         for column in (
             "start_time",
             "end_time",
@@ -1955,10 +1954,8 @@ class TestLongSharpWaveRippleDetector:
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
         speed = stationary.copy()
         speed[6800:7200] = 10.0  # moving through the first event
-        events = Long_sharp_wave_ripple_detector(
-            time, lfp, stationary, self.FS, random_state=0
-        )
-        moved = Long_sharp_wave_ripple_detector(time, lfp, speed, self.FS, random_state=0)
+        events = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=0)
+        moved = Long_sharp_wave_ripple_detector(time, lfp, speed, self.FS, rng=0)
         assert any((events.start_time <= time[7000]) & (events.end_time >= time[7000]))
         assert not any((moved.start_time <= time[7000]) & (moved.end_time >= time[7000]))
 
@@ -1977,7 +1974,7 @@ class TestLongSharpWaveRippleDetector:
         # 10 s is the longest separation the check admits, and every
         # consecutive pair of EVENTS is closer than that
         events = Long_sharp_wave_ripple_detector(
-            time, lfp, stationary, self.FS, minimum_separation=10.0, random_state=0
+            time, lfp, stationary, self.FS, minimum_separation=10.0, rng=0
         )
         assert len(events) <= 1
 
@@ -1990,7 +1987,7 @@ class TestLongSharpWaveRippleDetector:
             self.FS,
             minimum_sharp_wave_duration=0.001,
             maximum_sharp_wave_duration=0.002,
-            random_state=0,
+            rng=0,
         )
         assert events.empty
         assert "start_time" in events.columns
@@ -2008,12 +2005,10 @@ class TestLongSharpWaveRippleDetector:
         are treated as missing with a warning; the events on the long side
         are found as before."""
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
-        clean = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, random_state=0)
+        clean = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=0)
         lfp[100, 0] = np.nan  # leaves a 100-sample block before it
         with pytest.warns(UserWarning, match="treated as missing"):
-            events = Long_sharp_wave_ripple_detector(
-                time, lfp, stationary, self.FS, random_state=0
-            )
+            events = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=0)
         assert len(events) == len(clean) >= 1
         assert not events.clipped_start.any()
         assert not events.clipped_end.any()
@@ -2320,7 +2315,7 @@ class TestDetectorErrorHandling:
             noise_amplitude=1.2,
             ripple_snr=12.0,
             ripple_duration=0.15,
-            random_state=0,
+            rng=0,
         )
         filtered_lfps = filter_ripple_band(lfp[:, np.newaxis], 1500)
         whole = Kay_ripple_detector(
@@ -2495,7 +2490,7 @@ class TestShvartsmanParticipationSemantics:
                     [center],
                     noise_amplitude=1.2,
                     ripple_amplitude=1.5,
-                    random_state=seed,
+                    rng=seed,
                 )
                 for center, seed in [(1.1, 5), (1.15, 6), (1.2, 7)]
             ]
@@ -2543,14 +2538,10 @@ class TestShvartsmanParticipationSemantics:
         # Channel 0 ripples at 1.1s and 2.1s; channels 1 and 2 only at 1.1s, so the
         # event near 1.1s has 3 participants and the event near 2.1s has just 1.
         ch0 = simulate_LFP(
-            time_3s, [1.1, 2.1], noise_amplitude=1.2, ripple_amplitude=1.5, random_state=0
+            time_3s, [1.1, 2.1], noise_amplitude=1.2, ripple_amplitude=1.5, rng=0
         )
-        ch1 = simulate_LFP(
-            time_3s, [1.1], noise_amplitude=1.2, ripple_amplitude=1.5, random_state=1
-        )
-        ch2 = simulate_LFP(
-            time_3s, [1.1], noise_amplitude=1.2, ripple_amplitude=1.5, random_state=2
-        )
+        ch1 = simulate_LFP(time_3s, [1.1], noise_amplitude=1.2, ripple_amplitude=1.5, rng=1)
+        ch2 = simulate_LFP(time_3s, [1.1], noise_amplitude=1.2, ripple_amplitude=1.5, rng=2)
         filtered = filter_ripple_band(np.column_stack([ch0, ch1, ch2]), 1500)
 
         # Sanity: with no movement both events survive with differing participation.
@@ -2658,9 +2649,7 @@ class TestParticipatingFractionRounding:
         n_channels = 25
         lfps = np.column_stack(
             [
-                simulate_LFP(
-                    time_3s, [1.1], noise_amplitude=1.2, ripple_amplitude=1.5, random_state=s
-                )
+                simulate_LFP(time_3s, [1.1], noise_amplitude=1.2, ripple_amplitude=1.5, rng=s)
                 for s in range(n_channels)
             ]
         )
@@ -2669,7 +2658,7 @@ class TestParticipatingFractionRounding:
         # only 7 channels carry the ripple loudly enough: silence the others' bursts
         quiet = np.column_stack(
             [
-                simulate_LFP(time_3s, [], noise_amplitude=1.2, random_state=100 + s)
+                simulate_LFP(time_3s, [], noise_amplitude=1.2, rng=100 + s)
                 for s in range(n_channels - 7)
             ]
         )
@@ -2697,10 +2686,7 @@ class TestParticipatingFractionRounding:
     ):
         lfps = filter_ripple_band(
             np.column_stack(
-                [
-                    simulate_LFP(time_3s, [], noise_amplitude=1.2, random_state=s)
-                    for s in (1, 2)
-                ]
+                [simulate_LFP(time_3s, [], noise_amplitude=1.2, rng=s) for s in (1, 2)]
             ),
             1500,
         )
@@ -3108,7 +3094,7 @@ class TestLongMaxThreshIsFinite:
             np.full(self.N_TIME, 2.0),
             self.FS,
             minimum_ripple_duration=0.400,
-            random_state=0,
+            rng=0,
         )
         assert len(events) >= 1
         assert np.isfinite(events.max_sustained_zscore).all(), (
@@ -3780,10 +3766,10 @@ class TestNoEventSpansAGap:
         gap = (7000, 7002)  # through the second event
         if where == "lfp":
             lfp[slice(*gap), 1] = np.nan
-            events = Long_sharp_wave_ripple_detector(time, lfp, speed, self.FS, random_state=0)
+            events = Long_sharp_wave_ripple_detector(time, lfp, speed, self.FS, rng=0)
         else:
             events = Long_sharp_wave_ripple_detector(
-                *self._cut(gap, time, lfp, speed), self.FS, random_state=0
+                *self._cut(gap, time, lfp, speed), self.FS, rng=0
             )
         # candidates within the 5 s local window of a block edge are not
         # evaluated, so only the event far from both the gap and the edges is left
@@ -3865,9 +3851,7 @@ class TestUnknownSpeed:
     def _run_long(self, time, speed, **kwargs):
         # events at least local_window (5 s) from both ends, so each is evaluated
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, (8000, 12000))
-        return Long_sharp_wave_ripple_detector(
-            time, lfp, speed, self.FS, random_state=0, **kwargs
-        )
+        return Long_sharp_wave_ripple_detector(time, lfp, speed, self.FS, rng=0, **kwargs)
 
     def test_long_nan_inside_an_event_changes_nothing(self, time):
         speed = np.full(self.N_TIME, 2.0)

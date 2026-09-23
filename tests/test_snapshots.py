@@ -37,7 +37,7 @@ def test_lfp_data():
         noise_amplitude=1.0,
         ripple_amplitude=2.0,
         noise_type="white",
-        random_state=42,
+        rng=42,
     )
 
     return time, lfp[:, np.newaxis]
@@ -58,7 +58,7 @@ def test_multichannel_lfp_data():
             noise_amplitude=1.0,
             ripple_amplitude=2.0,
             noise_type="white",
-            random_state=channel,
+            rng=channel,
         )
         lfps.append(lfp)
 
@@ -335,7 +335,7 @@ class TestRegressionPrevention:
             ripple_times=[1.0],
             noise_amplitude=0.5,
             ripple_amplitude=5.0,  # Very strong
-            random_state=42,
+            rng=42,
         )[:, np.newaxis]
 
         filtered_lfp = filter_ripple_band(lfp, 1500)
@@ -403,9 +403,7 @@ class TestNewDetectorSnapshots:
         n = 40_000
         time = np.arange(n) / self.FS
         lfp = _synthetic_two_channel_lfp(n, self.FS, (7000, 11000, 15500, 19000, 23800, 28000))
-        events = Long_sharp_wave_ripple_detector(
-            time, lfp, np.full(n, 2.0), self.FS, random_state=0
-        )
+        events = Long_sharp_wave_ripple_detector(time, lfp, np.full(n, 2.0), self.FS, rng=0)
         _pin(snapshot, events, "long")
 
     def test_carey(self, snapshot):

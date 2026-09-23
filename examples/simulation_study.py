@@ -199,7 +199,7 @@ def main() -> None:
             n_units=N_UNITS,
             channel_gains=channel_gains(rng, n_channels),
             ripple_snr=snr,
-            random_state=seed,
+            rng=seed,
         )
         condition = {
             "condition": "ripples",
@@ -221,7 +221,7 @@ def main() -> None:
             n_channels=n_channels,
             n_units=N_UNITS,
             channel_gains=channel_gains(rng, n_channels),
-            random_state=100 + seed,
+            rng=100 + seed,
         )
         condition = {
             "condition": "noise only",
@@ -245,7 +245,7 @@ def main() -> None:
             n_units=N_UNITS,
             channel_gains=channel_gains(rng, n_channels, fraction),
             ripple_snr=snr,
-            random_state=400 + seed,
+            rng=400 + seed,
         )
         record(
             {
@@ -268,7 +268,7 @@ def main() -> None:
             n_units=SPARSE_UNITS,
             channel_gains=channel_gains(rng, SWEEP_CHANNELS),
             ripple_snr=4.0,
-            random_state=300 + seed,
+            rng=300 + seed,
         )
         record(
             {
@@ -294,7 +294,7 @@ def main() -> None:
             channel_gains=channel_gains(rng, SWEEP_CHANNELS),
             ripple_snr=ARTIFACT_SNR,
             artifact_times=list(centres[~which]),
-            random_state=200 + seed,
+            rng=200 + seed,
         )
         record(
             {

@@ -113,7 +113,7 @@ def session():
         n_units=100,
         channel_gains=[1.0, 0.9, 0.7, 0.6],
         ripple_snr=6.0,
-        random_state=0,
+        rng=0,
     )
 
 
@@ -134,7 +134,7 @@ def loud_session():
         ripple_snr=10.0,
         ripple_duration=0.08,
         ripple_frequency=200.0,
-        random_state=3,
+        rng=3,
     )
 
 
@@ -234,7 +234,7 @@ class TestWholeChainAtOtherRates:
             n_channels=3,
             n_units=5,
             ripple_snr=6.0,
-            random_state=1,
+            rng=1,
         )
         filt = filter_ripple_band(sess.lfps, sampling_frequency=fs)
         events = get_detector(name).detector(sess.time, filt, sess.speed, fs)
@@ -244,7 +244,7 @@ class TestWholeChainAtOtherRates:
         fs = 30000.0
         time = simulate_time(int(8 * fs), fs)
         sess = simulate_session(
-            time, [2.0, 4.0, 6.0], n_channels=2, n_units=3, ripple_snr=6.0, random_state=2
+            time, [2.0, 4.0, 6.0], n_channels=2, n_units=3, ripple_snr=6.0, rng=2
         )
         filt = filter_ripple_band(sess.lfps, sampling_frequency=fs)
         events = Kay_ripple_detector(sess.time, filt, sess.speed, fs)
@@ -291,7 +291,7 @@ class TestYuUnderCorrelatedNoise:
                 channel_gains=[1.0, 0.9, 0.7, 0.6],
                 shared_noise_fraction=shared,
                 ripple_snr=6.0,
-                random_state=0,
+                rng=0,
             )
             filt = filter_ripple_band(sess.lfps, sampling_frequency=FS)
             events = run("Yu_ripple_detector", sess, filt)
@@ -373,7 +373,7 @@ class TestInvariances:
 class TestRecordingEdges:
     def test_a_ripple_cut_by_the_recording_end_is_flagged(self):
         time = simulate_time(int(6 * FS), FS)
-        lfp = simulate_LFP(time, [1.0, time[-1] - 0.01], ripple_snr=8.0, random_state=4)
+        lfp = simulate_LFP(time, [1.0, time[-1] - 0.01], ripple_snr=8.0, rng=4)
         filt = filter_ripple_band(lfp[:, np.newaxis], sampling_frequency=FS)
         events = Kay_ripple_detector(time, filt, np.zeros_like(time), FS)
         last = events.iloc[-1]
@@ -384,7 +384,7 @@ class TestRecordingEdges:
 
     def test_a_ripple_cut_by_the_recording_start_is_flagged(self):
         time = simulate_time(int(6 * FS), FS)
-        lfp = simulate_LFP(time, [0.01, 4.0], ripple_snr=8.0, random_state=5)
+        lfp = simulate_LFP(time, [0.01, 4.0], ripple_snr=8.0, rng=5)
         filt = filter_ripple_band(lfp[:, np.newaxis], sampling_frequency=FS)
         events = Kay_ripple_detector(time, filt, np.zeros_like(time), FS)
         first = events.iloc[0]
@@ -398,9 +398,7 @@ class TestLongSeeding:
         args = (session.time, session.raw_lfp_pair, session.speed, FS)
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            Long_sharp_wave_ripple_detector(*args, random_state=None)
-        from_int = Long_sharp_wave_ripple_detector(*args, random_state=7)
-        from_generator = Long_sharp_wave_ripple_detector(
-            *args, random_state=np.random.default_rng(7)
-        )
+            Long_sharp_wave_ripple_detector(*args, rng=None)
+        from_int = Long_sharp_wave_ripple_detector(*args, rng=7)
+        from_generator = Long_sharp_wave_ripple_detector(*args, rng=np.random.default_rng(7))
         pd.testing.assert_frame_equal(from_int, from_generator)

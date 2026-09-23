@@ -37,6 +37,7 @@ REMOVED_ARGUMENTS: dict[str, tuple[str | None, str]] = {
             "rather than a RandomState"
         ),
     ),
+    "random_state": ("rng", "was renamed rng before 2.0 was released"),
     "edge_threshold": ("low_threshold", "was renamed low_threshold before 2.0 was released"),
     "peak_threshold": ("high_threshold", "was renamed high_threshold before 2.0 was released"),
     "participation_threshold": (
@@ -64,10 +65,11 @@ REMOVED_ARGUMENTS: dict[str, tuple[str | None, str]] = {
     ),
 }
 """Keywords that 1.x, or the development versions before 2.0 (the Carey and
-Shvartsman names), accepted and 2.0 does not: the parameter that replaces each,
-or None for one with no replacement, and what to pass instead. A note applies
-only to a function that has the replacement, so a keyword one function
-renamed is not explained that way on a function that never took it."""
+Shvartsman names, and the simulators' seed), accepted and 2.0 does not: the
+parameter that replaces each, or None for one with no replacement, and what to
+pass instead. A note applies only to a function that has the replacement, so a
+keyword one function renamed is not explained that way on a function that
+never took it."""
 
 POSITIONAL_ORDER_1X = {
     **dict.fromkeys(

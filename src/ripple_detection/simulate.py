@@ -14,7 +14,7 @@ from typing import Literal
 import numpy as np
 
 from ripple_detection._call_hints import explain_call_errors
-from ripple_detection.core import FloatArray, filter_ripple_band
+from ripple_detection.core import FloatArray, _generator, filter_ripple_band
 
 RIPPLE_FREQUENCY = 200
 NoiseType = Literal["white", "pink", "brown"]
@@ -100,21 +100,6 @@ def normalize(y: FloatArray, x: FloatArray | None = None) -> FloatArray:
     reference_power = mean_squared(x) if x is not None else 1.0
     # np.divide, not /, so a zero-power signal gives NaN with a RuntimeWarning, as documented
     return np.asarray(y * np.sqrt(np.divide(reference_power, mean_squared(y))), dtype=float)
-
-
-def _generator(seed: int | np.random.Generator | None) -> np.random.Generator:
-    """``numpy.random.default_rng(seed)``, refusing the legacy ``RandomState``
-    that 1.x's noise functions took: ``default_rng`` accepts one and silently
-    draws a different stream from it."""
-    given: object = seed  # a caller without a type checker can pass anything
-    if isinstance(given, np.random.RandomState):
-        msg = (
-            "Pass a seed or a numpy.random.Generator, not a RandomState: since 2.0 the "
-            "simulators draw through numpy.random.default_rng, so a RandomState would "
-            "give a different stream than it did in 1.x."
-        )
-        raise TypeError(msg)
-    return np.random.default_rng(seed)
 
 
 @explain_call_errors
@@ -275,7 +260,7 @@ def simulate_LFP(
     ripple_duration: float | tuple[float, float] = 0.100,
     noise_type: NoiseType = "pink",
     noise_amplitude: float = 1.3,
-    random_state: int | np.random.Generator | None = None,
+    rng: int | np.random.Generator | None = None,
     *,
     ripple_snr: float | None = None,
     ripple_frequency: float | tuple[float, float] = RIPPLE_FREQUENCY,
@@ -311,7 +296,7 @@ def simulate_LFP(
         finds every one of them. See Notes.
     noise_amplitude : float, optional
         Amplitude of background noise in the signal's units. Default is 1.3.
-    random_state : int or numpy.random.Generator, optional
+    rng : int or numpy.random.Generator, optional
         Seed, or a Generator to draw from, as ``numpy.random.default_rng``
         takes it. The noise is drawn first, then per-ripple
         frequencies, then per-ripple durations; a scalar consumes no
@@ -319,7 +304,7 @@ def simulate_LFP(
         ripple parameters, but giving a frequency range changes the duration
         draws. Default is None, which draws from the operating system and is
         not reproducible. `np.random.seed` does not control this function;
-        pass `random_state` to repeat a simulation.
+        pass `rng` to repeat a simulation.
     ripple_snr : float, optional
         Ripple size relative to the **ripple-band** background: the peak
         amplitude of each ripple after ``filter_ripple_band``, divided by the
@@ -377,12 +362,12 @@ def simulate_LFP(
     >>> time = simulate_time(15000, 1500)
     >>> lfp = simulate_LFP(
     ...     time, [2.0, 5.0, 8.0], noise_type='pink', ripple_snr=5,
-    ...     ripple_frequency=(150, 250), ripple_duration=(0.04, 0.12), random_state=0,
+    ...     ripple_frequency=(150, 250), ripple_duration=(0.04, 0.12), rng=0,
     ... )
 
     """
     _validate_sizes(ripple_amplitude, ripple_snr, noise_amplitude)
-    rng = _generator(random_state)
+    rng = _generator(rng)
     noise = (noise_amplitude / 2) * NOISE_FUNCTION[noise_type](time.size, rng=rng)
     return noise + _ripple_waveform(
         time,
@@ -613,6 +598,7 @@ def _add_common_mode_artifacts(
         out[window] += burst[:, np.newaxis]
 
 
+@explain_call_errors
 def simulate_multichannel_LFP(
     time: FloatArray,
     ripple_times: float | Sequence[float] | FloatArray,
@@ -629,7 +615,7 @@ def simulate_multichannel_LFP(
     artifact_times: Sequence[float] | None = None,
     artifact_amplitude: float | None = None,
     artifact_duration: float = 0.100,
-    random_state: int | np.random.Generator | None = None,
+    rng: int | np.random.Generator | None = None,
     sampling_frequency: float | None = None,
 ) -> FloatArray:
     """Simulate LFP channels that see the same ripples in correlated noise.
@@ -674,7 +660,7 @@ def simulate_multichannel_LFP(
     artifact_duration : float, optional
         Artifact duration in seconds, six standard deviations of its Gaussian
         envelope. Default 0.100.
-    random_state : int or numpy.random.Generator, optional
+    rng : int or numpy.random.Generator, optional
         As in ``simulate_LFP``. The shared noise is drawn first, then each
         channel's own noise, then per-ripple frequencies and durations, then
         the artifacts.
@@ -696,7 +682,7 @@ def simulate_multichannel_LFP(
     >>> time = simulate_time(15000, 1500)
     >>> lfps = simulate_multichannel_LFP(
     ...     time, [2.0, 5.0, 8.0], 4, ripple_snr=4, channel_gains=[1.0, 0.8, 0.6, 0.5],
-    ...     ripple_frequency=(150, 250), ripple_duration=(0.04, 0.12), random_state=0,
+    ...     ripple_frequency=(150, 250), ripple_duration=(0.04, 0.12), rng=0,
     ... )
     >>> lfps.shape
     (15000, 4)
@@ -707,7 +693,7 @@ def simulate_multichannel_LFP(
         msg = f"n_channels must be at least 1, got {n_channels}."
         raise ValueError(msg)
     gains = _channel_gains(channel_gains, n_channels)
-    rng = _generator(random_state)
+    rng = _generator(rng)
     lfps = _correlated_noise(
         time.size, n_channels, noise_type, noise_amplitude, shared_noise_fraction, rng
     )
@@ -764,6 +750,7 @@ def _add_sharp_wave_pair(
     _add_sharp_waves(radiatum_channel, time, ripple_times, -amplitude, duration)
 
 
+@explain_call_errors
 def simulate_sharp_wave_ripple_pair(
     time: FloatArray,
     ripple_times: float | Sequence[float] | FloatArray,
@@ -779,7 +766,7 @@ def simulate_sharp_wave_ripple_pair(
     ripple_frequency: float | tuple[float, float] | FloatArray = RIPPLE_FREQUENCY,
     noise_type: NoiseType = "pink",
     noise_amplitude: float = 1.3,
-    random_state: int | np.random.Generator | None = None,
+    rng: int | np.random.Generator | None = None,
     sampling_frequency: float | None = None,
 ) -> FloatArray:
     """Simulate the raw two-channel input of ``Long_sharp_wave_ripple_detector``.
@@ -806,7 +793,7 @@ def simulate_sharp_wave_ripple_pair(
     ripple_leak : float, optional
         Fraction of the ripple that appears on the radiatum channel. Default 0.3.
     shared_noise_fraction, ripple_amplitude, ripple_snr, ripple_duration,
-    ripple_frequency, noise_type, noise_amplitude, random_state,
+    ripple_frequency, noise_type, noise_amplitude, rng,
     sampling_frequency : optional
         As in ``simulate_multichannel_LFP``.
 
@@ -829,7 +816,7 @@ def simulate_sharp_wave_ripple_pair(
         ripple_frequency=ripple_frequency,
         noise_type=noise_type,
         noise_amplitude=noise_amplitude,
-        random_state=random_state,
+        rng=rng,
         sampling_frequency=sampling_frequency,
     )
     _add_sharp_wave_pair(
@@ -844,6 +831,7 @@ def simulate_sharp_wave_ripple_pair(
     return pair
 
 
+@explain_call_errors
 def simulate_multiunit(
     time: FloatArray,
     ripple_times: float | Sequence[float] | FloatArray,
@@ -853,7 +841,7 @@ def simulate_multiunit(
     ripple_rate_gain: float = 8.0,
     participation: float = 0.6,
     ripple_duration: float | tuple[float, float] | FloatArray = 0.100,
-    random_state: int | np.random.Generator | None = None,
+    rng: int | np.random.Generator | None = None,
 ) -> FloatArray:
     """Simulate spike counts per sample for units that burst during ripples.
 
@@ -879,7 +867,7 @@ def simulate_multiunit(
         Probability that a unit takes part in a given ripple. Default 0.6.
     ripple_duration : float, (low, high) or array of shape (n_ripples,), optional
         As in ``simulate_LFP``; pass the LFP simulation's draw to couple them.
-    random_state : int or numpy.random.Generator, optional
+    rng : int or numpy.random.Generator, optional
         Baseline rates are drawn first, then durations, then participation,
         then the spike counts.
 
@@ -898,7 +886,7 @@ def simulate_multiunit(
     if ripple_rate_gain < 1.0:
         msg = f"ripple_rate_gain must be at least 1, got {ripple_rate_gain}."
         raise ValueError(msg)
-    rng = _generator(random_state)
+    rng = _generator(rng)
     ripple_times = _as_ripple_times(ripple_times)
     n_ripples = ripple_times.size
     rates = _draw_per_ripple(baseline_rate, n_units, rng)
@@ -991,6 +979,7 @@ class SimulatedSession:
         )
 
 
+@explain_call_errors
 def simulate_session(
     time: FloatArray,
     ripple_times: float | Sequence[float] | FloatArray,
@@ -1015,7 +1004,7 @@ def simulate_session(
     artifact_times: Sequence[float] | None = None,
     artifact_amplitude: float | None = None,
     artifact_duration: float = 0.100,
-    random_state: int | np.random.Generator | None = None,
+    rng: int | np.random.Generator | None = None,
     sampling_frequency: float | None = None,
 ) -> SimulatedSession:
     """Simulate every input the detectors take, from one set of ripples.
@@ -1046,7 +1035,7 @@ def simulate_session(
         As in ``simulate_sharp_wave_ripple_pair``.
     baseline_rate, ripple_rate_gain, participation : optional
         As in ``simulate_multiunit``.
-    random_state : int or numpy.random.Generator, optional
+    rng : int or numpy.random.Generator, optional
         Per-ripple durations and frequencies are drawn first, then the LFP
         (``simulate_multichannel_LFP``'s order, with the radiatum channel
         last), then the multiunit activity.
@@ -1060,7 +1049,7 @@ def simulate_session(
     Examples
     --------
     >>> time = simulate_time(30000, 1500)
-    >>> session = simulate_session(time, [3.0, 9.0, 15.0], random_state=0)
+    >>> session = simulate_session(time, [3.0, 9.0, 15.0], rng=0)
     >>> session.lfps.shape, session.raw_lfp_pair.shape, session.multiunit.shape
     ((30000, 4), (30000, 2), (30000, 50))
 
@@ -1068,7 +1057,7 @@ def simulate_session(
     if ripple_amplitude is not None:
         ripple_snr = None
     time = np.asarray(time, dtype=float)
-    rng = _generator(random_state)
+    rng = _generator(rng)
     centers = _as_ripple_times(ripple_times)
     frequencies = _draw_per_ripple(ripple_frequency, centers.size, rng)
     durations = _draw_per_ripple(ripple_duration, centers.size, rng)
@@ -1088,7 +1077,7 @@ def simulate_session(
         artifact_times=artifact_times,
         artifact_amplitude=artifact_amplitude,
         artifact_duration=artifact_duration,
-        random_state=rng,
+        rng=rng,
         sampling_frequency=sampling_frequency,
     )
     lfps, radiatum = channels[:, :n_channels], channels[:, n_channels]
@@ -1109,7 +1098,7 @@ def simulate_session(
         ripple_rate_gain=ripple_rate_gain,
         participation=participation,
         ripple_duration=durations,
-        random_state=rng,
+        rng=rng,
     )
     return SimulatedSession(
         time=time,

@@ -210,7 +210,7 @@ def results():
     from ripple_detection.simulate import simulate_session, simulate_time
 
     time = simulate_time(45_000, 1500)
-    session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], random_state=0)
+    session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], rng=0)
     signals = {
         RIPPLE_BAND_LFP: filter_ripple_band(session.lfps, 1500),
         RAW_LFP_PAIR: session.raw_lfp_pair,

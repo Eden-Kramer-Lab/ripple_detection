@@ -46,7 +46,7 @@ here is relative to 1.7.1.
   `spec.parameters`, `spec.check_parameters(mapping)` and
   `spec.check_inputs(*signals)` check a call, and whose `spec.describe()` gives
   it all as JSON-ready data.
-- Simulation: `ripple_snr`, `random_state` and `(low, high)` ranges for
+- Simulation: `ripple_snr`, `rng` and `(low, high)` ranges for
   `ripple_frequency` and `ripple_duration` on `simulate_LFP`, and `simulate_multichannel_LFP`,
   `simulate_sharp_wave_ripple_pair`, `simulate_multiunit` and
   `simulate_session`, which share one set of ripples and return the ground

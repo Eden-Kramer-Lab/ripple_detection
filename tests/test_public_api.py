@@ -123,6 +123,10 @@ class TestCallsWrittenFor1x:
         ripple_detection.filter_ripple_band,
         ripple_detection.normalize_signal,
         ripple_detection.simulate_LFP,
+        ripple_detection.simulate_multichannel_LFP,
+        ripple_detection.simulate_sharp_wave_ripple_pair,
+        ripple_detection.simulate_multiunit,
+        ripple_detection.simulate_session,
     )
 
     @pytest.mark.parametrize("function", WRAPPED, ids=lambda function: function.__name__)
@@ -167,6 +171,48 @@ class TestCallsWrittenFor1x:
         with pytest.raises(TypeError, match="renamed rng"):
             pink(100, state=np.random.RandomState(0))
 
+    def test_the_pre_release_seed_keyword(self, inputs):
+        time, _, speed = inputs
+        with pytest.raises(TypeError, match="random_state was renamed rng"):
+            ripple_detection.simulate_session(time, [1.0], random_state=0)
+        with pytest.raises(TypeError, match="random_state was renamed rng"):
+            ripple_detection.Long_sharp_wave_ripple_detector(
+                time, np.zeros((len(time), 2)), speed, 1500, random_state=0
+            )
+
+    def test_every_seed_is_called_rng(self):
+        """One name for a seed or Generator across the package."""
+        import inspect
+
+        from ripple_detection.simulate import brown, pink, white
+
+        functions = [
+            getattr(ripple_detection, name)
+            for name in ripple_detection.__all__
+            if inspect.isfunction(getattr(ripple_detection, name))
+        ]
+        seed_names = {"rng", "random_state", "seed", "state"}
+        seeded = {
+            (function.__name__, name)
+            for function in [*functions, pink, white, brown]
+            for name in inspect.signature(function).parameters
+            if name in seed_names
+        }
+        assert seeded == {
+            (function, "rng")
+            for function in (
+                "Long_sharp_wave_ripple_detector",
+                "simulate_LFP",
+                "simulate_multichannel_LFP",
+                "simulate_multiunit",
+                "simulate_session",
+                "simulate_sharp_wave_ripple_pair",
+                "pink",
+                "white",
+                "brown",
+            )
+        }
+
     def test_a_renamed_keyword_names_its_own_replacement(self, inputs):
         """The Carey and Shvartsman tunables 1.x named differently."""
         time, lfps, speed = inputs
@@ -195,11 +241,10 @@ class TestCallsWrittenFor1x:
             )
 
     def test_a_hint_applies_only_where_the_replacement_exists(self, inputs):
-        """`state` was renamed `rng` on the noise generators; the detectors and
-        simulators take `random_state`, so they must not claim otherwise."""
-        time, lfps, speed = inputs
+        """`state` was renamed `rng`; a detector that draws no random numbers
+        takes neither, so it must not claim otherwise."""
         with pytest.raises(TypeError, match="takes no state") as info:
-            ripple_detection.Long_sharp_wave_ripple_detector(time, lfps, speed, 1500, state=0)
+            ripple_detection.Kay_ripple_detector(*inputs, 1500, state=0)
         assert "rng" not in str(info.value)
         with pytest.raises(TypeError, match="takes no edge_threshold") as info:
             ripple_detection.Kay_ripple_detector(*inputs, 1500, edge_threshold=1.0)

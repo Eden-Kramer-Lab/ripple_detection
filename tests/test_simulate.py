@@ -486,13 +486,11 @@ class TestSimulateLFPRealism:
         numpy.random.default_rng rather than the legacy RandomState and whose
         default noise is pink; the explicit brown call is the 1.x default."""
         t = simulate_time(4500, self.FS)
-        y = simulate_LFP(t, [1.0, 2.0], random_state=0)
+        y = simulate_LFP(t, [1.0, 2.0], rng=0)
         assert _digest(y) == "38aba443e5f044ca"
-        y = simulate_LFP(t, [1.0, 2.0], random_state=0, noise_type="brown")
+        y = simulate_LFP(t, [1.0, 2.0], rng=0, noise_type="brown")
         assert _digest(y) == "aec97d07aeeb5ff9"
-        y = simulate_LFP(
-            t, [1.0, 2.0], random_state=0, noise_type="pink", ripple_amplitude=1.0
-        )
+        y = simulate_LFP(t, [1.0, 2.0], rng=0, noise_type="pink", ripple_amplitude=1.0)
         assert _digest(y) == "fb97eb68f45ea538"
 
     def test_memory_does_not_grow_with_the_ripple_count(self):
@@ -504,7 +502,7 @@ class TestSimulateLFPRealism:
 
         def peak_bytes(n_ripples):
             tracemalloc.start()
-            simulate_LFP(t, list(np.linspace(1.0, 59.0, n_ripples)), random_state=0)
+            simulate_LFP(t, list(np.linspace(1.0, 59.0, n_ripples)), rng=0)
             _, peak = tracemalloc.get_traced_memory()
             tracemalloc.stop()
             return peak
@@ -524,10 +522,10 @@ class TestSimulateLFPRealism:
         ripples = [2.0, 5.0, 8.0, 11.0, 14.0, 17.0]
         # the noise is drawn first, so the same seed with no ripples is exactly
         # the background of the ripple record; the difference is the ripples alone
-        noise_only = simulate_LFP(t, [], noise_type="pink", random_state=1)
+        noise_only = simulate_LFP(t, [], noise_type="pink", rng=1)
         background_sd = filter_ripple_band(noise_only, sampling_frequency=self.FS).std()
         for snr in (3.0, 6.0):
-            y = simulate_LFP(t, ripples, noise_type="pink", ripple_snr=snr, random_state=1)
+            y = simulate_LFP(t, ripples, noise_type="pink", ripple_snr=snr, rng=1)
             bursts = filter_ripple_band(y - noise_only, sampling_frequency=self.FS)
             peaks = [np.abs(bursts[np.abs(t - r) < 0.02]).max() for r in ripples]
             achieved = np.array(peaks) / background_sd
@@ -542,7 +540,7 @@ class TestSimulateLFPRealism:
         # requested SNR must be measured on the filtered burst, not assumed
         t = simulate_time(self.FS * 20, self.FS)
         ripples = [2.0, 5.0, 8.0, 11.0, 14.0, 17.0]
-        noise_only = simulate_LFP(t, [], noise_type="pink", random_state=1)
+        noise_only = simulate_LFP(t, [], noise_type="pink", rng=1)
         background_sd = filter_ripple_band(noise_only, sampling_frequency=self.FS).std()
         y = simulate_LFP(
             t,
@@ -551,7 +549,7 @@ class TestSimulateLFPRealism:
             ripple_snr=5.0,
             ripple_frequency=frequency,
             ripple_duration=duration,
-            random_state=1,
+            rng=1,
         )
         bursts = filter_ripple_band(y - noise_only, sampling_frequency=self.FS)
         peaks = [np.abs(bursts[np.abs(t - r) < 0.05]).max() for r in ripples]
@@ -560,19 +558,19 @@ class TestSimulateLFPRealism:
     def test_ripple_snr_without_noise_raises(self):
         t = simulate_time(self.FS * 5, self.FS)
         with pytest.raises(ValueError, match="noise_amplitude"):
-            simulate_LFP(t, [2.0], ripple_snr=5.0, noise_amplitude=0.0, random_state=0)
+            simulate_LFP(t, [2.0], ripple_snr=5.0, noise_amplitude=0.0, rng=0)
 
     def test_a_tuple_is_a_range_and_a_list_is_one_value_per_ripple(self):
         t = simulate_time(self.FS * 4, self.FS)
-        as_list = simulate_LFP(t, [1.0, 3.0], ripple_frequency=[150.0, 250.0], random_state=3)
+        as_list = simulate_LFP(t, [1.0, 3.0], ripple_frequency=[150.0, 250.0], rng=3)
         as_array = simulate_LFP(
-            t, [1.0, 3.0], ripple_frequency=np.array([150.0, 250.0]), random_state=3
+            t, [1.0, 3.0], ripple_frequency=np.array([150.0, 250.0]), rng=3
         )
-        as_range = simulate_LFP(t, [1.0, 3.0], ripple_frequency=(150.0, 250.0), random_state=3)
+        as_range = simulate_LFP(t, [1.0, 3.0], ripple_frequency=(150.0, 250.0), rng=3)
         np.testing.assert_array_equal(as_list, as_array)
         assert not np.array_equal(as_list, as_range)
         with pytest.raises(ValueError, match="tuple"):
-            simulate_LFP(t, [1.0], ripple_frequency=(150.0, 200.0, 250.0), random_state=3)
+            simulate_LFP(t, [1.0], ripple_frequency=(150.0, 200.0, 250.0), rng=3)
 
     @pytest.mark.parametrize(
         "kwargs",
@@ -589,7 +587,7 @@ class TestSimulateLFPRealism:
     def test_a_nan_or_negative_size_raises(self, kwargs):
         t = simulate_time(self.FS * 4, self.FS)
         with pytest.raises(ValueError, match=r"must (be|lie)"):
-            simulate_LFP(t, [2.0], random_state=0, **kwargs)
+            simulate_LFP(t, [2.0], rng=0, **kwargs)
 
     def test_ripple_snr_and_amplitude_are_mutually_exclusive(self):
         t = simulate_time(4500, self.FS)
@@ -598,10 +596,8 @@ class TestSimulateLFPRealism:
 
     def test_ripple_snr_infers_sampling_rate_from_time(self):
         t = simulate_time(self.FS * 10, self.FS)
-        inferred = simulate_LFP(t, [3.0], ripple_snr=5.0, random_state=2)
-        explicit = simulate_LFP(
-            t, [3.0], ripple_snr=5.0, random_state=2, sampling_frequency=self.FS
-        )
+        inferred = simulate_LFP(t, [3.0], ripple_snr=5.0, rng=2)
+        explicit = simulate_LFP(t, [3.0], ripple_snr=5.0, rng=2, sampling_frequency=self.FS)
         # the inferred rate is 1500 to rounding, which moves the FFT filter's
         # block sizes and so its rounding; a wrong rate would differ by order one
         np.testing.assert_allclose(inferred, explicit, rtol=0, atol=1e-12)
@@ -617,13 +613,13 @@ class TestSimulateLFPRealism:
         t = simulate_time(self.FS * 8, self.FS)
         ripples = [1.0, 3.0, 5.0, 7.0]
         y = simulate_LFP(
-            t, ripples, noise_amplitude=0.0, ripple_frequency=(150.0, 250.0), random_state=3
+            t, ripples, noise_amplitude=0.0, ripple_frequency=(150.0, 250.0), rng=3
         )
         freqs = [_dominant_frequency(y[np.abs(t - r) < 0.05], self.FS) for r in ripples]
         assert all(150.0 - 5.0 <= f <= 250.0 + 5.0 for f in freqs)  # 5 Hz FFT resolution
         assert len(set(np.round(freqs, -1))) > 1  # not all the same
         again = simulate_LFP(
-            t, ripples, noise_amplitude=0.0, ripple_frequency=(150.0, 250.0), random_state=3
+            t, ripples, noise_amplitude=0.0, ripple_frequency=(150.0, 250.0), rng=3
         )
         np.testing.assert_array_equal(y, again)
 
@@ -632,9 +628,7 @@ class TestSimulateLFPRealism:
 
         t = simulate_time(self.FS * 26, self.FS)
         ripples = [2.0 + 2.0 * k for k in range(12)]
-        y = simulate_LFP(
-            t, ripples, noise_amplitude=0.0, ripple_duration=(0.03, 0.15), random_state=4
-        )
+        y = simulate_LFP(t, ripples, noise_amplitude=0.0, ripple_duration=(0.03, 0.15), rng=4)
         envelope = np.abs(hilbert(y))
         durations = []
         for r in ripples:
@@ -645,27 +639,25 @@ class TestSimulateLFPRealism:
         assert np.all((durations >= 0.029) & (durations <= 0.152)), durations
         assert durations.max() > 2 * durations.min()
         again = simulate_LFP(
-            t, ripples, noise_amplitude=0.0, ripple_duration=(0.03, 0.15), random_state=4
+            t, ripples, noise_amplitude=0.0, ripple_duration=(0.03, 0.15), rng=4
         )
         np.testing.assert_array_equal(y, again)
 
     def test_inverted_range_raises(self):
         t = simulate_time(4500, self.FS)
         with pytest.raises(ValueError, match="low <= high"):
-            simulate_LFP(t, [1.0], ripple_duration=(0.15, 0.03), random_state=0)
+            simulate_LFP(t, [1.0], ripple_duration=(0.15, 0.03), rng=0)
         with pytest.raises(ValueError, match="low <= high"):
-            simulate_LFP(t, [1.0], ripple_frequency=(220.0, 180.0), random_state=0)
+            simulate_LFP(t, [1.0], ripple_frequency=(220.0, 180.0), rng=0)
 
-    def test_random_state_instance_matches_seed(self):
+    def test_generator_instance_matches_seed(self):
         t = simulate_time(4500, self.FS)
-        from_seed = simulate_LFP(
-            t, [1.0, 2.0], ripple_frequency=(150.0, 250.0), random_state=7
-        )
+        from_seed = simulate_LFP(t, [1.0, 2.0], ripple_frequency=(150.0, 250.0), rng=7)
         from_state = simulate_LFP(
             t,
             [1.0, 2.0],
             ripple_frequency=(150.0, 250.0),
-            random_state=np.random.default_rng(7),
+            rng=np.random.default_rng(7),
         )
         np.testing.assert_array_equal(from_seed, from_state)
 
@@ -673,8 +665,8 @@ class TestSimulateLFPRealism:
         # with a scalar frequency and duration and no ripples, output equals the
         # pre-existing noise for the same seed
         t = simulate_time(4500, self.FS)
-        base = simulate_LFP(t, [], random_state=5)
-        same = simulate_LFP(t, [], random_state=5, ripple_frequency=200.0, ripple_duration=0.1)
+        base = simulate_LFP(t, [], rng=5)
+        same = simulate_LFP(t, [], rng=5, ripple_frequency=200.0, ripple_duration=0.1)
         np.testing.assert_array_equal(base, same)
 
 
@@ -705,8 +697,8 @@ class TestRippleTimes:
     )
     def test_one_ripple_time_in_any_numeric_form(self, value):
         t = simulate_time(3000, 1500)
-        expected = simulate_LFP(t, 1.0, random_state=0)
-        np.testing.assert_array_equal(simulate_LFP(t, value, random_state=0), expected)
+        expected = simulate_LFP(t, 1.0, rng=0)
+        np.testing.assert_array_equal(simulate_LFP(t, value, rng=0), expected)
 
 
 class TestDrawPerRipple:
@@ -741,12 +733,12 @@ class TestSimulateMultichannelLFP:
 
     def test_shape(self):
         t = simulate_time(3000, self.FS)
-        assert simulate_multichannel_LFP(t, [1.0], 3, random_state=0).shape == (3000, 3)
+        assert simulate_multichannel_LFP(t, [1.0], 3, rng=0).shape == (3000, 3)
 
     def test_every_channel_carries_the_same_ripple_scaled_by_its_gain(self):
         t = simulate_time(3000, self.FS)
         lfps = simulate_multichannel_LFP(
-            t, [1.0], 2, channel_gains=[1.0, 0.5], noise_amplitude=0.0, random_state=0
+            t, [1.0], 2, channel_gains=[1.0, 0.5], noise_amplitude=0.0, rng=0
         )
         np.testing.assert_allclose(lfps[:, 1], 0.5 * lfps[:, 0], atol=1e-15)
         assert np.abs(lfps[:, 0]).max() > 0.9
@@ -755,7 +747,7 @@ class TestSimulateMultichannelLFP:
         t = simulate_time(30000, self.FS)
         for fraction in (0.0, 0.5, 1.0):
             lfps = simulate_multichannel_LFP(
-                t, [], 2, shared_noise_fraction=fraction, noise_type="white", random_state=1
+                t, [], 2, shared_noise_fraction=fraction, noise_type="white", rng=1
             )
             assert np.corrcoef(lfps[:, 0], lfps[:, 1])[0, 1] == pytest.approx(
                 fraction, abs=0.03
@@ -764,17 +756,17 @@ class TestSimulateMultichannelLFP:
     def test_noise_has_the_single_channel_scale(self):
         """Each channel's noise has the mean square simulate_LFP's noise has."""
         t = simulate_time(30000, self.FS)
-        lfps = simulate_multichannel_LFP(t, [], 3, noise_type="white", random_state=2)
-        single = simulate_LFP(t, [], noise_type="white", random_state=2)
+        lfps = simulate_multichannel_LFP(t, [], 3, noise_type="white", rng=2)
+        single = simulate_LFP(t, [], noise_type="white", rng=2)
         np.testing.assert_allclose(np.mean(lfps**2, axis=0), np.mean(single**2), rtol=0.05)
 
     def test_ripple_snr_holds_on_a_unit_gain_channel(self):
         t = simulate_time(self.FS * 20, self.FS)
         lfps = simulate_multichannel_LFP(
-            t, [5.0, 10.0, 15.0], 2, channel_gains=[1.0, 0.5], ripple_snr=5.0, random_state=3
+            t, [5.0, 10.0, 15.0], 2, channel_gains=[1.0, 0.5], ripple_snr=5.0, rng=3
         )
         background = simulate_multichannel_LFP(
-            t, [], 2, channel_gains=[1.0, 0.5], noise_type="pink", random_state=3
+            t, [], 2, channel_gains=[1.0, 0.5], noise_type="pink", rng=3
         )
         # the same seed draws the same noise, so the difference is the ripples alone
         ripples_only = filter_ripple_band(lfps[:, 0] - background[:, 0], self.FS)
@@ -794,7 +786,7 @@ class TestSimulateMultichannelLFP:
             noise_amplitude=0.0,
             artifact_times=[2.0],
             artifact_amplitude=1.0,
-            random_state=4,
+            rng=4,
         )
         np.testing.assert_array_equal(lfps[:, 0], lfps[:, 1])
         np.testing.assert_array_equal(lfps[:, 0], lfps[:, 2])
@@ -803,20 +795,18 @@ class TestSimulateMultichannelLFP:
 
     def test_seed_reproduces_and_changes(self):
         t = simulate_time(3000, self.FS)
-        a = simulate_multichannel_LFP(t, [1.0], 2, random_state=5)
-        np.testing.assert_array_equal(
-            a, simulate_multichannel_LFP(t, [1.0], 2, random_state=5)
-        )
-        assert not np.array_equal(a, simulate_multichannel_LFP(t, [1.0], 2, random_state=6))
+        a = simulate_multichannel_LFP(t, [1.0], 2, rng=5)
+        np.testing.assert_array_equal(a, simulate_multichannel_LFP(t, [1.0], 2, rng=5))
+        assert not np.array_equal(a, simulate_multichannel_LFP(t, [1.0], 2, rng=6))
 
     def test_bad_arguments_raise(self):
         t = simulate_time(3000, self.FS)
         with pytest.raises(ValueError, match="channel_gains"):
-            simulate_multichannel_LFP(t, [1.0], 2, channel_gains=[1.0], random_state=0)
+            simulate_multichannel_LFP(t, [1.0], 2, channel_gains=[1.0], rng=0)
         with pytest.raises(ValueError, match="shared_noise_fraction"):
-            simulate_multichannel_LFP(t, [1.0], 2, shared_noise_fraction=1.5, random_state=0)
+            simulate_multichannel_LFP(t, [1.0], 2, shared_noise_fraction=1.5, rng=0)
         with pytest.raises(ValueError, match="n_channels"):
-            simulate_multichannel_LFP(t, [1.0], 0, random_state=0)
+            simulate_multichannel_LFP(t, [1.0], 0, rng=0)
         with pytest.raises(ValueError, match="not both"):
             simulate_multichannel_LFP(t, [1.0], 2, ripple_amplitude=1.0, ripple_snr=2.0)
 
@@ -826,7 +816,7 @@ class TestSimulateSharpWaveRipplePair:
 
     def test_shape_and_channel_order(self):
         t = simulate_time(3000, self.FS)
-        assert simulate_sharp_wave_ripple_pair(t, [1.0], random_state=0).shape == (3000, 2)
+        assert simulate_sharp_wave_ripple_pair(t, [1.0], rng=0).shape == (3000, 2)
 
     def test_sharp_wave_is_negative_on_the_radiatum_channel_and_leaks_positive(self):
         t = simulate_time(3000, self.FS)
@@ -853,7 +843,7 @@ class TestSimulateMultiunit:
 
     def test_shape_and_counts(self):
         t = simulate_time(3000, self.FS)
-        counts = simulate_multiunit(t, [1.0], 5, random_state=0)
+        counts = simulate_multiunit(t, [1.0], 5, rng=0)
         assert counts.shape == (3000, 5)
         assert np.all(counts >= 0)
         assert np.all(counts == np.round(counts))
@@ -868,7 +858,7 @@ class TestSimulateMultiunit:
             ripple_rate_gain=8.0,
             participation=1.0,
             ripple_duration=0.1,
-            random_state=1,
+            rng=1,
         )
         inside = counts[(t > 9.98) & (t < 10.02)].sum()
         outside = counts[(t > 4.98) & (t < 5.02)].sum()
@@ -876,16 +866,14 @@ class TestSimulateMultiunit:
 
     def test_no_participation_means_no_burst(self):
         t = simulate_time(self.FS * 20, self.FS)
-        counts = simulate_multiunit(
-            t, [10.0], 20, baseline_rate=5.0, participation=0.0, random_state=1
-        )
+        counts = simulate_multiunit(t, [10.0], 20, baseline_rate=5.0, participation=0.0, rng=1)
         inside = counts[(t > 9.9) & (t < 10.1)].sum()
         outside = counts[(t > 4.9) & (t < 5.1)].sum()
         assert inside < 2.0 * max(outside, 1)
 
     def test_baseline_rate_is_honoured(self):
         t = simulate_time(self.FS * 60, self.FS)
-        counts = simulate_multiunit(t, [], 10, baseline_rate=4.0, random_state=2)
+        counts = simulate_multiunit(t, [], 10, baseline_rate=4.0, rng=2)
         np.testing.assert_allclose(counts.sum(axis=0) / 60.0, 4.0, rtol=0.2)
 
     def test_bad_arguments_raise(self):
@@ -905,9 +893,7 @@ class TestSimulateSession:
 
     def test_shapes_and_ground_truth(self):
         t = simulate_time(self.FS * 20, self.FS)
-        session = simulate_session(
-            t, [3.0, 9.0, 15.0], n_channels=3, n_units=8, random_state=0
-        )
+        session = simulate_session(t, [3.0, 9.0, 15.0], n_channels=3, n_units=8, rng=0)
         assert isinstance(session, SimulatedSession)
         assert session.lfps.shape == (t.size, 3)
         assert session.raw_lfp_pair.shape == (t.size, 2)
@@ -936,7 +922,7 @@ class TestSimulateSession:
             ripple_amplitude=2.0,
             noise_amplitude=0.0,
             sharp_wave_leak=0.0,
-            random_state=seed,
+            rng=seed,
         )
         step = 1 / self.FS
         for center, duration, frequency in zip(
@@ -956,19 +942,19 @@ class TestSimulateSession:
 
     def test_windows_are_clipped_to_the_recording(self):
         t = simulate_time(self.FS * 2, self.FS)
-        session = simulate_session(t, [0.01, 1.99], ripple_duration=0.1, random_state=0)
+        session = simulate_session(t, [0.01, 1.99], ripple_duration=0.1, rng=0)
         np.testing.assert_allclose(session.ripple_windows, [[t[0], 0.06], [1.94, t[-1]]])
 
     def test_a_list_of_times_is_accepted_and_sessions_compare_by_identity(self):
         t = simulate_time(3000, self.FS)
-        session = simulate_session(list(t), [1.0], random_state=0)
+        session = simulate_session(list(t), [1.0], rng=0)
         assert isinstance(session.time, np.ndarray)
-        assert session != simulate_session(t, [1.0], random_state=0)
+        assert session != simulate_session(t, [1.0], rng=0)
         assert session == session
 
     def test_mismatched_lengths_raise(self):
         t = simulate_time(3000, self.FS)
-        session = simulate_session(t, [1.0], random_state=0)
+        session = simulate_session(t, [1.0], rng=0)
         with pytest.raises(ValueError, match="samples"):
             dataclasses.replace(session, speed=np.zeros(10))
         with pytest.raises(ValueError, match="length"):
@@ -976,7 +962,7 @@ class TestSimulateSession:
 
     def test_the_ripple_channel_is_shared_by_the_lfps_and_the_pair(self):
         t = simulate_time(3000, self.FS)
-        session = simulate_session(t, [1.0], random_state=1)
+        session = simulate_session(t, [1.0], rng=1)
         np.testing.assert_array_equal(session.lfps[:, 0], session.raw_lfp_pair[:, 0])
 
     def test_the_three_signals_carry_the_same_events(self):
@@ -988,7 +974,7 @@ class TestSimulateSession:
             noise_amplitude=0.0,
             baseline_rate=5.0,
             participation=1.0,
-            random_state=2,
+            rng=2,
         )
         for start, end in session.ripple_windows:
             inside = (t >= start) & (t <= end)
@@ -1000,13 +986,13 @@ class TestSimulateSession:
 
     def test_seed_reproduces(self):
         t = simulate_time(3000, self.FS)
-        a = simulate_session(t, [1.0], random_state=3)
-        b = simulate_session(t, [1.0], random_state=3)
+        a = simulate_session(t, [1.0], rng=3)
+        b = simulate_session(t, [1.0], rng=3)
         np.testing.assert_array_equal(a.lfps, b.lfps)
         np.testing.assert_array_equal(a.multiunit, b.multiunit)
         np.testing.assert_array_equal(a.ripple_durations, b.ripple_durations)
 
     def test_artifacts_are_recorded(self):
         t = simulate_time(6000, self.FS)
-        session = simulate_session(t, [1.0], artifact_times=[3.0], random_state=4)
+        session = simulate_session(t, [1.0], artifact_times=[3.0], rng=4)
         np.testing.assert_array_equal(session.artifact_times, [3.0])

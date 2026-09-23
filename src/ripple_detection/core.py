@@ -167,6 +167,21 @@ def _warn_at_caller(message: str) -> None:
     warnings.warn(message, UserWarning, stacklevel=stacklevel)
 
 
+def _generator(seed: int | np.random.Generator | None) -> np.random.Generator:
+    """``numpy.random.default_rng(seed)``, refusing the legacy ``RandomState``
+    that 1.x's noise functions took: ``default_rng`` accepts one and silently
+    draws a different stream from it."""
+    given: object = seed  # a caller without a type checker can pass anything
+    if isinstance(given, np.random.RandomState):
+        msg = (
+            "Pass a seed or a numpy.random.Generator, not a RandomState: since 2.0 every "
+            "random draw goes through numpy.random.default_rng, so a RandomState would "
+            "give a different stream than it did in 1.x."
+        )
+        raise TypeError(msg)
+    return np.random.default_rng(seed)
+
+
 def minimum_sample_count(time: ArrayLike, minimum_duration: float) -> int:
     """Number of consecutive samples that ``minimum_duration`` spans.
 

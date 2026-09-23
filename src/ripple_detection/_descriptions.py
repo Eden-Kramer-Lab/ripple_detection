@@ -206,7 +206,7 @@ PARAMETERS = {
         "s",
         "Shortest ripple; a candidate needs this or minimum_sharp_wave_duration.",
     ),
-    "random_state": (
+    "rng": (
         "",
         (
             "Seed or numpy.random.Generator for the k-means; None for the original's "

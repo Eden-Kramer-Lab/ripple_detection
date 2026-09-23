@@ -11,6 +11,7 @@ from scipy.ndimage import convolve1d
 from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import (
     FloatArray,
+    _generator,
     _is_immobile_at_endpoints,
     _unit_area_gaussian,
     minimum_sample_count,
@@ -92,7 +93,7 @@ def Long_sharp_wave_ripple_detector(
     minimum_sharp_wave_duration: float = 0.020,
     maximum_sharp_wave_duration: float = 0.500,
     minimum_ripple_duration: float = 0.025,
-    random_state: int | np.random.Generator | None = 0,
+    rng: int | np.random.Generator | None = 0,
 ) -> pd.DataFrame:
     """Detect sharp-wave ripples from a pyramidal-layer and a stratum radiatum channel.
 
@@ -127,7 +128,7 @@ def Long_sharp_wave_ripple_detector(
     Reimplemented from the algorithm as read. The source states no license.
     It departs from the original in five ways:
 
-    1. ``random_state`` seeds the k-means, where MATLAB's is unseeded.
+    1. ``rng`` seeds the k-means, where MATLAB's is unseeded.
     2. A candidate whose local window holds no sample below the boundary
        threshold is rejected, where the original errors.
     3. The package's endpoint speed rule is applied afterwards; a NaN in
@@ -197,7 +198,7 @@ def Long_sharp_wave_ripple_detector(
         boundary crossings: one less than the inclusive count used for the
         sharp wave, so ``ripple_duration`` is the elapsed time between the
         crossings.
-    random_state : int or numpy.random.Generator, optional
+    rng : int or numpy.random.Generator, optional
         Seed, or a Generator, for the k-means initialization, as
         ``numpy.random.default_rng`` takes it. Default is 0, so two runs on
         the same data give the same events; the original's k-means is
@@ -228,10 +229,10 @@ def Long_sharp_wave_ripple_detector(
     >>> from ripple_detection import filter_ripple_band
     >>> from ripple_detection.simulate import simulate_session, simulate_time
     >>> time = simulate_time(45_000, 1500)  # 30 s at 1500 Hz
-    >>> session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], random_state=0)
+    >>> session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], rng=0)
     >>> # raw, unfiltered: the ripple channel, then the stratum radiatum channel
     >>> events = Long_sharp_wave_ripple_detector(
-    ...     time, session.raw_lfp_pair, session.speed, 1500, random_state=0
+    ...     time, session.raw_lfp_pair, session.speed, 1500, rng=0
     ... )
     >>> "sharp_wave_duration" in events, bool(len(events))
     (True, True)
@@ -289,7 +290,7 @@ def Long_sharp_wave_ripple_detector(
         f"the {sharp_wave_band[0]} Hz sharp-wave low-pass "
         f"({slowest_kernel / sampling_frequency:.2f} s)",
     )
-    rng = np.random.default_rng(random_state)
+    rng = _generator(rng)
 
     # features, within each block
     power_kernel = _gaussian_lowpass_fir(
