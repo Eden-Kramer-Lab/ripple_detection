@@ -492,6 +492,4 @@ def test_require_and_exclude_overlap_partition_the_events(events, reference, min
 
     assert len(required) + len(excluded) == len(events)
     in_required = [any(np.array_equal(event, k) for k in required) for event in events]
-    np.testing.assert_array_equal(
-        np.vstack([events[~np.asarray(in_required, bool)]]), excluded
-    )
+    np.testing.assert_array_equal(events[~np.asarray(in_required, bool)], excluded)

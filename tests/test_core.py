@@ -1614,6 +1614,27 @@ class TestExcludeOverlap:
         with pytest.raises(ValueError, match="minimum_overlap"):
             exclude_overlap(np.array([(0.0, 0.1)]), np.array([(0.0, 0.1)]), -0.1)
 
+    @pytest.mark.parametrize("helper", [require_overlap, exclude_overlap])
+    @pytest.mark.parametrize("bad_row", [(0.5, np.nan), (np.nan, 0.6), (1.5, 1.05)])
+    def test_a_missing_or_reversed_bound_raises(self, helper, bad_row):
+        """One such row among the references used to switch the veto off for
+        every later event, silently."""
+        events = np.array([(1.0, 1.1), (2.0, 2.1)])
+        references = np.array([bad_row, (1.0, 1.1), (2.0, 2.1)])
+        with pytest.raises(ValueError, match="reference_event_times"):
+            helper(events, references)
+        with pytest.raises(ValueError, match="event_times"):
+            helper(np.array([bad_row, (2.0, 2.1)]), events)
+
+    def test_a_zero_length_reference_overlaps_nothing(self):
+        """A point, such as an interictal-spike peak, has no duration to
+        overlap; widen it into a window first."""
+        events = np.array([(1.0, 1.1), (2.0, 2.1)])
+        spike_peaks = np.array([1.05, 2.05])
+
+        assert len(exclude_overlap(events, np.column_stack([spike_peaks, spike_peaks]))) == 2
+        assert len(exclude_overlap(events, spike_peaks[:, np.newaxis] + [-0.1, 0.1])) == 0
+
 
 class TestCloseEventBoundaryAgreement:
     """The merge and drop conventions decide the same gap the same way."""
