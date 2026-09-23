@@ -602,7 +602,9 @@ class TestSimulateLFPRealism:
         explicit = simulate_LFP(
             t, [3.0], ripple_snr=5.0, random_state=2, sampling_frequency=self.FS
         )
-        np.testing.assert_array_equal(inferred, explicit)
+        # the inferred rate is 1500 to rounding, which moves the FFT filter's
+        # block sizes and so its rounding; a wrong rate would differ by order one
+        np.testing.assert_allclose(inferred, explicit, rtol=0, atol=1e-12)
 
     def test_scalar_frequency_is_reproduced_in_every_ripple(self):
         t = simulate_time(self.FS * 4, self.FS)
