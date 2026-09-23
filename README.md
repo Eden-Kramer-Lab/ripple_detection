@@ -548,6 +548,11 @@ Three cautions before treating this as a recipe:
 
 For detailed documentation on the detection algorithms and signal processing pipeline, see [CLAUDE.md](CLAUDE.md).
 
+[`llms.txt`](llms.txt) is a short map of the package for language models: the
+units, the one pipeline, the nine detectors, the migration from 1.x and the
+rules that are easy to get wrong. A test runs its example and checks that it
+names every detector.
+
 ## Choosing a detector
 
 All detectors take `time`, the signal, `speed`, and `sampling_frequency` as positional arguments

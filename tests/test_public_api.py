@@ -123,3 +123,21 @@ class TestCallsWrittenFor1x:
             "speed",
             "sampling_frequency",
         ]
+
+
+class TestLlmsTxt:
+    """llms.txt, the short map for language models, stays true to the code."""
+
+    TEXT = (__import__("pathlib").Path(__file__).parents[1] / "llms.txt").read_text()
+
+    def test_its_example_runs(self):
+        import re
+
+        (block,) = re.findall(r"```python\n(.*?)```", self.TEXT, re.DOTALL)
+        namespace: dict[str, object] = {}
+        exec(block, namespace)
+        assert len(namespace["events"]) > 0
+
+    def test_it_names_every_registered_detector(self):
+        missing = [name for name in ripple_detection.DETECTORS if f"`{name}`" not in self.TEXT]
+        assert missing == []

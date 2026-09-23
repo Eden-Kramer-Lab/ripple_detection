@@ -157,6 +157,9 @@ raises on zero rows; that is hdmf's, not this package's.
   tunables are named with their values, a near-miss keyword gets a "did you
   mean", and `filter_ripple_band` without a rate says why the rate is now
   required. The README opens with the migration table.
+- `llms.txt` at the repository root, a short map of the package for language
+  models (units, the pipeline, the detectors, the migration from 1.x, the
+  common mistakes); a test runs its example and checks it names every detector.
 - Every detector's docstring has a runnable example on simulated data, as do
   `minimum_sample_count`, `sample_count_within`, `ripple_bandpass_filter` and
   `simulate_time`; the examples run with the tests (`--doctest-modules`).
