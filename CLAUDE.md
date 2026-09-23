@@ -32,6 +32,8 @@ pip install -e .
 The `dev` extra and the `dev` dependency group in `pyproject.toml` list the same
 tools; keep them identical.
 
+Releasing: the `release` skill ([.claude/skills/release/SKILL.md](.claude/skills/release/SKILL.md)). What each test module covers: [tests/CLAUDE.md](tests/CLAUDE.md).
+
 ### Testing
 
 ```bash
@@ -97,64 +99,6 @@ python -m build
 # Build with hatch (if installed)
 hatch build
 ```
-
-### Release Process
-
-When preparing a new release:
-
-```bash
-# 1. Run all tests to ensure everything passes
-pytest    # tests/ and the docstring examples in src/
-
-# 2. Run code quality checks
-ruff format --check src/ tests/
-ruff check src/ tests/
-mypy src/
-
-# 3. Update CHANGELOG.md (and MIGRATING.md for a major version: the calls to
-#    change and why results differ; the changelog links it rather than repeating it)
-# - Add new version section with date: ## [X.Y.Z] - YYYY-MM-DD
-# - Document all changes under appropriate headers:
-#   - Added (new features)
-#   - Changed (changes to existing functionality)
-#   - Deprecated (soon-to-be removed features)
-#   - Removed (removed features)
-#   - Fixed (bug fixes)
-#   - Security (security fixes)
-# - List closed issues: "Closes #N"
-# - Update comparison links at bottom of file
-
-# 4. Commit the changelog
-git add CHANGELOG.md
-git commit -m "Update CHANGELOG for vX.Y.Z release"
-git push origin master
-
-# 5. Create and push annotated git tag
-git tag -a vX.Y.Z -m "Release vX.Y.Z
-
-## New Features
-- Feature description
-
-## Improvements
-- Improvement description
-
-Closes #N"
-
-git push origin vX.Y.Z
-
-# The tag push triggers the automated GitHub Actions release workflow:
-# - Runs tests on Python 3.10 through 3.14, and at the dependency floors
-# - Builds source distribution and wheels
-# - Publishes to PyPI
-# - Creates GitHub release with auto-generated notes
-```
-
-**Important Notes:**
-- Always update CHANGELOG.md BEFORE creating the tag
-- The tag must be an annotated tag (use `-a` flag) with a meaningful message
-- Version follows semantic versioning (MAJOR.MINOR.PATCH)
-- The version in `src/ripple_detection/_version.py` is auto-generated from the git tag by hatch-vcs
-- Monitor the release workflow at: https://github.com/Eden-Kramer-Lab/ripple_detection/actions
 
 ## Architecture
 
@@ -249,23 +193,6 @@ All detectors return rich event statistics via `_get_event_stats()`:
 - Speed metrics: speed at start/end, max/min/median/mean speed during event
 - Missing data: clipped_start, clipped_end (the event was cut off by a gap or the recording edge)
 - Detector-specific extras: Shvartsman `participants` (sorted tuple), `n_participants`, `frac_participants`; Yu `n_suprathreshold_samples`, `detection_threshold_zscore`; Zugaro and Long `peak_time`; Long sharp-wave and ripple statistics; Carey and HSE `n_active_units`. The README's "Output Format" tables are the reference.
-
-## Testing Strategy
-
-The suite, with its shared fixtures:
-
-1. **[tests/conftest.py](tests/conftest.py)** - Shared pytest fixtures: 1500 Hz LFP simulations with various ripple patterns, speed data (stationary and moving), multiunit spike trains, edge cases, and the class-aware `time` and `stationary` fixtures
-2. **[tests/test_core.py](tests/test_core.py)** - Core signal processing: segmentation, extension, merging, the duration and gap boundary rules, normalization (including the degenerate-scale errors), filtering at several rates and across NaN gaps, envelope, smoothing, the Yu noise-threshold estimator
-3. **[tests/test_detectors.py](tests/test_detectors.py)** - One test class per detector plus shared classes for error handling, parameter ranges, input contents, participation, duration and speed conventions (unknown speed included), exclusion order, time ordering, the gap rule, and missing samples (short blocks included); a class states `FS` and `N_TIME` and gets `time` and `stationary` fixtures from conftest, and builds inputs with the helpers in [tests/_synthetic.py](tests/_synthetic.py)
-4. **[tests/test_simulate.py](tests/test_simulate.py)** - Noise spectra, embedded ripples, per-ripple ranges, `ripple_snr`, and the inputs that used to give an all-NaN signal
-5. **[tests/test_properties.py](tests/test_properties.py)** - Hypothesis-driven invariants for the signal-processing functions
-6. **[tests/test_snapshots.py](tests/test_snapshots.py)** - Regression snapshots of detector output on fixed simulated data
-7. **[tests/test_public_api.py](tests/test_public_api.py)** - Pins `__all__`; the messages for calls written for 1.x; `llms.txt`'s example runs and names every detector
-8. **[tests/test_registry.py](tests/test_registry.py)** - Every exported detector is registered; each spec matches its signature by kind and position
-9. **[tests/test_literature.py](tests/test_literature.py)** - The shipped survey loads with the documented shape and types
-10. **[tests/test_integration.py](tests/test_integration.py)** - Every detector driven by name from the registry on `simulate_session` output and judged against the ground truth: the registry path and the parameter set Spyglass stores, recall with a false-positive budget per detector, event bounds against the ripple windows, the filter-then-detect chain at 1000, 2000 and 30000 Hz, cross-detector agreement on one ripple, the output contract including the empty-result schema, time-offset, scale and channel-order invariance, clipped flags at the recording edges, Long's seeding, and Yu's threshold under shared channel noise
-
-The whole suite runs in seconds; `pytest` reports coverage of `src/ripple_detection` with the missing lines. The package also validates that example notebooks run without errors in CI.
 
 ## Build System
 
