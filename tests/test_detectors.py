@@ -1888,7 +1888,9 @@ class TestLongSharpWaveRippleDetector:
 
     def test_recovers_planted_sharp_wave_ripples(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
-        events = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=0)
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp[:, 0], stationary, self.FS, sharp_wave_lfp=lfp[:, 1], rng=0
+        )
         hits = [
             any((events.start_time <= time[c]) & (events.end_time >= time[c]))
             for c in self.EVENTS
@@ -1900,7 +1902,9 @@ class TestLongSharpWaveRippleDetector:
 
     def test_ripple_without_sharp_wave_is_not_detected(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS, sharp_wave=False)
-        events = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=0)
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp[:, 0], stationary, self.FS, sharp_wave_lfp=lfp[:, 1], rng=0
+        )
         hits = [
             any((events.start_time <= time[c]) & (events.end_time >= time[c]))
             for c in self.EVENTS
@@ -1909,7 +1913,9 @@ class TestLongSharpWaveRippleDetector:
 
     def test_sharp_wave_without_ripple_is_not_detected(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS, ripple=False)
-        events = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=0)
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp[:, 0], stationary, self.FS, sharp_wave_lfp=lfp[:, 1], rng=0
+        )
         hits = [
             any((events.start_time <= time[c]) & (events.end_time >= time[c]))
             for c in self.EVENTS
@@ -1921,20 +1927,28 @@ class TestLongSharpWaveRippleDetector:
     ):
         edge_events = [2000, 38000, *self.EVENTS]
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, edge_events)
-        events = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=0)
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp[:, 0], stationary, self.FS, sharp_wave_lfp=lfp[:, 1], rng=0
+        )
         assert np.all(events.peak_time >= 5.0)
         assert np.all(events.peak_time <= time[-1] - 5.0)
 
     def test_seeded_clustering_is_reproducible(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
-        a = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=3)
-        b = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=3)
+        a = Long_sharp_wave_ripple_detector(
+            time, lfp[:, 0], stationary, self.FS, sharp_wave_lfp=lfp[:, 1], rng=3
+        )
+        b = Long_sharp_wave_ripple_detector(
+            time, lfp[:, 0], stationary, self.FS, sharp_wave_lfp=lfp[:, 1], rng=3
+        )
         pd.testing.assert_frame_equal(a, b)
 
     def test_window_size_given_in_milliseconds_raises(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
         with pytest.raises(ValueError, match=r"window_size is in seconds.*pass 0\.04"):
-            Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, window_size=40)
+            Long_sharp_wave_ripple_detector(
+                time, lfp[:, 0], stationary, self.FS, sharp_wave_lfp=lfp[:, 1], window_size=40
+            )
 
     def test_no_candidate_far_enough_from_a_block_edge_raises(self, time, stationary):
         """With every candidate within local_window of a block edge none can
@@ -1942,9 +1956,23 @@ class TestLongSharpWaveRippleDetector:
         local_window=5000 (milliseconds given as seconds) did on any record."""
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
         with pytest.raises(ValueError, match=r"local_window.*in seconds"):
-            Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, local_window=5000)
+            Long_sharp_wave_ripple_detector(
+                time,
+                lfp[:, 0],
+                stationary,
+                self.FS,
+                sharp_wave_lfp=lfp[:, 1],
+                local_window=5000,
+            )
         with pytest.raises(ValueError, match=r"local_window"):
-            Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, local_window=20.0)
+            Long_sharp_wave_ripple_detector(
+                time,
+                lfp[:, 0],
+                stationary,
+                self.FS,
+                sharp_wave_lfp=lfp[:, 1],
+                local_window=20.0,
+            )
 
     def test_a_random_state_instance_is_refused(self, time, stationary):
         """As the simulators refuse one: default_rng would accept it and draw a
@@ -1952,12 +1980,19 @@ class TestLongSharpWaveRippleDetector:
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
         with pytest.raises(TypeError, match="not a RandomState"):
             Long_sharp_wave_ripple_detector(
-                time, lfp, stationary, self.FS, rng=np.random.RandomState(0)
+                time,
+                lfp[:, 0],
+                stationary,
+                self.FS,
+                sharp_wave_lfp=lfp[:, 1],
+                rng=np.random.RandomState(0),
             )
 
     def test_output_columns(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
-        events = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=0)
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp[:, 0], stationary, self.FS, sharp_wave_lfp=lfp[:, 1], rng=0
+        )
         for column in (
             "start_time",
             "end_time",
@@ -1984,8 +2019,12 @@ class TestLongSharpWaveRippleDetector:
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
         speed = stationary.copy()
         speed[6800:7200] = 10.0  # moving through the first event
-        events = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=0)
-        moved = Long_sharp_wave_ripple_detector(time, lfp, speed, self.FS, rng=0)
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp[:, 0], stationary, self.FS, sharp_wave_lfp=lfp[:, 1], rng=0
+        )
+        moved = Long_sharp_wave_ripple_detector(
+            time, lfp[:, 0], speed, self.FS, sharp_wave_lfp=lfp[:, 1], rng=0
+        )
         assert any((events.start_time <= time[7000]) & (events.end_time >= time[7000]))
         assert not any((moved.start_time <= time[7000]) & (moved.end_time >= time[7000]))
 
@@ -1994,7 +2033,11 @@ class TestLongSharpWaveRippleDetector:
         lfp = _synthetic_two_channel_lfp(n_time, self.FS, ())
         with pytest.raises(ValueError, match=r"as long as the .* samples"):
             Long_sharp_wave_ripple_detector(
-                np.arange(n_time) / self.FS, lfp, np.full(n_time, 2.0), self.FS
+                np.arange(n_time) / self.FS,
+                lfp[:, 0],
+                np.full(n_time, 2.0),
+                self.FS,
+                sharp_wave_lfp=lfp[:, 1],
             )
 
     def test_minimum_separation_keeps_only_the_last_of_close_candidates(
@@ -2004,7 +2047,13 @@ class TestLongSharpWaveRippleDetector:
         # 10 s is the longest separation the check admits, and every
         # consecutive pair of EVENTS is closer than that
         events = Long_sharp_wave_ripple_detector(
-            time, lfp, stationary, self.FS, minimum_separation=10.0, rng=0
+            time,
+            lfp[:, 0],
+            stationary,
+            self.FS,
+            sharp_wave_lfp=lfp[:, 1],
+            minimum_separation=10.0,
+            rng=0,
         )
         assert len(events) <= 1
 
@@ -2012,9 +2061,10 @@ class TestLongSharpWaveRippleDetector:
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
         events = Long_sharp_wave_ripple_detector(
             time,
-            lfp,
+            lfp[:, 0],
             stationary,
             self.FS,
+            sharp_wave_lfp=lfp[:, 1],
             minimum_sharp_wave_duration=0.001,
             maximum_sharp_wave_duration=0.002,
             rng=0,
@@ -2023,22 +2073,52 @@ class TestLongSharpWaveRippleDetector:
         assert "start_time" in events.columns
         assert "sharp_wave_duration" in events.columns
 
-    def test_requires_exactly_two_channels(self, time, stationary):
+    def test_each_signal_is_one_channel(self, time, stationary):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
-        with pytest.raises(ValueError, match="two"):
-            Long_sharp_wave_ripple_detector(time, lfp[:, :1], stationary, self.FS)
-        with pytest.raises(ValueError, match="two"):
-            Long_sharp_wave_ripple_detector(time, np.hstack([lfp, lfp]), stationary, self.FS)
+        flat = Long_sharp_wave_ripple_detector(
+            time, lfp[:, 0], stationary, self.FS, sharp_wave_lfp=lfp[:, 1]
+        )
+        column = Long_sharp_wave_ripple_detector(
+            time, lfp[:, :1], stationary, self.FS, sharp_wave_lfp=lfp[:, 1:]
+        )
+        pd.testing.assert_frame_equal(flat, column)
+        with pytest.raises(ValueError, match="sharp_wave_lfp must be one channel"):
+            Long_sharp_wave_ripple_detector(
+                time, lfp[:, 0], stationary, self.FS, sharp_wave_lfp=lfp
+            )
+        with pytest.raises(ValueError, match="sharp_wave_lfp must have"):
+            Long_sharp_wave_ripple_detector(
+                time, lfp[:, 0], stationary, self.FS, sharp_wave_lfp=lfp[:-1, 1]
+            )
+
+    def test_a_two_channel_array_says_where_the_second_channel_goes(self, time, stationary):
+        """The shape the pre-release signature took."""
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        with pytest.raises(ValueError, match=r"raw_lfp must be one channel.*sharp_wave_lfp="):
+            Long_sharp_wave_ripple_detector(
+                time, lfp, stationary, self.FS, sharp_wave_lfp=lfp[:, 1]
+            )
+
+    def test_the_sharp_wave_channel_is_required(self, time, stationary):
+        """So a caller that resolves detectors by name and calls Long like the
+        ripple-band detectors fails instead of detecting on the wrong input."""
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        with pytest.raises(TypeError, match="sharp_wave_lfp"):
+            Long_sharp_wave_ripple_detector(time, lfp[:, 0], stationary, self.FS)
 
     def test_nan_splits_the_record_and_events_far_from_it_survive(self, time, stationary):
         """A NaN sample ends a block. Blocks shorter than the sharp-wave kernel
         are treated as missing with a warning; the events on the long side
         are found as before."""
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
-        clean = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=0)
+        clean = Long_sharp_wave_ripple_detector(
+            time, lfp[:, 0], stationary, self.FS, sharp_wave_lfp=lfp[:, 1], rng=0
+        )
         lfp[100, 0] = np.nan  # leaves a 100-sample block before it
         with pytest.warns(UserWarning, match="treated as missing"):
-            events = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=0)
+            events = Long_sharp_wave_ripple_detector(
+                time, lfp[:, 0], stationary, self.FS, sharp_wave_lfp=lfp[:, 1], rng=0
+            )
         assert len(events) == len(clean) >= 1
         assert not events.clipped_start.any()
         assert not events.clipped_end.any()
@@ -3144,9 +3224,10 @@ class TestLongMaxThreshIsFinite:
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
         events = Long_sharp_wave_ripple_detector(
             time,
-            lfp,
+            lfp[:, 0],
             np.full(self.N_TIME, 2.0),
             self.FS,
+            sharp_wave_lfp=lfp[:, 1],
             minimum_ripple_duration=0.400,
             rng=0,
         )
@@ -3538,9 +3619,10 @@ class TestDurationLimitValidation:
         with pytest.raises(ValueError, match="maximum"):
             Long_sharp_wave_ripple_detector(
                 time,
-                raw,
+                raw[:, 0],
                 stationary,
                 self.FS,
+                sharp_wave_lfp=raw[:, 1],
                 minimum_sharp_wave_duration=0.500,
                 maximum_sharp_wave_duration=0.100,
             )
@@ -3618,7 +3700,11 @@ class TestTimeMustBeIncreasing:
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, [2500])
         with pytest.raises(ValueError, match="increasing"):
             Long_sharp_wave_ripple_detector(
-                swapped_time, lfp, np.full(self.N_TIME, 2.0), self.FS
+                swapped_time,
+                lfp[:, 0],
+                np.full(self.N_TIME, 2.0),
+                self.FS,
+                sharp_wave_lfp=lfp[:, 1],
             )
 
     def test_repeated_timestamps_raise(self):
@@ -3820,10 +3906,18 @@ class TestNoEventSpansAGap:
         gap = (7000, 7002)  # through the second event
         if where == "lfp":
             lfp[slice(*gap), 1] = np.nan
-            events = Long_sharp_wave_ripple_detector(time, lfp, speed, self.FS, rng=0)
-        else:
             events = Long_sharp_wave_ripple_detector(
-                *self._cut(gap, time, lfp, speed), self.FS, rng=0
+                time, lfp[:, 0], speed, self.FS, sharp_wave_lfp=lfp[:, 1], rng=0
+            )
+        else:
+            cut_time, cut_lfp, cut_speed = self._cut(gap, time, lfp, speed)
+            events = Long_sharp_wave_ripple_detector(
+                cut_time,
+                cut_lfp[:, 0],
+                cut_speed,
+                self.FS,
+                sharp_wave_lfp=cut_lfp[:, 1],
+                rng=0,
             )
         # candidates within the 5 s local window of a block edge are not
         # evaluated, so only the event far from both the gap and the edges is left
@@ -3905,7 +3999,9 @@ class TestUnknownSpeed:
     def _run_long(self, time, speed, **kwargs):
         # events at least local_window (5 s) from both ends, so each is evaluated
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, (8000, 12000))
-        return Long_sharp_wave_ripple_detector(time, lfp, speed, self.FS, rng=0, **kwargs)
+        return Long_sharp_wave_ripple_detector(
+            time, lfp[:, 0], speed, self.FS, sharp_wave_lfp=lfp[:, 1], rng=0, **kwargs
+        )
 
     def test_long_nan_inside_an_event_changes_nothing(self, time):
         speed = np.full(self.N_TIME, 2.0)
@@ -4066,7 +4162,7 @@ class TestParameterRanges:
         fs = kwargs.pop("sampling_frequency", self.FS)
         if detector is Long_sharp_wave_ripple_detector:
             lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, (2500,))
-            return detector(time, lfp, speed, fs, **kwargs)
+            return detector(time, lfp[:, 0], speed, fs, sharp_wave_lfp=lfp[:, 1], **kwargs)
         if detector in (multiunit_HSE_detector, Carey_candidate_detector):
             lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, (2500,))
             if detector is multiunit_HSE_detector:
@@ -4248,8 +4344,8 @@ class TestInputContents:
         if detector is Long_sharp_wave_ripple_detector:
             lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, (2500,))
             lfp[:, 1] = 0.7
-            call = lambda: detector(time, lfp, speed, self.FS)  # noqa: E731
-            match = r"raw_lfp_pair channel\(s\) \[1\]"
+            call = lambda: detector(time, lfp[:, 0], speed, self.FS, sharp_wave_lfp=lfp[:, 1])  # noqa: E731
+            match = r"sharp_wave_lfp is constant"
         else:
             lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, (2500,))
             lfps[:, 2] = 0.7
@@ -4387,7 +4483,12 @@ class TestRemainingErrorPaths:
         lfp = _synthetic_two_channel_lfp(1500, self.FS, (750,))
         with pytest.raises(ValueError, match="Too few candidate windows"):
             Long_sharp_wave_ripple_detector(
-                time, lfp, np.full(1500, 2.0), self.FS, window_size=0.9
+                time,
+                lfp[:, 0],
+                np.full(1500, 2.0),
+                self.FS,
+                sharp_wave_lfp=lfp[:, 1],
+                window_size=0.9,
             )
 
     @pytest.mark.parametrize(

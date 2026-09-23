@@ -181,23 +181,28 @@ spec.check_parameters({"zscore_threshold": 3.0})  # raises on a name the detecto
 The names in `ripple_detection.__all__` are the public API; anything else is an
 implementation detail that may change without notice.
 
-Check `inputs` before calling. The detectors do not all take the same signal,
-and two of the mismatches are silent rather than loud:
+Check `inputs` before calling. The detectors do not all take the same signal:
 
 | `inputs` | Detectors | What to pass |
 |---|---|---|
 | `("ripple_band_lfp",)` | Kay, Karlsson, Roumis, Shvartsman, Yu, Zugaro | `(n_time, n_channels)` ripple-band filtered LFP |
-| `("raw_lfp_pair",)` | Long | `(n_time, 2)` **unfiltered** LFP: pyramidal-layer channel, then stratum radiatum |
-| `("ripple_band_lfp", "multiunit")` | Carey | both, in that order |
+| `("raw_lfp",)` | Long | `(n_time,)` **unfiltered** LFP of the pyramidal-layer channel, and the stratum radiatum channel by name, `sharp_wave_lfp=` |
+| `("ripple_band_lfp", "multiunit")` | Carey | both, in that order; optionally a theta channel, `theta_lfp=` |
 | `("multiunit",)` | `multiunit_HSE_detector` | `(n_time, n_units)` spike counts or indicators |
 
-`Long_sharp_wave_ripple_detector` takes raw LFP through a signature identical to
-the ripple-band detectors', so handing it filtered data raises nothing and
+`spec.keyword_inputs` names the signals a detector takes by name, and
+`spec.required_keyword_inputs` the ones it cannot run without. They are
+signals, not tunables, so `spec.parameters` leaves them out.
+
+`Long_sharp_wave_ripple_detector` takes raw LFP where the ripple-band detectors
+take filtered LFP. A call written like theirs fails, because it lacks
+`sharp_wave_lfp`, but filtered data passed with both channels raises nothing and
 returns plausible nonsense, and `multiunit_HSE_detector` has the same shape of
-hazard. `spec.check_inputs(*signals)` verifies what an array can show: the number
-of signals, that each is 2-D, that a raw pair has two channels, and that spike
-counts are non-negative whole numbers. It cannot tell raw LFP from filtered LFP,
-so `inputs` is the contract to check your pipeline against.
+hazard. `spec.check_inputs(*signals, **keyword_signals)` verifies what an array
+can show: the number of signals, the required keyword signals, that a
+multichannel signal is 2-D and a raw LFP one channel, and that spike counts are
+non-negative whole numbers. It cannot tell raw LFP from filtered LFP, so
+`inputs` is the contract to check your pipeline against.
 
 ```python
 spec = get_detector("Long_sharp_wave_ripple_detector")
@@ -205,8 +210,7 @@ try:
     spec.check_inputs(filtered_lfps)  # four channels from Basic Usage
 except ValueError as error:
     print(error)
-# Long_sharp_wave_ripple_detector takes raw_lfp_pair as signal 1: two channels,
-# the ripple channel then the sharp-wave channel, got 4.
+# Long_sharp_wave_ripple_detector needs sharp_wave_lfp, passed by name.
 ```
 
 `spec.describe()` gives everything above as plain data that `json.dumps`
@@ -559,7 +563,7 @@ conventions below.
 | `Shvartsman_ripple_detector` | same | per-channel z-scored envelopes; event kept when ≥ `minimum_participating_channels` (2), or `minimum_participating_fraction` of the channels, detect it | 3.0 | ≥ 0.015 s | same | at least half the event's samples ≤ threshold | lab variant (G. Shvartsman), unpublished |
 | `Yu_ripple_detector` | same | median over channels of each channel's z-scored 4 ms-smoothed envelope | `percentile` 99.99 of the mirrored immobility-noise distribution, estimated per call | ≥ 0.020 s | `close_ripple_threshold` 0.0 | noise from `speed <= threshold`; event endpoints ≤ threshold | Yu et al. 2017 |
 | `Zugaro_ripple_detector` | same, channels summed | z-scored smoothed squared signal, two thresholds (strictly above) | `low_threshold` 2.0 (bounds), `high_threshold` 5.0 (peak) | 0.020–0.100 s | `minimum_inter_ripple_interval` 0.030 s, merges | endpoints ≤ threshold | FMAToolbox `FindRipples` (Hirase; Zugaro) |
-| `Long_sharp_wave_ripple_detector` | **raw** LFP `(n_time, 2)`: ripple channel, stratum radiatum channel | sharp-wave difference and ripple power, split by k-means with local (±5 s) statistics | `sharp_wave_thresholds`, `ripple_thresholds` (0.5, 2.5) | sharp wave 0.020–0.500 s **or** ripple ≥ 0.025 s: either minimum suffices; a sharp wave over 0.500 s is dropped | `minimum_separation` 0.050 s from the previous candidate, kept or not; drops | endpoints ≤ threshold | Long, buzcode/neurocode `DetectSWR` |
+| `Long_sharp_wave_ripple_detector` | **raw** LFP of the pyramidal-layer channel, and of a stratum radiatum channel as `sharp_wave_lfp=` | sharp-wave difference and ripple power, split by k-means with local (±5 s) statistics | `sharp_wave_thresholds`, `ripple_thresholds` (0.5, 2.5) | sharp wave 0.020–0.500 s **or** ripple ≥ 0.025 s: either minimum suffices; a sharp wave over 0.500 s is dropped | `minimum_separation` 0.050 s from the previous candidate, kept or not; drops | endpoints ≤ threshold | Long, buzcode/neurocode `DetectSWR` |
 | `Carey_candidate_detector` | ripple-band LFP **and** spikes `(n_time, n_units)` | geometric mean of a ripple-envelope score and a multiunit score, two thresholds (strictly above) | `low_threshold` 1.0, `high_threshold` 3.0; ≥ `minimum_active_units` 5 | ≥ 0.020 s | none | whole event inside a low-speed interval (`speed <= threshold`) | Carey, Tanaka & van der Meer 2019 |
 | `multiunit_HSE_detector` | spikes `(n_time, n_units)`, no LFP | z-scored 15 ms-smoothed population rate | `zscore_threshold` 2.0 | ≥ 0.015 s | `close_event_threshold` 0.0 | endpoints ≤ threshold | package convention; Davidson et al. 2009 lineage |
 

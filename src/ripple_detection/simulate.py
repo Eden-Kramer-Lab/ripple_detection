@@ -768,14 +768,14 @@ def simulate_sharp_wave_ripple_pair(
     noise_amplitude: float = 1.3,
     rng: int | np.random.Generator | None = None,
     sampling_frequency: float | None = None,
-) -> FloatArray:
-    """Simulate the raw two-channel input of ``Long_sharp_wave_ripple_detector``.
+) -> tuple[FloatArray, FloatArray]:
+    """Simulate the two raw channels ``Long_sharp_wave_ripple_detector`` takes.
 
-    Column 0 is a pyramidal-layer channel: the ripple at full amplitude on a
-    small positive sharp-wave deflection. Column 1 is a stratum radiatum
-    channel: the sharp wave as a negative Gaussian deflection centred on each
-    ripple, with a weak copy of the ripple. The two channels' noise is
-    correlated as in ``simulate_multichannel_LFP``.
+    ``raw_lfp`` is a pyramidal-layer channel: the ripple at full amplitude on
+    a small positive sharp-wave deflection. ``sharp_wave_lfp`` is a stratum
+    radiatum channel: the sharp wave as a negative Gaussian deflection
+    centred on each ripple, with a weak copy of the ripple. The two channels'
+    noise is correlated as in ``simulate_multichannel_LFP``.
 
     Parameters
     ----------
@@ -799,9 +799,17 @@ def simulate_sharp_wave_ripple_pair(
 
     Returns
     -------
-    raw_lfp_pair : ndarray, shape (n_time, 2)
-        Raw, unfiltered: the ripple channel, then the sharp-wave channel, the
-        order the Long detector takes.
+    raw_lfp : ndarray, shape (n_time,)
+        The pyramidal-layer channel, raw.
+    sharp_wave_lfp : ndarray, shape (n_time,)
+        The stratum radiatum channel, raw.
+
+    Examples
+    --------
+    >>> time = simulate_time(15_000, 1500)
+    >>> raw_lfp, sharp_wave_lfp = simulate_sharp_wave_ripple_pair(time, [5.0], rng=0)
+    >>> raw_lfp.shape, sharp_wave_lfp.shape
+    ((15000,), (15000,))
 
     """
     pair = simulate_multichannel_LFP(
@@ -828,7 +836,7 @@ def simulate_sharp_wave_ripple_pair(
         sharp_wave_duration,
         sharp_wave_leak,
     )
-    return pair
+    return pair[:, 0].copy(), pair[:, 1].copy()
 
 
 @explain_call_errors
@@ -918,9 +926,11 @@ class SimulatedSession:
     lfps : ndarray, shape (n_time, n_channels)
         Raw multichannel LFP, the ripple channel first; filter it with
         ``filter_ripple_band`` before the ripple-band detectors.
-    raw_lfp_pair : ndarray, shape (n_time, 2)
-        The ripple channel and the stratum radiatum channel, unfiltered, for
-        ``Long_sharp_wave_ripple_detector``.
+    raw_lfp : ndarray, shape (n_time,)
+        The ripple channel, ``lfps[:, 0]``, for ``Long_sharp_wave_ripple_detector``.
+    sharp_wave_lfp : ndarray, shape (n_time,)
+        The stratum radiatum channel, unfiltered, for the same detector's
+        ``sharp_wave_lfp``.
     multiunit : ndarray, shape (n_time, n_units)
         Spike counts per sample.
     speed : ndarray, shape (n_time,)
@@ -941,7 +951,8 @@ class SimulatedSession:
 
     time: FloatArray
     lfps: FloatArray
-    raw_lfp_pair: FloatArray
+    raw_lfp: FloatArray
+    sharp_wave_lfp: FloatArray
     multiunit: FloatArray
     speed: FloatArray
     ripple_times: FloatArray
@@ -952,7 +963,7 @@ class SimulatedSession:
 
     def __post_init__(self) -> None:
         n_time = self.time.shape[0]
-        for name in ("lfps", "raw_lfp_pair", "multiunit", "speed"):
+        for name in ("lfps", "raw_lfp", "sharp_wave_lfp", "multiunit", "speed"):
             if getattr(self, name).shape[0] != n_time:
                 msg = f"{name} has {getattr(self, name).shape[0]} samples; time has {n_time}."
                 raise ValueError(msg)
@@ -1050,8 +1061,8 @@ def simulate_session(
     --------
     >>> time = simulate_time(30000, 1500)
     >>> session = simulate_session(time, [3.0, 9.0, 15.0], rng=0)
-    >>> session.lfps.shape, session.raw_lfp_pair.shape, session.multiunit.shape
-    ((30000, 4), (30000, 2), (30000, 50))
+    >>> session.lfps.shape, session.sharp_wave_lfp.shape, session.multiunit.shape
+    ((30000, 4), (30000,), (30000, 50))
 
     """
     if ripple_amplitude is not None:
@@ -1103,7 +1114,8 @@ def simulate_session(
     return SimulatedSession(
         time=time,
         lfps=lfps,
-        raw_lfp_pair=np.column_stack([lfps[:, 0], radiatum]),
+        raw_lfp=lfps[:, 0].copy(),
+        sharp_wave_lfp=radiatum,
         multiunit=multiunit,
         speed=np.zeros(time.size),
         ripple_times=centers,

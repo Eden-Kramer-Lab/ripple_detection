@@ -21,7 +21,7 @@ REGISTRY = [
     "DetectorSpec",
     "SignalKind",
     "MULTIUNIT",
-    "RAW_LFP_PAIR",
+    "RAW_LFP",
     "RIPPLE_BAND_LFP",
     "get_detector",
 ]
@@ -184,7 +184,7 @@ class TestCallsWrittenFor1x:
             ripple_detection.simulate_session(time, [1.0], random_state=0)
         with pytest.raises(TypeError, match="random_state was renamed rng"):
             ripple_detection.Long_sharp_wave_ripple_detector(
-                time, np.zeros((len(time), 2)), speed, 1500, random_state=0
+                time, np.zeros(len(time)), speed, 1500, sharp_wave_lfp=speed, random_state=0
             )
 
     def test_every_seed_is_called_rng(self):
@@ -251,13 +251,16 @@ class TestCallsWrittenFor1x:
             ripple_detection.Shvartsman_ripple_detector(
                 *inputs, 1500, manual_normalization=True
             )
-        with pytest.raises(TypeError, match=r"raw_lfps was renamed raw_lfp_pair"):
-            ripple_detection.Long_sharp_wave_ripple_detector(
-                time=time,
-                raw_lfps=np.zeros((len(time), 2)),
-                speed=speed,
-                sampling_frequency=1500,
-            )
+        for old in ("raw_lfps", "raw_lfp_pair"):
+            with pytest.raises(
+                TypeError, match=rf"{old} was split before 2.0.*raw_lfp.*sharp_wave_lfp"
+            ):
+                ripple_detection.Long_sharp_wave_ripple_detector(
+                    time=time,
+                    speed=speed,
+                    sampling_frequency=1500,
+                    **{old: np.zeros((len(time), 2))},
+                )
         with pytest.raises(TypeError, match=r"elec_baselines was renamed channel_baselines"):
             ripple_detection.Shvartsman_ripple_detector(
                 *inputs, 1500, elec_baselines=[0.0, 0.0]

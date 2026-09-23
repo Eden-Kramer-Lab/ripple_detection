@@ -73,13 +73,13 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
 3. **[src/ripple_detection/simulate.py](src/ripple_detection/simulate.py)** - Synthetic data generation
    - `simulate_LFP`: one channel of coloured noise (pink by default; brown was the 1.x default and has almost no ripple-band power) with Gaussian-windowed sine bursts, sized in signal units or by `ripple_snr`
    - `simulate_multichannel_LFP`: channels sharing one ripple (per-channel gains) in noise that is part shared, part their own; optional common-mode artifacts
-   - `simulate_sharp_wave_ripple_pair`: the raw pyramidal and stratum radiatum pair the Long detector takes
+   - `simulate_sharp_wave_ripple_pair`: the raw pyramidal-layer and stratum radiatum channels the Long detector takes
    - `simulate_multiunit`: Poisson units that burst with the ripples
    - `simulate_session`: all of the above from one draw of per-ripple durations and frequencies, returned with the ground truth as a `SimulatedSession` (`ripple_windows` are the intervals a detected event should overlap)
    - The basis of the integration tests and of `examples/simulation_study.py`
 
 4. **[src/ripple_detection/registry.py](src/ripple_detection/registry.py)** - `DETECTORS`, `get_detector`, `DetectorSpec`
-   - Resolves a detector by name and says which signal kind it takes (`RIPPLE_BAND_LFP`, `RAW_LFP_PAIR`, `MULTIUNIT`)
+   - Resolves a detector by name and says which signal kinds it takes (`RIPPLE_BAND_LFP`, `RAW_LFP`, `MULTIUNIT`), positionally (`inputs`) and by name (`keyword_inputs`: Long's `sharp_wave_lfp`, Carey's `theta_lfp`)
    - `spec.describe()`: JSON-ready inputs, tunables (default, unit, meaning) and output columns, from [_descriptions.py](src/ripple_detection/_descriptions.py); `tests/test_registry.py::TestDescribe` fails when a new or renamed parameter or column has no entry there
    - For pipelines that store a detector's name rather than importing it
 
@@ -111,7 +111,7 @@ Yu, Zugaro, Long and Carey use their own segmentation rules but the same blocks:
 - **Roumis detector**: Averages square-root of squared envelopes across channels
 - **Yu detector**: Median of per-channel z-scored envelopes; threshold from the mirrored immobility-noise histogram
 - **Zugaro detector**: Two thresholds (bounds and peak) on the z-scored squared sum; merges close events
-- **Long detector**: Raw two-channel input; sharp-wave difference and ripple power clustered by k-means with local statistics
+- **Long detector**: Raw input, the pyramidal-layer channel and `sharp_wave_lfp` by name; sharp-wave difference and ripple power clustered by k-means with local statistics
 - **Carey detector**: Geometric mean of a ripple-envelope score and a capped multiunit score; whole event inside a low-speed interval
 - **HSE detector**: Z-scored smoothed population spike rate, no LFP
 - One missing-sample policy for every detector: NaN in any signal, or a gap in time, ends a block; nothing crosses a gap; clipped events are flagged. NaN speed is unknown speed and splits no block: it fails the endpoint rule, is left out of Shvartsman's majority, and interrupts Carey's low-speed intervals

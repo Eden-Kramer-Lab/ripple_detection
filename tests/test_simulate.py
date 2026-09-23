@@ -814,28 +814,32 @@ class TestSimulateMultichannelLFP:
 class TestSimulateSharpWaveRipplePair:
     FS = 1500
 
-    def test_shape_and_channel_order(self):
+    def test_two_channels_in_the_order_the_long_detector_names_them(self):
         t = simulate_time(3000, self.FS)
-        assert simulate_sharp_wave_ripple_pair(t, [1.0], rng=0).shape == (3000, 2)
+        raw_lfp, sharp_wave_lfp = simulate_sharp_wave_ripple_pair(t, [1.0], rng=0)
+        assert raw_lfp.shape == sharp_wave_lfp.shape == (3000,)
 
     def test_sharp_wave_is_negative_on_the_radiatum_channel_and_leaks_positive(self):
         t = simulate_time(3000, self.FS)
-        pair = simulate_sharp_wave_ripple_pair(
+        raw_lfp, sharp_wave_lfp = simulate_sharp_wave_ripple_pair(
             t, [1.0], noise_amplitude=0.0, ripple_amplitude=2.0, sharp_wave_amplitude=2.0
         )
         near = (t > 0.95) & (t < 1.05)
+        far = (t < 0.85) | (t > 1.15)
         # radiatum: a -2 deflection carrying 0.3 of a unit-peak ripple
-        assert -2.3 <= pair[near, 1].min() <= -1.7
-        assert pair[near, 1].sum() < 0.0
-        assert pair[np.abs(t - 1.0) < 0.005, 1].mean() < -1.5
+        assert -2.3 <= sharp_wave_lfp[near].min() <= -1.7
+        assert sharp_wave_lfp[near].sum() < 0.0
+        assert sharp_wave_lfp[np.abs(t - 1.0) < 0.005].mean() < -1.5
         # pyramidal: the ripple (peak 1) on 0.3 x 2 of sharp wave
-        assert pair[near, 0].max() == pytest.approx(1.6, abs=0.2)
-        assert np.all(np.abs(pair[(t < 0.85) | (t > 1.15)]) < 1e-6)
+        assert raw_lfp[near].max() == pytest.approx(1.6, abs=0.2)
+        assert np.all(np.abs(raw_lfp[far]) < 1e-6)
+        assert np.all(np.abs(sharp_wave_lfp[far]) < 1e-6)
 
     def test_no_sharp_wave_without_ripples(self):
         t = simulate_time(3000, self.FS)
-        pair = simulate_sharp_wave_ripple_pair(t, [], noise_amplitude=0.0)
-        assert np.all(pair == 0.0)
+        raw_lfp, sharp_wave_lfp = simulate_sharp_wave_ripple_pair(t, [], noise_amplitude=0.0)
+        assert np.all(raw_lfp == 0.0)
+        assert np.all(sharp_wave_lfp == 0.0)
 
 
 class TestSimulateMultiunit:
@@ -896,7 +900,7 @@ class TestSimulateSession:
         session = simulate_session(t, [3.0, 9.0, 15.0], n_channels=3, n_units=8, rng=0)
         assert isinstance(session, SimulatedSession)
         assert session.lfps.shape == (t.size, 3)
-        assert session.raw_lfp_pair.shape == (t.size, 2)
+        assert session.raw_lfp.shape == session.sharp_wave_lfp.shape == (t.size,)
         assert session.multiunit.shape == (t.size, 8)
         assert session.speed.shape == (t.size,)
         assert np.all(session.speed == 0.0)
@@ -960,10 +964,10 @@ class TestSimulateSession:
         with pytest.raises(ValueError, match="length"):
             dataclasses.replace(session, ripple_durations=np.zeros(2))
 
-    def test_the_ripple_channel_is_shared_by_the_lfps_and_the_pair(self):
+    def test_the_ripple_channel_is_shared_by_the_lfps_and_the_raw_lfp(self):
         t = simulate_time(3000, self.FS)
         session = simulate_session(t, [1.0], rng=1)
-        np.testing.assert_array_equal(session.lfps[:, 0], session.raw_lfp_pair[:, 0])
+        np.testing.assert_array_equal(session.lfps[:, 0], session.raw_lfp)
 
     def test_the_three_signals_carry_the_same_events(self):
         t = simulate_time(self.FS * 20, self.FS)
@@ -979,7 +983,7 @@ class TestSimulateSession:
         for start, end in session.ripple_windows:
             inside = (t >= start) & (t <= end)
             assert np.abs(session.lfps[inside, 0]).max() > 0.9  # the ripple
-            assert session.raw_lfp_pair[inside, 1].min() < -1.5  # the sharp wave
+            assert session.sharp_wave_lfp[inside].min() < -1.5  # the sharp wave
             rate_inside = session.multiunit[inside].sum() / inside.sum()
             rate_outside = session.multiunit[~inside].sum() / (~inside).sum()
             assert rate_inside > 2.5 * rate_outside  # the population burst

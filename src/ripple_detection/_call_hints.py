@@ -38,7 +38,16 @@ REMOVED_ARGUMENTS: dict[str, tuple[str | None, str]] = {
         ),
     ),
     "random_state": ("rng", "was renamed rng before 2.0 was released"),
-    "raw_lfps": ("raw_lfp_pair", "was renamed raw_lfp_pair before 2.0 was released"),
+    **dict.fromkeys(
+        ("raw_lfps", "raw_lfp_pair"),
+        (
+            "raw_lfp",
+            (
+                "was split before 2.0 was released into raw_lfp, the pyramidal-layer "
+                "channel, and sharp_wave_lfp=, the stratum radiatum channel"
+            ),
+        ),
+    ),
     "edge_threshold": ("low_threshold", "was renamed low_threshold before 2.0 was released"),
     "peak_threshold": ("high_threshold", "was renamed high_threshold before 2.0 was released"),
     "spike_kernel_sigma": (

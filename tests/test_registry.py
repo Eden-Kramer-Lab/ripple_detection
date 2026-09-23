@@ -10,7 +10,7 @@ import ripple_detection
 from ripple_detection import (
     DETECTORS,
     MULTIUNIT,
-    RAW_LFP_PAIR,
+    RAW_LFP,
     RIPPLE_BAND_LFP,
     DetectorSpec,
     Kay_ripple_detector,
@@ -70,7 +70,7 @@ def test_unknown_name_raises_and_names_the_alternatives():
         ("Shvartsman_ripple_detector", ("ripple_band_lfp",)),
         ("Yu_ripple_detector", ("ripple_band_lfp",)),
         ("Zugaro_ripple_detector", ("ripple_band_lfp",)),
-        ("Long_sharp_wave_ripple_detector", ("raw_lfp_pair",)),
+        ("Long_sharp_wave_ripple_detector", ("raw_lfp",)),
         ("Carey_candidate_detector", ("ripple_band_lfp", "multiunit")),
         ("multiunit_HSE_detector", ("multiunit",)),
     ],
@@ -78,11 +78,34 @@ def test_unknown_name_raises_and_names_the_alternatives():
 def test_each_detector_declares_what_it_needs(name, inputs):
     """The point of the registry: which signal a detector takes, not just its name.
 
-    Long takes raw two-channel LFP through a signature identical to the
-    ripple-band detectors', so a caller that resolves by name alone would feed
-    it filtered data and get plausible nonsense.
+    Long takes raw LFP in the slot where the ripple-band detectors take
+    filtered LFP, so a caller that resolves by name alone would feed it
+    filtered data; its required ``sharp_wave_lfp`` makes that call fail.
     """
     assert get_detector(name).inputs == inputs
+
+
+@pytest.mark.parametrize(
+    ("name", "keyword_inputs"),
+    [
+        ("Long_sharp_wave_ripple_detector", {"sharp_wave_lfp": "raw_lfp"}),
+        ("Carey_candidate_detector", {"theta_lfp": "raw_lfp"}),
+        ("Kay_ripple_detector", {}),
+        ("multiunit_HSE_detector", {}),
+    ],
+)
+def test_each_detector_declares_its_keyword_signals(name, keyword_inputs):
+    """Signals passed by name are signals, not tunables."""
+    spec = get_detector(name)
+    assert dict(spec.keyword_inputs) == keyword_inputs
+    assert not set(keyword_inputs) & set(spec.parameters)
+
+
+def test_the_sharp_wave_channel_is_required_and_the_theta_channel_is_not():
+    assert get_detector("Long_sharp_wave_ripple_detector").required_keyword_inputs == (
+        "sharp_wave_lfp",
+    )
+    assert get_detector("Carey_candidate_detector").required_keyword_inputs == ()
 
 
 def test_declared_inputs_match_the_signature_in_kind_and_position():
@@ -92,7 +115,7 @@ def test_declared_inputs_match_the_signature_in_kind_and_position():
     the hand-written table above."""
     kind_of_parameter = {
         "filtered_lfps": RIPPLE_BAND_LFP,
-        "raw_lfp_pair": RAW_LFP_PAIR,
+        "raw_lfp": RAW_LFP,
         "multiunit": MULTIUNIT,
     }
     for name, spec in DETECTORS.items():
@@ -135,16 +158,48 @@ class TestSpecConstruction:
         with pytest.raises(ValueError, match="takes time, the signals, speed"):
             DetectorSpec(Kay_ripple_detector, (RIPPLE_BAND_LFP, MULTIUNIT))
 
+    def test_a_keyword_input_the_detector_does_not_take_raises(self):
+        with pytest.raises(ValueError, match="theta_lfp is not a keyword-only parameter"):
+            DetectorSpec(Kay_ripple_detector, (RIPPLE_BAND_LFP,), {"theta_lfp": RAW_LFP})
+
+    def test_an_undeclared_required_keyword_raises(self):
+        """Every tunable has a default, so a keyword without one must be a
+        declared signal."""
+        from ripple_detection import Long_sharp_wave_ripple_detector
+
+        with pytest.raises(ValueError, match="sharp_wave_lfp has no default"):
+            DetectorSpec(Long_sharp_wave_ripple_detector, (RAW_LFP,))
+
 
 class TestCheckInputs:
     """The spec checks what an array can show about a signal: count, shape, and
     for spikes that the values are counts. It does not judge filtered against raw."""
 
-    def test_raw_pair_needs_two_channels(self):
+    def test_raw_lfp_is_one_channel(self):
         spec = get_detector("Long_sharp_wave_ripple_detector")
-        spec.check_inputs(np.zeros((600, 2)))
-        with pytest.raises(ValueError, match="two channels"):
-            spec.check_inputs(np.zeros((600, 1)))
+        spec.check_inputs(np.zeros(600), sharp_wave_lfp=np.zeros(600))
+        spec.check_inputs(np.zeros((600, 1)), sharp_wave_lfp=np.zeros((600, 1)))
+        with pytest.raises(ValueError, match="one channel"):
+            spec.check_inputs(np.zeros((600, 2)), sharp_wave_lfp=np.zeros(600))
+
+    def test_a_required_keyword_signal_must_be_given(self):
+        spec = get_detector("Long_sharp_wave_ripple_detector")
+        with pytest.raises(ValueError, match="needs sharp_wave_lfp"):
+            spec.check_inputs(np.zeros(600))
+
+    def test_an_optional_keyword_signal_is_checked_when_given(self):
+        spec = get_detector("Carey_candidate_detector")
+        lfps, counts = np.zeros((600, 3)), np.zeros((600, 4))
+        spec.check_inputs(lfps, counts)
+        spec.check_inputs(lfps, counts, theta_lfp=np.zeros(600))
+        with pytest.raises(ValueError, match="one channel"):
+            spec.check_inputs(lfps, counts, theta_lfp=np.zeros((600, 2)))
+
+    def test_an_unknown_keyword_signal_raises(self):
+        with pytest.raises(ValueError, match="takes no keyword signal theta_lfp"):
+            get_detector("Kay_ripple_detector").check_inputs(
+                np.zeros((600, 2)), theta_lfp=np.zeros(600)
+            )
 
     def test_spike_counts_must_be_non_negative_whole_numbers(self):
         spec = get_detector("multiunit_HSE_detector")
@@ -195,7 +250,7 @@ class TestParameters:
             "multiunit",
         )
         assert get_detector("Long_sharp_wave_ripple_detector").signal_parameters == (
-            "raw_lfp_pair",
+            "raw_lfp",
         )
 
     def test_a_signal_new_in_2_is_named_after_its_kind(self):
@@ -209,6 +264,8 @@ class TestParameters:
                 if kind != RIPPLE_BAND_LFP:
                     assert parameter == kind, spec.name
                     assert parameter in fields, spec.name
+            for parameter in spec.required_keyword_inputs:
+                assert parameter in fields, spec.name
 
     def test_check_parameters_names_the_unknown_key(self):
         with pytest.raises(ValueError, match="does not take z_score_threshold"):
@@ -225,12 +282,16 @@ def results():
     session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], rng=0)
     signals = {
         RIPPLE_BAND_LFP: filter_ripple_band(session.lfps, 1500),
-        RAW_LFP_PAIR: session.raw_lfp_pair,
+        RAW_LFP: session.raw_lfp,
         MULTIUNIT: session.multiunit,
     }
     return {
         name: spec.detector(
-            time, *(signals[kind] for kind in spec.inputs), session.speed, 1500
+            time,
+            *(signals[kind] for kind in spec.inputs),
+            session.speed,
+            1500,
+            **{name: getattr(session, name) for name in spec.required_keyword_inputs},
         )
         for name, spec in DETECTORS.items()
     }
@@ -260,6 +321,23 @@ class TestDescribe:
         assert list(parameters) == list(get_detector(name).parameters)
         assert all(entry["description"] for entry in parameters.values())
 
+    @pytest.mark.parametrize("name", list(DETECTORS))
+    def test_keyword_signals_are_described_with_their_kind(self, name):
+        spec = get_detector(name)
+        described = spec.describe()["keyword_signals"]
+        assert [entry["name"] for entry in described] == list(spec.keyword_inputs)
+        for entry in described:
+            assert entry["kind"] == spec.keyword_inputs[entry["name"]]
+            assert entry["required"] == (entry["name"] in spec.required_keyword_inputs)
+            assert entry["description"]
+
+    def test_the_call_names_a_required_keyword_signal(self):
+        call = get_detector("Long_sharp_wave_ripple_detector").describe()["call"]
+        assert call == (
+            "Long_sharp_wave_ripple_detector(time, raw_lfp, speed, sampling_frequency, "
+            "sharp_wave_lfp=sharp_wave_lfp, **parameters)"
+        )
+
     def test_no_description_is_left_without_a_parameter(self):
         from ripple_detection import _descriptions
 
@@ -267,6 +345,9 @@ class TestDescribe:
         assert set(_descriptions.PARAMETERS) == used
         for detector, parameter in _descriptions.OVERRIDES:
             assert parameter in DETECTORS[detector].parameters
+        for detector, signal in _descriptions.SIGNAL_ROLES:
+            spec = DETECTORS[detector]
+            assert signal in (*spec.signal_parameters, *spec.keyword_inputs)
 
     @pytest.mark.parametrize("name", list(DETECTORS))
     def test_columns_are_what_the_detector_returns_in_order(self, name, results):

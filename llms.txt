@@ -40,7 +40,7 @@ ripple-band LFP of shape (n_time, n_channels) unless stated.
 - `Shvartsman_ripple_detector`: per-channel events kept when at least `minimum_participating_channels` (2) channels detect them; needs 2 or more channels by default. 3 SD.
 - `Yu_ripple_detector`: median of per-channel z-scored envelopes; the threshold is estimated per call from immobility noise (Yu et al. 2017). Needs immobile samples.
 - `Zugaro_ripple_detector`: FMAToolbox FindRipples two-threshold rule, bounds 2 SD, peak 5 SD; events of 20-100 ms by default.
-- `Long_sharp_wave_ripple_detector`: takes RAW, unfiltered LFP of shape (n_time, 2), the ripple channel then a stratum radiatum channel. Ripple-band input raises nothing and returns nonsense.
+- `Long_sharp_wave_ripple_detector`: takes RAW, unfiltered LFP: the pyramidal-layer channel, shape (n_time,), and a stratum radiatum channel by name, `sharp_wave_lfp=`. Ripple-band input raises nothing and returns nonsense.
 - `Carey_candidate_detector`: takes ripple-band LFP and multiunit spike counts (n_time, n_units); joint ripple and multiunit score (Carey, Tanaka & van der Meer 2019).
 - `multiunit_HSE_detector`: takes multiunit spike counts (n_time, n_units), no LFP; z-scored population rate.
 

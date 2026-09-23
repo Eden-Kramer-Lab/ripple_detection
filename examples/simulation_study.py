@@ -18,6 +18,7 @@ Run with ``uv run python examples/simulation_study.py``; about a quarter of an h
 
 from __future__ import annotations
 
+import functools
 import itertools
 import time as wall_clock
 import warnings
@@ -124,8 +125,10 @@ def detector_calls(session: rd.SimulatedSession, filtered: np.ndarray) -> dict[s
         for name in LFP_DETECTORS
     }
     calls["Long_sharp_wave_ripple_detector"] = (
-        rd.Long_sharp_wave_ripple_detector,
-        (session.time, session.raw_lfp_pair, session.speed, fs),
+        functools.partial(
+            rd.Long_sharp_wave_ripple_detector, sharp_wave_lfp=session.sharp_wave_lfp
+        ),
+        (session.time, session.raw_lfp, session.speed, fs),
     )
     calls["Carey_candidate_detector"] = (
         rd.Carey_candidate_detector,

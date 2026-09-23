@@ -13,7 +13,7 @@ import pytest
 from ripple_detection import (
     DETECTORS,
     MULTIUNIT,
-    RAW_LFP_PAIR,
+    RAW_LFP,
     RIPPLE_BAND_LFP,
     Karlsson_ripple_detector,
     Kay_ripple_detector,
@@ -143,15 +143,29 @@ def signals_for(name, session, filtered):
     by_kind = {
         RIPPLE_BAND_LFP: filtered,
         MULTIUNIT: session.multiunit,
-        RAW_LFP_PAIR: session.raw_lfp_pair,
+        RAW_LFP: session.raw_lfp,
     }
     return tuple(by_kind[kind] for kind in get_detector(name).inputs)
+
+
+def keyword_signals_for(name, session):
+    """The signals the detector requires by name, from the session fields
+    named after them."""
+    return {
+        signal: getattr(session, signal)
+        for signal in get_detector(name).required_keyword_inputs
+    }
 
 
 def run(name, session, filtered, **params):
     spec = get_detector(name)
     return spec.detector(
-        session.time, *signals_for(name, session, filtered), session.speed, FS, **params
+        session.time,
+        *signals_for(name, session, filtered),
+        session.speed,
+        FS,
+        **keyword_signals_for(name, session),
+        **params,
     )
 
 
@@ -178,7 +192,9 @@ class TestRegistryPath:
     def test_defaults_check_and_run(self, name, session, filtered):
         spec = get_detector(name)
         spec.check_parameters(spec.parameters)
-        spec.check_inputs(*signals_for(name, session, filtered))
+        spec.check_inputs(
+            *signals_for(name, session, filtered), **keyword_signals_for(name, session)
+        )
         events = run(name, session, filtered, **spec.parameters)
         assert isinstance(events, pd.DataFrame)
         assert events.index.name == "event_number"
@@ -395,10 +411,13 @@ class TestRecordingEdges:
 
 class TestLongSeeding:
     def test_none_runs_and_an_int_equals_its_generator(self, session):
-        args = (session.time, session.raw_lfp_pair, session.speed, FS)
+        args = (session.time, session.raw_lfp, session.speed, FS)
+        signal = {"sharp_wave_lfp": session.sharp_wave_lfp}
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            Long_sharp_wave_ripple_detector(*args, rng=None)
-        from_int = Long_sharp_wave_ripple_detector(*args, rng=7)
-        from_generator = Long_sharp_wave_ripple_detector(*args, rng=np.random.default_rng(7))
+            Long_sharp_wave_ripple_detector(*args, **signal, rng=None)
+        from_int = Long_sharp_wave_ripple_detector(*args, **signal, rng=7)
+        from_generator = Long_sharp_wave_ripple_detector(
+            *args, **signal, rng=np.random.default_rng(7)
+        )
         pd.testing.assert_frame_equal(from_int, from_generator)

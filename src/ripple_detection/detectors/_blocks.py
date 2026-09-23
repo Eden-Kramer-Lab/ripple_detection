@@ -107,6 +107,11 @@ def _reject_flat_channels(
     for start, stop in blocks:
         is_flat &= np.all(signal[start:stop] == reference, axis=0)
     flat = np.flatnonzero(is_flat)
+    if flat.size and signal.shape[1] == 1:
+        msg = (
+            f"{name} is constant over the valid samples, as a dead or disconnected channel is."
+        )
+        raise ValueError(msg)
     if flat.size:
         msg = (
             f"{name} channel(s) {flat.tolist()} are constant over the valid samples, "

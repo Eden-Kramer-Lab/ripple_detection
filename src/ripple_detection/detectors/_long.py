@@ -75,13 +75,28 @@ def _matlab_percentile(values: FloatArray, percent: float) -> float:
     return float(np.percentile(values, percent, method="hazen"))
 
 
+def _one_channel(name: str, signal: ArrayLike, hint: str = "") -> FloatArray:
+    """``signal`` as a 1-D array, from shape ``(n_time,)`` or ``(n_time, 1)``."""
+    array = np.asarray(signal, dtype=float)
+    if array.ndim == 2 and array.shape[1] == 1:
+        return array[:, 0]
+    if array.ndim != 1:
+        msg = (
+            f"{name} must be one channel, shape (n_time,) or (n_time, 1); got shape "
+            f"{array.shape}.{hint}"
+        )
+        raise ValueError(msg)
+    return array
+
+
 @explain_call_errors
 def Long_sharp_wave_ripple_detector(
     time: ArrayLike,
-    raw_lfp_pair: ArrayLike,
+    raw_lfp: ArrayLike,
     speed: ArrayLike,
     sampling_frequency: float,
     *,
+    sharp_wave_lfp: ArrayLike,
     speed_threshold: float = 4.0,
     sharp_wave_band: tuple[float, float] = (2.0, 50.0),
     ripple_band: tuple[float, float] = (80.0, 250.0),
@@ -106,11 +121,12 @@ def Long_sharp_wave_ripple_detector(
     in or just above the CA1 pyramidal layer, and a deeper one that records
     the sharp wave in stratum radiatum. It cannot run on a single layer.
 
-    **Unlike the other detectors, this one takes raw, unfiltered LFP**, shape
-    ``(n_time, 2)`` with the ripple channel first, because it filters both
-    bands itself. Handing it ripple-band data raises nothing and returns
-    nonsense, and no check on the array can tell the two apart for every
-    recording, so the caller must know which it holds. The sharp-wave feature is the ripple channel minus the
+    **Unlike the other detectors, this one takes raw, unfiltered LFP**: the
+    pyramidal-layer channel as ``raw_lfp``, and the stratum radiatum channel,
+    by name, as ``sharp_wave_lfp``. It filters both bands itself. Handing it
+    ripple-band data raises nothing and returns nonsense, and no check on the
+    array can tell the two apart for every recording, so the caller must know
+    which it holds. The sharp-wave feature is the ripple channel minus the
     radiatum channel after a 2-50 Hz difference-of-Gaussians band-pass; the
     ripple feature is the smoothed rectified 80-250 Hz band of the
     common-average-referenced pair, maximum over the two channels. In each
@@ -136,7 +152,7 @@ def Long_sharp_wave_ripple_detector(
     3. The package's endpoint speed rule is applied afterwards; a NaN in
        ``speed`` is an unknown speed, which fails it at an endpoint but
        splits no block.
-    4. Missing samples (NaN in ``raw_lfp_pair``, or a gap in ``time``) split the
+    4. Missing samples (NaN in either channel, or a gap in ``time``) split the
        recording into blocks: the filters and candidate windows run within
        each block, the k-means pools the candidates of every block, and a
        candidate within ``local_window`` of a block edge is not evaluated,
@@ -153,13 +169,16 @@ def Long_sharp_wave_ripple_detector(
     ----------
     time : array_like, shape (n_time,)
         Time values for each sample in seconds.
-    raw_lfp_pair : array_like, shape (n_time, 2)
-        **Raw** LFP: column 0 the ripple (pyramidal-layer) channel, column 1
-        the sharp-wave (stratum radiatum) channel. NaN marks missing samples.
+    raw_lfp : array_like, shape (n_time,) or (n_time, 1)
+        **Raw** LFP of the pyramidal-layer channel, which records the ripple.
+        NaN marks missing samples.
     speed : array_like, shape (n_time,)
         Animal's running speed in cm/s.
     sampling_frequency : float
         Sampling rate in Hz.
+    sharp_wave_lfp : array_like, shape (n_time,) or (n_time, 1)
+        **Raw** LFP of the stratum radiatum channel, which records the sharp
+        wave. Required, and passed by name. NaN marks missing samples.
     speed_threshold : float, optional
         Endpoint speed rule (``exclude_movement``); not part of the original.
         Default is 4.0.
@@ -232,9 +251,9 @@ def Long_sharp_wave_ripple_detector(
     >>> from ripple_detection.simulate import simulate_session, simulate_time
     >>> time = simulate_time(45_000, 1500)  # 30 s at 1500 Hz
     >>> session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], rng=0)
-    >>> # raw, unfiltered: the ripple channel, then the stratum radiatum channel
+    >>> # raw, unfiltered: the pyramidal-layer and the stratum radiatum channel
     >>> events = Long_sharp_wave_ripple_detector(
-    ...     time, session.raw_lfp_pair, session.speed, 1500, rng=0
+    ...     time, session.raw_lfp, session.speed, 1500, sharp_wave_lfp=session.sharp_wave_lfp
     ... )
     >>> "sharp_wave_duration" in events, bool(len(events))
     (True, True)
@@ -248,13 +267,19 @@ def Long_sharp_wave_ripple_detector(
     _validate_duration_limits(
         minimum_ripple_duration, None, names=("minimum_ripple_duration", "")
     )
-    lfp = np.asarray(raw_lfp_pair, dtype=float)
-    if lfp.ndim != 2 or lfp.shape[1] != 2:
+    ripple_channel = _one_channel(
+        "raw_lfp",
+        raw_lfp,
+        " Pass the stratum radiatum channel by name, as sharp_wave_lfp=.",
+    )
+    sharp_wave_channel = _one_channel("sharp_wave_lfp", sharp_wave_lfp)
+    if sharp_wave_channel.size != ripple_channel.size:
         msg = (
-            "raw_lfp_pair must have exactly two channels, shape (n_time, 2): the ripple "
-            f"channel first and the sharp-wave channel second; got shape {lfp.shape}."
+            f"sharp_wave_lfp must have as many samples as raw_lfp ({ripple_channel.size}), "
+            f"got {sharp_wave_channel.size}."
         )
         raise ValueError(msg)
+    lfp = np.column_stack([ripple_channel, sharp_wave_channel])
     time, lfp, speed = _validate_detector_inputs(
         time, lfp, speed, sampling_frequency, speed_threshold
     )
@@ -288,7 +313,8 @@ def Long_sharp_wave_ripple_detector(
     _check_gap(minimum_separation=minimum_separation)
     n_time = len(time)
     is_valid, blocks = _valid_blocks(time, lfp)
-    _reject_flat_channels(lfp, blocks, "raw_lfp_pair")
+    _reject_flat_channels(lfp[:, :1], blocks, "raw_lfp")
+    _reject_flat_channels(lfp[:, 1:], blocks, "sharp_wave_lfp")
     slowest_kernel = len(_gaussian_lowpass_fir(sharp_wave_band[0], sampling_frequency))
     blocks = _drop_short_blocks(
         blocks,

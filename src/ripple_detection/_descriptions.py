@@ -29,13 +29,10 @@ SIGNALS = {
             "missing sample."
         ),
     ),
-    "raw_lfp_pair": (
-        "(n_time, 2)",
+    "raw_lfp": (
+        "(n_time,) or (n_time, 1)",
         "signal units",
-        (
-            "Raw, unfiltered LFP: a pyramidal-layer (ripple) channel, then a stratum "
-            "radiatum (sharp-wave) channel."
-        ),
+        "Raw, unfiltered LFP from one channel. NaN marks a missing sample.",
     ),
     "multiunit": (
         "(n_time, n_units)",
@@ -47,6 +44,23 @@ SIGNALS = {
     ),
 }
 """Each signal kind: shape, unit, meaning."""
+
+SIGNAL_ROLES = {
+    ("Long_sharp_wave_ripple_detector", "raw_lfp"): (
+        "The pyramidal-layer channel, which records the ripple; raw, unfiltered. NaN "
+        "marks a missing sample."
+    ),
+    ("Long_sharp_wave_ripple_detector", "sharp_wave_lfp"): (
+        "The stratum radiatum channel, which records the sharp wave; raw, unfiltered. "
+        "Required."
+    ),
+    ("Carey_candidate_detector", "theta_lfp"): (
+        "Optional theta channel, raw; when given, an event must lie inside a period of "
+        "low theta power."
+    ),
+}
+"""What a signal is to one detector, where its kind alone does not say: every
+signal passed by name, and a raw channel whose place matters."""
 
 PARAMETERS = {
     "speed_threshold": (
@@ -230,13 +244,6 @@ PARAMETERS = {
     "baseline_cap": (
         "units",
         "Cap on the summed score before its baseline is taken, in units' worth.",
-    ),
-    "theta_lfp": (
-        "signal units",
-        (
-            "Optional raw LFP of a theta channel, shape (n_time,) or (n_time, 1); when "
-            "given, an event must lie inside a period of low theta power."
-        ),
     ),
     "theta_band": ("Hz", "(low, high) theta band of theta_lfp."),
     "theta_threshold": (

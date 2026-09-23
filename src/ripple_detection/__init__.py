@@ -47,7 +47,7 @@ from ripple_detection.literature import load_literature_parameters
 from ripple_detection.registry import (
     DETECTORS,
     MULTIUNIT,
-    RAW_LFP_PAIR,
+    RAW_LFP,
     RIPPLE_BAND_LFP,
     DetectorSpec,
     SignalKind,
@@ -76,7 +76,7 @@ __all__ = [
     "DEFAULT_TRANSITION_WIDTH",
     "DETECTORS",
     "MULTIUNIT",
-    "RAW_LFP_PAIR",
+    "RAW_LFP",
     "RIPPLE_BAND_LFP",
     "Carey_candidate_detector",
     "DetectorSpec",

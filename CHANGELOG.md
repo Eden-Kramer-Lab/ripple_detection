@@ -24,7 +24,8 @@ here is relative to 1.7.1.
     original drops; `events[~(events.clipped_start | events.clipped_end)]`
     restores that.
   - `Long_sharp_wave_ripple_detector` (J. D. Long II's `DetectSWR`), which takes
-    **raw** LFP from a pyramidal-layer and a stratum radiatum channel.
+    **raw** LFP from a pyramidal-layer channel and, as `sharp_wave_lfp=`, a
+    stratum radiatum channel.
   - `Carey_candidate_detector` (Carey, Tanaka & van der Meer 2019), a joint
     ripple and multiunit score, optionally restricted to low theta.
   - `Shvartsman_ripple_detector`, a laboratory variant that keeps an event when
@@ -41,11 +42,11 @@ here is relative to 1.7.1.
 - Event helpers that accept a detector's DataFrame: `require_overlap`,
   `merge_close_events` and `exclude_movement_by_majority`.
 - A detector registry for pipelines that store a detector by name:
-  `get_detector(name)` returns a `DetectorSpec` whose `spec.inputs` names the
-  signals (`RIPPLE_BAND_LFP`, `RAW_LFP_PAIR`, `MULTIUNIT`), whose
-  `spec.parameters`, `spec.check_parameters(mapping)` and
-  `spec.check_inputs(*signals)` check a call, and whose `spec.describe()` gives
-  it all as JSON-ready data.
+  `get_detector(name)` returns a `DetectorSpec` whose `spec.inputs` and
+  `spec.keyword_inputs` name the signals (`RIPPLE_BAND_LFP`, `RAW_LFP`,
+  `MULTIUNIT`), whose `spec.parameters`, `spec.check_parameters(mapping)` and
+  `spec.check_inputs(*signals, **keyword_signals)` check a call, and whose
+  `spec.describe()` gives it all as JSON-ready data.
 - Simulation: `ripple_snr`, `rng` and `(low, high)` ranges for
   `ripple_frequency` and `ripple_duration` on `simulate_LFP`, and `simulate_multichannel_LFP`,
   `simulate_sharp_wave_ripple_pair`, `simulate_multiunit` and

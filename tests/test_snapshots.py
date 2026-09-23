@@ -403,7 +403,9 @@ class TestNewDetectorSnapshots:
         n = 40_000
         time = np.arange(n) / self.FS
         lfp = _synthetic_two_channel_lfp(n, self.FS, (7000, 11000, 15500, 19000, 23800, 28000))
-        events = Long_sharp_wave_ripple_detector(time, lfp, np.full(n, 2.0), self.FS, rng=0)
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp[:, 0], np.full(n, 2.0), self.FS, sharp_wave_lfp=lfp[:, 1], rng=0
+        )
         _pin(snapshot, events, "long")
 
     def test_carey(self, snapshot):
