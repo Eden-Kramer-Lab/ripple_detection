@@ -24,17 +24,21 @@ from ripple_detection.detectors._events import (
 )
 from ripple_detection.detectors._validation import (
     _check_gap,
+    _check_smoothing_sigma,
     _check_thresholds,
-    _check_whole_number,
     _validate_detector_inputs,
     _validate_duration_limits,
 )
 
+ZUGARO_SMOOTHING_WINDOW = 11 / 1250
+"""Seconds: the FindRipples moving average, 11 samples at 1250 Hz."""
 
-def _zugaro_smoothing_window(sampling_frequency: float) -> int:
-    """Moving-average length of the FindRipples power trace: 11 samples at 1250 Hz,
-    scaled with the rate and kept odd so the filter is zero-phase."""
-    window = round(sampling_frequency / 1250.0 * 11.0)
+
+def _zugaro_smoothing_samples(smoothing_window: float, sampling_frequency: float) -> int:
+    """The moving average's length in samples: ``smoothing_window`` seconds
+    rounded to a whole number of samples, then up to an odd one so the
+    filter is zero-phase."""
+    window = round(smoothing_window * sampling_frequency)
     return window + 1 if window % 2 == 0 else window
 
 
@@ -150,7 +154,7 @@ def Zugaro_ripple_detector(
     minimum_inter_ripple_interval: float = 0.030,
     minimum_duration: float = 0.020,
     maximum_duration: float | None = 0.100,
-    smoothing_window: int | None = None,
+    smoothing_window: float = ZUGARO_SMOOTHING_WINDOW,
     normalization_mask: ArrayLike | None = None,
 ) -> pd.DataFrame:
     """Detect ripples with the FMAToolbox ``FindRipples`` two-threshold algorithm.
@@ -185,8 +189,9 @@ def Zugaro_ripple_detector(
        in ``clipped_start`` or ``clipped_end``, so
        ``events[~(events.clipped_start | events.clipped_end)]`` reproduces
        the original rule.
-    4. The moving average is the original's 11 samples at 1250 Hz scaled to
-       ``sampling_frequency`` (``smoothing_window``).
+    4. The moving average is given in seconds (``smoothing_window``), by
+       default the original's 11 samples at 1250 Hz, so it spans the same
+       time at any ``sampling_frequency``.
     5. The duration limits are the package's inclusive round-half-up sample
        counts (``sample_count_within``), where the original compares elapsed
        time.
@@ -234,10 +239,10 @@ def Zugaro_ripple_detector(
         that literature rather than of this algorithm's original settings, or
         pass ``maximum_duration=None`` for no ceiling, as the other detectors
         default to.
-    smoothing_window : int, optional
-        Moving-average length in samples. Default is the original's 11
-        samples at 1250 Hz scaled to ``sampling_frequency`` and kept odd. A
-        supplied value must be a positive odd integer.
+    smoothing_window : float, optional
+        Moving-average length in seconds, rounded to a whole number of
+        samples and then up to an odd one so the average is zero-phase.
+        Default is 0.0088, the original's 11 samples at 1250 Hz.
     normalization_mask : array_like, shape (n_time,), optional
         Samples used for the z-score statistics (the original's ``restrict``).
 
@@ -280,19 +285,18 @@ def Zugaro_ripple_detector(
     _validate_duration_limits(minimum_duration, maximum_duration)
     _check_thresholds("low_threshold", low_threshold, "high_threshold", high_threshold)
     _check_gap(minimum_inter_ripple_interval=minimum_inter_ripple_interval)
-    if smoothing_window is not None:
-        _check_whole_number("smoothing_window", smoothing_window, 1)
+    _check_smoothing_sigma(smoothing_window=smoothing_window)
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
-    window = (
-        _zugaro_smoothing_window(sampling_frequency)
-        if smoothing_window is None
-        else int(smoothing_window)
-    )
-    if window % 2 == 0:  # positive by _check_whole_number or by construction
-        msg = f"smoothing_window must be a positive odd integer, got {window}."
+    if round(smoothing_window * sampling_frequency) < 1:
+        msg = (
+            f"smoothing_window ({smoothing_window} s) is shorter than one sample at "
+            f"{sampling_frequency} Hz ({1 / sampling_frequency:.6g} s). "
+            "smoothing_window is in seconds."
+        )
         raise ValueError(msg)
+    window = _zugaro_smoothing_samples(smoothing_window, sampling_frequency)
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
     _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
     blocks = _drop_short_blocks(blocks, is_valid, window, "the smoothing window")

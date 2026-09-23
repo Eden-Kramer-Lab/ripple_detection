@@ -271,9 +271,10 @@ def _check_seconds(limit: float, consequence: str, **values: float) -> None:
 
 
 def _check_smoothing_sigma(**values: float) -> None:
-    """A Gaussian standard deviation in seconds: positive, finite, and under a
-    second, since a longer kernel smooths every ripple away and usually means
-    milliseconds were given."""
+    """A smoothing width in seconds, a Gaussian's standard deviation or a
+    moving average's length: positive, finite, and under a second, since a
+    longer kernel smooths every ripple away and usually means milliseconds
+    were given."""
     _check_positive(**values)
     _check_seconds(MAXIMUM_PLAUSIBLE_MINIMUM, "would smooth every ripple away", **values)
 

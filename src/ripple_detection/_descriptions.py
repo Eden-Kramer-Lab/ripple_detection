@@ -148,10 +148,10 @@ PARAMETERS = {
         ),
     ),
     "smoothing_window": (
-        "samples",
+        "s",
         (
-            "Length of the moving average, odd; None scales the original's 11 samples at "
-            "1250 Hz to the sampling rate."
+            "Length of the moving average, rounded to an odd number of samples; the "
+            "default is the original's 11 samples at 1250 Hz."
         ),
     ),
     "sharp_wave_band": (

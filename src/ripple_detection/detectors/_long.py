@@ -26,9 +26,11 @@ from ripple_detection.detectors._events import (
     _get_event_stats,
 )
 from ripple_detection.detectors._validation import (
+    MAXIMUM_PLAUSIBLE_MINIMUM,
     _check_band,
     _check_gap,
     _check_positive,
+    _check_seconds,
     _check_thresholds,
     _validate_detector_inputs,
     _validate_duration_limits,
@@ -177,8 +179,8 @@ def Long_sharp_wave_ripple_detector(
         ``bz_DetectSWR`` uses 0.200 and 0.100.
     local_window : float, optional
         Half-width in seconds of the window for local statistics. Candidates
-        closer than this to either end of their block are not evaluated.
-        Default is 5.0.
+        closer than this to either end of their block are not evaluated, and
+        the detector raises if that leaves none. Default is 5.0.
     sharp_wave_thresholds, ripple_thresholds : tuple of (float, float), optional
         ``(boundary, peak)`` in local standard deviations. Defaults (0.5, 2.5).
     minimum_separation : float, optional
@@ -278,6 +280,11 @@ def Long_sharp_wave_ripple_detector(
             msg = f"{name} must lie in (0, 100), got {percentile}."
             raise ValueError(msg)
     _check_positive(window_size=window_size, local_window=local_window)
+    _check_seconds(
+        MAXIMUM_PLAUSIBLE_MINIMUM,
+        "is longer than any sharp-wave ripple",
+        window_size=window_size,
+    )
     _check_gap(minimum_separation=minimum_separation)
     n_time = len(time)
     is_valid, blocks = _valid_blocks(time, lfp)
@@ -352,6 +359,14 @@ def Long_sharp_wave_ripple_detector(
     in_range = np.asarray(in_range_list, dtype=bool)
     if len(feature_index) < 2:
         msg = "Too few candidate windows to cluster; the recording is too short."
+        raise ValueError(msg)
+    if not in_range.any():
+        longest = max(stop - start for start, stop in blocks) / sampling_frequency
+        msg = (
+            f"No candidate lies local_window ({local_window} s) or more from both ends of "
+            f"its block of finite samples, so none can be evaluated; the longest block is "
+            f"{longest:.3g} s. local_window is in seconds."
+        )
         raise ValueError(msg)
 
     features = np.column_stack([sharp_wave_feature, ripple_feature])

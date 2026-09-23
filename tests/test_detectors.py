@@ -53,7 +53,11 @@ from ripple_detection.detectors._events import (
 )
 from ripple_detection.detectors._lfp import _extract_Yu_ripple_events
 from ripple_detection.detectors._long import _firfilt
-from ripple_detection.detectors._zugaro import _two_threshold_events, _zugaro_smoothing_window
+from ripple_detection.detectors._zugaro import (
+    ZUGARO_SMOOTHING_WINDOW,
+    _two_threshold_events,
+    _zugaro_smoothing_samples,
+)
 from ripple_detection.simulate import simulate_LFP
 
 
@@ -1668,8 +1672,13 @@ class TestZugaroSmoothingWindow:
     @pytest.mark.parametrize(
         ("fs", "expected"), [(1250, 11), (1500, 13), (1000, 9), (2000, 19), (2500, 23)]
     )
-    def test_scales_with_rate_and_stays_odd(self, fs, expected):
-        assert _zugaro_smoothing_window(fs) == expected
+    def test_the_default_is_the_original_scaled_with_rate_and_odd(self, fs, expected):
+        """FindRipples' 11 samples at 1250 Hz, in seconds."""
+        assert _zugaro_smoothing_samples(ZUGARO_SMOOTHING_WINDOW, fs) == expected
+
+    def test_an_even_sample_count_rounds_up_to_odd(self):
+        assert _zugaro_smoothing_samples(0.010, 1000) == 11
+        assert _zugaro_smoothing_samples(0.011, 1000) == 11
 
 
 class TestZugaroRippleDetector:
@@ -1746,15 +1755,21 @@ class TestZugaroRippleDetector:
         with pytest.raises(ValueError, match="nothing to detect"):
             Zugaro_ripple_detector(time, lfps, stationary, self.FS)
 
-    def test_even_smoothing_window_is_rejected(self, time, stationary):
+    def test_smoothing_window_is_in_seconds(self, time, stationary):
+        """Like every other duration here; 9 for 9 ms raises and says so."""
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
-        with pytest.raises(ValueError, match="odd"):
-            Zugaro_ripple_detector(time, lfps, stationary, self.FS, smoothing_window=10)
-        explicit = Zugaro_ripple_detector(
-            time, lfps, stationary, self.FS, smoothing_window=_zugaro_smoothing_window(self.FS)
+        with pytest.raises(ValueError, match=r"smoothing_window is in seconds.*pass 0\.009"):
+            Zugaro_ripple_detector(time, lfps, stationary, self.FS, smoothing_window=9)
+        nine_samples = Zugaro_ripple_detector(
+            time, lfps, stationary, self.FS, smoothing_window=0.009
         )
         default = Zugaro_ripple_detector(time, lfps, stationary, self.FS)
-        pd.testing.assert_frame_equal(explicit, default)
+        pd.testing.assert_frame_equal(nine_samples, default)
+
+    def test_a_smoothing_window_shorter_than_a_sample_raises(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(5000, 5060, 20.0)])
+        with pytest.raises(ValueError, match="shorter than one sample"):
+            Zugaro_ripple_detector(time, lfps, stationary, self.FS, smoothing_window=0.0004)
 
     def test_normalization_restricted_to_a_quiet_stretch_raises_the_zscores(
         self, time, stationary
@@ -1915,6 +1930,21 @@ class TestLongSharpWaveRippleDetector:
         a = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=3)
         b = Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, rng=3)
         pd.testing.assert_frame_equal(a, b)
+
+    def test_window_size_given_in_milliseconds_raises(self, time, stationary):
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        with pytest.raises(ValueError, match=r"window_size is in seconds.*pass 0\.04"):
+            Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, window_size=40)
+
+    def test_no_candidate_far_enough_from_a_block_edge_raises(self, time, stationary):
+        """With every candidate within local_window of a block edge none can
+        be evaluated; that used to return an empty table without a word, as
+        local_window=5000 (milliseconds given as seconds) did on any record."""
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        with pytest.raises(ValueError, match=r"local_window.*in seconds"):
+            Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, local_window=5000)
+        with pytest.raises(ValueError, match=r"local_window"):
+            Long_sharp_wave_ripple_detector(time, lfp, stationary, self.FS, local_window=20.0)
 
     def test_a_random_state_instance_is_refused(self, time, stationary):
         """As the simulators refuse one: default_rng would accept it and draw a
@@ -4131,7 +4161,7 @@ class TestParameterRanges:
             (Zugaro_ripple_detector, {"low_threshold": 5.0, "high_threshold": 2.0}, "above"),
             (Zugaro_ripple_detector, {"low_threshold": -1.0}, "low_threshold"),
             (Zugaro_ripple_detector, {"high_threshold": np.nan}, "high_threshold"),
-            (Zugaro_ripple_detector, {"smoothing_window": 3.9}, "whole number"),
+            (Zugaro_ripple_detector, {"smoothing_window": -0.01}, "smoothing_window"),
             (
                 Zugaro_ripple_detector,
                 {"minimum_inter_ripple_interval": -0.01},
@@ -4353,11 +4383,11 @@ class TestRemainingErrorPaths:
 
     def test_long_with_one_candidate_window_raises(self):
         # a window longer than half the recording leaves one window to cluster
-        time = np.arange(5000) / self.FS
-        lfp = _synthetic_two_channel_lfp(5000, self.FS, (2500,))
+        time = np.arange(1500) / self.FS
+        lfp = _synthetic_two_channel_lfp(1500, self.FS, (750,))
         with pytest.raises(ValueError, match="Too few candidate windows"):
             Long_sharp_wave_ripple_detector(
-                time, lfp, np.full(5000, 2.0), self.FS, window_size=3.0
+                time, lfp, np.full(1500, 2.0), self.FS, window_size=0.9
             )
 
     @pytest.mark.parametrize(
