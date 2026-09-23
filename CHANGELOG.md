@@ -32,7 +32,8 @@ here is relative to 1.7.1.
     `minimum_participating_channels` (or `minimum_participating_fraction`) of the
     channels detect it, and can take its statistics from elsewhere
     (`normalization_method="manual"`).
-- `maximum_duration` on every detector, and `minimum_active_units` (with
+- `maximum_duration` on every detector but Long, which limits the sharp wave
+  instead (`maximum_sharp_wave_duration`), and `minimum_active_units` (with
   `n_active_units` in the result) on `multiunit_HSE_detector`.
 - `n_samples`, `clipped_start` and `clipped_end` in every result; `n_samples` is
   the fourth column.
@@ -76,7 +77,9 @@ here is relative to 1.7.1.
   each run of finite samples on its own, where 1.7 assumed 1500 Hz and filtered
   across gaps.
 - **Breaking.** `ripple_bandpass_filter` sizes the filter for the rate, where 1.7
-  used 101 taps at any rate; 1500 Hz output is unchanged.
+  used 101 taps at any rate, so its coefficients change at every rate, 1500 Hz
+  included (155 taps there). `filter_ripple_band` at 1500 Hz with the default
+  band still uses the shipped kernel, and its output is unchanged.
 - **Breaking.** `gaussian_smooth` renormalizes its kernel at the ends of the data
   instead of padding with zeros; z-score statistics move in the third or fourth
   decimal.
