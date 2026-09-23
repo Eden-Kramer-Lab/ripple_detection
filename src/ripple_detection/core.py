@@ -3,6 +3,7 @@ potentials.
 """
 
 import functools
+import os
 import sys
 import warnings
 from collections.abc import Generator, Iterable
@@ -148,7 +149,10 @@ def _remez_bandpass(
     return kernel
 
 
-_PACKAGE_DIRECTORY = str(Path(__file__).resolve().parent)
+_PACKAGE_DIRECTORY = str(Path(__file__).parent) + os.sep
+"""The path the package was imported through, as the code objects record it:
+unresolved, so a symlinked install still matches, and ending in a separator,
+so a sibling directory with a longer name does not."""
 
 
 def _warn_at_caller(message: str) -> None:

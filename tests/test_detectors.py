@@ -1,7 +1,10 @@
 """Integration tests for ripple detection algorithms."""
 
 import contextlib
+import subprocess
+import sys
 import warnings
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -2951,6 +2954,38 @@ class TestWarningsPointAtTheCaller:
         unit_warnings = [w for w in caught if "Time array step" in str(w.message)]
         assert unit_warnings, [str(w.message) for w in caught]
         assert unit_warnings[0].filename == __file__
+
+    def test_through_a_symlinked_package_directory(self, tmp_path):
+        """The frame test compares the path the package was imported through,
+        which a symlink leaves unresolved, so it must not be resolved either."""
+        import ripple_detection
+
+        package = Path(ripple_detection.__file__).parent
+        linked = tmp_path / "linked"
+        linked.mkdir()
+        try:
+            (linked / "ripple_detection").symlink_to(package, target_is_directory=True)
+        except (OSError, NotImplementedError) as error:
+            pytest.skip(f"cannot create a symlink here: {error}")
+        script = (
+            "import sys, warnings, numpy as np\n"
+            f"sys.path.insert(0, {str(linked)!r})\n"
+            "import ripple_detection\n"
+            "assert ripple_detection.__file__.startswith(sys.path[0]), ripple_detection.__file__\n"
+            "n = 5000\n"
+            "time = np.arange(n) / 1000.0\n"
+            "lfps = np.random.default_rng(0).standard_normal((n, 2))\n"
+            "with warnings.catch_warnings(record=True) as caught:\n"
+            "    warnings.simplefilter('always')\n"
+            "    ripple_detection.Kay_ripple_detector(time, lfps, np.full(n, 0.02), 1000)\n"
+            "(unit,) = [w for w in caught if 'cm/s, not m/s' in str(w.message)]\n"
+            "print(unit.filename)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, check=False
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "<string>", result.stdout
 
 
 class TestNormalizationArgumentValidation:
