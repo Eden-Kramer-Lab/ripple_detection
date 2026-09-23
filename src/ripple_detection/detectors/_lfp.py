@@ -14,6 +14,7 @@ from ripple_detection.core import (
     FloatArray,
     IntArray,
     _is_immobile_at_endpoints,
+    _normalization_statistics,
     _runs_extended_to_mean,
     estimate_noise_threshold,
     exclude_movement_by_majority,
@@ -938,15 +939,16 @@ def Yu_ripple_detector(
             raise ValueError(msg)
     noise_mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
     noise_values = consensus[noise_mask]
-    baseline = np.mean(noise_values)
-    scale = np.std(noise_values, ddof=0)  # the ddof normalize_signal uses
-    normalized = normalize_signal(consensus, normalization_mask=noise_mask)
+    # the statistics the trace is normalized by, so a threshold estimated in
+    # the raw units converts with exactly the center and scale the trace used
+    center, scale = _normalization_statistics(consensus, noise_mask, "zscore")
+    normalized = np.asarray((consensus - center) / scale, dtype=float)
     if zscore_per_channel:
         # The original estimates on the median of per-tetrode z-scores, whose
         # units the histogram grid assumes; convert the result to the
         # immobility-normalized units the events are extracted in.
         threshold = estimate_noise_threshold(noise_values, percentile=percentile)
-        threshold_zscore = float((threshold - baseline) / scale)
+        threshold_zscore = float((threshold - center.item()) / scale.item())
     else:
         # A raw median of envelopes is not in the grid's units, so follow the
         # paper's text instead: normalize to immobility, then estimate.

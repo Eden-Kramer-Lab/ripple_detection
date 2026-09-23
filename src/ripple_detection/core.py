@@ -953,8 +953,10 @@ def _get_normalization_mask(
     return mask
 
 
-def _normalize(data: FloatArray, mask: BoolArray | None, method: str) -> FloatArray:
-    """Center and scale ``data`` with statistics from ``data[mask]``.
+def _normalization_statistics(
+    data: FloatArray, mask: BoolArray | None, method: str
+) -> tuple[FloatArray, FloatArray]:
+    """The center and scale :func:`_normalize` divides by, from ``data[mask]``.
 
     Parameters
     ----------
@@ -962,6 +964,13 @@ def _normalize(data: FloatArray, mask: BoolArray | None, method: str) -> FloatAr
     mask : ndarray of bool, shape (n_time,), or None
         Samples the statistics come from; None uses every sample.
     method : {'zscore', 'median_mad'}
+
+    Returns
+    -------
+    center, scale : ndarray, shape (1,) or (1, n_channels)
+        Mean and standard deviation (``ddof=0``), or median and normal-scaled
+        MAD, over the finite samples. A caller that converts a value between
+        the raw and the normalized units uses these, so the two agree.
 
     Raises
     ------
@@ -997,6 +1006,13 @@ def _normalize(data: FloatArray, mask: BoolArray | None, method: str) -> FloatAr
             "drop it before detecting."
         )
         raise ValueError(msg)
+    return np.asarray(center, dtype=float), np.asarray(scale, dtype=float)
+
+
+def _normalize(data: FloatArray, mask: BoolArray | None, method: str) -> FloatArray:
+    """Center and scale ``data`` with :func:`_normalization_statistics` from
+    ``data[mask]``; raises as it does for a zero or undefined scale."""
+    center, scale = _normalization_statistics(data, mask, method)
     return np.asarray((data - center) / scale, dtype=float)
 
 
