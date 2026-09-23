@@ -8,6 +8,7 @@ from hypothesis.extra.numpy import arrays
 
 from ripple_detection.core import (
     exclude_close_events,
+    exclude_overlap,
     filter_ripple_band,
     gaussian_smooth,
     get_envelope,
@@ -473,3 +474,22 @@ def test_require_overlap_matches_a_brute_force_sweep(events, reference, minimum_
     for event in rejected:
         assert not any(np.allclose(event, k) for k in kept_set), f"kept {event}"
     assert len(kept_set) <= len(events)
+
+
+@settings(max_examples=50, deadline=None)
+@given(
+    events=arrays(float, (6, 2), elements=st.floats(0.0, 5.0, width=32)),
+    reference=arrays(float, (5, 2), elements=st.floats(0.0, 5.0, width=32)),
+    minimum_overlap=st.floats(0.0, 1.0),
+)
+def test_require_and_exclude_overlap_partition_the_events(events, reference, minimum_overlap):
+    """Every event is kept by exactly one of the two, in input order."""
+    events = np.sort(events, axis=1)
+    reference = np.sort(reference, axis=1)
+
+    required = require_overlap(events, reference, minimum_overlap)
+    excluded = exclude_overlap(events, reference, minimum_overlap)
+
+    assert len(required) + len(excluded) == len(events)
+    in_required = [any(np.array_equal(event, k) for k in required) for event in events]
+    np.testing.assert_array_equal(events[~np.asarray(in_required, bool)], excluded)

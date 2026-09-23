@@ -14,6 +14,7 @@ from ripple_detection.core import (
     exclude_close_events,
     exclude_movement,
     exclude_movement_by_majority,
+    exclude_overlap,
     extend_threshold_to_mean,
     filter_ripple_band,
     gaussian_smooth,
@@ -1544,6 +1545,95 @@ class TestRequireOverlap:
     def test_negative_minimum_overlap_raises(self):
         with pytest.raises(ValueError, match="minimum_overlap"):
             require_overlap(np.array([(0.0, 0.1)]), np.array([(0.0, 0.1)]), -1.0)
+
+
+class TestExcludeOverlap:
+    """The complement of require_overlap: a veto, such as dropping ripples that
+    coincide with an event on a reference channel or with an EMG burst."""
+
+    def test_drops_an_overlapping_event_and_keeps_the_rest(self):
+        events = np.array([(0.0, 0.1), (1.0, 1.1), (2.0, 2.1)])
+        artifacts = np.array([(1.05, 1.5)])
+
+        np.testing.assert_allclose(
+            exclude_overlap(events, artifacts), [[0.0, 0.1], [2.0, 2.1]]
+        )
+
+    def test_touching_events_do_not_overlap_so_are_kept(self):
+        events = np.array([(0.0, 0.1)])
+        artifacts = np.array([(0.1, 0.2)])
+
+        np.testing.assert_allclose(exclude_overlap(events, artifacts), [[0.0, 0.1]])
+
+    def test_an_overlap_below_the_minimum_is_kept(self):
+        events = np.array([(0.0, 0.1), (1.0, 1.1)])
+        artifacts = np.array([(0.099, 0.5), (1.0, 1.1)])
+
+        kept = exclude_overlap(events, artifacts, minimum_overlap=0.01)
+
+        np.testing.assert_allclose(kept, [[0.0, 0.1]])
+
+    def test_a_window_around_the_reference_is_padding_the_reference(self):
+        """ "Within 100 ms of an interictal spike" is overlap with the spike
+        widened by 100 ms on each side."""
+        events = np.array([(1.0, 1.05), (2.0, 2.05)])
+        spikes = np.array([(1.12, 1.13)])
+
+        assert len(exclude_overlap(events, spikes)) == 2
+        np.testing.assert_allclose(
+            exclude_overlap(events, spikes + np.array([-0.1, 0.1])), [[2.0, 2.05]]
+        )
+
+    def test_accepts_and_returns_dataframes(self):
+        events = pd.DataFrame(
+            {
+                "start_time": [0.0, 1.0],
+                "end_time": [0.1, 1.1],
+                "max_sustained_zscore": [3.0, 4.0],
+            },
+            index=pd.Index([1, 2], name="event_number"),
+        )
+        artifacts = pd.DataFrame({"start_time": [1.05], "end_time": [1.5]})
+
+        kept = exclude_overlap(events, artifacts)
+
+        assert isinstance(kept, pd.DataFrame)
+        pd.testing.assert_frame_equal(kept, events.loc[[1]])
+
+    def test_empty_reference_keeps_everything(self):
+        events = np.array([(0.0, 0.1), (1.0, 1.1)])
+
+        np.testing.assert_allclose(exclude_overlap(events, np.empty((0, 2))), events)
+
+    def test_empty_events_stay_empty(self):
+        kept = exclude_overlap(np.empty((0, 2)), np.array([(0.0, 0.1)]))
+
+        assert kept.shape == (0, 2)
+
+    def test_negative_minimum_overlap_raises(self):
+        with pytest.raises(ValueError, match="minimum_overlap"):
+            exclude_overlap(np.array([(0.0, 0.1)]), np.array([(0.0, 0.1)]), -0.1)
+
+    @pytest.mark.parametrize("helper", [require_overlap, exclude_overlap])
+    @pytest.mark.parametrize("bad_row", [(0.5, np.nan), (np.nan, 0.6), (1.5, 1.05)])
+    def test_a_missing_or_reversed_bound_raises(self, helper, bad_row):
+        """One such row among the references used to switch the veto off for
+        every later event, silently."""
+        events = np.array([(1.0, 1.1), (2.0, 2.1)])
+        references = np.array([bad_row, (1.0, 1.1), (2.0, 2.1)])
+        with pytest.raises(ValueError, match="reference_event_times"):
+            helper(events, references)
+        with pytest.raises(ValueError, match="event_times"):
+            helper(np.array([bad_row, (2.0, 2.1)]), events)
+
+    def test_a_zero_length_reference_overlaps_nothing(self):
+        """A point, such as an interictal-spike peak, has no duration to
+        overlap; widen it into a window first."""
+        events = np.array([(1.0, 1.1), (2.0, 2.1)])
+        spike_peaks = np.array([1.05, 2.05])
+
+        assert len(exclude_overlap(events, np.column_stack([spike_peaks, spike_peaks]))) == 2
+        assert len(exclude_overlap(events, spike_peaks[:, np.newaxis] + [-0.1, 0.1])) == 0
 
 
 class TestCloseEventBoundaryAgreement:
