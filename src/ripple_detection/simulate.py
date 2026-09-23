@@ -799,7 +799,7 @@ def simulate_sharp_wave_ripple_pair(
 
     Returns
     -------
-    raw_lfps : ndarray, shape (n_time, 2)
+    raw_lfp_pair : ndarray, shape (n_time, 2)
         Raw, unfiltered: the ripple channel, then the sharp-wave channel, the
         order the Long detector takes.
 

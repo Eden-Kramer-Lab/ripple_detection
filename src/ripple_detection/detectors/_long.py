@@ -76,7 +76,7 @@ def _matlab_percentile(values: FloatArray, percent: float) -> float:
 @explain_call_errors
 def Long_sharp_wave_ripple_detector(
     time: ArrayLike,
-    raw_lfps: ArrayLike,
+    raw_lfp_pair: ArrayLike,
     speed: ArrayLike,
     sampling_frequency: float,
     *,
@@ -134,7 +134,7 @@ def Long_sharp_wave_ripple_detector(
     3. The package's endpoint speed rule is applied afterwards; a NaN in
        ``speed`` is an unknown speed, which fails it at an endpoint but
        splits no block.
-    4. Missing samples (NaN in ``raw_lfps``, or a gap in ``time``) split the
+    4. Missing samples (NaN in ``raw_lfp_pair``, or a gap in ``time``) split the
        recording into blocks: the filters and candidate windows run within
        each block, the k-means pools the candidates of every block, and a
        candidate within ``local_window`` of a block edge is not evaluated,
@@ -151,7 +151,7 @@ def Long_sharp_wave_ripple_detector(
     ----------
     time : array_like, shape (n_time,)
         Time values for each sample in seconds.
-    raw_lfps : array_like, shape (n_time, 2)
+    raw_lfp_pair : array_like, shape (n_time, 2)
         **Raw** LFP: column 0 the ripple (pyramidal-layer) channel, column 1
         the sharp-wave (stratum radiatum) channel. NaN marks missing samples.
     speed : array_like, shape (n_time,)
@@ -246,10 +246,10 @@ def Long_sharp_wave_ripple_detector(
     _validate_duration_limits(
         minimum_ripple_duration, None, names=("minimum_ripple_duration", "")
     )
-    lfp = np.asarray(raw_lfps, dtype=float)
+    lfp = np.asarray(raw_lfp_pair, dtype=float)
     if lfp.ndim != 2 or lfp.shape[1] != 2:
         msg = (
-            "raw_lfps must have exactly two channels, shape (n_time, 2): the ripple "
+            "raw_lfp_pair must have exactly two channels, shape (n_time, 2): the ripple "
             f"channel first and the sharp-wave channel second; got shape {lfp.shape}."
         )
         raise ValueError(msg)
@@ -281,7 +281,7 @@ def Long_sharp_wave_ripple_detector(
     _check_gap(minimum_separation=minimum_separation)
     n_time = len(time)
     is_valid, blocks = _valid_blocks(time, lfp)
-    _reject_flat_channels(lfp, blocks, "raw_lfps")
+    _reject_flat_channels(lfp, blocks, "raw_lfp_pair")
     slowest_kernel = len(_gaussian_lowpass_fir(sharp_wave_band[0], sampling_frequency))
     blocks = _drop_short_blocks(
         blocks,

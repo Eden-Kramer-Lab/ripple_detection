@@ -4195,7 +4195,7 @@ class TestInputContents:
             lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, (2500,))
             lfp[:, 1] = 0.7
             call = lambda: detector(time, lfp, speed, self.FS)  # noqa: E731
-            match = r"raw_lfps channel\(s\) \[1\]"
+            match = r"raw_lfp_pair channel\(s\) \[1\]"
         else:
             lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, (2500,))
             lfps[:, 2] = 0.7

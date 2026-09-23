@@ -235,6 +235,13 @@ class TestCallsWrittenFor1x:
             ripple_detection.Shvartsman_ripple_detector(
                 *inputs, 1500, manual_normalization=True
             )
+        with pytest.raises(TypeError, match=r"raw_lfps was renamed raw_lfp_pair"):
+            ripple_detection.Long_sharp_wave_ripple_detector(
+                time=time,
+                raw_lfps=np.zeros((len(time), 2)),
+                speed=speed,
+                sampling_frequency=1500,
+            )
         with pytest.raises(TypeError, match=r"elec_baselines was renamed channel_baselines"):
             ripple_detection.Shvartsman_ripple_detector(
                 *inputs, 1500, elec_baselines=[0.0, 0.0]

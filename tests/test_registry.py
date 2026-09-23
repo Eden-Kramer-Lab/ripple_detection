@@ -92,7 +92,7 @@ def test_declared_inputs_match_the_signature_in_kind_and_position():
     the hand-written table above."""
     kind_of_parameter = {
         "filtered_lfps": RIPPLE_BAND_LFP,
-        "raw_lfps": RAW_LFP_PAIR,
+        "raw_lfp_pair": RAW_LFP_PAIR,
         "multiunit": MULTIUNIT,
     }
     for name, spec in DETECTORS.items():
@@ -195,8 +195,20 @@ class TestParameters:
             "multiunit",
         )
         assert get_detector("Long_sharp_wave_ripple_detector").signal_parameters == (
-            "raw_lfps",
+            "raw_lfp_pair",
         )
+
+    def test_a_signal_new_in_2_is_named_after_its_kind(self):
+        """So `signal_parameters`, `inputs` and the SimulatedSession field
+        agree; only 1.x's `filtered_lfps` keeps a name of its own."""
+        from ripple_detection import SimulatedSession
+
+        fields = set(SimulatedSession.__dataclass_fields__)
+        for spec in DETECTORS.values():
+            for kind, parameter in zip(spec.inputs, spec.signal_parameters, strict=True):
+                if kind != RIPPLE_BAND_LFP:
+                    assert parameter == kind, spec.name
+                    assert parameter in fields, spec.name
 
     def test_check_parameters_names_the_unknown_key(self):
         with pytest.raises(ValueError, match="does not take z_score_threshold"):
