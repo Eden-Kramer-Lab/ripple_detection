@@ -3862,6 +3862,42 @@ class TestUnknownSpeed:
         kept = self._run(detector, time, speed, speed_threshold=np.inf)
         pd.testing.assert_frame_equal(self._bounds(kept), self._bounds(known))
 
+    def _run_long(self, time, speed, **kwargs):
+        # events at least local_window (5 s) from both ends, so each is evaluated
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, (8000, 12000))
+        return Long_sharp_wave_ripple_detector(
+            time, lfp, speed, self.FS, random_state=0, **kwargs
+        )
+
+    def test_long_nan_inside_an_event_changes_nothing(self, time):
+        speed = np.full(self.N_TIME, 2.0)
+        known = self._run_long(time, speed)
+        assert len(known) >= 1
+        middle = int(np.searchsorted(time, known[["start_time", "end_time"]].iloc[0].mean()))
+        speed[middle - 3 : middle + 3] = np.nan
+        pd.testing.assert_frame_equal(
+            self._bounds(self._run_long(time, speed)), self._bounds(known)
+        )
+
+    def test_long_unknown_endpoint_fails_the_endpoint_rule(self, time):
+        speed = np.full(self.N_TIME, 2.0)
+        known = self._run_long(time, speed)
+        speed[int(np.searchsorted(time, known.start_time.iloc[0]))] = np.nan
+        assert len(self._run_long(time, speed)) == len(known) - 1
+        kept = self._run_long(time, speed, speed_threshold=np.inf)
+        pd.testing.assert_frame_equal(self._bounds(kept), self._bounds(known))
+
+    def test_carey_unknown_speed_longer_than_the_merge_gap_interrupts_immobility(self, time):
+        """Carey keeps an event only inside a low-speed period; unknown speed is
+        not low speed, and a 60 ms dropout is longer than the 50 ms merge gap."""
+        speed = np.full(self.N_TIME, 2.0)
+        near = lambda events: events[(events.end_time > 4.9) & (events.start_time < 5.2)]  # noqa: E731
+        assert len(near(self._run(Carey_candidate_detector, time, speed))) == 1
+        speed[5010:5070] = np.nan
+        assert len(near(self._run(Carey_candidate_detector, time, speed))) == 0
+        kept = self._run(Carey_candidate_detector, time, speed, speed_threshold=np.inf)
+        assert len(near(kept)) == 1
+
     def test_yu_with_no_known_speed_and_the_criterion_off_uses_every_sample(self, time):
         """speed_threshold=np.inf turns the speed rule off for Yu's noise sample
         too, so all-NaN speed works there as the validation message says."""
@@ -4186,6 +4222,17 @@ class TestInputContents:
                 call = lambda: detector(time, lfps, speed, self.FS)  # noqa: E731
         with pytest.raises(ValueError, match=match):
             call()
+
+    def test_a_flat_channel_is_judged_over_every_block(self, time):
+        """A channel constant in one block but not across all of them is live;
+        one constant in every block is dead."""
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(3500, 3560, 20.0)])
+        lfps[2000:2100] = np.nan  # two blocks
+        lfps[:2000, 1] = 0.5  # flat in the first block only
+        Kay_ripple_detector(time, lfps, np.full(self.N_TIME, 2.0), self.FS)
+        lfps[2100:, 1] = 0.5  # now flat in both
+        with pytest.raises(ValueError, match=r"channel\(s\) \[1\]"):
+            Kay_ripple_detector(time, lfps, np.full(self.N_TIME, 2.0), self.FS)
 
     def test_a_channel_with_no_finite_sample_is_named(self, time):
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2500, 2560, 20.0)])

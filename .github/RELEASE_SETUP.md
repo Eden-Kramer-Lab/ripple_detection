@@ -101,7 +101,7 @@ Before pushing a release tag:
 - [ ] All changes committed and pushed to `master`
 - [ ] `CHANGELOG.md` updated with version number and date
 - [ ] Version tag follows semantic versioning (e.g., `v1.6.0`)
-- [ ] All tests pass locally: `pytest tests/`
+- [ ] All tests pass locally, docstring examples included: `pytest`
 - [ ] Quality checks pass: `ruff format --check src/ tests/`, `ruff check src/ tests/`, and `mypy src/`
 - [ ] Built and tested locally: `python -m build` works
 

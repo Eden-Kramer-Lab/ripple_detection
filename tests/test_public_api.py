@@ -118,6 +118,34 @@ class TestCallsWrittenFor1x:
                 time, np.zeros((3000, 2)), np.zeros(3000), 1500, 4.0
             )
 
+    WRAPPED = (
+        *(getattr(ripple_detection, name) for name in DETECTORS),
+        ripple_detection.filter_ripple_band,
+        ripple_detection.normalize_signal,
+        ripple_detection.simulate_LFP,
+    )
+
+    @pytest.mark.parametrize("function", WRAPPED, ids=lambda function: function.__name__)
+    def test_every_public_entry_point_explains_a_bad_call(self, function):
+        assert hasattr(function, "__wrapped__")
+        with pytest.raises(TypeError, match=rf"^{function.__name__}\(\): .*not_a_parameter"):
+            function(not_a_parameter=1)
+
+    @pytest.mark.parametrize("name", ["pink", "white", "brown"])
+    def test_the_noise_functions_explain_a_bad_call(self, name):
+        from ripple_detection import simulate
+
+        with pytest.raises(TypeError, match=rf"^{name}\(\): .*not_a_parameter"):
+            getattr(simulate, name)(100, not_a_parameter=1)
+
+    def test_only_the_unknown_keyword_is_reported(self, inputs):
+        with pytest.raises(TypeError) as raised:
+            ripple_detection.Kay_ripple_detector(
+                *inputs, 1500, speed_threshold=4.0, close_event_threshold=0.05
+            )
+        assert "takes no close_event_threshold" in str(raised.value)
+        assert "speed_threshold;" not in str(raised.value)
+
     def test_a_near_miss_keyword(self, inputs):
         with pytest.raises(TypeError, match="did you mean close_ripple_threshold"):
             ripple_detection.Kay_ripple_detector(*inputs, 1500, close_event_threshold=0.05)

@@ -104,7 +104,7 @@ When preparing a new release:
 
 ```bash
 # 1. Run all tests to ensure everything passes
-pytest tests/
+pytest    # tests/ and the docstring examples in src/
 
 # 2. Run code quality checks
 ruff format --check src/ tests/

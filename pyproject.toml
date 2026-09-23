@@ -63,7 +63,9 @@ source = "vcs"
 version-file = "src/ripple_detection/_version.py"
 
 [tool.hatch.build.targets.sdist]
-include = ["/src", "/tests", "/examples", "README.md", "LICENSE", "CITATION.cff"]
+include = [
+    "/src", "/tests", "/examples", "README.md", "LICENSE", "CITATION.cff", "llms.txt",
+]  # llms.txt: tests/test_public_api.py runs its example
 
 [tool.hatch.build.targets.wheel]
 # every file under the package ships, including ripplefilter.mat and the

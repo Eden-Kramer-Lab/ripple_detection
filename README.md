@@ -697,7 +697,7 @@ Releases are automated via GitHub Actions when a version tag is pushed:
 
 ```bash
 # 1. Ensure all tests pass and code quality checks pass
-pytest tests/
+pytest    # tests/ and the docstring examples in src/
 ruff format --check src/ tests/
 ruff check src/ tests/
 mypy src/
