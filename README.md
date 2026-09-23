@@ -85,26 +85,10 @@ pip install -e .[dev,examples]
 ## Migrating from 1.x
 
 2.0 changes results as well as calls, so detect again rather than mixing events
-from the two. Most code written for 1.x (including code a language model writes
-from 1.x examples) fails with a message naming the change: a removed or renamed
-keyword, a tunable passed by position, a `RandomState`, a missing
-`sampling_frequency`. The last three rows below cannot raise, so look for them.
-The full list is in [CHANGELOG.md](CHANGELOG.md#migrating-from-17).
-
-| 1.x | 2.0 |
-|---|---|
-| `filter_ripple_band(lfp)` | `filter_ripple_band(lfp, sampling_frequency)`: the rate is required |
-| `Kay_ripple_detector(time, lfps, speed, fs, 4.0, 0.015)` | tunables are keyword-only: `..., fs, speed_threshold=4.0, minimum_duration=0.015` |
-| `normalization_time_range=(start, end)` | `normalization_mask=(time >= start) & (time <= end)` |
-| `use_speed_threshold_for_zscore=True` (HSE) | `normalization_mask=speed <= speed_threshold` |
-| `normalize_signal(data, time, method)` | `normalize_signal(data, method, normalization_mask)` |
-| `pink(N, state=np.random.RandomState(0))` | `pink(N, rng=0)` |
-| `events.max_thresh` | `events.max_sustained_zscore`: the same quantity, computed exactly (1.x grew a window greedily from the peak, and its value could fall below the detection threshold) |
-| `simulate_LFP(...)` without `noise_type` | pink noise, where 1.x drew brown; pass `noise_type="brown"` for the old signal |
-| `exclude_close_events` / `exclude_movement` returning `[]` | an empty `(0, 2)` array |
-
-Every duration and rate is in seconds and hertz, and speed in cm/s; a value that
-looks like milliseconds (`minimum_duration=15`) raises and says what to pass.
+from the two versions. [MIGRATING.md](MIGRATING.md) lists the calls to change
+(most fail with a message naming the replacement), the three changes that cannot
+raise, the inputs that now raise, and why the same recording gives different
+events.
 
 ## Quick Start
 

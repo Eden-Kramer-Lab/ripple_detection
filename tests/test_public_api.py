@@ -234,6 +234,12 @@ class TestLlmsTxt:
         exec(block, namespace)
         assert len(namespace["events"]) > 0
 
+    def test_the_migration_guide_is_the_one_every_document_points_to(self):
+        root = __import__("pathlib").Path(__file__).parents[1]
+        assert (root / "MIGRATING.md").is_file()
+        for document in ("README.md", "CHANGELOG.md", "llms.txt"):
+            assert "MIGRATING.md" in (root / document).read_text(), document
+
     def test_it_names_every_registered_detector(self):
         missing = [name for name in ripple_detection.DETECTORS if f"`{name}`" not in self.TEXT]
         assert missing == []

@@ -3,7 +3,7 @@
 > Detects sharp-wave ripples (150-250 Hz events in hippocampal LFP) and
 > multiunit high-synchrony events, with nine published and lab detectors behind
 > one calling convention. Version 2.x; calls and results differ from 1.x (see
-> "Migrating from 1.x" below).
+> MIGRATING.md).
 
 Units everywhere: time in seconds, rates in Hz, speed in cm/s, durations and
 gaps in seconds. A duration that looks like milliseconds (`minimum_duration=15`)
@@ -59,25 +59,20 @@ resolves a stored name.
 
 ## Migrating from 1.x
 
-- `filter_ripple_band(lfp)` -> `filter_ripple_band(lfp, sampling_frequency)`.
-- Positional tunables -> keywords, as above.
-- `normalization_time_range=(start, end)` -> `normalization_mask=(time >= start) & (time <= end)`.
-- `use_speed_threshold_for_zscore=True` -> `normalization_mask=speed <= speed_threshold`.
-- `normalize_signal(data, time, method)` -> `normalize_signal(data, method, normalization_mask)`.
-- `pink(N, state=RandomState(0))` -> `pink(N, rng=0)`; `white` and `brown` the same.
-- Column `max_thresh` -> `max_sustained_zscore`: the highest threshold that still finds the event, computed exactly (1.x approximated it).
-- `simulate_LFP` draws pink noise by default, where 1.x drew brown; pass `noise_type="brown"` for the old signal.
-
-A 1.x call with a removed or renamed keyword, a tunable passed by position, a
-`RandomState`, or no `sampling_frequency` fails with a message naming the 2.0
-replacement. The column rename and the noise default cannot raise.
+Code written for 1.x needs changes, and results differ on the same recording;
+[MIGRATING.md](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/MIGRATING.md)
+is the full guide. Most 1.x calls fail with a message naming the replacement;
+three changes cannot raise: the column `max_thresh` is `max_sustained_zscore`,
+`simulate_LFP` draws pink noise by default where 1.x drew brown, and the event
+helpers return an empty `(0, 2)` array where they returned `[]`.
 
 ## Docs
 
 - [README](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/README.md): usage, output columns, parameter guide
 - [Choosing a detector](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/README.md#choosing-a-detector): how the detectors' conventions differ
 - [Published parameter values](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/README.md#published-parameter-values): the literature survey, also `load_literature_parameters()`
-- [CHANGELOG](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/CHANGELOG.md): every 2.0 change, with the migration list
+- [MIGRATING.md](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/MIGRATING.md): upgrading from 1.x
+- [CHANGELOG](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/CHANGELOG.md): every 2.0 change
 
 ## Optional
 

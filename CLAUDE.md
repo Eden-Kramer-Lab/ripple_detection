@@ -111,7 +111,8 @@ ruff format --check src/ tests/
 ruff check src/ tests/
 mypy src/
 
-# 3. Update CHANGELOG.md
+# 3. Update CHANGELOG.md (and MIGRATING.md for a major version: the calls to
+#    change and why results differ; the changelog links it rather than repeating it)
 # - Add new version section with date: ## [X.Y.Z] - YYYY-MM-DD
 # - Document all changes under appropriate headers:
 #   - Added (new features)
