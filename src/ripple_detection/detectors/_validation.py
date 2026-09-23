@@ -279,11 +279,12 @@ def _check_smoothing_sigma(**values: float) -> None:
 
 
 def _check_gap(**values: float) -> None:
-    """A gap or interval between events in seconds: non-negative, not NaN, and
-    not beyond ``MAXIMUM_PLAUSIBLE_CEILING`` (infinity passes)."""
-    _check_non_negative(**values)
+    """A gap or interval between events in seconds: finite, non-negative, and
+    not beyond ``MAXIMUM_PLAUSIBLE_CEILING``. Infinity is rejected: every
+    finite spacing falls below it, so it would keep or merge into one event."""
+    _check_finite_non_negative(**values)
     for name, value in values.items():
-        if np.isfinite(value) and value > MAXIMUM_PLAUSIBLE_CEILING:
+        if value > MAXIMUM_PLAUSIBLE_CEILING:
             _check_seconds(
                 MAXIMUM_PLAUSIBLE_CEILING,
                 "is longer than any gap between events",
@@ -382,10 +383,13 @@ def _validate_duration_limits(
     )
     if maximum_duration is None:
         return
-    if not maximum_duration > 0:
-        msg = f"{maximum_name} must be positive or None, got {maximum_duration}."
+    if not 0 < maximum_duration < np.inf:
+        msg = (
+            f"{maximum_name} must be positive and finite, or None for no ceiling; "
+            f"got {maximum_duration}."
+        )
         raise ValueError(msg)
-    if np.isfinite(maximum_duration) and maximum_duration > MAXIMUM_PLAUSIBLE_CEILING:
+    if maximum_duration > MAXIMUM_PLAUSIBLE_CEILING:
         _check_seconds(
             MAXIMUM_PLAUSIBLE_CEILING,
             "is longer than any published ceiling",

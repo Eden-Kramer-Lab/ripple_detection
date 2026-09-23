@@ -1971,8 +1971,10 @@ class TestLongSharpWaveRippleDetector:
         self, time, stationary
     ):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        # 10 s is the longest separation the check admits, and every
+        # consecutive pair of EVENTS is closer than that
         events = Long_sharp_wave_ripple_detector(
-            time, lfp, stationary, self.FS, minimum_separation=np.inf, random_state=0
+            time, lfp, stationary, self.FS, minimum_separation=10.0, random_state=0
         )
         assert len(events) <= 1
 
@@ -3928,9 +3930,9 @@ class TestMillisecondsGivenAsSeconds:
         with pytest.raises(ValueError, match=rf"{name} is in seconds.*pass {value / 1000}"):
             TestParameterRanges()._call(detector, **kwargs)
 
-    def test_a_ceiling_of_two_seconds_and_an_infinite_gap_are_accepted(self):
+    def test_a_ceiling_of_two_seconds_and_a_gap_of_ten_are_accepted(self):
         TestParameterRanges()._call(
-            Kay_ripple_detector, maximum_duration=2.0, close_ripple_threshold=np.inf
+            Kay_ripple_detector, maximum_duration=2.0, close_ripple_threshold=10.0
         )
 
 
@@ -3975,6 +3977,7 @@ class TestParameterRanges:
             ({"minimum_duration": -0.01}, "minimum_duration"),
             ({"minimum_duration": np.nan}, "minimum_duration"),
             ({"maximum_duration": 0.0}, "maximum_duration"),
+            ({"maximum_duration": np.inf}, "maximum_duration.*None for no ceiling"),
             ({"speed_threshold": np.nan}, "speed_threshold"),
             ({"speed_threshold": -1.0}, "speed_threshold"),
             ({"sampling_frequency": 0.0}, "sampling_frequency"),
@@ -4012,6 +4015,17 @@ class TestParameterRanges:
         ("detector", "kwargs", "match"),
         [
             (Kay_ripple_detector, {"close_ripple_threshold": -1.0}, "close_ripple_threshold"),
+            (Kay_ripple_detector, {"close_ripple_threshold": np.inf}, "finite"),
+            (multiunit_HSE_detector, {"close_event_threshold": np.inf}, "finite"),
+            (Zugaro_ripple_detector, {"minimum_inter_ripple_interval": np.inf}, "finite"),
+            (Long_sharp_wave_ripple_detector, {"minimum_separation": np.inf}, "finite"),
+            (
+                Long_sharp_wave_ripple_detector,
+                {"maximum_sharp_wave_duration": np.inf},
+                "maximum_sharp_wave_duration.*None for no ceiling",
+            ),
+            (Carey_candidate_detector, {"state_merge_gap": np.inf}, "finite"),
+            (Carey_candidate_detector, {"state_minimum_length": np.inf}, "finite"),
             (Yu_ripple_detector, {"close_ripple_threshold": np.nan}, "close_ripple_threshold"),
             (Yu_ripple_detector, {"smoothing_sigma": -0.004}, "smoothing_sigma"),
             (multiunit_HSE_detector, {"close_event_threshold": -1.0}, "close_event_threshold"),

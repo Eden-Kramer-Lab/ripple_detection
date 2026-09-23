@@ -329,7 +329,9 @@ raises on zero rows; that is hdmf's, not this package's.
     width of zero or of a second or more, a minimum duration of a second or
     more, a duration ceiling or a gap between events longer than 10 s (each
     of these last three is milliseconds given as seconds, and the message
-    gives the value to pass), a
+    gives the value to pass), an infinite ceiling or gap (`None` is the way
+    to have no ceiling; an infinite gap would keep one event, since every
+    finite spacing falls below it), a
     bounds threshold above the peak threshold (Zugaro, Carey, Long), a band
     that is reversed or reaches Nyquist (Long, Carey's theta), a
     non-integer channel, unit or window count, and a `minimum_active_units`

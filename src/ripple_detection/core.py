@@ -1364,7 +1364,8 @@ def _is_gap_below(
 
 def _check_non_negative(**values: float) -> None:
     """Raise for a value that is NaN or negative. Infinity passes: it is how a
-    caller turns a speed or proximity criterion off."""
+    caller turns the speed criterion off. A gap or ceiling must be finite, which
+    ``_check_gap`` and ``_validate_duration_limits`` enforce."""
     for name, value in values.items():
         if not value >= 0:
             msg = f"{name} must be non-negative, got {value}."
