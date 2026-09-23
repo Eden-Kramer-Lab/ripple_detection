@@ -247,7 +247,6 @@ def Long_sharp_wave_ripple_detector(
 
     Examples
     --------
-    >>> from ripple_detection import filter_ripple_band
     >>> from ripple_detection.simulate import simulate_session, simulate_time
     >>> time = simulate_time(45_000, 1500)  # 30 s at 1500 Hz
     >>> session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], rng=0)

@@ -400,3 +400,23 @@ def test_the_citation_is_the_latest_release():
     citation = (root / "CITATION.cff").read_text()
     assert re.search(r"^version: (.+)$", citation, re.MULTILINE).group(1) == version
     assert re.search(r'^date-released: "(.+)"$', citation, re.MULTILINE).group(1) == date
+
+
+def test_the_readme_quick_start_runs_and_finds_the_simulated_ripples(capsys):
+    """Every block of the Quick Start, in order, in one namespace, as a reader
+    copies them; the Basic Usage events include every simulated ripple (at
+    2 SD on pink noise Kay also finds a few noise events, as it should)."""
+    import re
+    from pathlib import Path
+
+    text = (Path(__file__).parents[1] / "README.md").read_text()
+    section = text[
+        text.index("## Quick Start") : text.index("\n## ", text.index("## Quick Start"))
+    ]
+    namespace: dict[str, object] = {}
+    for block in re.findall(r"```python\n(.*?)```", section, re.DOTALL):
+        exec(block, namespace)
+    events, session = namespace["ripple_times"], namespace["session"]
+    for low, high in session.ripple_windows:
+        assert ((events.start_time <= high) & (events.end_time >= low)).any()
+    assert "needs sharp_wave_lfp" in capsys.readouterr().out

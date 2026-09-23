@@ -102,17 +102,22 @@ events.
 ### Basic Usage
 
 ```python
-from ripple_detection import Kay_ripple_detector, filter_ripple_band
-import numpy as np
+from ripple_detection import (
+    Kay_ripple_detector,
+    filter_ripple_band,
+    simulate_session,
+    simulate_time,
+)
 
-# Your data (replace the random arrays with real recordings)
-sampling_frequency = 1500  # Hz; pass your true rate to filter_ripple_band
-time = np.arange(0, 10, 1 / sampling_frequency)  # 10 seconds
-LFPs = np.random.randn(len(time), 4)  # 4 channels of raw LFP data
-speed = np.abs(np.random.randn(len(time)))  # Animal speed (cm/s)
+# 30 s with five known ripples; replace with your recording: time in seconds,
+# raw LFP of shape (n_time, n_channels), and speed in cm/s
+sampling_frequency = 1500  # Hz; pass your true rate
+time = simulate_time(45_000, sampling_frequency)
+session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], rng=0)
+LFPs, speed = session.lfps, session.speed
 
-# Filter into the ripple band (150-250 Hz) first: the detectors expect
-# ripple-band-filtered LFPs, not raw signal.
+# Filter into the ripple band (150-250 Hz) first: the ripple-band detectors take
+# filtered LFP (Long_sharp_wave_ripple_detector, which takes raw LFP, is the exception)
 filtered_lfps = filter_ripple_band(LFPs, sampling_frequency=sampling_frequency)
 
 # Detect ripples
@@ -123,7 +128,7 @@ ripple_times = Kay_ripple_detector(
     zscore_threshold=2.0
 )
 
-print(ripple_times)
+print(ripple_times[["start_time", "end_time", "duration", "max_zscore"]])
 ```
 
 ### Data-driven threshold (Yu et al. 2017)
@@ -219,8 +224,9 @@ except ValueError as error:
 ```
 
 `spec.describe()` gives everything above as plain data that `json.dumps`
-accepts: the positional arguments with their shapes and units, every tunable
-with its default, unit and meaning, and the columns of the result. A pipeline,
+accepts: the positional arguments and the signals passed by name with their
+shapes and units, every tunable with its default, unit and meaning, and the
+columns of the result. A pipeline,
 or a language model choosing and configuring a detector, can read it instead
 of the docstring:
 

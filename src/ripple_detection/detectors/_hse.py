@@ -57,11 +57,11 @@ def multiunit_HSE_detector(
 
     The 15 ms smoothing kernel follows Davidson et al. 2009 [1]_. The
     selection rule does not. Davidson et al. define a candidate event as a
-    period above the mean whose *peak* exceeds 3 s.d. They take the statistics
+    period above the mean whose *peak* exceeds 3 SD. They take the statistics
     from stopped periods only and impose no sustained-duration requirement.
     To approximate that convention, pass ``zscore_threshold=3.0``,
     ``minimum_duration=0.0`` and ``normalization_mask=speed < 5.0``, their
-    stopped-period criterion. The defaults here, 2 s.d. held for 15 ms with
+    stopped-period criterion. The defaults here, 2 SD held for 15 ms with
     statistics over all samples, are this package's own convention.
 
     Parameters
@@ -172,7 +172,6 @@ def multiunit_HSE_detector(
 
     Examples
     --------
-    >>> from ripple_detection import filter_ripple_band
     >>> from ripple_detection.simulate import simulate_session, simulate_time
     >>> time = simulate_time(45_000, 1500)  # 30 s at 1500 Hz
     >>> session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], rng=0)

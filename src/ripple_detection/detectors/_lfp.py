@@ -735,21 +735,15 @@ def Kay_ripple_detector(
 
     Examples
     --------
-    >>> from ripple_detection import filter_ripple_band, Kay_ripple_detector
-    >>> import numpy as np
-    >>>
-    >>> # Step 1: Prepare your data
-    >>> time = np.arange(10000) / 1500  # 10000 samples at 1500 Hz
-    >>> raw_lfps = np.random.randn(10000, 4)  # 4 channels of raw LFP
-    >>> speed = np.abs(np.random.randn(10000)) * 5  # Speed in cm/s
-    >>>
-    >>> # Step 2: Filter LFPs to ripple band (REQUIRED)
-    >>> filtered_lfps = filter_ripple_band(raw_lfps, sampling_frequency=1500)
-    >>>
-    >>> # Step 3: Detect ripples
-    >>> ripples = Kay_ripple_detector(time, filtered_lfps, speed, sampling_frequency=1500)
-    >>> "start_time" in ripples.columns
-    True
+    >>> from ripple_detection import filter_ripple_band
+    >>> from ripple_detection.simulate import simulate_session, simulate_time
+    >>> time = simulate_time(45_000, 1500)  # 30 s at 1500 Hz
+    >>> session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], rng=0)
+    >>> # filter to the ripple band first; the detector takes ripple-band LFP
+    >>> filtered_lfps = filter_ripple_band(session.lfps, sampling_frequency=1500)
+    >>> ripples = Kay_ripple_detector(time, filtered_lfps, session.speed, 1500)
+    >>> "start_time" in ripples.columns, bool(len(ripples))
+    (True, True)
 
     References
     ----------
