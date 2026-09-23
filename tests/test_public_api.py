@@ -42,6 +42,7 @@ HELPERS = [
     "get_multiunit_population_firing_rate",
     "load_literature_parameters",
     "exclude_close_events",
+    "exclude_overlap",
     "exclude_movement",
     "exclude_movement_by_majority",
     "merge_close_events",

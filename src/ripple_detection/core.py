@@ -1612,7 +1612,7 @@ def require_overlap(
     -------
     kept_events : ndarray, shape (n_kept, 2), or pd.DataFrame
         The subset of `event_times` meeting the criterion, in its input order
-        and type.
+        and type. :func:`exclude_overlap` returns the rest.
 
     Raises
     ------
@@ -1627,32 +1627,98 @@ def require_overlap(
     array([[1. , 1.1]])
 
     """
-    _check_non_negative(minimum_overlap=minimum_overlap)
-
-    events = _event_bounds(event_times)
-    reference = _event_bounds(reference_event_times)
-
-    keep = np.zeros(len(events), dtype=bool)
-    if len(events) and len(reference):
-        reference = reference[np.argsort(reference[:, 0], kind="stable")]
-        reference = merge_close_events(reference)
-        starts, ends = events[:, 0], events[:, 1]
-        ref_start, ref_end = reference[:, 0], reference[:, 1]
-        # the reference is disjoint and sorted, so the intervals that can meet
-        # an event form one contiguous run; cumulative lengths then give the
-        # total overlap without looping over the pairs
-        cumulative = np.concatenate([[0.0], np.cumsum(ref_end - ref_start)])
-        first = np.searchsorted(ref_end, starts, side="right")
-        last = np.searchsorted(ref_start, ends, side="left")
-        meets = last > first
-        head = np.maximum(0.0, starts - ref_start[np.clip(first, 0, len(reference) - 1)])
-        tail = np.maximum(0.0, ref_end[np.clip(last - 1, 0, len(reference) - 1)] - ends)
-        overlap = np.where(meets, cumulative[last] - cumulative[first] - head - tail, 0.0)
-        keep = (overlap > 0) & (overlap >= minimum_overlap)
-
+    keep = _overlaps(event_times, reference_event_times, minimum_overlap)
     if isinstance(event_times, pd.DataFrame):
         return event_times.iloc[np.flatnonzero(keep)].copy()
-    return events[keep]
+    return _event_bounds(event_times)[keep]
+
+
+def exclude_overlap(
+    event_times: ArrayLike | pd.DataFrame,
+    reference_event_times: ArrayLike | pd.DataFrame,
+    minimum_overlap: float = 0.0,
+) -> FloatArray | pd.DataFrame:
+    """Drop the events that overlap an event in a second inventory.
+
+    The complement of :func:`require_overlap`, for vetoes: ripples that
+    coincide with an event on a reference or noise channel, with a burst of
+    muscle activity, or with an interictal spike. Every event is kept by
+    exactly one of the two functions given the same arguments::
+
+        ripples = Kay_ripple_detector(time, lfps, speed, fs)
+        artifacts = Kay_ripple_detector(time, reference_lfp, speed, fs)
+        clean = exclude_overlap(ripples, artifacts)
+
+    A veto that reaches beyond the reference events, such as "within 100 ms
+    of an interictal spike", is overlap with the references widened by that
+    much: ``exclude_overlap(ripples, np.asarray(spikes) + [-0.1, 0.1])``.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2), or pd.DataFrame
+        The events to filter. A DataFrame needs ``start_time`` and
+        ``end_time`` columns and is returned as a DataFrame, with every column
+        and its index preserved.
+    reference_event_times : array_like, shape (n_reference, 2), or pd.DataFrame
+        The events to avoid. Reduced to its union first, so references that
+        overlap each other are not counted twice. Need not be sorted.
+    minimum_overlap : float, optional
+        Least total overlap, in the units of the event times, for an event to
+        be dropped. Default is 0.0, which drops any overlap of positive
+        duration: events that merely touch a reference at an endpoint are kept.
+
+    Returns
+    -------
+    kept_events : ndarray, shape (n_kept, 2), or pd.DataFrame
+        The subset of `event_times` that does not meet the criterion, in its
+        input order and type.
+
+    Raises
+    ------
+    ValueError
+        If `minimum_overlap` is negative.
+
+    Examples
+    --------
+    >>> ripples = np.array([(0.0, 0.1), (1.0, 1.1)])
+    >>> artifacts = np.array([(1.05, 1.5)])
+    >>> exclude_overlap(ripples, artifacts)
+    array([[0. , 0.1]])
+
+    """
+    keep = ~_overlaps(event_times, reference_event_times, minimum_overlap)
+    if isinstance(event_times, pd.DataFrame):
+        return event_times.iloc[np.flatnonzero(keep)].copy()
+    return _event_bounds(event_times)[keep]
+
+
+def _overlaps(
+    event_times: ArrayLike | pd.DataFrame,
+    reference_event_times: ArrayLike | pd.DataFrame,
+    minimum_overlap: float,
+) -> BoolArray:
+    """Whether each event overlaps the union of the references by a positive
+    amount of at least ``minimum_overlap``."""
+    _check_non_negative(minimum_overlap=minimum_overlap)
+    events = _event_bounds(event_times)
+    reference = _event_bounds(reference_event_times)
+    if not (len(events) and len(reference)):
+        return np.zeros(len(events), dtype=bool)
+    reference = reference[np.argsort(reference[:, 0], kind="stable")]
+    reference = merge_close_events(reference)
+    starts, ends = events[:, 0], events[:, 1]
+    ref_start, ref_end = reference[:, 0], reference[:, 1]
+    # the reference is disjoint and sorted, so the intervals that can meet
+    # an event form one contiguous run; cumulative lengths then give the
+    # total overlap without looping over the pairs
+    cumulative = np.concatenate([[0.0], np.cumsum(ref_end - ref_start)])
+    first = np.searchsorted(ref_end, starts, side="right")
+    last = np.searchsorted(ref_start, ends, side="left")
+    meets = last > first
+    head = np.maximum(0.0, starts - ref_start[np.clip(first, 0, len(reference) - 1)])
+    tail = np.maximum(0.0, ref_end[np.clip(last - 1, 0, len(reference) - 1)] - ends)
+    overlap = np.where(meets, cumulative[last] - cumulative[first] - head - tail, 0.0)
+    return np.asarray((overlap > 0) & (overlap >= minimum_overlap))
 
 
 YU_HISTOGRAM_EDGES = np.round(np.arange(-10.0, 50.0 + 0.005, 0.01), 6)
