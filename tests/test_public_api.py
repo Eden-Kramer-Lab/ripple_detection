@@ -225,6 +225,15 @@ class TestCallsWrittenFor1x:
             ripple_detection.Carey_candidate_detector(
                 time, lfps, multiunit, speed, 1500, peak_threshold=3.0
             )
+        for old, new in (
+            ("spike_kernel_sigma", "spike_smoothing_sigma"),
+            ("baseline_sigma", "baseline_smoothing_sigma"),
+            ("state_minimum_length", "minimum_state_duration"),
+        ):
+            with pytest.raises(TypeError, match=rf"{old} was renamed {new}"):
+                ripple_detection.Carey_candidate_detector(
+                    time, lfps, multiunit, speed, 1500, **{old: 0.05}
+                )
         with pytest.raises(
             TypeError, match=r"participation_threshold was split.*minimum_participating"
         ):

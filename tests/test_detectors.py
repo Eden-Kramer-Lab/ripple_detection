@@ -2149,6 +2149,21 @@ class TestCareyCandidateDetector:
         assert not self._hits(with_theta, time, self.EVENTS)[1]
         assert all(self._hits(with_theta, time, [self.EVENTS[0], *self.EVENTS[2:]]))
 
+    def test_theta_lfp_as_one_column_is_the_same_channel(self, time, stationary):
+        """Every other signal is (n_time, n_channels), and the errors say to
+        reshape a single channel to (n, 1); a theta channel shaped that way
+        is the same channel."""
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        theta_lfp = np.random.default_rng(5).normal(0.0, 1.0, self.N_TIME)
+        theta_lfp[6000:8000] += 15.0 * np.sin(2 * np.pi * 8.0 * time[6000:8000])
+        flat = Carey_candidate_detector(
+            time, lfps, multiunit, stationary, self.FS, theta_lfp=theta_lfp
+        )
+        column = Carey_candidate_detector(
+            time, lfps, multiunit, stationary, self.FS, theta_lfp=theta_lfp[:, np.newaxis]
+        )
+        pd.testing.assert_frame_equal(flat, column)
+
     def test_output_columns(self, time, stationary):
         lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
         events = Carey_candidate_detector(time, lfps, multiunit, stationary, self.FS)
@@ -2254,6 +2269,15 @@ class TestCareyCandidateDetector:
         with pytest.raises(ValueError, match="theta_lfp must have shape"):
             Carey_candidate_detector(
                 time, lfps, multiunit, stationary, self.FS, theta_lfp=np.zeros(self.N_TIME - 1)
+            )
+        with pytest.raises(ValueError, match="theta_lfp must have shape"):
+            Carey_candidate_detector(
+                time,
+                lfps,
+                multiunit,
+                stationary,
+                self.FS,
+                theta_lfp=np.zeros((self.N_TIME, 2)),
             )
 
     def test_unreachable_peak_threshold_gives_an_empty_table(self, time, stationary):
@@ -4088,7 +4112,7 @@ class TestParameterRanges:
                 "maximum_sharp_wave_duration.*None for no ceiling",
             ),
             (Carey_candidate_detector, {"state_merge_gap": np.inf}, "finite"),
-            (Carey_candidate_detector, {"state_minimum_length": np.inf}, "finite"),
+            (Carey_candidate_detector, {"minimum_state_duration": np.inf}, "finite"),
             (
                 Long_sharp_wave_ripple_detector,
                 {"window_size": 0.0005},

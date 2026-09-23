@@ -41,6 +41,18 @@ REMOVED_ARGUMENTS: dict[str, tuple[str | None, str]] = {
     "raw_lfps": ("raw_lfp_pair", "was renamed raw_lfp_pair before 2.0 was released"),
     "edge_threshold": ("low_threshold", "was renamed low_threshold before 2.0 was released"),
     "peak_threshold": ("high_threshold", "was renamed high_threshold before 2.0 was released"),
+    "spike_kernel_sigma": (
+        "spike_smoothing_sigma",
+        "was renamed spike_smoothing_sigma before 2.0 was released",
+    ),
+    "baseline_sigma": (
+        "baseline_smoothing_sigma",
+        "was renamed baseline_smoothing_sigma before 2.0 was released",
+    ),
+    "state_minimum_length": (
+        "minimum_state_duration",
+        "was renamed minimum_state_duration before 2.0 was released",
+    ),
     "participation_threshold": (
         "minimum_participating_channels",
         (

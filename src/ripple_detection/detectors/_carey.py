@@ -147,15 +147,15 @@ def Carey_candidate_detector(
     minimum_duration: float = 0.020,
     minimum_active_units: int = 5,
     ripple_smoothing_sigma: float = 0.010,
-    spike_kernel_sigma: float = 0.020,
+    spike_smoothing_sigma: float = 0.020,
     spike_cap: float = 2.0,
-    baseline_sigma: float = 0.125,
+    baseline_smoothing_sigma: float = 0.125,
     baseline_cap: float = 4.0,
     theta_lfp: ArrayLike | None = None,
     theta_band: tuple[float, float] = (6.0, 10.0),
     theta_threshold: float = 2.0,
     state_merge_gap: float = 0.050,
-    state_minimum_length: float = 0.050,
+    minimum_state_duration: float = 0.050,
     maximum_duration: float | None = None,
 ) -> pd.DataFrame:
     """Detect candidate replay events from ripple power and multiunit activity jointly.
@@ -191,7 +191,7 @@ def Carey_candidate_detector(
     - **State**: a candidate is kept only if it lies entirely inside a
       low-speed interval (speed at or below ``speed_threshold``, runs merged across
       gaps under ``state_merge_gap`` and dropped unless longer than
-      ``state_minimum_length``) and, when ``theta_lfp`` is given, inside a
+      ``minimum_state_duration``) and, when ``theta_lfp`` is given, inside a
       low-theta interval (z-scored theta-band envelope below
       ``theta_threshold``, same interval rules), and has at least
       ``minimum_active_units`` units with a spike inside it.
@@ -245,17 +245,17 @@ def Carey_candidate_detector(
     ripple_smoothing_sigma : float, optional
         Gaussian standard deviation in seconds of the ripple-score smoothing.
         Default 0.010.
-    spike_kernel_sigma : float, optional
+    spike_smoothing_sigma : float, optional
         Gaussian standard deviation in seconds of each unit's spike kernel.
         Default 0.020.
     spike_cap : float, optional
         Per-unit cap in coincident spikes. Default 2.
-    baseline_sigma : float, optional
+    baseline_smoothing_sigma : float, optional
         Gaussian standard deviation in seconds of the slow baseline. Default
         0.125.
     baseline_cap : float, optional
         Baseline cap in units' worth. Default 4.
-    theta_lfp : array_like, shape (n_time,), optional
+    theta_lfp : array_like, shape (n_time,) or (n_time, 1), optional
         Raw LFP of a theta channel; when given, candidates during elevated
         theta are excluded, as the original's theta restriction does. It
         needs a channel the other inputs do not, so it is optional here.
@@ -264,16 +264,16 @@ def Carey_candidate_detector(
         Theta pass-band in Hz, Butterworth of total order 4 (order 2 per edge, as MATLAB's `fdesign` 'N' counts it). Default (6, 10).
     theta_threshold : float, optional
         Theta-envelope z-score at or above which a period is excluded. Default 2.
-    state_merge_gap, state_minimum_length : float, optional
+    state_merge_gap, minimum_state_duration : float, optional
         Interval rules for the low-speed and low-theta periods, in seconds.
         Defaults 0.050 and 0.050 (vandermeerlab ``TSDtoIV`` defaults).
-
     maximum_duration : float, optional
         Longest allowed event duration in **seconds**, applied to the event as
         it is reported rather than to the run above threshold, because that is
         what a published maximum describes. Default is None (no upper limit).
         Published ceilings run from a few hundred milliseconds to a couple of
         seconds.
+
     Returns
     -------
     candidate_times : pd.DataFrame
@@ -309,11 +309,11 @@ def Carey_candidate_detector(
     _check_thresholds("low_threshold", low_threshold, "high_threshold", high_threshold)
     _check_smoothing_sigma(
         ripple_smoothing_sigma=ripple_smoothing_sigma,
-        spike_kernel_sigma=spike_kernel_sigma,
-        baseline_sigma=baseline_sigma,
+        spike_smoothing_sigma=spike_smoothing_sigma,
+        baseline_smoothing_sigma=baseline_smoothing_sigma,
     )
     _check_positive(spike_cap=spike_cap, baseline_cap=baseline_cap)
-    _check_gap(state_merge_gap=state_merge_gap, state_minimum_length=state_minimum_length)
+    _check_gap(state_merge_gap=state_merge_gap, minimum_state_duration=minimum_state_duration)
     if not np.isfinite(theta_threshold):
         msg = f"theta_threshold must be finite, got {theta_threshold}."
         raise ValueError(msg)
@@ -333,8 +333,13 @@ def Carey_candidate_detector(
     theta_envelope: FloatArray | None = None
     if theta_lfp is not None:
         theta_signal = np.asarray(theta_lfp, dtype=float)
+        if theta_signal.shape == (n_time, 1):
+            theta_signal = theta_signal[:, 0]
         if theta_signal.shape != (n_time,):
-            msg = f"theta_lfp must have shape ({n_time},), got {theta_signal.shape}."
+            msg = (
+                f"theta_lfp must have shape ({n_time},) or ({n_time}, 1), one channel, "
+                f"got {theta_signal.shape}."
+            )
             raise ValueError(msg)
         theta_envelope = _theta_envelope(theta_signal, time, sampling_frequency, theta_band)
         signals.append(theta_envelope)
@@ -354,10 +359,10 @@ def Carey_candidate_detector(
     ripple_score = ripple_score / np.nanmean(ripple_score)
 
     # multiunit score (amMUA)
-    sigma_samples = spike_kernel_sigma * sampling_frequency
+    sigma_samples = spike_smoothing_sigma * sampling_frequency
     spike_kernel = _unit_area_gaussian(sigma_samples, 5.0)
     cap = spike_cap / (sigma_samples * np.sqrt(2.0 * np.pi))
-    baseline_kernel = _unit_area_gaussian(baseline_sigma * sampling_frequency, 12.0)
+    baseline_kernel = _unit_area_gaussian(baseline_smoothing_sigma * sampling_frequency, 12.0)
     summed = np.full(n_time, np.nan)
     baseline = np.full(n_time, np.nan)
     for start, stop in blocks:
@@ -411,7 +416,7 @@ def Carey_candidate_detector(
                     is_in_state[start:stop],
                     time[start:stop],
                     state_merge_gap,
-                    state_minimum_length,
+                    minimum_state_duration,
                 )
                 for start, stop in blocks
             ]

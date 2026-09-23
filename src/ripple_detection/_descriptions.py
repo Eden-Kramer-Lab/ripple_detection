@@ -221,9 +221,9 @@ PARAMETERS = {
         "s",
         "Standard deviation of the Gaussian that smooths the ripple score.",
     ),
-    "spike_kernel_sigma": ("s", "Standard deviation of each unit's spike kernel."),
+    "spike_smoothing_sigma": ("s", "Standard deviation of each unit's spike kernel."),
     "spike_cap": ("spikes", "Cap on each unit's smoothed contribution, in coincident spikes."),
-    "baseline_sigma": (
+    "baseline_smoothing_sigma": (
         "s",
         "Standard deviation of the slow baseline subtracted from the multiunit score.",
     ),
@@ -234,8 +234,8 @@ PARAMETERS = {
     "theta_lfp": (
         "signal units",
         (
-            "Optional raw LFP of a theta channel, shape (n_time,); when given, an event must "
-            "lie inside a period of low theta power."
+            "Optional raw LFP of a theta channel, shape (n_time,) or (n_time, 1); when "
+            "given, an event must lie inside a period of low theta power."
         ),
     ),
     "theta_band": ("Hz", "(low, high) theta band of theta_lfp."),
@@ -247,7 +247,7 @@ PARAMETERS = {
         "s",
         "Low-speed (and low-theta) periods closer than this are joined.",
     ),
-    "state_minimum_length": (
+    "minimum_state_duration": (
         "s",
         "Low-speed (and low-theta) periods no longer than this are dropped.",
     ),
