@@ -348,6 +348,8 @@ keeps the events of one inventory that overlap an event of another, so any two
 detectors compose into that criterion. The events keep their own bounds.
 
 ```python
+import numpy as np
+
 from ripple_detection import (
     Kay_ripple_detector,
     exclude_overlap,
@@ -369,17 +371,22 @@ ripples_with_a_burst = require_overlap(ripples, bursts)  # the other direction
 start and end times, and `minimum_overlap` raises the bar above "any overlap".
 
 `exclude_overlap` is its complement, for vetoes: it keeps the events
-`require_overlap` would drop. Detect on a reference or noise channel with the
-same detector and drop the ripples that coincide with what it finds; to veto
-within a window of each reference event, widen the references first.
+`require_overlap` would drop. Detect on a reference or noise channel and drop
+the ripples that coincide with what it finds. A detector z-scores its own
+input, so it finds events on any channel, artifacts or not; at Kay's default
+2 SD, a reference channel of pure noise vetoes a few percent of real ripples
+by chance. Detect the references at a high threshold, as FindRipples does
+(5 SD), and on a channel that does not carry the ripples: the common average
+of CA1 channels carries them, and vetoed half the ripples in a simulation.
 
 ```python
 # reference_lfp: (n_time, 1) raw LFP from a channel outside the hippocampus, or
-# the common average, which carries artifacts but not ripples
+# the common average of channels mostly outside it
 filtered_reference = filter_ripple_band(reference_lfp, sampling_frequency=sampling_frequency)
-# speed_threshold=np.inf: no artifact is dropped for movement, so none escapes the veto
 artifacts = Kay_ripple_detector(
-    time, filtered_reference, speed, sampling_frequency, speed_threshold=np.inf
+    time, filtered_reference, speed, sampling_frequency,
+    zscore_threshold=5.0,     # only large events on the reference veto a ripple
+    speed_threshold=np.inf,   # no artifact is dropped for movement, so none escapes
 )
 clean = exclude_overlap(ripples, artifacts)
 
@@ -387,6 +394,10 @@ clean = exclude_overlap(ripples, artifacts)
 windows = artifacts[["start_time", "end_time"]].to_numpy() + [-0.1, 0.1]
 clean = exclude_overlap(ripples, windows)
 ```
+
+A zero-length interval has no duration to overlap, so point events, such as
+the peak times of interictal spikes, veto nothing until widened into windows:
+`exclude_overlap(ripples, peak_times[:, np.newaxis] + [-0.1, 0.1])`.
 
 ### Simulating realistic ripples
 
