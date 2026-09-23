@@ -1683,28 +1683,16 @@ def exclude_overlap(
 ) -> FloatArray | pd.DataFrame:
     """Drop the events that overlap an event in a second inventory.
 
-    The complement of :func:`require_overlap`, for vetoes: ripples that
-    coincide with an event on a reference or noise channel, with a burst of
-    muscle activity, or with an interictal spike. Every event is kept by
-    exactly one of the two functions given the same arguments::
+    The complement of :func:`require_overlap`, for vetoes: drop the events
+    that coincide with intervals marked elsewhere, such as artifacts, periods
+    of muscle activity, or interictal spikes. This package does not detect
+    those; pass their start and end times from whatever marked them. Every
+    event is kept by exactly one of the two functions given the same
+    arguments.
 
-        ripples = Kay_ripple_detector(time, filtered_lfps, speed, fs)
-        artifacts = Kay_ripple_detector(
-            time, filtered_reference, speed, fs,
-            zscore_threshold=5.0, speed_threshold=np.inf,
-        )
-        clean = exclude_overlap(ripples, artifacts)
-
-    A detector z-scores its own input, so it finds events on any channel,
-    artifacts or not: at Kay's default 2 SD a clean reference yields dozens a
-    minute and vetoes real ripples by chance. Detect the references at a high
-    threshold, as FindRipples does (5 SD of its noise channel), and on a
-    channel that does not carry the ripples: outside the hippocampus, or the
-    common average of channels mostly outside it.
-
-    A veto that reaches beyond the reference events, such as "within 100 ms
-    of an interictal spike", is overlap with the references widened by that
-    much. A zero-length interval has no duration to overlap, so a point
+    A veto that reaches beyond the reference intervals, such as "within
+    100 ms of an interictal spike", is overlap with the references widened by
+    that much. A zero-length interval has no duration to overlap, so a point
     reference, such as a spike's peak time, vetoes nothing until widened:
     ``exclude_overlap(ripples, peak_times[:, np.newaxis] + [-0.1, 0.1])``.
 

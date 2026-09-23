@@ -41,8 +41,8 @@ here is relative to 1.7.1.
   `ripple_bandpass_filter`, to design a filter for another band; the shipped
   kernel stays in use at 1500 Hz with the default 150-250 Hz band.
 - Event helpers that accept a detector's DataFrame: `require_overlap` and its
-  complement `exclude_overlap` (a veto, such as ripples coinciding with an
-  artifact on a reference channel), `merge_close_events` and
+  complement `exclude_overlap` (a veto: drop the events that coincide with
+  intervals marked elsewhere, such as artifacts), `merge_close_events` and
   `exclude_movement_by_majority`.
 - A detector registry for pipelines that store a detector by name:
   `get_detector(name)` returns a `DetectorSpec` whose `spec.inputs` and

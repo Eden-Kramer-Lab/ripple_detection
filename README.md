@@ -36,8 +36,8 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
 - **Combining Detectors**
   - `require_overlap` - keep the events of one detector that overlap another's,
     for studies that require a ripple and a population burst together
-  - `exclude_overlap` - drop them instead, to veto events that coincide with an
-    artifact on a reference channel, a burst of muscle activity, or an interictal spike
+  - `exclude_overlap` - drop them instead, to veto events that coincide with
+    intervals marked elsewhere, such as artifacts or interictal spikes
   - `merge_close_events` / `exclude_close_events` - the two conventions for
     events separated by a short gap: join them, or keep the first and drop the rest
   - `exclude_movement` / `exclude_movement_by_majority` - the two speed rules: immobile
@@ -371,28 +371,16 @@ ripples_with_a_burst = require_overlap(ripples, bursts)  # the other direction
 start and end times, and `minimum_overlap` raises the bar above "any overlap".
 
 `exclude_overlap` is its complement, for vetoes: it keeps the events
-`require_overlap` would drop. Detect on a reference or noise channel and drop
-the ripples that coincide with what it finds. A detector z-scores its own
-input, so it finds events on any channel, artifacts or not; at Kay's default
-2 SD, a reference channel of pure noise vetoes a few percent of real ripples
-by chance. Detect the references at a high threshold, as FindRipples does
-(5 SD), and on a channel that does not carry the ripples: the common average
-of CA1 channels carries them, and vetoed half the ripples in a simulation.
+`require_overlap` would drop. The intervals to avoid come from outside this
+package: artifacts marked by hand or by another tool, periods of high muscle
+activity, interictal spikes.
 
 ```python
-# reference_lfp: (n_time, 1) raw LFP from a channel outside the hippocampus, or
-# the common average of channels mostly outside it
-filtered_reference = filter_ripple_band(reference_lfp, sampling_frequency=sampling_frequency)
-artifacts = Kay_ripple_detector(
-    time, filtered_reference, speed, sampling_frequency,
-    zscore_threshold=5.0,     # only large events on the reference veto a ripple
-    speed_threshold=np.inf,   # no artifact is dropped for movement, so none escapes
-)
-clean = exclude_overlap(ripples, artifacts)
+# artifact_intervals: (n_artifacts, 2) start and end times in seconds, marked elsewhere
+clean = exclude_overlap(ripples, artifact_intervals)
 
 # or drop ripples within 100 ms of an artifact
-windows = artifacts[["start_time", "end_time"]].to_numpy() + [-0.1, 0.1]
-clean = exclude_overlap(ripples, windows)
+clean = exclude_overlap(ripples, artifact_intervals + np.array([-0.1, 0.1]))
 ```
 
 A zero-length interval has no duration to overlap, so point events, such as
