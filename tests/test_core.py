@@ -1548,8 +1548,8 @@ class TestRequireOverlap:
 
 
 class TestExcludeOverlap:
-    """The complement of require_overlap: a veto, such as dropping ripples that
-    coincide with an event on a reference channel or with an EMG burst."""
+    """The complement of require_overlap: a veto, dropping the events that
+    coincide with intervals marked elsewhere, such as artifacts."""
 
     def test_drops_an_overlapping_event_and_keeps_the_rest(self):
         events = np.array([(0.0, 0.1), (1.0, 1.1), (2.0, 2.1)])
