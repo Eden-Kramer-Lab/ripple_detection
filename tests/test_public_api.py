@@ -112,6 +112,47 @@ class TestCallsWrittenFor1x:
         with pytest.raises(TypeError, match="renamed rng"):
             pink(100, state=np.random.RandomState(0))
 
+    def test_a_renamed_keyword_names_its_own_replacement(self, inputs):
+        """The Carey and Shvartsman tunables 1.x named differently."""
+        time, lfps, speed = inputs
+        multiunit = np.zeros((len(time), 3))
+        with pytest.raises(TypeError, match=r"edge_threshold was renamed low_threshold"):
+            ripple_detection.Carey_candidate_detector(
+                time, lfps, multiunit, speed, 1500, edge_threshold=1.0
+            )
+        with pytest.raises(TypeError, match=r"peak_threshold was renamed high_threshold"):
+            ripple_detection.Carey_candidate_detector(
+                time, lfps, multiunit, speed, 1500, peak_threshold=3.0
+            )
+        with pytest.raises(
+            TypeError, match=r"participation_threshold was split.*minimum_participating"
+        ):
+            ripple_detection.Shvartsman_ripple_detector(
+                *inputs, 1500, participation_threshold=2
+            )
+        with pytest.raises(TypeError, match=r"pass normalization_method='manual'"):
+            ripple_detection.Shvartsman_ripple_detector(
+                *inputs, 1500, manual_normalization=True
+            )
+        with pytest.raises(TypeError, match=r"elec_baselines was renamed channel_baselines"):
+            ripple_detection.Shvartsman_ripple_detector(
+                *inputs, 1500, elec_baselines=[0.0, 0.0]
+            )
+
+    def test_a_hint_applies_only_where_the_replacement_exists(self, inputs):
+        """`state` was renamed `rng` on the noise generators; the detectors and
+        simulators take `random_state`, so they must not claim otherwise."""
+        time, lfps, speed = inputs
+        with pytest.raises(TypeError, match="takes no state") as info:
+            ripple_detection.Long_sharp_wave_ripple_detector(time, lfps, speed, 1500, state=0)
+        assert "rng" not in str(info.value)
+        with pytest.raises(TypeError, match="takes no edge_threshold") as info:
+            ripple_detection.Kay_ripple_detector(*inputs, 1500, edge_threshold=1.0)
+        assert "low_threshold" not in str(info.value)
+        with pytest.raises(TypeError, match="takes no manual_normalization") as info:
+            ripple_detection.Kay_ripple_detector(*inputs, 1500, manual_normalization=True)
+        assert "'manual'" not in str(info.value), "Kay has no manual method"
+
     def test_a_wrapped_detector_keeps_its_signature_and_name(self):
         import inspect
 

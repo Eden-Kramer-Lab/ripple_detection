@@ -18,20 +18,48 @@ from typing import ParamSpec, TypeVar
 P = ParamSpec("P")
 R = TypeVar("R")
 
-REMOVED_ARGUMENTS = {
+REMOVED_ARGUMENTS: dict[str, tuple[str | None, str]] = {
     "normalization_time_range": (
-        "was removed in 2.0: a time range is a mask, "
-        "normalization_mask=(time >= start) & (time <= end)"
+        None,
+        (
+            "was removed in 2.0: a time range is a mask, "
+            "normalization_mask=(time >= start) & (time <= end)"
+        ),
     ),
     "use_speed_threshold_for_zscore": (
-        "was removed in 2.0: pass normalization_mask=speed <= speed_threshold"
+        None,
+        "was removed in 2.0: pass normalization_mask=speed <= speed_threshold",
     ),
     "state": (
-        "was renamed rng in 2.0, and takes a seed or a numpy.random.Generator rather "
-        "than a RandomState"
+        "rng",
+        (
+            "was renamed rng in 2.0, and takes a seed or a numpy.random.Generator "
+            "rather than a RandomState"
+        ),
     ),
+    "edge_threshold": ("low_threshold", "was renamed low_threshold in 2.0"),
+    "peak_threshold": ("high_threshold", "was renamed high_threshold in 2.0"),
+    "participation_threshold": (
+        "minimum_participating_channels",
+        (
+            "was split in 2.0 into minimum_participating_channels, a count, and "
+            "minimum_participating_fraction, a fraction of the channels in [0, 1]"
+        ),
+    ),
+    "manual_normalization": (
+        "channel_baselines",  # Shvartsman's alone; Kay has normalization_method too
+        (
+            "was removed in 2.0: pass normalization_method='manual' with "
+            "channel_baselines and channel_deviations"
+        ),
+    ),
+    "elec_baselines": ("channel_baselines", "was renamed channel_baselines in 2.0"),
+    "elec_deviations": ("channel_deviations", "was renamed channel_deviations in 2.0"),
 }
-"""Keywords 1.x accepted that 2.0 does not, and what to pass instead."""
+"""Keywords 1.x accepted that 2.0 does not: the parameter that replaces each,
+or None for one with no replacement, and what to pass instead. A note applies
+only to a function that has the replacement, so a keyword one function
+renamed is not explained that way on a function that never took it."""
 
 REQUIRED_SINCE_2 = {
     "sampling_frequency": (
@@ -84,8 +112,10 @@ def _explain(
         if key in parameters:
             continue
         if key in REMOVED_ARGUMENTS:
-            notes.append(f"{key} {REMOVED_ARGUMENTS[key]}.")
-            continue
+            replacement, note = REMOVED_ARGUMENTS[key]
+            if replacement is None or replacement in parameters:
+                notes.append(f"{key} {note}.")
+                continue
         close = difflib.get_close_matches(key, list(parameters), n=1, cutoff=0.6)
         notes.append(
             f"{name} takes no {key}; did you mean {close[0]}?"

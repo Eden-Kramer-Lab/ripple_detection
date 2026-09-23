@@ -33,6 +33,13 @@ Calls that stop working, and the change to make:
 - `pink(N, state=np.random.RandomState(seed))`, and `white` and `brown` the
   same way -> `pink(N, rng=seed)`. The argument is renamed and takes a seed
   or a `numpy.random.Generator`.
+- `Carey_candidate_detector(..., edge_threshold=, peak_threshold=)` ->
+  `low_threshold=, high_threshold=`.
+- `Shvartsman_ripple_detector(..., participation_threshold=n)` ->
+  `minimum_participating_channels=n` for a count, or
+  `minimum_participating_fraction=f` for a fraction of the channels in [0, 1];
+  `manual_normalization=True, elec_baselines=, elec_deviations=` ->
+  `normalization_method='manual', channel_baselines=, channel_deviations=`.
 
 Apart from these, the Kay, Karlsson, Roumis and HSE signatures change only by
 the star and the new `maximum_duration` (and `minimum_active_units` on HSE),
