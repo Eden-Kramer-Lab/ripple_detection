@@ -125,7 +125,7 @@ def _theta_envelope(
     if not np.any(finite):
         return envelope  # every sample missing; _valid_blocks reports it
     runs = _drop_short_blocks(
-        _contiguous_valid_blocks(finite, time), finite, padlen + 1, "the theta filter", 4
+        _contiguous_valid_blocks(finite, time), finite, padlen + 1, "the theta filter"
     )
     for start, stop in runs:
         envelope[start:stop] = get_envelope(sosfiltfilt(sos, theta_lfp[start:stop]))

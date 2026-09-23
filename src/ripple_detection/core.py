@@ -3,6 +3,7 @@ potentials.
 """
 
 import functools
+import sys
 import warnings
 from collections.abc import Generator, Iterable
 from dataclasses import dataclass
@@ -135,6 +136,21 @@ def _remez_bandpass(
     kernel = np.asarray(remez(numtaps, list(desired), [0, 1, 0], fs=sampling_frequency))
     kernel.flags.writeable = False
     return kernel
+
+
+_PACKAGE_DIRECTORY = str(Path(__file__).resolve().parent)
+
+
+def _warn_at_caller(message: str) -> None:
+    """``warnings.warn(message, UserWarning)`` attributed to the first frame
+    outside this package: the caller's line, however deep inside the package
+    the warning is raised and whatever wraps the public function."""
+    frame = sys._getframe(1)
+    stacklevel = 2  # the frame that called this function
+    while frame.f_back is not None and frame.f_code.co_filename.startswith(_PACKAGE_DIRECTORY):
+        frame = frame.f_back
+        stacklevel += 1
+    warnings.warn(message, UserWarning, stacklevel=stacklevel)
 
 
 def minimum_sample_count(time: ArrayLike, minimum_duration: float) -> int:
@@ -386,13 +402,11 @@ def filter_ripple_band(
         raise ValueError(msg)
     if not np.all(long_enough):
         short = runs[~long_enough]
-        warnings.warn(
+        _warn_at_caller(
             f"{len(short)} run(s) of finite samples shorter than the {min_required_length} "
             "samples the filter needs are returned as NaN (sample ranges "
             f"{[(int(a), int(b)) for a, b in short[:5]]}{', ...' if len(short) > 5 else ''}). "
-            "Interpolate short gaps before filtering if those samples matter.",
-            UserWarning,
-            stacklevel=2,
+            "Interpolate short gaps before filtering if those samples matter."
         )
 
     filtered_data = np.full_like(data_array, np.nan)
@@ -1801,12 +1815,10 @@ def noise_threshold_diagnostics(
     # The two reflections agree whenever every left-flank bin is non-positive,
     # so the warning is raised only when a bin above zero can contribute.
     if mode > 0 and np.any(edges[:mode_index] > 0):
-        warnings.warn(
+        _warn_at_caller(
             f"Histogram mode is positive ({mode:.3f}); the original MATLAB "
             "reflection (abs(b) + 2m) would differ from the intended 2m - b "
-            "used here.",
-            UserWarning,
-            stacklevel=2,
+            "used here."
         )
 
     left_positions = edges[: mode_index + 1]

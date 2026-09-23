@@ -1,7 +1,6 @@
 """The one missing-sample policy: valid samples, their contiguous blocks, and the
 transforms and threshold tests that run within a block."""
 
-import warnings
 from itertools import pairwise
 
 import numpy as np
@@ -11,6 +10,7 @@ from ripple_detection.core import (
     BoolArray,
     FloatArray,
     _get_normalization_mask,
+    _warn_at_caller,
     gaussian_smooth,
     get_envelope,
     minimum_sample_count,
@@ -84,7 +84,6 @@ def _valid_blocks(
             is_valid,
             minimum_sample_count(time, minimum_duration),
             f"an event of minimum_duration ({minimum_duration} s)",
-            stacklevel=4,
         )
     return is_valid, blocks
 
@@ -121,7 +120,6 @@ def _drop_short_blocks(
     is_valid: BoolArray,
     minimum_length: int,
     reason: str,
-    stacklevel: int = 3,
 ) -> list[tuple[int, int]]:
     """Treat blocks shorter than a detector's transform needs as missing.
 
@@ -140,12 +138,10 @@ def _drop_short_blocks(
             f"{reason} needs."
         )
         raise ValueError(msg)
-    warnings.warn(
+    _warn_at_caller(
         f"{len(short)} block(s) of finite samples shorter than the {minimum_length} samples "
         f"that {reason} needs are treated as missing (sample ranges "
-        f"{short[:5]}{', ...' if len(short) > 5 else ''}).",
-        UserWarning,
-        stacklevel=stacklevel,
+        f"{short[:5]}{', ...' if len(short) > 5 else ''})."
     )
     return kept
 

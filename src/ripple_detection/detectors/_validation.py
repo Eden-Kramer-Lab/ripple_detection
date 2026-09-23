@@ -1,11 +1,9 @@
 """Input checks shared by the detectors: shapes, lengths, units, duration limits."""
 
-import warnings
-
 import numpy as np
 from numpy.typing import ArrayLike
 
-from ripple_detection.core import FloatArray, _check_non_negative
+from ripple_detection.core import FloatArray, _check_non_negative, _warn_at_caller
 
 
 def _validate_lfp_dimensions(filtered_lfps: FloatArray) -> None:
@@ -71,9 +69,7 @@ def _validate_array_lengths(
         raise ValueError(msg)
 
 
-def _validate_time_units(
-    time: FloatArray, sampling_frequency: float, stacklevel: int = 4
-) -> None:
+def _validate_time_units(time: FloatArray, sampling_frequency: float) -> None:
     """Validate that time array is in seconds (not samples).
 
     Parameters
@@ -82,8 +78,6 @@ def _validate_time_units(
         Time array to validate.
     sampling_frequency : float
         Expected sampling frequency in Hz.
-    stacklevel : int, optional
-        Frames between this function and the caller's line, for the warning.
 
     Raises
     ------
@@ -148,20 +142,16 @@ def _validate_time_units(
             )
             raise ValueError(msg)
         if not np.isclose(median_dt, expected_dt, rtol=0.02):
-            warnings.warn(
+            _warn_at_caller(
                 f"Time array step ({median_dt:.6f} s) differs from expected sampling interval "
                 f"({expected_dt:.6f} s at {sampling_frequency} Hz).\n"
                 f"Verify that:\n"
                 f"  1. time is in seconds (not milliseconds or samples)\n"
                 f"  2. sampling_frequency ({sampling_frequency} Hz) is correct",
-                UserWarning,
-                stacklevel=stacklevel,
             )
 
 
-def _validate_speed_units(
-    speed: FloatArray, speed_threshold: float, stacklevel: int = 4
-) -> None:
+def _validate_speed_units(speed: FloatArray, speed_threshold: float) -> None:
     """Validate that speed is in cm/s (not m/s).
 
     Parameters
@@ -183,13 +173,11 @@ def _validate_speed_units(
     median_speed = np.median(moving)
     # a median under 0.5 against a typical threshold (> 1 cm/s) is m/s
     if median_speed < 0.5:
-        warnings.warn(
+        _warn_at_caller(
             f"Speed values appear very small (median non-zero: {median_speed:.4f}).\n"
             f"Speed should be in cm/s, not m/s.\n"
             f"If your speed is in m/s, multiply by 100:\n"
             "  speed_cms = speed_ms * 100",
-            UserWarning,
-            stacklevel=stacklevel,
         )
 
 
@@ -199,7 +187,6 @@ def _validate_detector_inputs(
     speed: ArrayLike,
     sampling_frequency: float,
     speed_threshold: float,
-    stacklevel: int = 4,
 ) -> tuple[FloatArray, FloatArray, FloatArray]:
     """Cast the inputs to float arrays and check shapes, lengths and units.
 
@@ -212,8 +199,6 @@ def _validate_detector_inputs(
     sampling_frequency : float
     speed_threshold : float
         Used only to judge whether speed is in cm/s.
-    stacklevel : int, optional
-        Frames between this function and the caller's line, for warnings.
 
     Returns
     -------
@@ -242,8 +227,8 @@ def _validate_detector_inputs(
             "Pass speed_threshold=np.inf to detect without one."
         )
         raise ValueError(msg)
-    _validate_time_units(time, sampling_frequency, stacklevel=stacklevel)
-    _validate_speed_units(speed, speed_threshold, stacklevel=stacklevel)
+    _validate_time_units(time, sampling_frequency)
+    _validate_speed_units(speed, speed_threshold)
     return time, signal, speed
 
 
