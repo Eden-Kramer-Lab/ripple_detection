@@ -980,6 +980,18 @@ class TestEstimateNoiseThreshold:
         with pytest.raises(ValueError, match="read-only"):
             diag.histogram_edges[:] -= 1.0
 
+    def test_diagnostics_compare_by_identity_and_hash(self):
+        """The array fields have no single truth value, so a generated
+        ``__eq__`` would raise; two runs on the same values are two objects."""
+        values = np.random.default_rng(2).normal(-1.0, 0.5, 100_000)
+        first, second = (
+            noise_threshold_diagnostics(values),
+            noise_threshold_diagnostics(values),
+        )
+        assert first == first
+        assert first != second
+        assert len({first, second}) == 2
+
     def test_flank_ratio_is_infinite_when_mean_is_at_or_below_the_mode(self):
         # left-skewed sample: the mode lies above the mean, so the mirrored
         # distribution trivially reaches past the mean
@@ -1235,7 +1247,9 @@ class TestSegmentBooleanSeriesMissingValues:
 class TestNearestSampleIndex:
     def test_returns_the_closest_sample_in_query_order(self):
         time = np.arange(0.0, 1.0, 0.1)
-        np.testing.assert_array_equal(nearest_sample_index(time, [0.52, 0.0, 0.98]), [5, 0, 9])
+        index = nearest_sample_index(time, [0.52, 0.0, 0.98])
+        np.testing.assert_array_equal(index, [5, 0, 9])
+        assert index.dtype.kind == "i", "indices, as the annotation says"
 
     def test_empty_time_raises(self):
         with pytest.raises(ValueError, match="time is empty"):

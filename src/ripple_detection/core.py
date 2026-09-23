@@ -605,7 +605,7 @@ def _runs_extended_to_mean(
     return above_mean[runs], longest
 
 
-def nearest_sample_index(time: ArrayLike, query_times: ArrayLike) -> FloatArray:
+def nearest_sample_index(time: ArrayLike, query_times: ArrayLike) -> IntArray:
     """Index of the sample in ``time`` closest to each query time.
 
     Event bounds come from ``time``, so the match is normally exact. Looking
@@ -1681,9 +1681,12 @@ def _histc(values: FloatArray, edges: FloatArray) -> IntArray:
     return counts
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class NoiseThresholdDiagnostics:
     """Everything :func:`estimate_noise_threshold` computed on the way to its answer.
+
+    Instances compare by identity: the array fields have no single truth
+    value, so a generated ``__eq__`` would raise.
 
     Attributes
     ----------

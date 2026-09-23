@@ -364,7 +364,10 @@ EXTRA_COLUMNS = {
         "sharp_wave_local_percentile": "Percentile of the peak sharp wave in its local window.",
         "ripple_power_zscore": "Local SD. Peak ripple power against its local window.",
         "ripple_power_local_percentile": "Percentile of the peak ripple power in its local window.",
-        "sharp_wave_duration": "s. Duration of the sharp wave, the event's span.",
+        "sharp_wave_duration": (
+            "s. Samples of the sharp wave, first to last inclusive, over the rate: one "
+            "sample interval more than duration, which is end_time - start_time."
+        ),
         "ripple_duration": "s. Duration of the ripple, one sample short of its crossings' span.",
     },
     "Carey_candidate_detector": {
