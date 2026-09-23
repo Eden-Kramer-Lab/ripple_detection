@@ -93,7 +93,7 @@ pip install -e .[dev,examples]
 
 2.0 changes results as well as calls, so detect again rather than mixing events
 from the two versions. [MIGRATING.md](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/MIGRATING.md) lists the calls to change
-(most fail with a message naming the replacement), the three changes that cannot
+(most fail with a message naming the replacement), the changes that cannot
 raise, the inputs that now raise, and why the same recording gives different
 events.
 
