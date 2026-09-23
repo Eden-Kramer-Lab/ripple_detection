@@ -191,11 +191,14 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
 
 4. **[src/ripple_detection/registry.py](src/ripple_detection/registry.py)** - `DETECTORS`, `get_detector`, `DetectorSpec`
    - Resolves a detector by name and says which signal kind it takes (`RIPPLE_BAND_LFP`, `RAW_LFP_PAIR`, `MULTIUNIT`)
+   - `spec.describe()`: JSON-ready inputs, tunables (default, unit, meaning) and output columns, from [_descriptions.py](src/ripple_detection/_descriptions.py); `tests/test_registry.py::TestDescribe` fails when a new or renamed parameter or column has no entry there
    - For pipelines that store a detector's name rather than importing it
 
 5. **[src/ripple_detection/literature.py](src/ripple_detection/literature.py)** - `load_literature_parameters`
    - The survey of detection parameters from 57 replay papers, shipped as `data/literature_detection_parameters.csv`
    - The README's "Published parameter values" table is computed from it
+
+Two private modules serve callers rather than detection: [_call_hints.py](src/ripple_detection/_call_hints.py) wraps the public functions so a call written for 1.x fails with the 2.0 change behind it (add a removed or renamed argument to `REMOVED_ARGUMENTS` there), and [_descriptions.py](src/ripple_detection/_descriptions.py) holds what `describe()` reports. Warnings go through `core._warn_at_caller`, which attributes them to the first frame outside the package, so no function passes a `stacklevel`.
 
 ### Detection Pipeline Architecture
 

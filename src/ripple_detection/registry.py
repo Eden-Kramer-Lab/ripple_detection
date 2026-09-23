@@ -21,6 +21,7 @@ import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
 
+from ripple_detection import _descriptions
 from ripple_detection.detectors import (
     Carey_candidate_detector,
     Karlsson_ripple_detector,
@@ -136,6 +137,78 @@ class DetectorSpec:
             name: parameter.default
             for name, parameter in signature.parameters.items()
             if parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        }
+
+    def describe(self) -> dict[str, object]:
+        """Everything a caller needs to use this detector, as plain data.
+
+        A dict that ``json.dumps`` accepts, for a pipeline or a language model
+        choosing and configuring a detector without reading its docstring:
+        the positional arguments with their shapes and units, every tunable
+        with its default, unit and meaning, and the columns of the result.
+        Units are ``"s"``, ``"Hz"``, ``"cm/s"``, ``"SD"`` (standard deviations
+        of a normalized trace) and so on, or ``""`` for none.
+
+        Returns
+        -------
+        description : dict
+            ``name``, ``summary``, ``call``, ``positional`` (list of dicts with
+            ``name``, ``shape``, ``unit``, ``description``, and ``kind`` for a
+            signal), ``parameters`` (name -> ``default``, ``unit``,
+            ``description``), and ``returns`` (``index`` and ``columns``,
+            column -> description, in the order the detector returns them).
+
+        Examples
+        --------
+        >>> import json
+        >>> from ripple_detection import get_detector
+        >>> description = get_detector("Kay_ripple_detector").describe()
+        >>> description["parameters"]["minimum_duration"]["unit"]
+        's'
+        >>> [argument["name"] for argument in description["positional"]]
+        ['time', 'filtered_lfps', 'speed', 'sampling_frequency']
+        >>> json.loads(json.dumps(description)) == description
+        True
+
+        """
+        signal_names = self.signal_parameters
+        positional: list[dict[str, str]] = []
+        for name in ("time", *signal_names, "speed", "sampling_frequency"):
+            if name in signal_names:
+                kind = self.inputs[signal_names.index(name)]
+                shape, unit, text = _descriptions.SIGNALS[kind]
+                positional.append(
+                    {
+                        "name": name,
+                        "kind": kind,
+                        "shape": shape,
+                        "unit": unit,
+                        "description": text,
+                    }
+                )
+            else:
+                shape, unit, text = _descriptions.POSITIONAL[name]
+                positional.append(
+                    {"name": name, "shape": shape, "unit": unit, "description": text}
+                )
+        parameters: dict[str, dict[str, object]] = {}
+        for name, default in self.parameters.items():
+            unit, text = _descriptions.OVERRIDES.get(
+                (self.name, name), _descriptions.PARAMETERS[name]
+            )
+            parameters[name] = {
+                "default": list(default) if isinstance(default, tuple) else default,
+                "unit": unit,
+                "description": text,
+            }
+        columns = {**_descriptions.COLUMNS, **_descriptions.EXTRA_COLUMNS.get(self.name, {})}
+        return {
+            "name": self.name,
+            "summary": (inspect.getdoc(self.detector) or "").split("\n", 1)[0],
+            "call": f"{self.name}({', '.join(item['name'] for item in positional)}, **parameters)",
+            "positional": positional,
+            "parameters": parameters,
+            "returns": {"index": "event_number", "columns": columns},
         }
 
     def check_parameters(self, parameters: Mapping[str, object]) -> None:

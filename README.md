@@ -219,6 +219,22 @@ except ValueError as error:
 # the ripple channel then the sharp-wave channel, got 4.
 ```
 
+`spec.describe()` gives everything above as plain data that `json.dumps`
+accepts: the positional arguments with their shapes and units, every tunable
+with its default, unit and meaning, and the columns of the result. A pipeline,
+or a language model choosing and configuring a detector, can read it instead
+of the docstring:
+
+```python
+import json
+
+description = get_detector("Kay_ripple_detector").describe()
+description["parameters"]["minimum_duration"]
+# {'default': 0.015, 'unit': 's', 'description': 'Shortest run at or above the
+#  threshold that makes an event, before the event is extended to the mean; ...'}
+catalog = json.dumps({name: spec.describe() for name, spec in DETECTORS.items()})
+```
+
 ## How the detectors compare on simulated data
 
 [`examples/simulation_study.py`](examples/simulation_study.py) runs every detector at its

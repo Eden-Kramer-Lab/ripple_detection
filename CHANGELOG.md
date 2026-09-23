@@ -127,7 +127,11 @@ raises on zero rows; that is hdmf's, not this package's.
   the number of signals, a signal's dimensionality, a raw pair's channel count,
   or the spike counts (non-negative whole numbers) are wrong. It does not judge
   whether LFP is filtered; no property of the array settles that for every
-  recording.
+  recording. `spec.describe()` returns all of it as JSON-ready data, with each
+  tunable's default, unit and meaning and the result's columns, for pipelines
+  and language models that configure a detector without reading its docstring;
+  a test holds the descriptions to the signatures and to the columns each
+  detector returns.
 - `load_literature_parameters`, the survey of detection parameters in 57 papers
   that decode replay content.
 - `ripple_snr`, `random_state` and ranges for `ripple_frequency` and

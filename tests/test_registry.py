@@ -201,3 +201,63 @@ class TestParameters:
     def test_check_parameters_names_the_unknown_key(self):
         with pytest.raises(ValueError, match="does not take z_score_threshold"):
             get_detector("Kay_ripple_detector").check_parameters({"z_score_threshold": 3.0})
+
+
+@pytest.fixture(scope="module")
+def results():
+    """Every registered detector's result on one simulated session."""
+    from ripple_detection import filter_ripple_band
+    from ripple_detection.simulate import simulate_session, simulate_time
+
+    time = simulate_time(45_000, 1500)
+    session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], random_state=0)
+    signals = {
+        RIPPLE_BAND_LFP: filter_ripple_band(session.lfps, 1500),
+        RAW_LFP_PAIR: session.raw_lfp_pair,
+        MULTIUNIT: session.multiunit,
+    }
+    return {
+        name: spec.detector(
+            time, *(signals[kind] for kind in spec.inputs), session.speed, 1500
+        )
+        for name, spec in DETECTORS.items()
+    }
+
+
+class TestDescribe:
+    """describe() is plain data a pipeline or a language model can read, and a
+    test holds it to the code so it cannot drift."""
+
+    @pytest.mark.parametrize("name", list(DETECTORS))
+    def test_round_trips_through_json(self, name):
+        import json
+
+        description = get_detector(name).describe()
+        assert json.loads(json.dumps(description)) == description
+
+    @pytest.mark.parametrize("name", list(DETECTORS))
+    def test_positional_arguments_follow_the_signature(self, name):
+        spec = get_detector(name)
+        described = [argument["name"] for argument in spec.describe()["positional"]]
+        assert described == list(inspect.signature(spec.detector).parameters)[: len(described)]
+        assert described[-2:] == ["speed", "sampling_frequency"]
+
+    @pytest.mark.parametrize("name", list(DETECTORS))
+    def test_every_tunable_has_a_unit_and_a_description(self, name):
+        parameters = get_detector(name).describe()["parameters"]
+        assert list(parameters) == list(get_detector(name).parameters)
+        assert all(entry["description"] for entry in parameters.values())
+
+    def test_no_description_is_left_without_a_parameter(self):
+        from ripple_detection import _descriptions
+
+        used = {parameter for spec in DETECTORS.values() for parameter in spec.parameters}
+        assert set(_descriptions.PARAMETERS) == used
+        for detector, parameter in _descriptions.OVERRIDES:
+            assert parameter in DETECTORS[detector].parameters
+
+    @pytest.mark.parametrize("name", list(DETECTORS))
+    def test_columns_are_what_the_detector_returns_in_order(self, name, results):
+        columns = get_detector(name).describe()["returns"]["columns"]
+        assert list(columns) == list(results[name].columns)
+        assert results[name].index.name == "event_number"
