@@ -54,20 +54,21 @@ ACCEPT_SPYGLASS_DEFAULT = {
     "Shvartsman_ripple_detector",
 }
 
-# Parameters under which no event can exist, for the empty-result schema.
+# Parameters under which no event can exist, for the empty-result schema: a
+# minimum just under the second the unit check allows, far beyond any ripple.
 EMPTY_PARAMS = {
-    "Kay_ripple_detector": {"minimum_duration": 5.0},
-    "Karlsson_ripple_detector": {"minimum_duration": 5.0},
-    "Roumis_ripple_detector": {"minimum_duration": 5.0},
-    "Shvartsman_ripple_detector": {"minimum_duration": 5.0},
-    "Yu_ripple_detector": {"minimum_duration": 5.0},
-    "Zugaro_ripple_detector": {"minimum_duration": 5.0, "maximum_duration": None},
+    "Kay_ripple_detector": {"minimum_duration": 0.9},
+    "Karlsson_ripple_detector": {"minimum_duration": 0.9},
+    "Roumis_ripple_detector": {"minimum_duration": 0.9},
+    "Shvartsman_ripple_detector": {"minimum_duration": 0.9},
+    "Yu_ripple_detector": {"minimum_duration": 0.9},
+    "Zugaro_ripple_detector": {"minimum_duration": 0.9, "maximum_duration": None},
     "Long_sharp_wave_ripple_detector": {
         "minimum_sharp_wave_duration": 0.45,
-        "minimum_ripple_duration": 5.0,
+        "minimum_ripple_duration": 0.9,
     },
-    "Carey_candidate_detector": {"minimum_duration": 5.0},
-    "multiunit_HSE_detector": {"minimum_duration": 5.0},
+    "Carey_candidate_detector": {"minimum_duration": 0.9},
+    "multiunit_HSE_detector": {"minimum_duration": 0.9},
 }
 
 # False positives a detector at its defaults is allowed on this 30 s session.

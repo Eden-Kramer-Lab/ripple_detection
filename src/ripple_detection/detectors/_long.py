@@ -25,7 +25,7 @@ from ripple_detection.detectors._events import (
 )
 from ripple_detection.detectors._validation import (
     _check_band,
-    _check_finite_non_negative,
+    _check_gap,
     _check_positive,
     _check_thresholds,
     _validate_detector_inputs,
@@ -221,7 +221,14 @@ def Long_sharp_wave_ripple_detector(
        https://github.com/ayalab1/neurocode/blob/d166a67ffb73096d8d11b14be6693d96ad63e4ed/SharpWaveRipples/DetectSWR.m
 
     """
-    _validate_duration_limits(minimum_sharp_wave_duration, maximum_sharp_wave_duration)
+    _validate_duration_limits(
+        minimum_sharp_wave_duration,
+        maximum_sharp_wave_duration,
+        names=("minimum_sharp_wave_duration", "maximum_sharp_wave_duration"),
+    )
+    _validate_duration_limits(
+        minimum_ripple_duration, None, names=("minimum_ripple_duration", "")
+    )
     lfp = np.asarray(raw_lfps, dtype=float)
     if lfp.ndim != 2 or lfp.shape[1] != 2:
         msg = (
@@ -254,9 +261,7 @@ def Long_sharp_wave_ripple_detector(
             msg = f"{name} must lie in (0, 100), got {percentile}."
             raise ValueError(msg)
     _check_positive(window_size=window_size, local_window=local_window)
-    _check_finite_non_negative(
-        minimum_separation=minimum_separation, minimum_ripple_duration=minimum_ripple_duration
-    )
+    _check_gap(minimum_separation=minimum_separation)
     n_time = len(time)
     is_valid, blocks = _valid_blocks(time, lfp)
     _reject_flat_channels(lfp, blocks, "raw_lfps")

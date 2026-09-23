@@ -5,7 +5,6 @@ import pandas as pd
 from numpy.typing import ArrayLike
 
 from ripple_detection.core import (
-    _check_non_negative,
     _is_immobile_at_endpoints,
     get_multiunit_population_firing_rate,
     nearest_sample_index,
@@ -21,6 +20,7 @@ from ripple_detection.detectors._events import (
 )
 from ripple_detection.detectors._validation import (
     _check_finite_non_negative,
+    _check_gap,
     _check_minimum_active_units,
     _check_smoothing_sigma,
     _validate_detector_inputs,
@@ -171,7 +171,7 @@ def multiunit_HSE_detector(
     """
     _validate_duration_limits(minimum_duration, maximum_duration)
     _check_finite_non_negative(zscore_threshold=zscore_threshold)
-    _check_non_negative(close_event_threshold=close_event_threshold)
+    _check_gap(close_event_threshold=close_event_threshold)
     _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
     multiunit = np.asarray(multiunit, dtype=float)
     _validate_multiunit(multiunit)

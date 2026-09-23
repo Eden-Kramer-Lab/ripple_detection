@@ -1972,7 +1972,7 @@ class TestLongSharpWaveRippleDetector:
     ):
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
         events = Long_sharp_wave_ripple_detector(
-            time, lfp, stationary, self.FS, minimum_separation=1e6, random_state=0
+            time, lfp, stationary, self.FS, minimum_separation=np.inf, random_state=0
         )
         assert len(events) <= 1
 
@@ -3893,6 +3893,47 @@ class TestBlocksTooShortForAnEvent:
         assert record[0].filename == __file__
 
 
+class TestMillisecondsGivenAsSeconds:
+    """The commonest unit slip, 15 for 15 ms, raises and says what to pass."""
+
+    FS = 1000
+
+    @pytest.mark.parametrize(
+        ("detector", "kwargs", "name"),
+        [
+            (Kay_ripple_detector, {"minimum_duration": 15}, "minimum_duration"),
+            (Kay_ripple_detector, {"maximum_duration": 500}, "maximum_duration"),
+            (Kay_ripple_detector, {"close_ripple_threshold": 50}, "close_ripple_threshold"),
+            (multiunit_HSE_detector, {"close_event_threshold": 50}, "close_event_threshold"),
+            (
+                Zugaro_ripple_detector,
+                {"minimum_inter_ripple_interval": 30},
+                "minimum_inter_ripple_interval",
+            ),
+            (
+                Long_sharp_wave_ripple_detector,
+                {"minimum_ripple_duration": 25},
+                "minimum_ripple_duration",
+            ),
+            (
+                Long_sharp_wave_ripple_detector,
+                {"minimum_separation": 50},
+                "minimum_separation",
+            ),
+            (Carey_candidate_detector, {"state_merge_gap": 50}, "state_merge_gap"),
+        ],
+    )
+    def test_the_message_gives_the_value_in_seconds(self, detector, kwargs, name):
+        (value,) = kwargs.values()
+        with pytest.raises(ValueError, match=rf"{name} is in seconds.*pass {value / 1000}"):
+            TestParameterRanges()._call(detector, **kwargs)
+
+    def test_a_ceiling_of_two_seconds_and_an_infinite_gap_are_accepted(self):
+        TestParameterRanges()._call(
+            Kay_ripple_detector, maximum_duration=2.0, close_ripple_threshold=np.inf
+        )
+
+
 class TestParameterRanges:
     """A tunable that is NaN, negative, reversed or in the wrong unit raises
     rather than quietly disabling a criterion or emptying the result."""
@@ -4016,7 +4057,7 @@ class TestParameterRanges:
             (
                 Long_sharp_wave_ripple_detector,
                 {"minimum_sharp_wave_duration": np.nan},
-                "minimum_duration",
+                "minimum_sharp_wave_duration",
             ),
         ],
     )

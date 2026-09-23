@@ -263,18 +263,47 @@ def _check_positive(**values: float) -> None:
             raise ValueError(msg)
 
 
+MAXIMUM_PLAUSIBLE_MINIMUM = 1.0
+"""Seconds. No minimum event duration, and no smoothing width, reaches a
+second: published minimums run 15-100 ms. A larger value is milliseconds
+given where seconds are expected."""
+
+MAXIMUM_PLAUSIBLE_CEILING = 10.0
+"""Seconds. Published duration ceilings and merge gaps stay within a couple
+of seconds; a larger value is milliseconds given where seconds are expected."""
+
+
+def _check_seconds(limit: float, consequence: str, **values: float) -> None:
+    """Raise for a finite duration above ``limit`` seconds, naming the value
+    in milliseconds too: the commonest unit slip is 15 for 15 ms."""
+    for name, value in values.items():
+        if np.isfinite(value) and value >= limit:
+            msg = (
+                f"{name} is in seconds; {value} s {consequence}. "
+                f"For {value} ms pass {value / 1000}."
+            )
+            raise ValueError(msg)
+
+
 def _check_smoothing_sigma(**values: float) -> None:
     """A Gaussian standard deviation in seconds: positive, finite, and under a
     second, since a longer kernel smooths every ripple away and usually means
     milliseconds were given."""
     _check_positive(**values)
+    _check_seconds(MAXIMUM_PLAUSIBLE_MINIMUM, "would smooth every ripple away", **values)
+
+
+def _check_gap(**values: float) -> None:
+    """A gap or interval between events in seconds: non-negative, not NaN, and
+    not beyond ``MAXIMUM_PLAUSIBLE_CEILING`` (infinity passes)."""
+    _check_non_negative(**values)
     for name, value in values.items():
-        if value >= 1.0:
-            msg = (
-                f"{name} is in seconds; {value} s would smooth every ripple away. "
-                f"For {value} ms pass {value / 1000}."
+        if np.isfinite(value) and value > MAXIMUM_PLAUSIBLE_CEILING:
+            _check_seconds(
+                MAXIMUM_PLAUSIBLE_CEILING,
+                "is longer than any gap between events",
+                **{name: value},
             )
-            raise ValueError(msg)
 
 
 def _check_thresholds(
@@ -352,15 +381,34 @@ def _validate_multiunit(multiunit: FloatArray, what: str = "multiunit") -> None:
 _MULTIUNIT_CHUNK = 65_536
 
 
-def _validate_duration_limits(minimum_duration: float, maximum_duration: float | None) -> None:
-    """Reject duration limits that are not durations or leave no admissible event."""
-    _check_finite_non_negative(minimum_duration=minimum_duration)
-    if maximum_duration is not None and not maximum_duration > 0:
-        msg = f"maximum_duration must be positive or None, got {maximum_duration}."
+def _validate_duration_limits(
+    minimum_duration: float,
+    maximum_duration: float | None,
+    names: tuple[str, str] = ("minimum_duration", "maximum_duration"),
+) -> None:
+    """Reject duration limits that are not durations, are milliseconds given
+    as seconds, or leave no admissible event."""
+    minimum_name, maximum_name = names
+    _check_finite_non_negative(**{minimum_name: minimum_duration})
+    _check_seconds(
+        MAXIMUM_PLAUSIBLE_MINIMUM,
+        "is longer than any ripple or burst",
+        **{minimum_name: minimum_duration},
+    )
+    if maximum_duration is None:
+        return
+    if not maximum_duration > 0:
+        msg = f"{maximum_name} must be positive or None, got {maximum_duration}."
         raise ValueError(msg)
-    if maximum_duration is not None and maximum_duration < minimum_duration:
+    if np.isfinite(maximum_duration) and maximum_duration > MAXIMUM_PLAUSIBLE_CEILING:
+        _check_seconds(
+            MAXIMUM_PLAUSIBLE_CEILING,
+            "is longer than any published ceiling",
+            **{maximum_name: maximum_duration},
+        )
+    if maximum_duration < minimum_duration:
         msg = (
-            f"maximum_duration ({maximum_duration}) is below minimum_duration "
+            f"{maximum_name} ({maximum_duration}) is below {minimum_name} "
             f"({minimum_duration}); no event could satisfy both. Both are in seconds."
         )
         raise ValueError(msg)

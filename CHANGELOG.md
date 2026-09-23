@@ -310,7 +310,10 @@ raises on zero rows; that is hdmf's, not this package's.
   - a tunable that is NaN, negative, reversed or in the wrong unit, in every
     detector: a NaN threshold or speed limit, a negative or NaN duration, gap
     or speed limit, a non-positive or NaN `sampling_frequency`, a smoothing
-    width of zero or of a second or more (milliseconds given as seconds), a
+    width of zero or of a second or more, a minimum duration of a second or
+    more, a duration ceiling or a gap between events longer than 10 s (each
+    of these last three is milliseconds given as seconds, and the message
+    gives the value to pass), a
     bounds threshold above the peak threshold (Zugaro, Carey, Long), a band
     that is reversed or reaches Nyquist (Long, Carey's theta), a
     non-integer channel, unit or window count, and a `minimum_active_units`

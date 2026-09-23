@@ -11,7 +11,6 @@ from ripple_detection.core import (
     FloatArray,
     IntArray,
     _boolean_run_bounds,
-    _check_non_negative,
     _is_immobile,
     _unit_area_gaussian,
     get_envelope,
@@ -32,6 +31,7 @@ from ripple_detection.detectors._events import (
 )
 from ripple_detection.detectors._validation import (
     _check_band,
+    _check_gap,
     _check_minimum_active_units,
     _check_positive,
     _check_smoothing_sigma,
@@ -298,9 +298,7 @@ def Carey_candidate_detector(
         baseline_sigma=baseline_sigma,
     )
     _check_positive(spike_cap=spike_cap, baseline_cap=baseline_cap)
-    _check_non_negative(
-        state_merge_gap=state_merge_gap, state_minimum_length=state_minimum_length
-    )
+    _check_gap(state_merge_gap=state_merge_gap, state_minimum_length=state_minimum_length)
     if not np.isfinite(theta_threshold):
         msg = f"theta_threshold must be finite, got {theta_threshold}."
         raise ValueError(msg)
