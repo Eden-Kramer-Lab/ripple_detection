@@ -73,10 +73,12 @@ packages = ["src/ripple_detection"]
 
 [tool.pytest.ini_options]
 minversion = "7"
-testpaths = ["tests"]
+# src/ for the docstring examples, which a reader (or a model) copies verbatim
+testpaths = ["tests", "src"]
 pythonpath = ["tests"]
 addopts = [
     "-ra",
+    "--doctest-modules",
     "--strict-config",
     "--strict-markers",
     "--cov=src/ripple_detection",

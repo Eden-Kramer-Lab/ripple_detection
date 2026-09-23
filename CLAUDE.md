@@ -35,8 +35,8 @@ tools; keep them identical.
 ### Testing
 
 ```bash
-# Run all tests with coverage
-pytest tests/
+# Run all tests with coverage, and the docstring examples in src/ (testpaths)
+pytest
 
 # Run one module
 pytest tests/test_core.py          # signal processing
@@ -343,8 +343,8 @@ All code quality tools are configured in [pyproject.toml](pyproject.toml):
 
 **Pytest** (`[tool.pytest.ini_options]`):
 - Strict: every warning is an error (`filterwarnings = ["error"]`), `--strict-config --strict-markers`, `xfail_strict`
+- `--doctest-modules` over `testpaths = ["tests", "src"]`: every public detector's docstring example runs, so what a reader copies works. Examples print column names and booleans, not event counts, which move with NumPy's random streams
 - Coverage of `src/ripple_detection` reported to the terminal with missing lines
-- Test path: `tests/`
 
 **Pre-commit** (`.pre-commit-config.yaml`):
 - The standard file hooks, `ruff-check --fix` and `ruff-format` on `src/` and `tests/` (the paths CI checks), codespell (configured under `[tool.codespell]`), and mypy through `uv run`

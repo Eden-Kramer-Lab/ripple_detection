@@ -222,6 +222,19 @@ def Long_sharp_wave_ripple_detector(
        file), doi:10.5281/zenodo.7819979
        https://github.com/ayalab1/neurocode/blob/d166a67ffb73096d8d11b14be6693d96ad63e4ed/SharpWaveRipples/DetectSWR.m
 
+    Examples
+    --------
+    >>> from ripple_detection import filter_ripple_band
+    >>> from ripple_detection.simulate import simulate_session, simulate_time
+    >>> time = simulate_time(45_000, 1500)  # 30 s at 1500 Hz
+    >>> session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], random_state=0)
+    >>> # raw, unfiltered: the ripple channel, then the stratum radiatum channel
+    >>> events = Long_sharp_wave_ripple_detector(
+    ...     time, session.raw_lfp_pair, session.speed, 1500, random_state=0
+    ... )
+    >>> "sharp_wave_duration" in events, bool(len(events))
+    (True, True)
+
     """
     _validate_duration_limits(
         minimum_sharp_wave_duration,

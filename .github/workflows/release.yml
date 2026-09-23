@@ -75,7 +75,7 @@ jobs:
       - name: Install dependencies
         run: pip install -e .[dev]
       - name: Run tests with coverage
-        run: pytest --cov-report=xml tests/
+        run: pytest --cov-report=xml  # tests/ and the docstring examples in src/
       - name: Upload coverage to Codecov
         if: matrix.python-version == '3.12'
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5  # v7.1.1
@@ -108,7 +108,7 @@ jobs:
           pip install --no-deps -e .
           pip install pytest pytest-cov hypothesis pytest-snapshot
       - name: Run tests
-        run: pytest tests/ --no-cov
+        run: pytest --no-cov  # tests/ and the docstring examples in src/
 
   build:
     name: Build distribution

@@ -86,6 +86,14 @@ def ripple_bandpass_filter(
     before filtering loses nothing below 300 Hz and gives the specified
     design at a tenth of the cost.
 
+    Examples
+    --------
+    >>> kernel, denominator = ripple_bandpass_filter(1500)
+    >>> len(kernel), denominator
+    (155, 1.0)
+    >>> len(ripple_bandpass_filter(30_000)[0])  # the tap count grows with the rate
+    3093
+
     """
     STOPBAND_ATTENUATION_DB = 45.0
     MINIMUM_NUMTAPS = 101
@@ -185,6 +193,13 @@ def minimum_sample_count(time: ArrayLike, minimum_duration: float) -> int:
         most timestamps repeat. A count of 1 would then disable the duration
         criterion.
 
+    Examples
+    --------
+    >>> import numpy as np
+    >>> time = np.arange(1500) / 1500  # 1 s at 1500 Hz
+    >>> minimum_sample_count(time, 0.015)  # 22.5 samples rounds half up
+    23
+
     """
     time = np.asarray(time, dtype=float)
     if time.size < 2:
@@ -229,6 +244,13 @@ def sample_count_within(
     -------
     qualifies : bool or ndarray of bool
         Same shape as ``n_samples``; a Python bool for a scalar input.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> time = np.arange(1500) / 1500
+    >>> sample_count_within([22, 23, 24], time, 0.015).tolist()
+    [False, True, True]
 
     """
     counts = np.asarray(n_samples)

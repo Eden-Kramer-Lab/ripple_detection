@@ -261,6 +261,17 @@ def Zugaro_ripple_detector(
        interneurons in the behaving rat. Journal of Neuroscience, 19(1),
        274-287. doi:10.1523/JNEUROSCI.19-01-00274.1999
 
+    Examples
+    --------
+    >>> from ripple_detection import filter_ripple_band
+    >>> from ripple_detection.simulate import simulate_session, simulate_time
+    >>> time = simulate_time(45_000, 1500)  # 30 s at 1500 Hz
+    >>> session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], random_state=0)
+    >>> filtered_lfps = filter_ripple_band(session.lfps, sampling_frequency=1500)
+    >>> events = Zugaro_ripple_detector(time, filtered_lfps, session.speed, 1500)
+    >>> "peak_time" in events, bool(len(events))
+    (True, True)
+
     """
     _validate_duration_limits(minimum_duration, maximum_duration)
     _check_thresholds("low_threshold", low_threshold, "high_threshold", high_threshold)

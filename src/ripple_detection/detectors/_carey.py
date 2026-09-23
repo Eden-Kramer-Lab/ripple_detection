@@ -291,6 +291,19 @@ def Carey_candidate_detector(
        with ``beta/OldWizard.m``, ``beta/amMUA.m``, and ``beta/TSDtoIV2.m``.
        https://github.com/vandermeerlab/vandermeerlab/blob/82ba3fe29cc3912575b32a0fcdaaa1c4fe097231/code-matlab/tasks/Alyssa_Tmaze/GenCandidateEvents.m
 
+    Examples
+    --------
+    >>> from ripple_detection import filter_ripple_band
+    >>> from ripple_detection.simulate import simulate_session, simulate_time
+    >>> time = simulate_time(45_000, 1500)  # 30 s at 1500 Hz
+    >>> session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], random_state=0)
+    >>> filtered_lfps = filter_ripple_band(session.lfps, sampling_frequency=1500)
+    >>> events = Carey_candidate_detector(
+    ...     time, filtered_lfps, session.multiunit, session.speed, 1500
+    ... )
+    >>> bool((events.n_active_units >= 5).all())
+    True
+
     """
     _validate_duration_limits(minimum_duration, maximum_duration)
     _check_thresholds("low_threshold", low_threshold, "high_threshold", high_threshold)

@@ -35,6 +35,12 @@ def simulate_time(n_samples: int, sampling_frequency: float) -> FloatArray:
     time : ndarray, shape (n_samples,)
         Time array in seconds, starting at 0.
 
+    Examples
+    --------
+    >>> time = simulate_time(3000, 1500)
+    >>> time.size, float(time[1])
+    (3000, 0.0006666666666666666)
+
     """
     return np.arange(n_samples) / sampling_frequency
 

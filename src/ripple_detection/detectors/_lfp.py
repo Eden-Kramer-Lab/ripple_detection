@@ -462,6 +462,19 @@ def Shvartsman_ripple_detector(
     ripple, so at the default a single-channel input raises; pass
     ``minimum_participating_channels=1`` for one channel.
 
+    Examples
+    --------
+    >>> from ripple_detection import filter_ripple_band
+    >>> from ripple_detection.simulate import simulate_session, simulate_time
+    >>> time = simulate_time(45_000, 1500)  # 30 s at 1500 Hz
+    >>> session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], random_state=0)
+    >>> filtered_lfps = filter_ripple_band(session.lfps, sampling_frequency=1500)
+    >>> events = Shvartsman_ripple_detector(
+    ...     time, filtered_lfps, session.speed, 1500, minimum_participating_channels=2
+    ... )
+    >>> bool((events.n_participants >= 2).all())
+    True
+
     """
     manual = normalization_method == "manual"
     if manual:
@@ -868,6 +881,17 @@ def Yu_ripple_detector(
        experiences associated with movement versus immobility. eLife, 6,
        e27621. doi:10.7554/eLife.27621
 
+    Examples
+    --------
+    >>> from ripple_detection import filter_ripple_band
+    >>> from ripple_detection.simulate import simulate_session, simulate_time
+    >>> time = simulate_time(45_000, 1500)  # 30 s at 1500 Hz
+    >>> session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], random_state=0)
+    >>> filtered_lfps = filter_ripple_band(session.lfps, sampling_frequency=1500)
+    >>> events = Yu_ripple_detector(time, filtered_lfps, session.speed, 1500)
+    >>> bool((events.detection_threshold_zscore > 0).all())  # estimated per call
+    True
+
     """
     _validate_duration_limits(minimum_duration, maximum_duration)
     _check_gap(close_ripple_threshold=close_ripple_threshold)
@@ -1067,6 +1091,17 @@ def Karlsson_ripple_detector(
        experiences in the hippocampus. Nature Neuroscience, 12(7), 913-918.
        doi:10.1038/nn.2344
 
+    Examples
+    --------
+    >>> from ripple_detection import filter_ripple_band
+    >>> from ripple_detection.simulate import simulate_session, simulate_time
+    >>> time = simulate_time(45_000, 1500)  # 30 s at 1500 Hz
+    >>> session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], random_state=0)
+    >>> filtered_lfps = filter_ripple_band(session.lfps, sampling_frequency=1500)
+    >>> events = Karlsson_ripple_detector(time, filtered_lfps, session.speed, 1500)
+    >>> events.index.name, bool(len(events))
+    ('event_number', True)
+
     """
     _validate_duration_limits(minimum_duration, maximum_duration)
     _check_finite_non_negative(zscore_threshold=zscore_threshold)
@@ -1223,6 +1258,17 @@ def Roumis_ripple_detector(
     no paper of its own. It averages across channels the square root of each
     channel's smoothed squared envelope, then z-scores, between Kay's
     consensus trace and Karlsson's per-channel rule.
+
+    Examples
+    --------
+    >>> from ripple_detection import filter_ripple_band
+    >>> from ripple_detection.simulate import simulate_session, simulate_time
+    >>> time = simulate_time(45_000, 1500)  # 30 s at 1500 Hz
+    >>> session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], random_state=0)
+    >>> filtered_lfps = filter_ripple_band(session.lfps, sampling_frequency=1500)
+    >>> events = Roumis_ripple_detector(time, filtered_lfps, session.speed, 1500)
+    >>> events.index.name, bool(len(events))
+    ('event_number', True)
 
     """
     _validate_duration_limits(minimum_duration, maximum_duration)
