@@ -202,6 +202,13 @@ class DetectorSpec:
                 "description": text,
             }
         columns = {**_descriptions.COLUMNS, **_descriptions.EXTRA_COLUMNS.get(self.name, {})}
+        columns.update(
+            {
+                column: text
+                for (detector, column), text in _descriptions.COLUMN_OVERRIDES.items()
+                if detector == self.name
+            }
+        )
         return {
             "name": self.name,
             "summary": (inspect.getdoc(self.detector) or "").split("\n", 1)[0],

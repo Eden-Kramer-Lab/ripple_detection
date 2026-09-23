@@ -15,8 +15,9 @@ below is relative to 1.7.1.
 
 ### Migrating from 1.7
 
-Calls that stop working, and the change to make. Each of these now fails with a
-message that names its replacement.
+Calls that stop working, and the change to make. Each call below fails with a
+message that names its replacement, except the last two items, which change
+silently.
 
 - `filter_ripple_band(lfp)` -> `filter_ripple_band(lfp, sampling_frequency)`.
   The rate is required; 1.7 assumed 1500 Hz whatever the data's rate.
@@ -35,8 +36,10 @@ message that names its replacement.
   immobile, as the speed rule always has.
 - `pink(N, state=np.random.RandomState(seed))`, and `white` and `brown` the
   same way -> `pink(N, rng=seed)`, a seed or a `numpy.random.Generator`.
-- The result column `max_thresh` -> `max_sustained_zscore`, with a different
-  meaning; see below.
+- A `RandomState` passed to the noise functions or simulators, by name or by
+  position, raises; pass a seed or a `Generator`.
+- The result column `max_thresh` -> `max_sustained_zscore`: the same quantity,
+  computed exactly; see below.
 - `exclude_close_events` and `exclude_movement` return an array of shape
   `(n, 2)` when nothing is left, where they returned `[]`.
 
@@ -188,9 +191,10 @@ Each is described under Changed or Fixed.
   samples at the two ends.
 - **Breaking.** `max_thresh` is `max_sustained_zscore`: the largest z-score
   sustained for `minimum_duration`, which is the highest threshold at which the
-  detector would still find the event. In 1.7 the value could fall below
-  `zscore_threshold` (on noise every Karlsson event did, down to -0.16), and
-  Karlsson and HSE computed it for 15 ms whatever `minimum_duration` was.
+  detector would still find the event. 1.7 approximated it by growing a window
+  greedily from the peak, so its value could fall below `zscore_threshold` (on
+  noise every Karlsson event did, down to -0.16), and Karlsson and HSE computed
+  it for 15 ms whatever `minimum_duration` was.
 - **Breaking.** `Karlsson_ripple_detector` reports its per-event statistics on
   the per-sample maximum over the channels' z-scored envelopes; 1.7 used the
   mean of the filtered LFP. The events do not change.

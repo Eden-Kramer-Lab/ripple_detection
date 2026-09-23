@@ -191,7 +191,11 @@ PARAMETERS = {
     ),
     "minimum_separation": (
         "s",
-        "A candidate closer than this to the previous candidate, kept or not, is dropped.",
+        (
+            "A candidate closer than this to the previous candidate, kept or not, is "
+            "dropped; the last candidate is exempt, and the first is measured from the "
+            "start of the record, as in the original."
+        ),
     ),
     "minimum_sharp_wave_duration": (
         "s",
@@ -245,7 +249,7 @@ PARAMETERS = {
     ),
     "state_minimum_length": (
         "s",
-        "Low-speed (and low-theta) periods shorter than this are dropped.",
+        "Low-speed (and low-theta) periods no longer than this are dropped.",
     ),
 }
 """Each tunable: unit ("" when it has none) and meaning, where it means the
@@ -308,6 +312,17 @@ OVERRIDES = {
         "s",
         "Standard deviation of the Gaussian that smooths the population rate.",
     ),
+    ("Kay_ripple_detector", "smoothing_sigma"): (
+        "s",
+        (
+            "Standard deviation of the Gaussian that smooths the sum of the channels' "
+            "squared envelopes."
+        ),
+    ),
+    ("Roumis_ripple_detector", "smoothing_sigma"): (
+        "s",
+        "Standard deviation of the Gaussian that smooths each channel's squared envelope.",
+    ),
     ("Carey_candidate_detector", "low_threshold"): (
         "SD",
         "Bounds on the z-scored joint score: an event is a run strictly above this.",
@@ -319,14 +334,37 @@ OVERRIDES = {
 }
 """Where a tunable means something particular in one detector."""
 
+_DESCRIPTIVE = (
+    "Largest value of the detection trace sustained for minimum_duration. "
+    "Descriptive only: {why}, so it can fall below the detection threshold."
+)
+
+COLUMN_OVERRIDES = {
+    ("Shvartsman_ripple_detector", "max_sustained_zscore"): _DESCRIPTIVE.format(
+        why="it is taken on the mean over the participating channels"
+    ),
+    ("Zugaro_ripple_detector", "max_sustained_zscore"): _DESCRIPTIVE.format(
+        why="events come from a two-threshold rule"
+    ),
+    ("Carey_candidate_detector", "max_sustained_zscore"): _DESCRIPTIVE.format(
+        why="events come from a two-threshold rule"
+    ),
+    ("Long_sharp_wave_ripple_detector", "max_sustained_zscore"): _DESCRIPTIVE.format(
+        why="events come from clustering, and it is NaN for an event shorter than "
+        "minimum_sharp_wave_duration"
+    ),
+}
+"""Where a column means something particular in one detector."""
+
 COLUMNS = {
     "start_time": "s. Time of the event's first sample.",
     "end_time": "s. Time of the event's last sample.",
     "duration": "s. end_time - start_time, one sample interval less than n_samples spans.",
     "n_samples": "Samples in the event, first to last inclusive; what the duration limits test.",
     "max_sustained_zscore": (
-        "Largest z-score sustained for minimum_duration: the highest threshold that "
-        "would still find the event. Named max_thresh before 2.0."
+        "Largest z-score sustained for minimum_duration: the highest threshold "
+        "that would still find the event. Named max_thresh before 2.0, which "
+        "approximated it."
     ),
     "mean_zscore": "Mean of the detection trace over the event.",
     "median_zscore": "Median of the detection trace over the event.",
@@ -361,14 +399,18 @@ EXTRA_COLUMNS = {
     "Long_sharp_wave_ripple_detector": {
         "peak_time": "s. Time of the sharp-wave peak.",
         "sharp_wave_zscore": "Local SD. Peak sharp-wave feature against its local window.",
-        "sharp_wave_local_percentile": "Percentile of the peak sharp wave in its local window.",
+        "sharp_wave_local_percentile": (
+            "Fraction (0-1) of the local window below the peak sharp wave."
+        ),
         "ripple_power_zscore": "Local SD. Peak ripple power against its local window.",
-        "ripple_power_local_percentile": "Percentile of the peak ripple power in its local window.",
+        "ripple_power_local_percentile": (
+            "Fraction (0-1) of the local window below the peak ripple power."
+        ),
         "sharp_wave_duration": (
             "s. Samples of the sharp wave, first to last inclusive, over the rate: one "
             "sample interval more than duration, which is end_time - start_time."
         ),
-        "ripple_duration": "s. Duration of the ripple, one sample short of its crossings' span.",
+        "ripple_duration": "s. Elapsed time between the ripple's two boundary crossings.",
     },
     "Carey_candidate_detector": {
         "n_active_units": "Units with at least one spike inside the event.",

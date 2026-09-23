@@ -193,9 +193,10 @@ def Long_sharp_wave_ripple_detector(
         and 0.500.
     minimum_ripple_duration : float, optional
         Ripple duration minimum in seconds. Default 0.025. The ripple's sample
-        count is the original's, one less than the inclusive count used for
-        the sharp wave, so ``ripple_duration`` is one sample shorter than the
-        span between its two boundary crossings.
+        count is the original's, the difference between the indices of its two
+        boundary crossings: one less than the inclusive count used for the
+        sharp wave, so ``ripple_duration`` is the elapsed time between the
+        crossings.
     random_state : int or numpy.random.Generator, optional
         Seed, or a Generator, for the k-means initialization, as
         ``numpy.random.default_rng`` takes it. Default is 0, so two runs on

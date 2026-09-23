@@ -458,17 +458,17 @@ def Shvartsman_ripple_detector(
     Notes
     -----
     Missing samples: a NaN or infinite value in any channel of
-    ``filtered_lfps`` marks that sample missing, as does a step in ``time``
-    larger than 1.5 times its median step. The valid samples form contiguous
-    blocks, and every step runs within a block, so nothing is computed across
-    a gap and no event spans one. An event cut off by a gap or by the
+    ``filtered_lfps`` marks that sample missing, and a step in ``time``
+    larger than 1.5 times its median step ends a block as a missing sample
+    does. Every detector in the package splits the valid samples into these
+    blocks and runs every step within one, so nothing is computed across a
+    gap and no event spans one; an event cut off by a gap or by the
     recording edge is kept and flagged in ``clipped_start`` and
-    ``clipped_end``. A block too short for an event of ``minimum_duration``
-    is treated as missing, with a warning, and no block left raises. Every
-    detector in the package follows this rule. A NaN in ``speed`` is an
-    unknown speed, not a missing sample: it splits no
-    block, and an event whose first or last sample has unknown speed fails
-    the speed criterion.
+    ``clipped_end``. Here a block too short for an event of
+    ``minimum_duration`` is treated as missing, with a warning, and no block
+    left raises. A NaN in ``speed`` is an unknown speed, not a missing
+    sample: it splits no block, and the majority rule counts only the
+    samples whose speed is known, so an event with no known speed fails it.
     See the README's "Choosing a detector" table for how the detectors'
     conventions differ.
 
@@ -716,17 +716,17 @@ def Kay_ripple_detector(
     Notes
     -----
     Missing samples: a NaN or infinite value in any channel of
-    ``filtered_lfps`` marks that sample missing, as does a step in ``time``
-    larger than 1.5 times its median step. The valid samples form contiguous
-    blocks, and every step runs within a block, so nothing is computed across
-    a gap and no event spans one. An event cut off by a gap or by the
+    ``filtered_lfps`` marks that sample missing, and a step in ``time``
+    larger than 1.5 times its median step ends a block as a missing sample
+    does. Every detector in the package splits the valid samples into these
+    blocks and runs every step within one, so nothing is computed across a
+    gap and no event spans one; an event cut off by a gap or by the
     recording edge is kept and flagged in ``clipped_start`` and
-    ``clipped_end``. A block too short for an event of ``minimum_duration``
-    is treated as missing, with a warning, and no block left raises. Every
-    detector in the package follows this rule. A NaN in ``speed`` is an
-    unknown speed, not a missing sample: it splits no
-    block, and an event whose first or last sample has unknown speed fails
-    the speed criterion.
+    ``clipped_end``. Here a block too short for an event of
+    ``minimum_duration`` is treated as missing, with a warning, and no block
+    left raises. A NaN in ``speed`` is an unknown speed, not a missing
+    sample: it splits no block, and an event whose first or last sample has
+    unknown speed fails the speed criterion.
     See the README's "Choosing a detector" table for how the detectors'
     conventions differ.
 
@@ -1092,17 +1092,17 @@ def Karlsson_ripple_detector(
     Notes
     -----
     Missing samples: a NaN or infinite value in any channel of
-    ``filtered_lfps`` marks that sample missing, as does a step in ``time``
-    larger than 1.5 times its median step. The valid samples form contiguous
-    blocks, and every step runs within a block, so nothing is computed across
-    a gap and no event spans one. An event cut off by a gap or by the
+    ``filtered_lfps`` marks that sample missing, and a step in ``time``
+    larger than 1.5 times its median step ends a block as a missing sample
+    does. Every detector in the package splits the valid samples into these
+    blocks and runs every step within one, so nothing is computed across a
+    gap and no event spans one; an event cut off by a gap or by the
     recording edge is kept and flagged in ``clipped_start`` and
-    ``clipped_end``. A block too short for an event of ``minimum_duration``
-    is treated as missing, with a warning, and no block left raises. Every
-    detector in the package follows this rule. A NaN in ``speed`` is an
-    unknown speed, not a missing sample: it splits no
-    block, and an event whose first or last sample has unknown speed fails
-    the speed criterion.
+    ``clipped_end``. Here a block too short for an event of
+    ``minimum_duration`` is treated as missing, with a warning, and no block
+    left raises. A NaN in ``speed`` is an unknown speed, not a missing
+    sample: it splits no block, and an event whose first or last sample has
+    unknown speed fails the speed criterion.
     See the README's "Choosing a detector" table for how the detectors'
     conventions differ.
 
@@ -1259,17 +1259,17 @@ def Roumis_ripple_detector(
     Notes
     -----
     Missing samples: a NaN or infinite value in any channel of
-    ``filtered_lfps`` marks that sample missing, as does a step in ``time``
-    larger than 1.5 times its median step. The valid samples form contiguous
-    blocks, and every step runs within a block, so nothing is computed across
-    a gap and no event spans one. An event cut off by a gap or by the
+    ``filtered_lfps`` marks that sample missing, and a step in ``time``
+    larger than 1.5 times its median step ends a block as a missing sample
+    does. Every detector in the package splits the valid samples into these
+    blocks and runs every step within one, so nothing is computed across a
+    gap and no event spans one; an event cut off by a gap or by the
     recording edge is kept and flagged in ``clipped_start`` and
-    ``clipped_end``. A block too short for an event of ``minimum_duration``
-    is treated as missing, with a warning, and no block left raises. Every
-    detector in the package follows this rule. A NaN in ``speed`` is an
-    unknown speed, not a missing sample: it splits no
-    block, and an event whose first or last sample has unknown speed fails
-    the speed criterion.
+    ``clipped_end``. Here a block too short for an event of
+    ``minimum_duration`` is treated as missing, with a warning, and no block
+    left raises. A NaN in ``speed`` is an unknown speed, not a missing
+    sample: it splits no block, and an event whose first or last sample has
+    unknown speed fails the speed criterion.
     See the README's "Choosing a detector" table for how the detectors'
     conventions differ.
 

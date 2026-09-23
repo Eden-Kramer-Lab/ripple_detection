@@ -148,7 +148,7 @@ def _drop_short_blocks(
 
 def _mask_invalid(signal: FloatArray, is_valid: BoolArray) -> FloatArray:
     """A copy of ``signal`` with NaN at every invalid sample, so a helper that
-    splits blocks on its own splits them where the detector does."""
+    skips NaN (normalize_signal) leaves out the samples the detector does."""
     masked = signal.copy()
     masked[~is_valid] = np.nan
     return masked

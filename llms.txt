@@ -36,7 +36,7 @@ ripple-band LFP of shape (n_time, n_channels) unless stated.
 
 - `Kay_ripple_detector`: z-scored consensus of the channels' envelopes (Kay et al. 2016). Default 2 SD held for 15 ms.
 - `Karlsson_ripple_detector`: each channel's envelope, per-channel events merged (Karlsson & Frank 2009). 3 SD.
-- `Roumis_ripple_detector`: mean over channels of each channel's smoothed envelope (Frank-lab variant). 2 SD.
+- `Roumis_ripple_detector`: mean over channels of the square root of each channel's smoothed squared envelope (Frank-lab variant). 2 SD.
 - `Shvartsman_ripple_detector`: per-channel events kept when at least `minimum_participating_channels` (2) channels detect them; needs 2 or more channels by default. 3 SD.
 - `Yu_ripple_detector`: median of per-channel z-scored envelopes; the threshold is estimated per call from immobility noise (Yu et al. 2017). Needs immobile samples.
 - `Zugaro_ripple_detector`: FMAToolbox FindRipples two-threshold rule, bounds 2 SD, peak 5 SD; events of 20-100 ms by default.
@@ -65,9 +65,12 @@ resolves a stored name.
 - `use_speed_threshold_for_zscore=True` -> `normalization_mask=speed <= speed_threshold`.
 - `normalize_signal(data, time, method)` -> `normalize_signal(data, method, normalization_mask)`.
 - `pink(N, state=RandomState(0))` -> `pink(N, rng=0)`; `white` and `brown` the same.
-- Column `max_thresh` -> `max_sustained_zscore`, with a different meaning (the highest threshold that still finds the event).
+- Column `max_thresh` -> `max_sustained_zscore`: the highest threshold that still finds the event, computed exactly (1.x approximated it).
+- `simulate_LFP` draws pink noise by default, where 1.x drew brown; pass `noise_type="brown"` for the old signal.
 
-A 1.x call fails with a message naming its 2.0 replacement.
+A 1.x call with a removed or renamed keyword, a tunable passed by position, a
+`RandomState`, or no `sampling_frequency` fails with a message naming the 2.0
+replacement. The column rename and the noise default cannot raise.
 
 ## Docs
 

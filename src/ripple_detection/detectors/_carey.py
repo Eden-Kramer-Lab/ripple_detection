@@ -190,7 +190,7 @@ def Carey_candidate_detector(
       duration rule.
     - **State**: a candidate is kept only if it lies entirely inside a
       low-speed interval (speed at or below ``speed_threshold``, runs merged across
-      gaps under ``state_merge_gap`` and dropped under
+      gaps under ``state_merge_gap`` and dropped unless longer than
       ``state_minimum_length``) and, when ``theta_lfp`` is given, inside a
       low-theta interval (z-scored theta-band envelope below
       ``theta_threshold``, same interval rules), and has at least
@@ -367,7 +367,7 @@ def Carey_candidate_detector(
         for unit in multiunit[start:stop].T:
             block_sum += np.minimum(_convolve_spikes(unit, spike_kernel), cap)
         summed[start:stop] = block_sum
-        # FFT convolution: the 250 ms baseline kernel has thousands of taps,
+        # FFT convolution: the baseline kernel (SD 125 ms, +/-12 SD) has thousands of taps,
         # and the capped sum is dense (equal to convolve1d to rounding, 1e-15)
         baseline[start:stop] = oaconvolve(
             np.minimum(baseline_cap * cap, block_sum), baseline_kernel, mode="same"

@@ -319,7 +319,7 @@ def _get_event_stats(
         each event's metrics are computed from its participating channels only.
     speed : array_like, shape (n_time,)
         Animal's speed at each time point.
-    minimum_duration : float, optional
+    minimum_duration : float
         Minimum duration for the max_sustained_zscore calculation.
     blocks : list of (start, stop)
         The valid blocks the events were found in (``_valid_blocks``), for

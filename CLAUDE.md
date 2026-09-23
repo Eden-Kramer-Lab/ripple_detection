@@ -225,7 +225,7 @@ Yu, Zugaro, Long and Carey use their own segmentation rules but the same blocks:
 - **Long detector**: Raw two-channel input; sharp-wave difference and ripple power clustered by k-means with local statistics
 - **Carey detector**: Geometric mean of a ripple-envelope score and a capped multiunit score; whole event inside a low-speed interval
 - **HSE detector**: Z-scored smoothed population spike rate, no LFP
-- One missing-sample policy for every detector: NaN in any signal, or a gap in time, ends a block; nothing crosses a gap; clipped events are flagged. NaN speed is unknown speed: it fails the endpoint rule and splits no block
+- One missing-sample policy for every detector: NaN in any signal, or a gap in time, ends a block; nothing crosses a gap; clipped events are flagged. NaN speed is unknown speed and splits no block: it fails the endpoint rule, is left out of Shvartsman's majority, and interrupts Carey's low-speed intervals
 
 ### Pre-computed Filter
 
@@ -259,7 +259,7 @@ The suite, with its shared fixtures:
 4. **[tests/test_simulate.py](tests/test_simulate.py)** - Noise spectra, embedded ripples, per-ripple ranges, `ripple_snr`, and the inputs that used to give an all-NaN signal
 5. **[tests/test_properties.py](tests/test_properties.py)** - Hypothesis-driven invariants for the signal-processing functions
 6. **[tests/test_snapshots.py](tests/test_snapshots.py)** - Regression snapshots of detector output on fixed simulated data
-7. **[tests/test_public_api.py](tests/test_public_api.py)** - Pins `__all__`
+7. **[tests/test_public_api.py](tests/test_public_api.py)** - Pins `__all__`; the messages for calls written for 1.x; `llms.txt`'s example runs and names every detector
 8. **[tests/test_registry.py](tests/test_registry.py)** - Every exported detector is registered; each spec matches its signature by kind and position
 9. **[tests/test_literature.py](tests/test_literature.py)** - The shipped survey loads with the documented shape and types
 10. **[tests/test_integration.py](tests/test_integration.py)** - Every detector driven by name from the registry on `simulate_session` output and judged against the ground truth: the registry path and the parameter set Spyglass stores, recall with a false-positive budget per detector, event bounds against the ripple windows, the filter-then-detect chain at 1000, 2000 and 30000 Hz, cross-detector agreement on one ripple, the output contract including the empty-result schema, time-offset, scale and channel-order invariance, clipped flags at the recording edges, Long's seeding, and Yu's threshold under shared channel noise

@@ -159,10 +159,10 @@ def multiunit_HSE_detector(
     whose first or last sample has unknown speed fails the speed criterion.
 
     The 15 ms smoothing is Davidson et al.'s; the other defaults (2 SD, a
-    15 ms minimum, 4 cm/s) are this package's convention. Published
-    multiunit-burst detectors in the same lineage use their own values
-    (Davidson et al. 2009 among them), so set them explicitly when
-    reproducing a paper.
+    15 ms minimum, 4 cm/s) are this package's convention, where Davidson et
+    al. take a peak above 3 SD, bounds at the mean and stopped periods below
+    5 cm/s. Published multiunit-burst detectors differ in all of these, so
+    set them explicitly when reproducing a paper.
 
     References
     ----------

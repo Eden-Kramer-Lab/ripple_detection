@@ -85,9 +85,11 @@ pip install -e .[dev,examples]
 ## Migrating from 1.x
 
 2.0 changes results as well as calls, so detect again rather than mixing events
-from the two. Code written for 1.x (including code a language model writes from
-1.x examples) fails with a message naming the change; the full list is in
-[CHANGELOG.md](CHANGELOG.md#migrating-from-1x). The ones that come up most:
+from the two. Most code written for 1.x (including code a language model writes
+from 1.x examples) fails with a message naming the change: a removed or renamed
+keyword, a tunable passed by position, a `RandomState`, a missing
+`sampling_frequency`. The last three rows below cannot raise, so look for them.
+The full list is in [CHANGELOG.md](CHANGELOG.md#migrating-from-17).
 
 | 1.x | 2.0 |
 |---|---|
@@ -97,7 +99,9 @@ from the two. Code written for 1.x (including code a language model writes from
 | `use_speed_threshold_for_zscore=True` (HSE) | `normalization_mask=speed <= speed_threshold` |
 | `normalize_signal(data, time, method)` | `normalize_signal(data, method, normalization_mask)` |
 | `pink(N, state=np.random.RandomState(0))` | `pink(N, rng=0)` |
-| `events.max_thresh` | `events.max_sustained_zscore` (and it now means the highest threshold that still finds the event) |
+| `events.max_thresh` | `events.max_sustained_zscore`: the same quantity, computed exactly (1.x grew a window greedily from the peak, and its value could fall below the detection threshold) |
+| `simulate_LFP(...)` without `noise_type` | pink noise, where 1.x drew brown; pass `noise_type="brown"` for the old signal |
+| `exclude_close_events` / `exclude_movement` returning `[]` | an empty `(0, 2)` array |
 
 Every duration and rate is in seconds and hertz, and speed in cm/s; a value that
 looks like milliseconds (`minimum_duration=15`) raises and says what to pass.
@@ -266,10 +270,11 @@ What it shows:
   count, since any one channel crossing 3 SD makes an event; Yu's data-driven threshold falls the
   more correlated channels feed its median. Kay, Roumis, Zugaro, Long and Shvartsman barely move.
 - **At a matched false-positive rate the ripple-band algorithms are close, and Shvartsman
-  leads.** On 16 channels Kay at 3.0 SD, Karlsson at 3.5 and Zugaro at 8 each allow 1 to 2
-  false positives a minute and recall 0.5 to 0.64 of ripples at `ripple_snr` 3; Shvartsman at its
-  default allows 0.7 and recalls 0.67. Most of what separates the defaults is where the
-  threshold sits. Kay at 2 SD is a candidate generator, about 20 events a minute on noise.
+  leads.** On 16 channels Kay at 3.0 SD (1.5 false positives a minute) and Karlsson at 3.5
+  (1.8) recall 0.62 to 0.64 of ripples at `ripple_snr` 3; Zugaro needs 8 SD to fall below one
+  a minute (0.8), and then recalls 0.32. Shvartsman at its default allows 0.7 and recalls 0.67.
+  Most of what separates the defaults is where the threshold sits. Kay at 2 SD is a candidate
+  generator, about 20 events a minute on noise.
 - **Which channels carry the ripple matters more than how many there are.** Pooled traces are
   diluted by silent channels (Kay by the channel count, Roumis worse), and a median cannot see a
   ripple on a minority of channels at any amplitude (Yu). Karlsson's per-channel rule is the only
@@ -575,8 +580,8 @@ conventions below.
 Notes:
 
 - **Missing samples** are handled the same way by every detector. A sample is missing when any
-  channel of any signal is NaN or infinite, or when the step in `time` to it exceeds 1.5 times
-  the median step. The valid samples form contiguous blocks; every step runs within a block, so
+  channel of any signal is NaN or infinite, and a step in `time` larger than 1.5 times the median
+  step ends a block as a missing sample does. The valid samples form contiguous blocks; every step runs within a block, so
   nothing is smoothed, thresholded or merged across a gap and no event spans one. An event cut off
   by a gap or by the recording edge is kept and flagged in `clipped_start` and `clipped_end`. A
   block too short for a detector's transform (Zugaro's smoothing window, Long's sharp-wave kernel,
