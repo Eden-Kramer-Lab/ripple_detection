@@ -8,6 +8,7 @@ from numpy.typing import ArrayLike
 from scipy.cluster.vq import kmeans2
 from scipy.ndimage import convolve1d
 
+from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import (
     FloatArray,
     _is_immobile_at_endpoints,
@@ -71,6 +72,7 @@ def _matlab_percentile(values: FloatArray, percent: float) -> float:
     return float(np.percentile(values, percent, method="hazen"))
 
 
+@explain_call_errors
 def Long_sharp_wave_ripple_detector(
     time: ArrayLike,
     raw_lfps: ArrayLike,

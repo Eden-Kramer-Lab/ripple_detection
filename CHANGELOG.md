@@ -147,6 +147,12 @@ raises on zero rows; that is hdmf's, not this package's.
   `noise_threshold_diagnostics` and its result type
   `NoiseThresholdDiagnostics`, `simulate_LFP`, `simulate_time`, and the
   simulators and `SimulatedSession` above, with the registry names above.
+- A call written for 1.x fails with the 2.0 change behind it rather than
+  Python's bare `TypeError`: a removed keyword names its replacement
+  (`normalization_time_range` -> `normalization_mask=...`), positional
+  tunables are named with their values, a near-miss keyword gets a "did you
+  mean", and `filter_ripple_band` without a rate says why the rate is now
+  required. The README opens with the migration table.
 - README: tables for the choice of detector, for published parameter values, and
   for tools that this package does not implement.
 - `py.typed`. The package is type-checked with strict mypy, and downstream

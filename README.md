@@ -82,6 +82,26 @@ pip install -e .[dev,examples]
 - scipy >= 1.10
 - pandas >= 2.0
 
+## Migrating from 1.x
+
+2.0 changes results as well as calls, so detect again rather than mixing events
+from the two. Code written for 1.x (including code a language model writes from
+1.x examples) fails with a message naming the change; the full list is in
+[CHANGELOG.md](CHANGELOG.md#migrating-from-1x). The ones that come up most:
+
+| 1.x | 2.0 |
+|---|---|
+| `filter_ripple_band(lfp)` | `filter_ripple_band(lfp, sampling_frequency)`: the rate is required |
+| `Kay_ripple_detector(time, lfps, speed, fs, 4.0, 0.015)` | tunables are keyword-only: `..., fs, speed_threshold=4.0, minimum_duration=0.015` |
+| `normalization_time_range=(start, end)` | `normalization_mask=(time >= start) & (time <= end)` |
+| `use_speed_threshold_for_zscore=True` (HSE) | `normalization_mask=speed <= speed_threshold` |
+| `normalize_signal(data, time, method)` | `normalize_signal(data, method, normalization_mask)` |
+| `pink(N, state=np.random.RandomState(0))` | `pink(N, rng=0)` |
+| `events.max_thresh` | `events.max_sustained_zscore` (and it now means the highest threshold that still finds the event) |
+
+Every duration and rate is in seconds and hertz, and speed in cm/s; a value that
+looks like milliseconds (`minimum_duration=15`) raises and says what to pass.
+
 ## Quick Start
 
 ### Basic Usage

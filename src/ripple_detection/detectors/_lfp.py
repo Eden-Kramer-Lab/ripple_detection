@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
 
+from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import (
     BoolArray,
     FloatArray,
@@ -301,6 +302,7 @@ def _extract_Yu_ripple_events(
     return np.asarray(event_times, dtype=float).reshape(-1, 2), n_suprathreshold
 
 
+@explain_call_errors
 def Shvartsman_ripple_detector(
     time: ArrayLike,
     filtered_lfps: ArrayLike,
@@ -577,6 +579,7 @@ def Shvartsman_ripple_detector(
     )
 
 
+@explain_call_errors
 def Kay_ripple_detector(
     time: ArrayLike,
     filtered_lfps: ArrayLike,
@@ -749,6 +752,7 @@ def Kay_ripple_detector(
     )
 
 
+@explain_call_errors
 def Yu_ripple_detector(
     time: ArrayLike,
     filtered_lfps: ArrayLike,
@@ -943,6 +947,7 @@ def Yu_ripple_detector(
     return events
 
 
+@explain_call_errors
 def Karlsson_ripple_detector(
     time: ArrayLike,
     filtered_lfps: ArrayLike,
@@ -1102,6 +1107,7 @@ def Karlsson_ripple_detector(
     )
 
 
+@explain_call_errors
 def Roumis_ripple_detector(
     time: ArrayLike,
     filtered_lfps: ArrayLike,

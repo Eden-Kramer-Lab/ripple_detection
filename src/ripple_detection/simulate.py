@@ -13,6 +13,7 @@ from typing import Literal
 
 import numpy as np
 
+from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import FloatArray, filter_ripple_band
 
 RIPPLE_FREQUENCY = 200
@@ -95,6 +96,7 @@ def normalize(y: FloatArray, x: FloatArray | None = None) -> FloatArray:
     return np.asarray(y * np.sqrt(np.divide(reference_power, mean_squared(y))), dtype=float)
 
 
+@explain_call_errors
 def pink(N: int, rng: int | np.random.Generator | None = None) -> FloatArray:
     """Generate pink (1/f) noise.
 
@@ -135,6 +137,7 @@ def pink(N: int, rng: int | np.random.Generator | None = None) -> FloatArray:
     return normalize(y)
 
 
+@explain_call_errors
 def white(N: int, rng: int | np.random.Generator | None = None) -> FloatArray:
     """Generate white noise.
 
@@ -159,6 +162,7 @@ def white(N: int, rng: int | np.random.Generator | None = None) -> FloatArray:
     return rng.standard_normal(N)
 
 
+@explain_call_errors
 def brown(N: int, rng: int | np.random.Generator | None = None) -> FloatArray:
     """Generate brown (Brownian, red) noise.
 
@@ -242,6 +246,7 @@ def _draw_per_ripple(
     return values
 
 
+@explain_call_errors
 def simulate_LFP(
     time: FloatArray,
     ripple_times: float | Sequence[float] | FloatArray,

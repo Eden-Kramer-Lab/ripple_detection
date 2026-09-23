@@ -19,6 +19,8 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.signal import hilbert, oaconvolve, remez
 from scipy.stats import median_abs_deviation
 
+from ripple_detection._call_hints import explain_call_errors
+
 FloatArray = NDArray[np.floating]
 """A NumPy array of floats, the shape stated in each docstring."""
 
@@ -288,6 +290,7 @@ def segment_boolean_series(
     return [(index[start], index[stop - 1]) for start, stop in bounds]
 
 
+@explain_call_errors
 def filter_ripple_band(
     data: ArrayLike,
     sampling_frequency: float,
@@ -971,6 +974,7 @@ def _normalize(data: FloatArray, mask: BoolArray | None, method: str) -> FloatAr
     return np.asarray((data - center) / scale, dtype=float)
 
 
+@explain_call_errors
 def normalize_signal(
     data: ArrayLike,
     method: str = "zscore",
@@ -1078,6 +1082,15 @@ def normalize_signal(
        Psychology, 49(4), 764-766. doi:10.1016/j.jesp.2013.03.013
 
     """
+    given: object = method  # a caller without a type checker can pass anything
+    if not isinstance(given, str):
+        msg = (
+            f"method must be 'zscore' or 'median_mad', got a {type(method).__name__}. "
+            "normalize_signal no longer takes time (removed in 2.0); call "
+            "normalize_signal(data, method, normalization_mask), with a time range as "
+            "normalization_mask=(time >= start) & (time <= end)."
+        )
+        raise TypeError(msg)
     if method not in ("zscore", "median_mad"):
         msg = (
             f"Invalid normalization method: '{method}'. "

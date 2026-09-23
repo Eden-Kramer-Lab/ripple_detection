@@ -6,6 +6,7 @@ from numpy.typing import ArrayLike
 from scipy.ndimage import convolve1d, gaussian_filter1d
 from scipy.signal import butter, oaconvolve, sosfiltfilt
 
+from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import (
     BoolArray,
     FloatArray,
@@ -132,6 +133,7 @@ def _theta_envelope(
     return envelope
 
 
+@explain_call_errors
 def Carey_candidate_detector(
     time: ArrayLike,
     filtered_lfps: ArrayLike,

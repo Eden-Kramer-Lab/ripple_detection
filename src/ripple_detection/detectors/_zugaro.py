@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
 
+from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import (
     BoolArray,
     FloatArray,
@@ -136,6 +137,7 @@ def _two_threshold_events(
     return np.column_stack([time[events[:, 0]], time[events[:, 1]]]), time[peaks], clipped
 
 
+@explain_call_errors
 def Zugaro_ripple_detector(
     time: ArrayLike,
     filtered_lfps: ArrayLike,
