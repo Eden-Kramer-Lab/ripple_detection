@@ -546,8 +546,8 @@ Three cautions before treating this as a recipe:
 
 ### Getting Help
 
-- **Issues**: [GitHub Issues](https://github.com/Eden-Kramer-Lab/ripple_detection/issues)
-- **Discussions**: For questions about usage and parameter selection
+- **Issues**: [GitHub Issues](https://github.com/Eden-Kramer-Lab/ripple_detection/issues), for
+  bugs and for questions about usage and parameter selection
 - **Email**: [edeno@bu.edu](mailto:edeno@bu.edu)
 
 ## Documentation
@@ -812,6 +812,6 @@ This project is licensed under the MIT License - see the [LICENSE](https://githu
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/Eden-Kramer-Lab/ripple_detection/issues)
-- **Discussions**: For questions and discussions about usage
+- **Issues**: [GitHub Issues](https://github.com/Eden-Kramer-Lab/ripple_detection/issues), for
+  bugs and for questions about usage
 - **Email**: [edeno@bu.edu](mailto:edeno@bu.edu)
