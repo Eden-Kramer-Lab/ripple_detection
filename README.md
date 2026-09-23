@@ -38,6 +38,8 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
     for studies that require a ripple and a population burst together
   - `merge_close_events` / `exclude_close_events` - the two conventions for
     events separated by a short gap: join them, or keep the first and drop the rest
+  - `exclude_movement` / `exclude_movement_by_majority` - the two speed rules: immobile
+    at the event's first and last sample, or over most of its samples
 
 - **Simulation Tools**
   - Generate synthetic LFPs with embedded ripples

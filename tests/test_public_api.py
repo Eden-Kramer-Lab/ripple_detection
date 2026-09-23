@@ -42,8 +42,12 @@ HELPERS = [
     "get_multiunit_population_firing_rate",
     "load_literature_parameters",
     "exclude_close_events",
+    "exclude_movement",
+    "exclude_movement_by_majority",
     "merge_close_events",
     "require_overlap",
+    "segment_boolean_series",
+    "threshold_by_zscore",
     "minimum_sample_count",
     "sample_count_within",
     "simulate_LFP",
@@ -53,6 +57,9 @@ HELPERS = [
     "simulate_session",
     "SimulatedSession",
     "simulate_time",
+    "pink",
+    "white",
+    "brown",
     "__version__",
 ]
 

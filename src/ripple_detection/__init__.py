@@ -13,6 +13,8 @@ from ripple_detection.core import (
     NoiseThresholdDiagnostics,
     estimate_noise_threshold,
     exclude_close_events,
+    exclude_movement,
+    exclude_movement_by_majority,
     filter_ripple_band,
     gaussian_smooth,
     get_envelope,
@@ -25,6 +27,8 @@ from ripple_detection.core import (
     require_overlap,
     ripple_bandpass_filter,
     sample_count_within,
+    segment_boolean_series,
+    threshold_by_zscore,
 )
 from ripple_detection.detectors import (
     Carey_candidate_detector,
@@ -51,12 +55,15 @@ from ripple_detection.registry import (
 )
 from ripple_detection.simulate import (
     SimulatedSession,
+    brown,
+    pink,
     simulate_LFP,
     simulate_multichannel_LFP,
     simulate_multiunit,
     simulate_session,
     simulate_sharp_wave_ripple_pair,
     simulate_time,
+    white,
 )
 
 try:
@@ -84,8 +91,11 @@ __all__ = [
     "Yu_ripple_detector",
     "Zugaro_ripple_detector",
     "__version__",
+    "brown",
     "estimate_noise_threshold",
     "exclude_close_events",
+    "exclude_movement",
+    "exclude_movement_by_majority",
     "filter_ripple_band",
     "gaussian_smooth",
     "get_Kay_ripple_consensus_trace",
@@ -100,13 +110,17 @@ __all__ = [
     "noise_threshold_diagnostics",
     "normalize_signal",
     "normalize_signal_manually",
+    "pink",
     "require_overlap",
     "ripple_bandpass_filter",
     "sample_count_within",
+    "segment_boolean_series",
     "simulate_LFP",
     "simulate_multichannel_LFP",
     "simulate_multiunit",
     "simulate_session",
     "simulate_sharp_wave_ripple_pair",
     "simulate_time",
+    "threshold_by_zscore",
+    "white",
 ]
