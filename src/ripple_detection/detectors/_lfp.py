@@ -90,6 +90,12 @@ def get_Kay_ripple_consensus_trace(
     consensus_trace : ndarray, shape (n_time,)
         ``sqrt(gaussian_smooth(sum(envelope ** 2)))`` per sample.
 
+    Raises
+    ------
+    ValueError
+        If ``ripple_filtered_lfps`` is not 2-D, ``time`` is not one timestamp
+        per sample, or no sample is finite in every channel.
+
     References
     ----------
     .. [1] Kay, K., Sosa, M., Chung, J. E., Karlsson, M. P., Larkin, M. C., &
@@ -101,10 +107,26 @@ def get_Kay_ripple_consensus_trace(
     # Cast to float so integer input is not truncated and the squared envelope
     # cannot overflow before the square root.
     ripple_filtered_lfps = np.asarray(ripple_filtered_lfps, dtype=float)
+    _validate_lfp_dimensions(ripple_filtered_lfps)
+    time_array = _consensus_time(time, ripple_filtered_lfps.shape[0])
     is_valid = np.all(np.isfinite(ripple_filtered_lfps), axis=1)
-    time_array = None if time is None else np.asarray(time, dtype=float)
+    if not np.any(is_valid):
+        msg = "No sample has finite values in every channel."
+        raise ValueError(msg)
     blocks = _contiguous_valid_blocks(is_valid, time_array)
     return _kay_consensus(ripple_filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
+
+
+def _consensus_time(time: ArrayLike | None, n_time: int) -> FloatArray | None:
+    """The optional timestamps of a consensus trace as a float array of one
+    timestamp per sample, or None."""
+    if time is None:
+        return None
+    time_array = np.asarray(time, dtype=float)
+    if time_array.shape != (n_time,):
+        msg = f"time has shape {time_array.shape} but filtered_lfps has {n_time} samples."
+        raise ValueError(msg)
+    return time_array
 
 
 def _kay_consensus(
@@ -189,13 +211,7 @@ def get_Yu_ripple_consensus_trace(
     """
     ripple_filtered_lfps = np.asarray(ripple_filtered_lfps, dtype=float)
     _validate_lfp_dimensions(ripple_filtered_lfps)
-    n_time = ripple_filtered_lfps.shape[0]
-    if time is not None:
-        time = np.asarray(time, dtype=float)
-        if time.shape != (n_time,):
-            msg = f"time has shape {time.shape} but filtered_lfps has {n_time} samples."
-            raise ValueError(msg)
-
+    time_array = _consensus_time(time, ripple_filtered_lfps.shape[0])
     is_valid = np.all(np.isfinite(ripple_filtered_lfps), axis=1)
     if not np.any(is_valid):
         msg = "No sample has finite values in every channel."
@@ -203,7 +219,7 @@ def get_Yu_ripple_consensus_trace(
     return _yu_consensus(
         ripple_filtered_lfps,
         is_valid,
-        _contiguous_valid_blocks(is_valid, time),
+        _contiguous_valid_blocks(is_valid, time_array),
         sampling_frequency,
         smoothing_sigma,
         zscore_per_channel,

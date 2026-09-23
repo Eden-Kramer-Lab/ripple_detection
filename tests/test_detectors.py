@@ -4026,6 +4026,11 @@ class TestParameterRanges:
             ),
             (Carey_candidate_detector, {"state_merge_gap": np.inf}, "finite"),
             (Carey_candidate_detector, {"state_minimum_length": np.inf}, "finite"),
+            (
+                Long_sharp_wave_ripple_detector,
+                {"window_size": 0.0005},
+                "window_size.*shorter than one sample",
+            ),
             (Yu_ripple_detector, {"close_ripple_threshold": np.nan}, "close_ripple_threshold"),
             (Yu_ripple_detector, {"smoothing_sigma": -0.004}, "smoothing_sigma"),
             (multiunit_HSE_detector, {"close_event_threshold": -1.0}, "close_event_threshold"),
@@ -4211,9 +4216,28 @@ class TestRemainingErrorPaths:
             get_Kay_ripple_consensus_trace(with_nan, self.FS),
         )
 
-    def test_yu_consensus_of_all_missing_samples_raises(self):
+    @pytest.mark.parametrize(
+        "consensus", [get_Kay_ripple_consensus_trace, get_Yu_ripple_consensus_trace]
+    )
+    def test_consensus_of_all_missing_samples_raises(self, consensus):
         with pytest.raises(ValueError, match="No sample has finite values"):
-            get_Yu_ripple_consensus_trace(np.full((100, 2), np.nan), self.FS)
+            consensus(np.full((100, 2), np.nan), self.FS)
+
+    @pytest.mark.parametrize(
+        "consensus", [get_Kay_ripple_consensus_trace, get_Yu_ripple_consensus_trace]
+    )
+    def test_consensus_of_a_single_channel_says_to_reshape(self, consensus):
+        lfp = np.random.default_rng(0).standard_normal(3000)
+        with pytest.raises(ValueError, match=r"reshape\(-1, 1\)"):
+            consensus(lfp, self.FS)
+
+    @pytest.mark.parametrize(
+        "consensus", [get_Kay_ripple_consensus_trace, get_Yu_ripple_consensus_trace]
+    )
+    def test_consensus_with_time_of_the_wrong_length_raises(self, consensus):
+        lfps = np.random.default_rng(0).standard_normal((3000, 2))
+        with pytest.raises(ValueError, match="time has shape"):
+            consensus(lfps, self.FS, time=np.arange(2999) / self.FS)
 
     def test_yu_consensus_raises_for_a_channel_with_no_spread(self):
         lfps = np.random.default_rng(0).standard_normal((2000, 3))

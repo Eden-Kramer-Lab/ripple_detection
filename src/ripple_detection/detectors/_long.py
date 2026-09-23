@@ -310,6 +310,13 @@ def Long_sharp_wave_ripple_detector(
 
     # candidate feature pairs, one per non-overlapping window within a block
     window = int(np.floor(window_size * sampling_frequency))
+    if window < 1:
+        msg = (
+            f"window_size ({window_size} s) is shorter than one sample at "
+            f"{sampling_frequency} Hz ({1 / sampling_frequency:.6g} s); a candidate "
+            "window needs at least one sample. window_size is in seconds."
+        )
+        raise ValueError(msg)
     half_window = window // 2
     bound = int(local_window * sampling_frequency)
     feature_index_list: list[int] = []

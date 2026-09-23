@@ -288,6 +288,10 @@ raises on zero rows; that is hdmf's, not this package's.
 
 ### Fixed
 
+- `get_Kay_ripple_consensus_trace` raises a `ValueError` that says to reshape
+  for a one-dimensional input, and for an input with no finite sample, as
+  `get_Yu_ripple_consensus_trace` does; before, the first failed with NumPy's
+  `AxisError` and the second returned NaN throughout.
 - `simulate_LFP` adds each ripple over its own window instead of holding one
   full-length array per ripple. Ten minutes at 1500 Hz with 100 ripples
   peaked at 1.5 GB and now stays near the size of the output; the values are
@@ -339,6 +343,7 @@ raises on zero rows; that is hdmf's, not this package's.
     gives the value to pass), an infinite ceiling or gap (`None` is the way
     to have no ceiling; an infinite gap would keep one event, since every
     finite spacing falls below it), a
+    Long `window_size` shorter than one sample, a
     bounds threshold above the peak threshold (Zugaro, Carey, Long), a band
     that is reversed or reaches Nyquist (Long, Carey's theta), a
     non-integer channel, unit or window count, and a `minimum_active_units`
