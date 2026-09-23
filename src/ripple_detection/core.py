@@ -174,9 +174,9 @@ def _generator(seed: int | np.random.Generator | None) -> np.random.Generator:
     given: object = seed  # a caller without a type checker can pass anything
     if isinstance(given, np.random.RandomState):
         msg = (
-            "Pass a seed or a numpy.random.Generator, not a RandomState: since 2.0 every "
-            "random draw goes through numpy.random.default_rng, so a RandomState would "
-            "give a different stream than it did in 1.x."
+            "Pass a seed or a numpy.random.Generator, not a RandomState: every random "
+            "draw goes through numpy.random.default_rng, which would accept a RandomState "
+            "and silently draw a different stream from it."
         )
         raise TypeError(msg)
     return np.random.default_rng(seed)

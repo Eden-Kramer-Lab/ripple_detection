@@ -58,7 +58,8 @@ here is relative to 1.7.1.
 - The package root exports the helpers the detectors are built from, such as
   `minimum_sample_count` and `sample_count_within`; `__all__` is the public API.
 - Help for people and language models writing calls: a 1.x call fails with the
-  2.0 change and the call to write, a duration given in milliseconds raises
+  2.0 change and the call to write, a keyword another detector (or library)
+  uses for the same role names this one's, a duration given in milliseconds raises
   with the value to pass, every detector's docstring has a runnable example,
   and `llms.txt` maps the package.
 - `py.typed` and `CITATION.cff`.

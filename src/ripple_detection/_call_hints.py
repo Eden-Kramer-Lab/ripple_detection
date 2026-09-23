@@ -18,80 +18,43 @@ from typing import ParamSpec, TypeVar
 P = ParamSpec("P")
 R = TypeVar("R")
 
-REMOVED_ARGUMENTS: dict[str, tuple[str | None, str]] = {
-    "normalization_time_range": (
-        None,
-        (
-            "was removed in 2.0: a time range is a mask, "
-            "normalization_mask=(time >= start) & (time <= end)"
-        ),
+_TIME_RANGE_IS_A_MASK = (
+    "was removed in 2.0: a time range is a mask, "
+    "normalization_mask=(time >= start) & (time <= end)"
+)
+
+REMOVED_ARGUMENTS: dict[tuple[str, str], str] = {
+    **{
+        (function, "normalization_time_range"): _TIME_RANGE_IS_A_MASK
+        for function in (
+            "Kay_ripple_detector",
+            "Karlsson_ripple_detector",
+            "Roumis_ripple_detector",
+            "multiunit_HSE_detector",
+            "normalize_signal",
+        )
+    },
+    ("multiunit_HSE_detector", "use_speed_threshold_for_zscore"): (
+        "was removed in 2.0: pass normalization_mask=speed <= speed_threshold"
     ),
-    "use_speed_threshold_for_zscore": (
-        None,
-        "was removed in 2.0: pass normalization_mask=speed <= speed_threshold",
+    ("normalize_signal", "time"): (
+        "was removed in 2.0: call normalize_signal(data, method, normalization_mask), "
+        "with a time range as normalization_mask=(time >= start) & (time <= end)"
     ),
-    "state": (
-        "rng",
-        (
+    **{
+        (function, "state"): (
             "was renamed rng in 2.0, and takes a seed or a numpy.random.Generator "
             "rather than a RandomState"
-        ),
-    ),
-    "random_state": ("rng", "was renamed rng before 2.0 was released"),
-    **dict.fromkeys(
-        ("raw_lfps", "raw_lfp_pair"),
-        (
-            "raw_lfp",
-            (
-                "was split before 2.0 was released into raw_lfp, the pyramidal-layer "
-                "channel, and sharp_wave_lfp=, the stratum radiatum channel"
-            ),
-        ),
-    ),
-    "edge_threshold": ("low_threshold", "was renamed low_threshold before 2.0 was released"),
-    "peak_threshold": ("high_threshold", "was renamed high_threshold before 2.0 was released"),
-    "spike_kernel_sigma": (
-        "spike_smoothing_sigma",
-        "was renamed spike_smoothing_sigma before 2.0 was released",
-    ),
-    "baseline_sigma": (
-        "baseline_smoothing_sigma",
-        "was renamed baseline_smoothing_sigma before 2.0 was released",
-    ),
-    "state_minimum_length": (
-        "minimum_state_duration",
-        "was renamed minimum_state_duration before 2.0 was released",
-    ),
-    "participation_threshold": (
-        "minimum_participating_channels",
-        (
-            "was split before 2.0 was released into minimum_participating_channels, a "
-            "count, and "
-            "minimum_participating_fraction, a fraction of the channels in [0, 1]"
-        ),
-    ),
-    "manual_normalization": (
-        "channel_baselines",  # Shvartsman's alone; Kay has normalization_method too
-        (
-            "was removed before 2.0 was released: pass normalization_method='manual' with "
-            "channel_baselines and channel_deviations"
-        ),
-    ),
-    "elec_baselines": (
-        "channel_baselines",
-        "was renamed channel_baselines before 2.0 was released",
-    ),
-    "elec_deviations": (
-        "channel_deviations",
-        "was renamed channel_deviations before 2.0 was released",
-    ),
+        )
+        for function in ("pink", "white", "brown")
+    },
 }
-"""Keywords that 1.x, or the development versions before 2.0 (the Carey and
-Shvartsman names, Long's signal and the simulators' seed), accepted and 2.0
-does not: the parameter that replaces each, or None for one with no
-replacement, and what to pass instead. A note applies only to a function that
-has the replacement, so a keyword one function renamed is not explained that
-way on a function that never took it."""
+"""Keywords a 1.x release accepted and 2.0 does not, by the function that took
+them: what happened to each and what to pass instead. Checked against the
+signatures of every release from 1.0.0 to 1.7.1. Only names a release shipped
+belong here: a reader upgrades from a release, not from a development commit,
+so a name that changed between 1.7.1 and 2.0 gets no history (``SAME_ROLE``
+and the spelling match still point it at the parameter to use)."""
 
 POSITIONAL_ORDER_1X = {
     **dict.fromkeys(
@@ -161,11 +124,13 @@ SAME_ROLE = (
         "minimum_separation",
     ),
     ("smoothing_sigma", "ripple_smoothing_sigma", "smoothing_window"),
+    ("rng", "random_state", "seed", "state"),
 )
-"""Parameters that play one role under different names in different detectors:
-the detection threshold, the duration limits, the rule for close events, the
-smoothing width. A keyword from another detector is matched to this one's by
-role, not by spelling, which sent ``zscore_threshold`` to ``speed_threshold``."""
+"""Parameters that play one role under different names in different detectors,
+or in other libraries: the detection threshold, the duration limits, the rule
+for close events, the smoothing width, the seed. A keyword from elsewhere is
+matched to this function's by role, not by spelling, which sent
+``zscore_threshold`` to ``speed_threshold``."""
 
 
 def explain_call_errors(function: Callable[P, R]) -> Callable[P, R]:
@@ -209,11 +174,9 @@ def _explain(
     for key in kwargs:
         if key in parameters:
             continue
-        if key in REMOVED_ARGUMENTS:
-            replacement, note = REMOVED_ARGUMENTS[key]
-            if replacement is None or replacement in parameters:
-                notes.append(f"{key} {note}.")
-                continue
+        if (name, key) in REMOVED_ARGUMENTS:
+            notes.append(f"{key} {REMOVED_ARGUMENTS[name, key]}.")
+            continue
         roles = [group for group in SAME_ROLE if key in group]
         same_role = [
             parameter for group in roles for parameter in group if parameter in parameters
@@ -251,9 +214,9 @@ def _explain(
                 f"in 1.x's order the extra values were {named}. Pass each by name."
             )
             notes.extend(
-                f"{parameter} {REMOVED_ARGUMENTS[parameter][1]}."
+                f"{parameter} {REMOVED_ARGUMENTS[name, parameter]}."
                 for parameter in order[: len(extra)]
-                if parameter in REMOVED_ARGUMENTS
+                if (name, parameter) in REMOVED_ARGUMENTS
             )
     missing = [
         parameter.name

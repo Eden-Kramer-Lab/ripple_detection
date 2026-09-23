@@ -2102,7 +2102,8 @@ class TestLongSharpWaveRippleDetector:
             )
 
     def test_a_two_channel_array_says_where_the_second_channel_goes(self, time, stationary):
-        """The shape the pre-release signature took."""
+        """Two columns, as the original DetectSWR takes its channels: the
+        message says where the second one goes."""
         lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
         with pytest.raises(ValueError, match=r"raw_lfp must be one channel.*sharp_wave_lfp="):
             Long_sharp_wave_ripple_detector(

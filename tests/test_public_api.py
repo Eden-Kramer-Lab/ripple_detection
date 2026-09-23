@@ -231,14 +231,22 @@ class TestCallsWrittenFor1x:
         with pytest.raises(TypeError, match="renamed rng"):
             pink(100, state=np.random.RandomState(0))
 
-    def test_the_pre_release_seed_keyword(self, inputs):
+    def test_a_seed_under_another_librarys_name(self, inputs):
+        """random_state (scikit-learn) and seed are the same role as rng; no 1.x
+        release took them, so the message suggests rng without a history."""
         time, _, speed = inputs
-        with pytest.raises(TypeError, match="random_state was renamed rng"):
+        with pytest.raises(
+            TypeError, match=r"takes no random_state; did you mean rng\?"
+        ) as info:
             ripple_detection.simulate_session(time, [1.0], random_state=0)
-        with pytest.raises(TypeError, match="random_state was renamed rng"):
+        assert "renamed" not in str(info.value)
+        with pytest.raises(TypeError, match=r"takes no seed; did you mean rng\?"):
             ripple_detection.Long_sharp_wave_ripple_detector(
-                time, np.zeros(len(time)), speed, 1500, sharp_wave_lfp=speed, random_state=0
+                time, np.zeros(len(time)), speed, 1500, sharp_wave_lfp=speed, seed=0
             )
+        with pytest.raises(TypeError, match=r"takes no state; did you mean rng\?") as info:
+            ripple_detection.simulate_LFP(time, [1.0], state=0)
+        assert "renamed" not in str(info.value), "simulate_LFP never took state"
 
     def test_every_seed_is_called_rng(self):
         """One name for a seed or Generator across the package."""
@@ -273,51 +281,62 @@ class TestCallsWrittenFor1x:
             )
         }
 
-    def test_a_renamed_keyword_names_its_own_replacement(self, inputs):
-        """The Carey and Shvartsman tunables 1.x named differently."""
-        time, lfps, speed = inputs
-        multiunit = np.zeros((len(time), 3))
-        with pytest.raises(TypeError, match=r"edge_threshold was renamed low_threshold"):
-            ripple_detection.Carey_candidate_detector(
-                time, lfps, multiunit, speed, 1500, edge_threshold=1.0
+    @pytest.mark.parametrize(
+        ("detector", "keyword"),
+        [
+            ("Carey_candidate_detector", "edge_threshold"),
+            ("Carey_candidate_detector", "spike_kernel_sigma"),
+            ("Shvartsman_ripple_detector", "participation_threshold"),
+            ("Shvartsman_ripple_detector", "elec_baselines"),
+            ("Long_sharp_wave_ripple_detector", "raw_lfp_pair"),
+        ],
+    )
+    def test_a_name_no_release_took_is_not_given_a_history(self, detector, keyword):
+        """Names from development commits between 1.7.1 and 2.0: a reader
+        upgrades from a release, so no message says these were renamed."""
+        with pytest.raises(TypeError, match=rf"takes no {keyword}") as info:
+            ripple_detection.get_detector(detector).detector(**{keyword: 1.0})
+        assert "renamed" not in str(info.value)
+        assert "before 2.0" not in str(info.value)
+
+    def test_every_hint_is_for_a_keyword_a_release_took_and_2_does_not(self):
+        """The table holds only 1.x names, each on a function that still exists,
+        is wrapped to explain a bad call, and no longer takes it."""
+        import inspect
+
+        from ripple_detection import simulate
+        from ripple_detection._call_hints import REMOVED_ARGUMENTS
+
+        for (function_name, keyword), note in REMOVED_ARGUMENTS.items():
+            function = getattr(ripple_detection, function_name, None) or getattr(
+                simulate, function_name
             )
-        with pytest.raises(TypeError, match=r"peak_threshold was renamed high_threshold"):
-            ripple_detection.Carey_candidate_detector(
-                time, lfps, multiunit, speed, 1500, peak_threshold=3.0
-            )
-        for old, new in (
-            ("spike_kernel_sigma", "spike_smoothing_sigma"),
-            ("baseline_sigma", "baseline_smoothing_sigma"),
-            ("state_minimum_length", "minimum_state_duration"),
-        ):
-            with pytest.raises(TypeError, match=rf"{old} was renamed {new}"):
-                ripple_detection.Carey_candidate_detector(
-                    time, lfps, multiunit, speed, 1500, **{old: 0.05}
+            assert hasattr(function, "__wrapped__"), function_name
+            assert keyword not in inspect.signature(function).parameters
+            assert "in 2.0" in note
+            assert "before 2.0" not in note
+        assert set(REMOVED_ARGUMENTS) == {
+            *(
+                (function, "normalization_time_range")
+                for function in (
+                    "Kay_ripple_detector",
+                    "Karlsson_ripple_detector",
+                    "Roumis_ripple_detector",
+                    "multiunit_HSE_detector",
+                    "normalize_signal",
                 )
-        with pytest.raises(
-            TypeError, match=r"participation_threshold was split.*minimum_participating"
-        ):
-            ripple_detection.Shvartsman_ripple_detector(
-                *inputs, 1500, participation_threshold=2
-            )
-        with pytest.raises(TypeError, match=r"pass normalization_method='manual'"):
-            ripple_detection.Shvartsman_ripple_detector(
-                *inputs, 1500, manual_normalization=True
-            )
-        for old in ("raw_lfps", "raw_lfp_pair"):
-            with pytest.raises(
-                TypeError, match=rf"{old} was split before 2.0.*raw_lfp.*sharp_wave_lfp"
-            ):
-                ripple_detection.Long_sharp_wave_ripple_detector(
-                    time=time,
-                    speed=speed,
-                    sampling_frequency=1500,
-                    **{old: np.zeros((len(time), 2))},
-                )
-        with pytest.raises(TypeError, match=r"elec_baselines was renamed channel_baselines"):
-            ripple_detection.Shvartsman_ripple_detector(
-                *inputs, 1500, elec_baselines=[0.0, 0.0]
-            )
+            ),
+            ("multiunit_HSE_detector", "use_speed_threshold_for_zscore"),
+            ("normalize_signal", "time"),
+            ("pink", "state"),
+            ("white", "state"),
+            ("brown", "state"),
+        }, "the names 1.0.0 to 1.7.1 took that 2.0 does not"
+
+    def test_normalize_signal_with_time_by_keyword(self, inputs):
+        time, lfps, _ = inputs
+        with pytest.raises(TypeError, match=r"time was removed in 2\.0"):
+            ripple_detection.normalize_signal(lfps[:, 0], time=time)
 
     def test_a_hint_applies_only_where_the_replacement_exists(self, inputs):
         """`state` was renamed `rng`; a detector that draws no random numbers
@@ -331,6 +350,11 @@ class TestCallsWrittenFor1x:
         with pytest.raises(TypeError, match="takes no manual_normalization") as info:
             ripple_detection.Kay_ripple_detector(*inputs, 1500, manual_normalization=True)
         assert "'manual'" not in str(info.value), "Kay has no manual method"
+        with pytest.raises(TypeError, match="takes no use_speed_threshold_for_zscore") as info:
+            ripple_detection.Kay_ripple_detector(
+                *inputs, 1500, use_speed_threshold_for_zscore=True
+            )
+        assert "removed" not in str(info.value), "only the HSE detector had the flag"
 
     def test_a_wrapped_detector_keeps_its_signature_and_name(self):
         import inspect

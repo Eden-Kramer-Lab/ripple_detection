@@ -87,7 +87,7 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
    - The survey of detection parameters from 57 replay papers, shipped as `data/literature_detection_parameters.csv`
    - The README's "Published parameter values" table is computed from it
 
-Two private modules serve callers rather than detection: [_call_hints.py](src/ripple_detection/_call_hints.py) wraps the public functions so a call written for 1.x fails with the 2.0 change behind it (add a removed or renamed argument to `REMOVED_ARGUMENTS` there), and [_descriptions.py](src/ripple_detection/_descriptions.py) holds what `describe()` reports. Warnings go through `core._warn_at_caller`, which attributes them to the first frame outside the package, so no function passes a `stacklevel`.
+Two private modules serve callers rather than detection: [_call_hints.py](src/ripple_detection/_call_hints.py) wraps the public functions so a call written for 1.x fails with the 2.0 change behind it (add a removed or renamed argument to `REMOVED_ARGUMENTS` there, keyed by function, and only for a name a release shipped: users upgrade from a release, so a name that changed between releases gets no hint; `SAME_ROLE` maps other detectors' and libraries' names for a parameter by what it does), and [_descriptions.py](src/ripple_detection/_descriptions.py) holds what `describe()` reports. Warnings go through `core._warn_at_caller`, which attributes them to the first frame outside the package, so no function passes a `stacklevel`.
 
 ### Detection Pipeline Architecture
 
