@@ -55,10 +55,15 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
 pip install ripple_detection
 ```
 
-### From Conda
+### Into a conda environment
+
+Releases are published to PyPI only; the `edeno` conda channel stops at 1.5.1.
+Install with pip inside the environment:
 
 ```bash
-conda install -c edeno ripple_detection
+conda create -n ripple_detection python=3.12
+conda activate ripple_detection
+pip install ripple_detection
 ```
 
 ### From Source
