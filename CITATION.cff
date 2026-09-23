@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, cite it with the metadata below, and cite the
+  paper or code the detector you used comes from; the README's Citation table
+  lists one per detector.
+type: software
+title: ripple_detection
+abstract: >-
+  Detection of sharp-wave ripple events and multiunit population bursts from
+  local field potentials and spikes, with nine published and laboratory
+  detection algorithms behind one interface.
+authors:
+  - family-names: Denovellis
+    given-names: Eric
+    email: edeno@bu.edu
+repository-code: https://github.com/Eden-Kramer-Lab/ripple_detection
+url: https://github.com/Eden-Kramer-Lab/ripple_detection
+license: MIT
+version: 2.0.0
+date-released: "2026-09-22"
+keywords:
+  - neuroscience
+  - hippocampus
+  - sharp-wave ripple
+  - local field potential
+  - replay

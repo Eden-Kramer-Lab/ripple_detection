@@ -2,10 +2,20 @@
 
 import numpy as np
 import pytest
+from _synthetic import (
+    _synthetic_joint_inputs,
+    _synthetic_ripple_band,
+    _synthetic_two_channel_lfp,
+)
 
 from ripple_detection import (
+    Carey_candidate_detector,
     Karlsson_ripple_detector,
     Kay_ripple_detector,
+    Long_sharp_wave_ripple_detector,
+    Shvartsman_ripple_detector,
+    Yu_ripple_detector,
+    Zugaro_ripple_detector,
     filter_ripple_band,
 )
 from ripple_detection.detectors import (
@@ -27,7 +37,7 @@ def test_lfp_data():
         noise_amplitude=1.0,
         ripple_amplitude=2.0,
         noise_type="white",
-        random_state=42,
+        rng=42,
     )
 
     return time, lfp[:, np.newaxis]
@@ -48,7 +58,7 @@ def test_multichannel_lfp_data():
             noise_amplitude=1.0,
             ripple_amplitude=2.0,
             noise_type="white",
-            random_state=channel,
+            rng=channel,
         )
         lfps.append(lfp)
 
@@ -91,7 +101,7 @@ class TestKayDetectorSnapshots:
     def test_kay_single_channel_output(self, snapshot, test_lfp_data):
         """Test Kay detector output structure and values remain consistent."""
         time, lfp = test_lfp_data
-        filtered_lfp = filter_ripple_band(lfp)
+        filtered_lfp = filter_ripple_band(lfp, 1500)
         speed = np.ones(len(time)) * 2.0
 
         ripples = Kay_ripple_detector(
@@ -121,7 +131,7 @@ class TestKayDetectorSnapshots:
     def test_kay_multichannel_output(self, snapshot, test_multichannel_lfp_data):
         """Test Kay detector with multiple channels."""
         time, lfps = test_multichannel_lfp_data
-        filtered_lfps = filter_ripple_band(lfps)
+        filtered_lfps = filter_ripple_band(lfps, 1500)
         speed = np.ones(len(time)) * 2.0
 
         ripples = Kay_ripple_detector(
@@ -151,7 +161,7 @@ class TestKarlssonDetectorSnapshots:
     def test_karlsson_single_channel_output(self, snapshot, test_lfp_data):
         """Test Karlsson detector output consistency."""
         time, lfp = test_lfp_data
-        filtered_lfp = filter_ripple_band(lfp)
+        filtered_lfp = filter_ripple_band(lfp, 1500)
         speed = np.ones(len(time)) * 2.0
 
         ripples = Karlsson_ripple_detector(
@@ -174,7 +184,7 @@ class TestKarlssonDetectorSnapshots:
     def test_karlsson_multichannel_merging(self, snapshot, test_multichannel_lfp_data):
         """Test Karlsson detector merges overlapping events from different channels."""
         time, lfps = test_multichannel_lfp_data
-        filtered_lfps = filter_ripple_band(lfps)
+        filtered_lfps = filter_ripple_band(lfps, 1500)
         speed = np.ones(len(time)) * 2.0
 
         ripples = Karlsson_ripple_detector(
@@ -193,7 +203,9 @@ class TestKarlssonDetectorSnapshots:
             durations = [round(float(d), 4) for d in ripples["duration"].tolist()]
             snapshot.assert_match(str(durations), "merged_durations")
             # the z-score statistics come from the strongest channel at each sample
-            stats = ripples[["max_thresh", "mean_zscore", "max_zscore", "min_zscore"]]
+            stats = ripples[
+                ["max_sustained_zscore", "mean_zscore", "max_zscore", "min_zscore"]
+            ]
             snapshot.assert_match(
                 str(stats.round(6).to_dict("records")), "merged_zscore_stats"
             )
@@ -205,7 +217,7 @@ class TestRoumisDetectorSnapshots:
     def test_roumis_output(self, snapshot, test_multichannel_lfp_data):
         """Test Roumis detector output consistency."""
         time, lfps = test_multichannel_lfp_data
-        filtered_lfps = filter_ripple_band(lfps)
+        filtered_lfps = filter_ripple_band(lfps, 1500)
         speed = np.ones(len(time)) * 2.0
 
         ripples = Roumis_ripple_detector(
@@ -265,7 +277,7 @@ class TestDetectorComparison:
     def test_detector_comparison(self, snapshot, test_multichannel_lfp_data):
         """Compare outputs of different detectors on same data."""
         time, lfps = test_multichannel_lfp_data
-        filtered_lfps = filter_ripple_band(lfps)
+        filtered_lfps = filter_ripple_band(lfps, 1500)
         speed = np.ones(len(time)) * 2.0
 
         # Run all three ripple detectors
@@ -298,7 +310,7 @@ class TestRegressionPrevention:
 
         # Pure noise, no ripples
         lfp = rng.standard_normal((len(time), 1)) * 0.5
-        filtered_lfp = filter_ripple_band(lfp)
+        filtered_lfp = filter_ripple_band(lfp, 1500)
         speed = np.ones(len(time)) * 2.0
 
         ripples = Kay_ripple_detector(
@@ -323,10 +335,10 @@ class TestRegressionPrevention:
             ripple_times=[1.0],
             noise_amplitude=0.5,
             ripple_amplitude=5.0,  # Very strong
-            random_state=42,
+            rng=42,
         )[:, np.newaxis]
 
-        filtered_lfp = filter_ripple_band(lfp)
+        filtered_lfp = filter_ripple_band(lfp, 1500)
         speed = np.ones(len(time)) * 2.0
 
         ripples = Kay_ripple_detector(
@@ -346,3 +358,59 @@ class TestRegressionPrevention:
             assert any(abs(t - 1.0) < 0.1 for t in detected_times), (
                 "Detected ripple not near expected time"
             )
+
+
+def _pin(snapshot, events, prefix):
+    """Pin the count, the columns, and the first event rounded to 6 places."""
+    snapshot.assert_match(str(len(events)), f"{prefix}_n_detections")
+    snapshot.assert_match(str(sorted(events.columns.tolist())), f"{prefix}_columns")
+    if len(events):
+        first = {
+            k: (round(float(v), 6) if not isinstance(v, tuple) else v)
+            for k, v in events.iloc[0].to_dict().items()
+        }
+        snapshot.assert_match(str(first), f"{prefix}_first_detection")
+
+
+class TestNewDetectorSnapshots:
+    """Regression pins for the detectors added in 2.0: change detectors, not
+    correctness oracles. Inputs come from tests/_synthetic.py at 1000 Hz."""
+
+    FS = 1000
+
+    def test_shvartsman(self, snapshot):
+        n = 20_000
+        time = np.arange(n) / self.FS
+        lfps = _synthetic_ripple_band(n, self.FS, [(5000, 5060, 20.0), (12000, 12060, 20.0)])
+        events = Shvartsman_ripple_detector(time, lfps, np.full(n, 2.0), self.FS)
+        _pin(snapshot, events, "shvartsman")
+
+    def test_yu(self, snapshot):
+        n = 20_000
+        time = np.arange(n) / self.FS
+        lfps = _synthetic_ripple_band(n, self.FS, [(5000, 5060, 20.0), (12000, 12060, 20.0)])
+        events = Yu_ripple_detector(time, lfps, np.full(n, 2.0), self.FS)
+        _pin(snapshot, events, "yu")
+
+    def test_zugaro(self, snapshot):
+        n = 20_000
+        time = np.arange(n) / self.FS
+        lfps = _synthetic_ripple_band(n, self.FS, [(5000, 5060, 20.0), (12000, 12060, 20.0)])
+        events = Zugaro_ripple_detector(time, lfps, np.full(n, 2.0), self.FS)
+        _pin(snapshot, events, "zugaro")
+
+    def test_long(self, snapshot):
+        n = 40_000
+        time = np.arange(n) / self.FS
+        lfp = _synthetic_two_channel_lfp(n, self.FS, (7000, 11000, 15500, 19000, 23800, 28000))
+        events = Long_sharp_wave_ripple_detector(
+            time, lfp[:, 0], np.full(n, 2.0), self.FS, sharp_wave_lfp=lfp[:, 1], rng=0
+        )
+        _pin(snapshot, events, "long")
+
+    def test_carey(self, snapshot):
+        n = 20_000
+        time = np.arange(n) / self.FS
+        lfps, multiunit = _synthetic_joint_inputs(n, self.FS, (3000, 7000, 11000, 15000))
+        events = Carey_candidate_detector(time, lfps, multiunit, np.full(n, 2.0), self.FS)
+        _pin(snapshot, events, "carey")

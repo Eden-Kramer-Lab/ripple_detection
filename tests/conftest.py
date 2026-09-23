@@ -1,9 +1,17 @@
 """Shared fixtures for ripple detection tests."""
 
+import os
+
 import numpy as np
 import pytest
+from hypothesis import settings
 
 from ripple_detection.simulate import simulate_LFP, simulate_time
+
+# Hypothesis draws fresh examples on every run. In CI, derandomize so a
+# failure there reproduces here; locally keep the search random.
+settings.register_profile("ci", derandomize=True)
+settings.load_profile("ci" if os.environ.get("CI") else "default")
 
 
 @pytest.fixture
@@ -32,6 +40,12 @@ def stationary_speed(time_3s):
     return np.ones_like(time_3s) * 2.0
 
 
+# The LFP fixtures size their ripples with ripple_snr: a peak six times the SD of
+# the ripple-band background, on the simulator's default pink noise. Before 2.0
+# the default was brown noise, whose ripple-band power is so small that a
+# ripple of any amplitude was hundreds of times the background.
+
+
 @pytest.fixture
 def single_lfp_with_ripples(time_3s):
     """Generate single LFP channel with ripples at 1.1s and 2.1s."""
@@ -39,8 +53,8 @@ def single_lfp_with_ripples(time_3s):
         time_3s,
         ripple_times=[1.1, 2.1],
         noise_amplitude=1.2,
-        ripple_amplitude=1.5,
-        random_state=0,
+        ripple_snr=6.0,
+        rng=0,
     )
     return lfp[:, np.newaxis]
 
@@ -52,15 +66,15 @@ def dual_lfp_with_ripples(time_3s):
         time_3s,
         ripple_times=[1.1, 2.1],
         noise_amplitude=1.2,
-        ripple_amplitude=1.5,
-        random_state=1,
+        ripple_snr=6.0,
+        rng=1,
     )
     lfp2 = simulate_LFP(
         time_3s,
         ripple_times=[0.5, 2.5],
         noise_amplitude=1.2,
-        ripple_amplitude=1.5,
-        random_state=2,
+        ripple_snr=6.0,
+        rng=2,
     )
     return np.column_stack([lfp1, lfp2])
 
@@ -72,15 +86,15 @@ def dual_lfp_with_cooccur_ripples(time_3s):
         time_3s,
         ripple_times=[1.1, 2.1],
         noise_amplitude=1.2,
-        ripple_amplitude=1.5,
-        random_state=3,
+        ripple_snr=6.0,
+        rng=3,
     )
     lfp2 = simulate_LFP(
         time_3s,
         ripple_times=[1.1, 2.1],
         noise_amplitude=1.2,
-        ripple_amplitude=1.5,
-        random_state=4,
+        ripple_snr=6.0,
+        rng=4,
     )
     return np.column_stack([lfp1, lfp2])
 
@@ -92,15 +106,15 @@ def dual_lfp_close_ripples(time_3s):
         time_3s,
         ripple_times=[1.100, 2.100],
         noise_amplitude=1.2,
-        ripple_amplitude=1.5,
-        random_state=5,
+        ripple_snr=6.0,
+        rng=5,
     )
     lfp2 = simulate_LFP(
         time_3s,
         ripple_times=[1.150, 2.150],
         noise_amplitude=1.2,
-        ripple_amplitude=1.5,
-        random_state=6,
+        ripple_snr=6.0,
+        rng=6,
     )
     return np.column_stack([lfp1, lfp2])
 
@@ -112,15 +126,15 @@ def dual_lfp_with_close_cooccur_ripples(time_3s):
         time_3s,
         ripple_times=[1.1, 1.3],
         noise_amplitude=1.2,
-        ripple_amplitude=1.5,
-        random_state=7,
+        ripple_snr=6.0,
+        rng=7,
     )
     lfp2 = simulate_LFP(
         time_3s,
         ripple_times=[1.1, 1.3],
         noise_amplitude=1.2,
-        ripple_amplitude=1.5,
-        random_state=8,
+        ripple_snr=6.0,
+        rng=8,
     )
     return np.column_stack([lfp1, lfp2])
 
@@ -134,8 +148,8 @@ def multi_lfp_sparse_ripples(time_3s):
             time_3s,
             ripple_times=[1.1, 2.1],
             noise_amplitude=1.2,
-            ripple_amplitude=1.5,
-            random_state=9,
+            ripple_snr=6.0,
+            rng=9,
         )
     )
     lfps.append(
@@ -143,21 +157,21 @@ def multi_lfp_sparse_ripples(time_3s):
             time_3s,
             ripple_times=[0.5, 2.5],
             noise_amplitude=1.2,
-            ripple_amplitude=1.5,
-            random_state=10,
+            ripple_snr=6.0,
+            rng=10,
         )
     )
     # Add 11 channels without ripples
-    for i in range(11):
-        lfps.append(
-            simulate_LFP(
-                time_3s,
-                ripple_times=[],
-                noise_amplitude=1.2,
-                ripple_amplitude=1.5,
-                random_state=100 + i,
-            )
+    lfps.extend(
+        simulate_LFP(
+            time_3s,
+            ripple_times=[],
+            noise_amplitude=1.2,
+            ripple_amplitude=1.5,
+            rng=100 + i,
         )
+        for i in range(11)
+    )
     return np.column_stack(lfps)
 
 
@@ -170,8 +184,8 @@ def multi_lfp_sparse_cooccur_ripples(time_3s):
             time_3s,
             ripple_times=[1.1, 2.1],
             noise_amplitude=1.2,
-            ripple_amplitude=1.5,
-            random_state=11,
+            ripple_snr=6.0,
+            rng=11,
         )
     )
     lfps.append(
@@ -179,21 +193,20 @@ def multi_lfp_sparse_cooccur_ripples(time_3s):
             time_3s,
             ripple_times=[1.1, 2.1],
             noise_amplitude=1.2,
-            ripple_amplitude=1.5,
-            random_state=12,
+            ripple_snr=6.0,
+            rng=12,
         )
     )
     # Add 11 channels without ripples
-    for i in range(11):
-        lfps.append(
-            simulate_LFP(
-                time_3s,
-                ripple_times=[],
-                noise_amplitude=1.2,
-                ripple_amplitude=1.5,
-                random_state=200 + i,
-            )
+    lfps.extend(
+        simulate_LFP(
+            time_3s,
+            ripple_times=[],
+            noise_amplitude=1.2,
+            rng=200 + i,
         )
+        for i in range(11)
+    )
     return np.column_stack(lfps)
 
 
@@ -205,14 +218,14 @@ def lfp_no_ripples(time_3s):
         ripple_times=[],
         noise_amplitude=1.0,
         ripple_amplitude=1.5,
-        random_state=13,
+        rng=13,
     )
     lfp2 = simulate_LFP(
         time_3s,
         ripple_times=[],
         noise_amplitude=1.0,
         ripple_amplitude=1.5,
-        random_state=14,
+        rng=14,
     )
     return np.column_stack([lfp1, lfp2])
 
@@ -226,7 +239,7 @@ def lfp_short_duration_ripples(time_3s):
         noise_amplitude=1.2,
         ripple_amplitude=1.5,
         ripple_duration=0.001,  # Too short to detect
-        random_state=15,
+        rng=15,
     )
     return lfp[:, np.newaxis]
 
@@ -240,7 +253,7 @@ def dual_lfp_with_cooccur_short_ripples(time_3s):
         noise_amplitude=1.2,
         ripple_amplitude=1.5,
         ripple_duration=0.001,
-        random_state=16,
+        rng=16,
     )
     lfp2 = simulate_LFP(
         time_3s,
@@ -248,7 +261,7 @@ def dual_lfp_with_cooccur_short_ripples(time_3s):
         noise_amplitude=1.2,
         ripple_amplitude=1.5,
         ripple_duration=0.001,
-        random_state=17,
+        rng=17,
     )
     return np.column_stack([lfp1, lfp2])
 
@@ -264,8 +277,7 @@ def speed_with_movement(time_3s):
 @pytest.fixture
 def speed_with_all_movement(time_3s):
     """Generate speed data where animal is always moving."""
-    speed = np.ones_like(time_3s) * 5  # Above typical threshold of 4
-    return speed
+    return np.ones_like(time_3s) * 5  # Above typical threshold of 4
 
 
 @pytest.fixture
@@ -286,3 +298,19 @@ def multiunit_data(time_3s):
         multiunit[time_mask, :] = rng.random((time_mask.sum(), n_units)) < hse_rate
 
     return multiunit.astype(float)
+
+
+# Class-aware fixtures for the detector tests. A test class states FS and
+# N_TIME once; these build the time axis and a stationary speed from them.
+
+
+@pytest.fixture
+def time(request):
+    """``np.arange(N_TIME) / FS`` for the requesting class's constants."""
+    return np.arange(request.cls.N_TIME) / request.cls.FS
+
+
+@pytest.fixture
+def stationary(request):
+    """A speed of 2 cm/s at every sample, below every default speed threshold."""
+    return np.full(request.cls.N_TIME, 2.0)

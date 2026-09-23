@@ -5,16 +5,15 @@ import warnings
 import numpy as np
 import pandas as pd
 import pytest
-from scipy.signal import freqz
-from scipy.stats import zscore
+from scipy.signal import filtfilt, freqz
+from scipy.stats import median_abs_deviation, zscore
 
 from ripple_detection.core import (
-    _extend_segment,
-    _find_containing_interval,
     _get_ripplefilter_kernel,
     estimate_noise_threshold,
     exclude_close_events,
     exclude_movement,
+    exclude_movement_by_majority,
     extend_threshold_to_mean,
     filter_ripple_band,
     gaussian_smooth,
@@ -23,7 +22,9 @@ from ripple_detection.core import (
     merge_close_events,
     merge_overlapping_ranges,
     merge_overlapping_ranges_track_participation,
+    minimum_sample_count,
     nearest_sample_index,
+    noise_threshold_diagnostics,
     normalize_signal,
     normalize_signal_manually,
     require_overlap,
@@ -35,7 +36,7 @@ from ripple_detection.core import (
 
 
 @pytest.mark.parametrize(
-    "series, expected_segments",
+    ("series", "expected_segments"),
     [
         (
             pd.Series([False, True, True, True, False], index=np.linspace(0, 0.020, 5)),
@@ -110,37 +111,40 @@ class TestSegmentDurationCountsSamples:
         assert len(segment_boolean_series(series, 0.015)) == 0
 
 
-@pytest.mark.parametrize(
-    "interval_candidates, target_interval, expected_interval",
-    [
-        ([(1, 2), (5, 7)], (6, 7), (5, 7)),
-        ([(1, 2), (5, 7)], (1, 2), (1, 2)),
-        ([(1, 2), (5, 7), (20, 30)], (5, 6), (5, 7)),
-        ([(1, 2), (5, 7), (20, 30)], (24, 26), (20, 30)),
-    ],
-)
-def test_find_containing_interval(interval_candidates, target_interval, expected_interval):
-    test_interval = _find_containing_interval(interval_candidates, target_interval)
-    assert np.all(test_interval == expected_interval)
+def _reference_threshold_to_mean(values, n_min, threshold):
+    """Slow reference: walk out from each long enough run above threshold to
+    the samples above zero, one event per containing run."""
+    events = set()
+    start = 0
+    while start < len(values):
+        if values[start] < threshold:
+            start += 1
+            continue
+        stop = start
+        while stop < len(values) and values[stop] >= threshold:
+            stop += 1
+        if stop - start >= n_min:
+            left, right = start, stop - 1
+            while left > 0 and values[left - 1] >= 0:
+                left -= 1
+            while right < len(values) - 1 and values[right + 1] >= 0:
+                right += 1
+            events.add((left, right))
+        start = stop
+    return sorted(events)
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_threshold_by_zscore_matches_a_slow_reference(seed):
+    rng = np.random.default_rng(seed)
+    values = np.convolve(rng.standard_normal(3000), np.ones(15) / 4, mode="same")
+    time = np.arange(3000) / 1000.0
+    expected = [(time[a], time[b]) for a, b in _reference_threshold_to_mean(values, 15, 1.5)]
+    assert threshold_by_zscore(values, time, 0.015, 1.5) == expected
 
 
 @pytest.mark.parametrize(
-    "interval_candidates, target_intervals, expected_intervals",
-    [
-        ([(1, 2), (5, 7)], [(6, 7)], [(5, 7)]),
-        ([(1, 2), (5, 7)], [(1, 2)], [(1, 2)]),
-        ([(1, 2), (5, 7), (20, 30)], [(5, 6)], [(5, 7)]),
-        ([(1, 2), (5, 7), (20, 30)], [(24, 26), (6, 7)], [(20, 30), (5, 7)]),
-        ([(1, 2), (5, 7), (20, 30)], [(24, 26), (27, 28)], [(20, 30)]),
-    ],
-)
-def test__extend_segment(interval_candidates, target_intervals, expected_intervals):
-    test_intervals = _extend_segment(target_intervals, interval_candidates)
-    assert np.all(test_intervals == expected_intervals)
-
-
-@pytest.mark.parametrize(
-    "ranges, expected_ranges",
+    ("ranges", "expected_ranges"),
     [
         ([(5, 7), (3, 5), (-1, 3)], [(-1, 7)]),
         ([(5, 6), (3, 4), (1, 2)], [(1, 2), (3, 4), (5, 6)]),
@@ -152,7 +156,7 @@ def test_merge_overlapping_ranges(ranges, expected_ranges):
 
 
 @pytest.mark.parametrize(
-    "channel_ranges, expected",
+    ("channel_ranges", "expected"),
     [
         # A-B and B-C overlap preserves all three participants.
         (
@@ -208,7 +212,8 @@ class TestRippleBandpassFilter:
         """The tap count is odd and grows with the sampling rate."""
         low_rate, _ = ripple_bandpass_filter(1500)
         high_rate, filter_denominator = ripple_bandpass_filter(30000)
-        assert len(low_rate) % 2 == 1 and len(high_rate) % 2 == 1
+        assert len(low_rate) % 2 == 1
+        assert len(high_rate) % 2 == 1
         assert len(low_rate) >= 101
         assert len(high_rate) > len(low_rate)
         assert filter_denominator == 1.0
@@ -247,7 +252,7 @@ class TestFilterRippleBand:
         lfp2 = simulate_LFP(time, [1.2], noise_amplitude=1.2, ripple_amplitude=1.5)
         multi_channel = np.column_stack([lfp1, lfp2])
 
-        filtered = filter_ripple_band(multi_channel)
+        filtered = filter_ripple_band(multi_channel, 1500)
 
         assert filtered.shape == multi_channel.shape
         assert not np.all(np.isnan(filtered)), "Filtered signal should contain valid data"
@@ -288,13 +293,16 @@ class TestFilterRippleBandSamplingRate:
         assert in_gain > 0.5  # passband
         assert 10 * np.log10(out_gain / in_gain) < -30  # at least 30 dB down
 
-    def test_1500_hz_matches_the_shipped_kernel(self):
+    def test_1500_hz_uses_the_shipped_kernel(self):
         _, x = self._tones(1500)
+        kernel, _ = _get_ripplefilter_kernel()
+        # FFT convolution equals filtfilt to rounding; another kernel would
+        # differ by order one
         np.testing.assert_allclose(
             filter_ripple_band(x, sampling_frequency=1500),
-            filter_ripple_band(x),
+            filtfilt(kernel, 1, x),
             rtol=0,
-            atol=0,
+            atol=1e-12,
         )
 
     def test_rate_too_low_for_the_band_raises(self):
@@ -304,10 +312,30 @@ class TestFilterRippleBandSamplingRate:
 
     def test_nan_rows_are_preserved(self):
         _, x = self._tones(2000)
-        x[100:150] = np.nan
+        x[1000:1050] = np.nan
         y = filter_ripple_band(x, sampling_frequency=2000)
-        assert np.all(np.isnan(y[100:150]))
-        assert np.all(np.isfinite(np.delete(y, np.arange(100, 150))))
+        assert np.all(np.isnan(y[1000:1050]))
+        assert np.all(np.isfinite(np.delete(y, np.arange(1000, 1050))))
+
+    def test_each_side_of_a_gap_is_filtered_on_its_own(self):
+        """A DC step across the gap must not leak a transient into either side."""
+        rng = np.random.default_rng(0)
+        x = rng.normal(size=6000)
+        x[:2000] += 50.0  # a large offset on one side only
+        x[2000:2500] = np.nan
+        y = filter_ripple_band(x, sampling_frequency=1500)
+        np.testing.assert_array_equal(y[:2000], filter_ripple_band(x[:2000], 1500))
+        np.testing.assert_array_equal(y[2500:], filter_ripple_band(x[2500:], 1500))
+
+    def test_a_run_too_short_to_filter_is_nan_with_a_warning(self):
+        x = np.random.default_rng(0).normal(size=6000)
+        x[2000:2010] = np.nan
+        x[2100:2110] = np.nan  # leaves a 90-sample run between the gaps
+        with pytest.warns(UserWarning, match="shorter than"):
+            y = filter_ripple_band(x, sampling_frequency=1500)
+        assert np.all(np.isnan(y[2000:2110]))
+        assert np.all(np.isfinite(y[:2000]))
+        assert np.all(np.isfinite(y[2110:]))
 
 
 class TestGetEnvelope:
@@ -383,10 +411,9 @@ class TestGaussianSmooth:
 
         smoothed = gaussian_smooth(signal, sigma, sampling_frequency)
 
-        # Smoothing a constant signal should preserve most values
-        # Edge effects may cause some variation
-        middle = slice(100, -100)
-        assert np.allclose(smoothed[middle], signal[middle], atol=0.1)
+        # the kernel is renormalized where it runs past the data, so the ends
+        # keep the level too instead of being pulled toward zero
+        np.testing.assert_allclose(smoothed, signal, rtol=1e-12)
 
     def test_smooths_step_function(self):
         """Test smoothing of step function."""
@@ -520,16 +547,9 @@ class TestCoreErrorHandling:
     """Test error handling for core functions."""
 
     def test_filter_ripple_band_empty_array(self):
-        """Test filtering with empty array."""
-        # Empty array will raise ValueError, which is expected
-        empty_array = np.array([])
-        try:
-            filtered = filter_ripple_band(empty_array)
-            # If it succeeds, check shape
-            assert filtered.shape == empty_array.shape
-        except ValueError:
-            # Expected for empty input
-            pass
+        """An empty array has no run long enough to filter."""
+        with pytest.raises(ValueError, match="too short"):
+            filter_ripple_band(np.array([]), 1500)
 
     def test_get_envelope_empty_array(self):
         """Test envelope extraction with empty array."""
@@ -646,21 +666,6 @@ class TestNormalizeSignal:
         assert len(normalized) == 100
         assert np.abs(np.median(normalized[mask])) < 0.5
 
-    def test_normalization_time_range(self):
-        """Test normalization with time range."""
-        rng = np.random.default_rng(42)
-        time = np.arange(100) / 100.0  # 0 to 0.99 seconds
-        data = rng.standard_normal(100) + 5.0
-
-        # Normalize using first 50 time points (0 to 0.49 seconds)
-        normalized = normalize_signal(
-            data, time=time, method="zscore", normalization_time_range=(0.0, 0.49)
-        )
-
-        assert len(normalized) == 100
-        # First half should have mean ~0
-        assert np.abs(np.mean(normalized[:50])) < 0.5
-
     def test_multichannel_zscore(self):
         """Test z-score normalization with multi-channel data."""
         rng = np.random.default_rng(42)
@@ -720,49 +725,38 @@ class TestNormalizeSignal:
         # Other values should be normalized
         assert not np.isnan(normalized[0])
 
-    def test_constant_data_zscore(self):
-        """Test z-score normalization with constant data."""
-        data = np.ones(100)
-        normalized = normalize_signal(data, method="zscore")
+    @pytest.mark.parametrize("method", ["zscore", "median_mad"])
+    def test_constant_data_raises(self, method):
+        """A constant trace has no scale, so it cannot be normalized."""
+        with pytest.raises(ValueError, match="zero or undefined"):
+            normalize_signal(np.ones(100), method=method)
 
-        # scipy.stats.zscore returns NaN for constant data (std=0)
-        # This is expected behavior - constant data has undefined z-score
-        assert np.all(np.isnan(normalized))
+    @pytest.mark.parametrize("method", ["zscore", "median_mad"])
+    def test_constant_channel_raises_and_names_it(self, method):
+        """One dead channel among healthy ones raises and says which."""
+        rng = np.random.default_rng(0)
+        data = rng.standard_normal((200, 3))
+        data[:, 1] = 0.0
+        with pytest.raises(ValueError, match=r"channel\(s\) \[1\]"):
+            normalize_signal(data, method=method)
 
-    def test_constant_data_median_mad(self):
-        """Test median/MAD normalization with constant data."""
-        data = np.ones(100)
-        normalized = normalize_signal(data, method="median_mad")
+    def test_two_dimensional_mask_raises(self):
+        """A (n_time, n_channels) mask would pool every channel's statistics."""
+        data = np.random.default_rng(0).normal(size=(100, 3)) * [1.0, 10.0, 100.0]
+        with pytest.raises(ValueError, match="1-D"):
+            normalize_signal(data, normalization_mask=np.ones((100, 3), dtype=bool))
 
-        # Should return zeros (MAD is 0, avoid division by zero)
-        assert np.allclose(normalized, 0.0)
+    def test_non_boolean_mask_raises(self):
+        """A forgotten comparison (speed instead of speed <= 4) is caught."""
+        data = np.arange(10.0)
+        with pytest.raises(ValueError, match="must be boolean"):
+            normalize_signal(data, normalization_mask=np.arange(10.0))
 
     def test_invalid_method(self):
         """Test that invalid method raises ValueError."""
         data = np.array([1.0, 2.0, 3.0])
         with pytest.raises(ValueError, match="Invalid normalization method"):
             normalize_signal(data, method="invalid")
-
-    def test_mask_and_time_range_both_specified(self):
-        """Test that using both mask and time_range raises error."""
-        data = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        time = np.arange(5) / 5.0
-        mask = np.array([True, True, False, False, False])
-
-        with pytest.raises(ValueError, match="Cannot specify both"):
-            normalize_signal(
-                data,
-                time=time,
-                normalization_mask=mask,
-                normalization_time_range=(0.0, 0.5),
-            )
-
-    def test_time_range_without_time(self):
-        """Test that time_range without time raises error."""
-        data = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-
-        with pytest.raises(ValueError, match="'time' parameter is required"):
-            normalize_signal(data, normalization_time_range=(0.0, 2.0))
 
     def test_mask_length_mismatch(self):
         """Test that mask length mismatch raises error."""
@@ -771,14 +765,6 @@ class TestNormalizeSignal:
 
         with pytest.raises(ValueError, match="normalization_mask length"):
             normalize_signal(data, normalization_mask=mask)
-
-    def test_empty_time_range(self):
-        """Test that empty time range raises error."""
-        data = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
-        time = np.array([0.0, 0.1, 0.2, 0.3, 0.4])
-
-        with pytest.raises(ValueError, match="does not contain any data points"):
-            normalize_signal(data, time=time, normalization_time_range=(1.0, 2.0))
 
     def test_comparison_with_scipy_zscore(self):
         """Test that default zscore matches scipy.stats.zscore."""
@@ -818,7 +804,7 @@ class TestNormalizeSignal:
         lfp[300:] += 3.0  # Shift after baseline period
 
         # Normalize using baseline (0 to 0.2 seconds)
-        normalized = normalize_signal(lfp, time=time, normalization_time_range=(0.0, 0.2))
+        normalized = normalize_signal(lfp, normalization_mask=time <= 0.2)
 
         # Baseline period should have mean ~0
         baseline_mask = time < 0.2
@@ -849,33 +835,33 @@ class TestNormalizeSignalManually:
             normalize_signal_manually(data, 1.0, 2.0), (data - 1.0) / 2.0
         )
 
-    def test_1d_degenerate_raises(self):
-        """1-D input whose single channel is degenerate is all-degenerate, so it
-        raises instead of silently returning a zero (signal-free) trace."""
-        data = np.arange(5.0)
-        for baseline, deviation in [(0.0, 0.0), (0.0, np.nan), (np.nan, 2.0)]:
-            with pytest.raises(ValueError, match="All channels"):
-                normalize_signal_manually(data, baseline, deviation)
+    @pytest.mark.parametrize(
+        ("baseline", "deviation"), [(0.0, 0.0), (0.0, np.nan), (np.nan, 2.0)]
+    )
+    def test_1d_degenerate_raises(self, baseline, deviation):
+        with pytest.raises(ValueError, match="no scale"):
+            normalize_signal_manually(np.arange(5.0), baseline, deviation)
 
-    def test_multichannel_partial_degenerate_zeros_and_warns(self):
-        """A degenerate channel alongside a healthy one is zeroed with a warning;
-        the healthy channel is normalized normally."""
-        data = np.tile(np.arange(5.0)[:, None], (1, 2))
-        baselines = np.array([1.0, np.nan])  # channel 1 degenerate
-        deviations = np.array([2.0, 1.0])
-        with pytest.warns(UserWarning, match="Zeroing channel"):
-            out = normalize_signal_manually(data, baselines, deviations)
-        np.testing.assert_allclose(out[:, 0], (data[:, 0] - 1.0) / 2.0)
-        assert np.all(out[:, 1] == 0)
-
-    def test_multichannel_all_degenerate_raises(self):
-        """If every channel is degenerate the result would be uniformly zero, so
-        a ValueError is raised rather than returning a signal-free array."""
+    def test_degenerate_channel_raises_and_names_it(self):
+        """A dead channel is not silently zeroed; the caller must drop it."""
         data = np.tile(np.arange(5.0)[:, None], (1, 3))
-        baselines = np.array([0.0, np.nan, 1.0])
-        deviations = np.array([0.0, 1.0, np.nan])  # all three degenerate
-        with pytest.raises(ValueError, match="All channels"):
+        baselines = np.array([1.0, np.nan, 0.0])
+        deviations = np.array([2.0, 1.0, 0.0])
+        with pytest.raises(ValueError, match=r"channel\(s\) \[1, 2\]"):
             normalize_signal_manually(data, baselines, deviations)
+
+    def test_multichannel(self):
+        data = np.tile(np.arange(5.0)[:, None], (1, 2))
+        out = normalize_signal_manually(data, [1.0, 2.0], [2.0, 4.0])
+        np.testing.assert_allclose(out[:, 0], (data[:, 0] - 1.0) / 2.0)
+        np.testing.assert_allclose(out[:, 1], (data[:, 1] - 2.0) / 4.0)
+
+    def test_wrong_channel_count_raises(self):
+        data = np.zeros((5, 4))
+        with pytest.raises(ValueError, match="one entry per channel"):
+            normalize_signal_manually(data, [0.0], [1.0])
+        with pytest.raises(ValueError, match="same shape"):
+            normalize_signal_manually(data, [0.0, 0.0, 0.0, 0.0], [1.0, 1.0])
 
 
 # ---------------------------------------------------------------------------
@@ -968,35 +954,54 @@ class TestEstimateNoiseThreshold:
     def test_diagnostics_expose_grid_mode_and_counts(self):
         rng = np.random.default_rng(2)
         values = rng.normal(-1.0, 0.5, 100_000)
-        threshold, diag = estimate_noise_threshold(values, return_diagnostics=True)
+        diag = noise_threshold_diagnostics(values)
+        threshold = diag.threshold
         _, expected_mode = _matlab_reference_threshold(values)
-        assert diag["mode"] == pytest.approx(expected_mode, abs=1e-9)
-        assert diag["histogram_edges"][0] == pytest.approx(-10.0)
-        assert diag["histogram_edges"][-1] == pytest.approx(50.0)
-        assert len(diag["histogram_edges"]) == 6001
-        assert diag["counts"].sum() == 100_000
-        assert diag["out_of_grid_fraction"] == 0.0
-        assert diag["threshold"] == threshold
-        assert diag["mean"] == pytest.approx(values.mean())
-        assert diag["min"] == pytest.approx(values.min())
+        assert diag.mode == pytest.approx(expected_mode, abs=1e-9)
+        assert diag.histogram_edges[0] == pytest.approx(-10.0)
+        assert diag.histogram_edges[-1] == pytest.approx(50.0)
+        assert len(diag.histogram_edges) == 6001
+        assert diag.counts.sum() == 100_000
+        assert diag.out_of_grid_fraction == 0.0
+        assert diag.threshold == threshold
+        assert diag.mean == pytest.approx(values.mean())
+        assert diag.min == pytest.approx(values.min())
         # flank ratio: left-flank width over mode-to-mean distance; > 1 is the
         # regime in which the mirrored distribution can reach past the mean
         expected_ratio = (
-            (diag["mode"] - values.min()) / (values.mean() - diag["mode"])
-            if values.mean() > diag["mode"]
+            (diag.mode - values.min()) / (values.mean() - diag.mode)
+            if values.mean() > diag.mode
             else np.inf
         )
-        assert diag["flank_ratio"] == pytest.approx(expected_ratio)
+        assert diag.flank_ratio == pytest.approx(expected_ratio)
+
+    def test_the_default_grid_cannot_be_changed_through_the_diagnostics(self):
+        diag = noise_threshold_diagnostics(np.random.default_rng(2).normal(-1.0, 0.5, 100_000))
+        with pytest.raises(ValueError, match="read-only"):
+            diag.histogram_edges[:] -= 1.0
+
+    def test_diagnostics_compare_by_identity_and_hash(self):
+        """The array fields have no single truth value, so a generated
+        ``__eq__`` would raise; two runs on the same values are two objects."""
+        values = np.random.default_rng(2).normal(-1.0, 0.5, 100_000)
+        first, second = (
+            noise_threshold_diagnostics(values),
+            noise_threshold_diagnostics(values),
+        )
+        assert first == first
+        assert first != second
+        assert len({first, second}) == 2
 
     def test_flank_ratio_is_infinite_when_mean_is_at_or_below_the_mode(self):
         # left-skewed sample: the mode lies above the mean, so the mirrored
         # distribution trivially reaches past the mean
         rng = np.random.default_rng(12)
         values = -rng.gamma(2.0, 0.4, 200_000) - 0.2
-        threshold, diag = estimate_noise_threshold(values, return_diagnostics=True)
-        assert diag["mean"] <= diag["mode"]
-        assert diag["flank_ratio"] == np.inf
-        assert threshold > diag["mean"]
+        diag = noise_threshold_diagnostics(values)
+        threshold = diag.threshold
+        assert diag.mean <= diag.mode
+        assert diag.flank_ratio == np.inf
+        assert threshold > diag.mean
 
     def test_reflection_equals_original_formula_when_mode_nonpositive(self):
         rng = np.random.default_rng(3)
@@ -1009,7 +1014,7 @@ class TestEstimateNoiseThreshold:
     def test_positive_mode_warns_and_uses_intended_reflection(self):
         rng = np.random.default_rng(4)
         mean, sd = 0.5, 0.2
-        values = rng.normal(mean, sd, 2_000_000)
+        values = rng.normal(mean, sd, 500_000)
         with pytest.warns(UserWarning, match="mode"):
             threshold = estimate_noise_threshold(values)
         expected = mean + sd * 3.719016
@@ -1030,10 +1035,9 @@ class TestEstimateNoiseThreshold:
         rng = np.random.default_rng(6)
         values = rng.normal(-1.0, 0.5, 500_000)
         edges = np.round(np.arange(-5, 5 + 0.005, 0.01), 6)
-        threshold, diag = estimate_noise_threshold(
-            values, histogram_edges=edges, return_diagnostics=True
-        )
-        assert len(diag["histogram_edges"]) == len(edges)
+        diag = noise_threshold_diagnostics(values, histogram_edges=edges)
+        threshold = diag.threshold
+        assert len(diag.histogram_edges) == len(edges)
         assert abs(threshold - (-1.0 + 0.5 * 3.719016)) <= 0.03
 
     def test_out_of_grid_fraction_above_ceiling_raises(self):
@@ -1047,8 +1051,8 @@ class TestEstimateNoiseThreshold:
         rng = np.random.default_rng(8)
         values = rng.normal(-1.0, 0.5, 100_000)
         values[:10] = np.nan
-        _, diag = estimate_noise_threshold(values, return_diagnostics=True)
-        assert diag["out_of_grid_fraction"] == pytest.approx(10 / 100_000)
+        diag = noise_threshold_diagnostics(values)
+        assert diag.out_of_grid_fraction == pytest.approx(10 / 100_000)
 
     def test_mode_at_grid_edge_raises(self):
         rng = np.random.default_rng(9)
@@ -1154,14 +1158,38 @@ class TestRippleBandpassFilterAcrossRates:
 class TestFilterRippleBandLengthGuard:
     def test_shortest_accepted_signal_filters_without_a_scipy_error(self):
         kernel, _ = _get_ripplefilter_kernel()
-        shortest = 3 * len(kernel) + 1
-        filtered = filter_ripple_band(np.random.default_rng(0).normal(size=shortest))
+        shortest = len(kernel)
+        filtered = filter_ripple_band(np.random.default_rng(0).normal(size=shortest), 1500)
         assert np.isfinite(filtered).all()
 
     def test_one_sample_shorter_raises_this_package_s_error(self):
         kernel, _ = _get_ripplefilter_kernel()
         with pytest.raises(ValueError, match="samples"):
-            filter_ripple_band(np.random.default_rng(0).normal(size=3 * len(kernel)))
+            filter_ripple_band(np.random.default_rng(0).normal(size=len(kernel) - 1), 1500)
+
+
+class TestFilterRippleBandPadLength:
+    def test_the_fir_pad_length_gives_filtfilt_s_default_output_exactly(self):
+        """A run only needs as many samples as the kernel has taps because a
+        pad of taps - 1 samples gives bit-identical output to the default pad
+        of 3 x taps; if that ever stopped holding, so would the shorter floor."""
+        from scipy.signal import filtfilt
+
+        x = np.random.default_rng(0).normal(size=5000)
+        for kernel in (_get_ripplefilter_kernel()[0], ripple_bandpass_filter(1000.0)[0]):
+            default_pad = filtfilt(kernel, 1.0, x)
+            fir_pad = filtfilt(kernel, 1.0, x, padlen=len(kernel) - 1)
+            assert np.array_equal(default_pad, fir_pad)
+
+    def test_a_run_as_long_as_the_kernel_is_filtered_and_one_shorter_is_nan(self):
+        kernel, _ = _get_ripplefilter_kernel()
+        x = np.random.default_rng(1).normal(size=3 * len(kernel))
+        x[len(kernel)] = np.nan  # a 318-sample run, a NaN, then a 317-sample run
+        x[2 * len(kernel) :] = np.nan
+        with pytest.warns(UserWarning, match="shorter than the 318 samples"):
+            filtered = filter_ripple_band(x, 1500)
+        assert np.isfinite(filtered[: len(kernel)]).all()
+        assert np.isnan(filtered[len(kernel) + 1 : 2 * len(kernel)]).all()
 
 
 class TestExcludeCloseEventsChaining:
@@ -1171,11 +1199,16 @@ class TestExcludeCloseEventsChaining:
         events = np.array([[0.0, 0.1], [0.5, 0.6], [1.2, 1.3]])
         np.testing.assert_allclose(exclude_close_events(events, 1.0), [[0.0, 0.1], [1.2, 1.3]])
 
-    def test_indices_track_the_retained_events(self):
+    def test_it_returns_the_events_alone(self):
+        """Its signature is 1.x's; the detectors track indices privately."""
+        import inspect
+
+        assert list(inspect.signature(exclude_close_events).parameters) == [
+            "candidate_event_times",
+            "close_event_threshold",
+        ]
         events = np.array([[0.0, 0.1], [0.5, 0.6], [1.2, 1.3]])
-        kept, inds = exclude_close_events(events, 1.0, included_ripple_inds=[10, 11, 12])
-        assert len(kept) == 2
-        np.testing.assert_array_equal(np.asarray(inds), [10, 12])
+        assert isinstance(exclude_close_events(events, 1.0), np.ndarray)
 
 
 class TestCoreInputConversion:
@@ -1219,7 +1252,9 @@ class TestSegmentBooleanSeriesMissingValues:
 class TestNearestSampleIndex:
     def test_returns_the_closest_sample_in_query_order(self):
         time = np.arange(0.0, 1.0, 0.1)
-        np.testing.assert_array_equal(nearest_sample_index(time, [0.52, 0.0, 0.98]), [5, 0, 9])
+        index = nearest_sample_index(time, [0.52, 0.0, 0.98])
+        np.testing.assert_array_equal(index, [5, 0, 9])
+        assert index.dtype.kind == "i", "indices, as the annotation says"
 
     def test_empty_time_raises(self):
         with pytest.raises(ValueError, match="time is empty"):
@@ -1361,11 +1396,6 @@ class TestCustomFrequencyBand:
         assert wide.std() > 0.5
         assert default.std() < 0.1
 
-    def test_band_needs_a_sampling_frequency(self):
-        """The shipped 1500 Hz kernel cannot be redesigned."""
-        with pytest.raises(ValueError, match="sampling_frequency"):
-            filter_ripple_band(np.zeros(4000), band=(80.0, 250.0))
-
     def test_band_at_1500_hz_bypasses_the_shipped_kernel(self):
         """A custom band is designed even at the shipped kernel's rate."""
         signal = np.sin(2 * np.pi * 100.0 * np.arange(6000) / 1500.0)
@@ -1480,7 +1510,11 @@ class TestRequireOverlap:
     def test_accepts_and_returns_dataframes(self):
         """Detector output goes straight in and comes back with every column."""
         events = pd.DataFrame(
-            {"start_time": [0.0, 1.0], "end_time": [0.1, 1.1], "max_thresh": [3.0, 4.0]}
+            {
+                "start_time": [0.0, 1.0],
+                "end_time": [0.1, 1.1],
+                "max_sustained_zscore": [3.0, 4.0],
+            }
         )
         reference = pd.DataFrame({"start_time": [1.05], "end_time": [1.5]})
 
@@ -1488,7 +1522,7 @@ class TestRequireOverlap:
 
         assert isinstance(kept, pd.DataFrame)
         assert list(kept.index) == [1]
-        assert list(kept.max_thresh) == [4.0]
+        assert list(kept.max_sustained_zscore) == [4.0]
 
     def test_empty_reference_keeps_nothing(self):
         events = np.array([(0.0, 0.1)])
@@ -1599,18 +1633,30 @@ class TestHelperBoundaries:
 
 def test_merge_close_events_rejects_a_flat_array_of_the_wrong_length():
     """A 1-D input has to be pairs of bounds."""
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match=r"shape \(n_events, 2\)"):
         merge_close_events(np.array([0.0, 1.0, 2.0]), 0.05)
 
 
-def test_transition_width_raises_where_the_shipped_kernel_is_used():
-    """A silently ignored keyword would give the caller the wrong filter."""
+def test_the_default_band_given_explicitly_is_the_shipped_kernel():
+    """band=(150, 250) at 1500 Hz is the default band, so it gets the kernel
+    the default gets, not a different design that differs by up to 0.8 SD."""
     signal = np.random.default_rng(0).normal(size=4000)
 
-    with pytest.raises(ValueError, match="transition_width"):
-        filter_ripple_band(signal, 1500.0, transition_width=10.0)
-    with pytest.raises(ValueError, match="transition_width"):
-        filter_ripple_band(signal, transition_width=10.0)
+    explicit = filter_ripple_band(signal, 1500.0, band=(150.0, 250.0))
+
+    assert np.array_equal(explicit, filter_ripple_band(signal, 1500.0))
+
+
+def test_a_transition_width_at_1500_hz_designs_a_filter_with_that_width():
+    """The shipped kernel is a fixed design; asking for a width means asking
+    for a designed filter, the same one any other rate would get."""
+    signal = np.random.default_rng(0).normal(size=4000)
+
+    designed = filter_ripple_band(signal, 1500.0, transition_width=25.0)
+    kernel, _ = ripple_bandpass_filter(1500.0, transition_width=25.0)
+
+    assert not np.array_equal(designed, filter_ripple_band(signal, 1500.0))
+    assert np.allclose(designed, filtfilt(kernel, 1.0, signal, padlen=len(kernel) - 1))
 
 
 def test_transition_width_applies_without_a_band_at_other_rates():
@@ -1621,3 +1667,236 @@ def test_transition_width_applies_without_a_band_at_other_rates():
     )
 
     assert not np.allclose(default, narrow)
+
+
+class TestThresholdInclusivity:
+    """Docstrings say "at or above"; these pin it at exact equality."""
+
+    def test_a_run_exactly_at_the_threshold_qualifies(self):
+        fs = 1000
+        time = np.arange(1000) / fs
+        n_min = minimum_sample_count(time, 0.015)
+        z = np.full(1000, -1.0)
+        z[100 : 100 + n_min] = 2.0  # exactly the threshold, exactly the minimum run
+        assert threshold_by_zscore(z, time, 0.015, 2.0) == [(time[100], time[100 + n_min - 1])]
+        z[100 + n_min - 1] = 1.999
+        assert threshold_by_zscore(z, time, 0.015, 2.0) == []
+
+
+class TestEndpointSpeedRule:
+    def test_speed_equal_to_the_threshold_is_immobile(self):
+        time = np.arange(100) / 1000.0
+        speed = np.full(100, 4.0)
+        kept = exclude_movement(np.array([[time[10], time[20]]]), speed, time, 4.0)
+        assert len(kept) == 1
+
+    def test_movement_at_the_end_sample_alone_excludes(self):
+        time = np.arange(100) / 1000.0
+        speed = np.full(100, 1.0)
+        speed[20:] = 10.0
+        kept = exclude_movement(np.array([[time[10], time[20]]]), speed, time, 4.0)
+        assert kept.shape == (0, 2)
+
+    def test_exactly_half_the_samples_immobile_is_kept_by_the_majority_rule(self):
+        time = np.arange(100) / 1000.0
+        speed = np.full(100, 1.0)
+        speed[15:20] = 10.0  # 5 of the 10 samples in [10, 19]
+        kept = exclude_movement_by_majority(np.array([[time[10], time[19]]]), speed, time, 4.0)
+        assert len(kept) == 1
+        speed[14] = 10.0
+        kept = exclude_movement_by_majority(np.array([[time[10], time[19]]]), speed, time, 4.0)
+        assert kept.shape == (0, 2)
+
+    def test_the_majority_is_of_the_samples_whose_speed_is_known(self):
+        time = np.arange(100) / 1000.0
+        event = np.array([[time[10], time[19]]])
+        speed = np.full(100, 1.0)
+        speed[10:14] = np.nan
+        speed[14:17] = 10.0  # 3 of the 6 known samples moving
+        kept = exclude_movement_by_majority(event, speed, time, 4.0, majority_threshold=0.5)
+        assert len(kept) == 1
+        kept = exclude_movement_by_majority(event, speed, time, 4.0, majority_threshold=0.6)
+        assert len(kept) == 0
+
+    def test_three_of_ten_meets_a_threshold_of_three_tenths(self):
+        time = np.arange(100) / 1000.0
+        speed = np.full(100, 10.0)
+        speed[10:13] = 1.0
+        kept = exclude_movement_by_majority(
+            np.array([[time[10], time[19]]]), speed, time, 4.0, majority_threshold=0.3
+        )
+        assert len(kept) == 1
+
+    def test_no_known_speed_fails_both_rules_unless_the_threshold_is_infinite(self):
+        time = np.arange(100) / 1000.0
+        event = np.array([[time[10], time[19]]])
+        speed = np.full(100, np.nan)
+        assert len(exclude_movement_by_majority(event, speed, time, 4.0)) == 0
+        assert len(exclude_movement(event, speed, time, 4.0)) == 0
+        assert len(exclude_movement_by_majority(event, speed, time, np.inf)) == 1
+        assert len(exclude_movement(event, speed, time, np.inf)) == 1
+
+
+class TestHelperErrorPaths:
+    def test_a_threshold_run_leaving_the_mean_run_raises(self):
+        time = np.arange(100) / 1000.0
+        is_above_mean = np.zeros(100, dtype=bool)
+        is_above_mean[10:30] = True
+        is_above_threshold = np.zeros(100, dtype=bool)
+        is_above_threshold[20:50] = True
+        with pytest.raises(ValueError, match="not inside a run above the mean"):
+            extend_threshold_to_mean(is_above_mean, is_above_threshold, time, 0.01)
+
+    def test_threshold_by_zscore_rejects_a_negative_threshold(self):
+        with pytest.raises(ValueError, match="must be non-negative"):
+            threshold_by_zscore(np.zeros(100), np.arange(100) / 1000.0, 0.015, -1.0)
+
+    def test_majority_rule_raises_for_an_event_outside_the_recording(self):
+        time = np.arange(100) / 1000.0
+        with pytest.raises(ValueError, match="No speed samples fall within"):
+            exclude_movement_by_majority(np.array([[1.0, 1.1]]), np.zeros(100), time, 4.0)
+
+    def test_nearest_sample_of_a_single_timestamp_is_it(self):
+        np.testing.assert_array_equal(nearest_sample_index([2.0], [0.0, 5.0]), [0, 0])
+
+
+class TestFFTFiltfilt:
+    """filter_ripple_band convolves by FFT; it must equal scipy's direct
+    filtfilt to rounding, at the minimum run length too."""
+
+    @pytest.mark.parametrize(
+        ("sampling_frequency", "n_extra", "n_channels"),
+        [(1500, 0, 1), (1500, 5000, 3), (1000, 1, 2), (30_000, 20_000, 2)],
+    )
+    def test_matches_scipy_filtfilt(self, sampling_frequency, n_extra, n_channels):
+        from scipy.signal import filtfilt
+
+        if sampling_frequency == 1500:
+            kernel, _ = _get_ripplefilter_kernel()
+        else:
+            kernel, _ = ripple_bandpass_filter(sampling_frequency)
+        n_time = len(kernel) + n_extra
+        data = np.random.default_rng(0).standard_normal((n_time, n_channels))
+        expected = filtfilt(kernel, 1.0, data, axis=0, padlen=len(kernel) - 1)
+        np.testing.assert_allclose(
+            filter_ripple_band(data, sampling_frequency=sampling_frequency),
+            expected,
+            rtol=0,
+            atol=1e-12,
+        )
+
+    def test_the_cached_kernels_cannot_be_changed_by_a_caller(self):
+        kernel, _ = ripple_bandpass_filter(2000)
+        kernel[:] = 0.0
+        assert np.any(ripple_bandpass_filter(2000)[0] != 0.0)
+        shipped, _ = _get_ripplefilter_kernel()
+        shipped[:] = 0.0
+        assert np.any(_get_ripplefilter_kernel()[0] != 0.0)
+
+
+class TestCloseEventGap:
+    @pytest.mark.parametrize("gap", [-1.0, np.nan])
+    def test_exclude_close_events_rejects_a_negative_or_nan_gap(self, gap):
+        with pytest.raises(ValueError, match="close_event_threshold"):
+            exclude_close_events(np.array([[0.0, 0.1], [0.2, 0.3]]), gap)
+
+
+class TestMinimumSampleCountUsesTheMedianStep:
+    def test_a_hole_in_the_timestamps_does_not_shrink_the_count(self):
+        fs = 1500
+        time = np.arange(fs * 10) / fs
+        time = np.concatenate([time[: fs * 3], time[fs * 4 :]])  # a 1 s hole
+        assert minimum_sample_count(time, 0.015) == 23
+
+    def test_mostly_repeated_timestamps_raise(self):
+        time = np.repeat(np.arange(100) / 1000.0, 3)
+        with pytest.raises(ValueError, match="median timestamp step"):
+            minimum_sample_count(time, 0.015)
+
+
+class TestMedianMadWithAMask:
+    def test_matches_a_hand_computation_on_the_masked_samples(self):
+        rng = np.random.default_rng(0)
+        data = rng.normal(size=(500, 2))
+        mask = np.zeros(500, dtype=bool)
+        mask[:200] = True
+        out = normalize_signal(data, method="median_mad", normalization_mask=mask)
+        median = np.median(data[:200], axis=0)
+        mad = median_abs_deviation(data[:200], axis=0, scale="normal")
+        np.testing.assert_allclose(out, (data - median) / mad)
+
+
+class TestExtendThresholdToMeanWithNoContainingRun:
+    def test_raises_a_value_error_not_an_index_error(self):
+        time = np.arange(100) / 1000.0
+        is_above_threshold = np.zeros(100, dtype=bool)
+        is_above_threshold[10:60] = True
+        with pytest.raises(ValueError, match="No candidate interval"):
+            extend_threshold_to_mean(np.zeros(100, dtype=bool), is_above_threshold, time, 0.01)
+
+
+class TestEventHelpersAcceptADetectorDataFrame:
+    """The README says merge and exclude apply to any inventory afterwards, so
+    a detector's DataFrame must work, and an array of the wrong shape must
+    raise rather than be reshaped into pairs."""
+
+    @pytest.fixture
+    def events(self):
+        return pd.DataFrame(
+            {
+                "start_time": [0.0, 1.0, 1.05, 3.0],
+                "end_time": [0.1, 1.1, 1.2, 3.1],
+                "max_zscore": [3.0, 4.0, 5.0, 6.0],
+                "clipped_start": [False, False, False, True],
+            },
+            index=pd.Index([1, 2, 3, 4], name="event_number"),
+        )
+
+    def test_exclude_close_events_filters_the_frame(self, events):
+        kept = exclude_close_events(events, 0.5)
+        assert isinstance(kept, pd.DataFrame)
+        assert kept.index.tolist() == [1, 2, 4]
+        assert list(kept.columns) == list(events.columns)
+
+    def test_exclude_movement_filters_the_frame(self, events):
+        time = np.arange(0, 4, 0.01)
+        speed = np.full(len(time), 1.0)
+        speed[(time >= 0.95) & (time <= 1.25)] = 10.0
+        kept = exclude_movement(events, speed, time, 4.0)
+        assert isinstance(kept, pd.DataFrame)
+        assert kept.index.tolist() == [1, 4]
+
+    def test_merge_close_events_reads_the_frame_and_returns_bounds(self, events):
+        merged = merge_close_events(events, 0.5)
+        np.testing.assert_allclose(merged, [[0.0, 0.1], [1.0, 1.2], [3.0, 3.1]])
+
+    def test_majority_rule_filters_the_frame(self, events):
+        """As exclude_movement does: the frame back, with every column."""
+        time = np.arange(0, 4, 0.01)
+        speed = np.full(len(time), 1.0)
+        speed[(time >= 0.95) & (time <= 1.25)] = 10.0
+        kept = exclude_movement_by_majority(events, speed, time, 4.0)
+        assert isinstance(kept, pd.DataFrame)
+        pd.testing.assert_frame_equal(kept, events.loc[[1, 4]])
+
+    @pytest.mark.parametrize("helper", [exclude_close_events, merge_close_events])
+    def test_a_wide_array_raises_instead_of_being_paired_up(self, events, helper):
+        with pytest.raises(ValueError, match=r"shape \(n_events, 2\)"):
+            helper(events.to_numpy(dtype=float))
+
+
+class TestEstimateNoiseThresholdArgumentValidation:
+    def test_edges_must_increase(self):
+        with pytest.raises(ValueError, match="strictly increasing"):
+            estimate_noise_threshold(np.zeros(100), histogram_edges=[0.0, 1.0, 1.0])
+
+    @pytest.mark.parametrize("percentile", [0.0, 100.0, -1.0])
+    def test_percentile_must_lie_inside_the_open_interval(self, percentile):
+        with pytest.raises(ValueError, match="percentile"):
+            estimate_noise_threshold(
+                np.random.default_rng(0).normal(size=100), percentile=percentile
+            )
+
+    def test_empty_values_raise(self):
+        with pytest.raises(ValueError, match="empty"):
+            estimate_noise_threshold(np.array([]))

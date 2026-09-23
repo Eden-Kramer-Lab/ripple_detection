@@ -4,17 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`ripple_detection` is a Python package for detecting sharp-wave ripple events (150-250 Hz) from local field potentials (LFPs) in neuroscience research. It implements detection algorithms from Karlsson et al. 2009 and Kay et al. 2016, along with other variants.
+`ripple_detection` is a Python package for detecting sharp-wave ripple events (150-250 Hz) from local field potentials (LFPs) in neuroscience research. It implements detection algorithms from Karlsson & Frank 2009, Kay et al. 2016, Yu et al. 2017, Carey et al. 2019, FMAToolbox and buzcode, along with unpublished lab variants.
 
 ## Development Commands
 
 ### Setup
 
 ```bash
-# Install from source (development mode with dev dependencies)
+# uv (recommended): .venv from uv.lock with the package editable plus the dev tools
+uv sync --extra examples
+uv run pytest            # prefix any command with `uv run` to use that environment
+uv lock                  # after changing dependencies in pyproject.toml
+uvx pre-commit install   # once; each commit then runs ruff, codespell, mypy and the file checks
+
+# Or pip into your own environment
 pip install -e .[dev,examples]
 
-# Or create conda environment with all dependencies
+# Or conda
 conda env create -f environment.yml
 conda activate ripple_detection
 pip install -e .[dev,examples]
@@ -23,164 +29,80 @@ pip install -e .[dev,examples]
 pip install -e .
 ```
 
+The `dev` extra and the `dev` dependency group in `pyproject.toml` list the same
+tools; keep them identical.
+
+Releasing: the `release` skill ([.claude/skills/release/SKILL.md](.claude/skills/release/SKILL.md)). What each test module covers: [tests/CLAUDE.md](tests/CLAUDE.md).
+
 ### Testing
 
 ```bash
-# Run all tests with coverage (93% coverage achieved!)
-pytest --cov=ripple_detection tests/
-
-# Run specific test module
-pytest tests/test_core.py          # Core signal processing tests
-pytest tests/test_detectors.py     # Detector integration tests
-pytest tests/test_simulate.py      # Simulation module tests
-
-# Run specific test class or function
-pytest tests/test_core.py::TestGetEnvelope
-pytest tests/test_detectors.py::TestKayRippleDetector::test_single_channel_with_ripples
-
-# Generate HTML coverage report
-pytest --cov=ripple_detection --cov-report=html tests/
-open htmlcov/index.html
+# Run all tests with coverage, and the docstring examples in src/ (testpaths)
+pytest
 
 # Test notebooks (as done in CI)
 jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/detection_examples.ipynb
 jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/test_individual_algorithm_components.ipynb
 jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/ripple_detection_tutorial.ipynb
+jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/simulation_study.ipynb
+
+# Re-run the simulation study sweep the notebook reads (about two minutes)
+uv run python examples/simulation_study.py
 ```
-
-### Code Quality
-
-```bash
-# Format code with ruff
-ruff format ripple_detection/ tests/
-
-# Check formatting without modifying files
-ruff format --check ripple_detection/ tests/
-
-# Lint code with ruff
-ruff check ripple_detection/ tests/
-
-# Auto-fix ruff issues where possible
-ruff check --fix ripple_detection/ tests/
-
-# Type check with mypy
-mypy ripple_detection/
-```
-
-### Building
-
-```bash
-# Build package using modern build tools (recommended)
-python -m build
-
-# Build with hatch (if installed)
-hatch build
-```
-
-### Release Process
-
-When preparing a new release:
-
-```bash
-# 1. Run all tests to ensure everything passes
-pytest --cov=ripple_detection tests/
-
-# 2. Run code quality checks
-ruff format --check ripple_detection/ tests/
-ruff check ripple_detection/ tests/
-mypy ripple_detection/
-
-# 3. Update CHANGELOG.md
-# - Add new version section with date: ## [X.Y.Z] - YYYY-MM-DD
-# - Document all changes under appropriate headers:
-#   - Added (new features)
-#   - Changed (changes to existing functionality)
-#   - Deprecated (soon-to-be removed features)
-#   - Removed (removed features)
-#   - Fixed (bug fixes)
-#   - Security (security fixes)
-# - List closed issues: "Closes #N"
-# - Update comparison links at bottom of file
-
-# 4. Commit the changelog
-git add CHANGELOG.md
-git commit -m "Update CHANGELOG for vX.Y.Z release"
-git push origin master
-
-# 5. Create and push annotated git tag
-git tag -a vX.Y.Z -m "Release vX.Y.Z
-
-## New Features
-- Feature description
-
-## Improvements
-- Improvement description
-
-Closes #N"
-
-git push origin vX.Y.Z
-
-# The tag push triggers the automated GitHub Actions release workflow:
-# - Runs tests on Python 3.10, 3.11, 3.12, 3.13
-# - Builds source distribution and wheels
-# - Publishes to PyPI
-# - Creates GitHub release with auto-generated notes
-```
-
-**Important Notes:**
-- Always update CHANGELOG.md BEFORE creating the tag
-- The tag must be an annotated tag (use `-a` flag) with a meaningful message
-- Version follows semantic versioning (MAJOR.MINOR.PATCH)
-- The version in `ripple_detection/_version.py` is auto-generated from the git tag by hatch-vcs
-- Monitor the release workflow at: https://github.com/Eden-Kramer-Lab/ripple_detection/actions
 
 ## Architecture
 
 ### Core Module Structure
 
-The package is organized into three main modules:
+The package lives under `src/` (the Scientific Python guide's layout, so tests import the installed package, never the checkout) and is organized into five modules, one of them a package:
 
-1. **[ripple_detection/core.py](ripple_detection/core.py)** - Low-level signal processing utilities
-   - Bandpass filtering for ripple band (150-250 Hz)
-   - Envelope extraction via Hilbert transform
-   - Gaussian smoothing
-   - Threshold detection and segment extraction
-   - Movement exclusion based on speed
-   - Utility functions for time series segmentation
+1. **[src/ripple_detection/core.py](src/ripple_detection/core.py)** - Low-level signal processing utilities
 
-2. **[ripple_detection/detectors.py](ripple_detection/detectors.py)** - High-level detection algorithms
-   - `Kay_ripple_detector` - Multi-channel consensus approach (Kay et al. 2016)
-   - `Karlsson_ripple_detector` - Per-channel detection with merging (Karlsson et al. 2009)
-   - `Roumis_ripple_detector` - Per-channel envelopes averaged (Frank-lab variant, unpublished)
-   - `Shvartsman_ripple_detector` - Per-channel detection requiring a minimum number of participating channels (unpublished)
-   - `Yu_ripple_detector` - Median consensus with a data-driven noise-percentile threshold (Yu et al. 2017)
-   - `Zugaro_ripple_detector` - FMAToolbox `FindRipples` two-threshold rule
-   - `Long_sharp_wave_ripple_detector` - Sharp wave + ripple power on two raw channels, k-means split (Long, `DetectSWR`)
-   - `Carey_candidate_detector` - Joint ripple-power × multiunit score (Carey, Tank & van der Meer 2019)
-   - `multiunit_HSE_detector` - Multiunit High Synchrony Event detector (spikes only)
+2. **[src/ripple_detection/detectors/](src/ripple_detection/detectors/)** - High-level detection algorithms, a package whose `__init__` re-exports the public names so `from ripple_detection.detectors import Kay_ripple_detector` still works
+   - `_validation.py` - shape, length, unit and duration-limit checks
+   - `_blocks.py` - the missing-sample policy: valid samples, contiguous blocks, block-wise transforms and threshold tests
+   - `_events.py` - the shared detection tail, duration ceiling, active-unit counts, and `_get_event_stats`
+   - `_lfp.py` - `Kay_ripple_detector` (Kay et al. 2016), `Karlsson_ripple_detector` (Karlsson & Frank 2009), `Roumis_ripple_detector` (Frank-lab variant, unpublished), `Shvartsman_ripple_detector` (unpublished), `Yu_ripple_detector` (Yu et al. 2017), and the two consensus traces
+   - `_zugaro.py` - `Zugaro_ripple_detector`, the FMAToolbox `FindRipples` two-threshold rule
+   - `_long.py` - `Long_sharp_wave_ripple_detector`, sharp wave + ripple power on two raw channels, k-means split (Long, `DetectSWR`)
+   - `_carey.py` - `Carey_candidate_detector`, joint ripple-envelope × multiunit score (Carey, Tanaka & van der Meer 2019)
+   - `_hse.py` - `multiunit_HSE_detector`, multiunit High Synchrony Events (spikes only)
    - The README's "Choosing a detector" table is the reference for how their conventions differ
    - All detectors return pandas DataFrames with event statistics
 
-3. **[ripple_detection/simulate.py](ripple_detection/simulate.py)** - Synthetic data generation
-   - Simulate LFPs with embedded ripples
-   - Multiple noise types (white, pink, brown)
-   - Used for testing and validation
+3. **[src/ripple_detection/simulate.py](src/ripple_detection/simulate.py)** - Synthetic data generation
+   - `simulate_LFP`: one channel of coloured noise (pink by default; brown was the 1.x default and has almost no ripple-band power) with Gaussian-windowed sine bursts, sized in signal units or by `ripple_snr`
+   - `simulate_multichannel_LFP`: channels sharing one ripple (per-channel gains) in noise that is part shared, part their own; optional common-mode artifacts
+   - `simulate_sharp_wave_ripple_pair`: the raw pyramidal-layer and stratum radiatum channels the Long detector takes
+   - `simulate_multiunit`: Poisson units that burst with the ripples
+   - `simulate_session`: all of the above from one draw of per-ripple durations and frequencies, returned with the ground truth as a `SimulatedSession` (`ripple_windows` are the intervals a detected event should overlap)
+   - The basis of the integration tests and of `examples/simulation_study.py`
+
+4. **[src/ripple_detection/registry.py](src/ripple_detection/registry.py)** - `DETECTORS`, `get_detector`, `DetectorSpec`
+   - Resolves a detector by name and says which signal kinds it takes (`RIPPLE_BAND_LFP`, `RAW_LFP`, `MULTIUNIT`), positionally (`inputs`) and by name (`keyword_inputs`: Long's `sharp_wave_lfp`, Carey's `theta_lfp`)
+   - `spec.describe()`: JSON-ready inputs, tunables (default, unit, meaning) and output columns, from [_descriptions.py](src/ripple_detection/_descriptions.py); `tests/test_registry.py::TestDescribe` fails when a new or renamed parameter or column has no entry there
+   - For pipelines that store a detector's name rather than importing it
+
+5. **[src/ripple_detection/literature.py](src/ripple_detection/literature.py)** - `load_literature_parameters`
+   - The survey of detection parameters from 57 replay papers, shipped as `data/literature_detection_parameters.csv`
+   - The README's "Published parameter values" table is computed from it
+
+Two private modules serve callers rather than detection: [_call_hints.py](src/ripple_detection/_call_hints.py) wraps the public functions so a call written for 1.x fails with the 2.0 change behind it (add a removed or renamed argument to `REMOVED_ARGUMENTS` there, keyed by function, and only for a name a release shipped: users upgrade from a release, so a name that changed between releases gets no hint; `SAME_ROLE` maps other detectors' and libraries' names for a parameter by what it does), and [_descriptions.py](src/ripple_detection/_descriptions.py) holds what `describe()` reports. Warnings go through `core._warn_at_caller`, which attributes them to the first frame outside the package, so no function passes a `stacklevel`.
 
 ### Detection Pipeline Architecture
 
-All ripple detectors follow a common pipeline:
+Kay, Roumis and the HSE detector threshold one trace (`_threshold_trace`; Kay and Roumis through `_detect_from_trace`); Karlsson and Shvartsman run the same steps on each channel and merge the per-channel events. Those five and Yu end in `_finish_events`: every candidate criterion (speed, HSE's active units) before the proximity rule, the duration ceiling after it:
 
-1. **Preprocessing**: Remove NaN values, align time/speed/LFP data
-2. **Signal Transformation**:
-   - Apply Hilbert transform to get envelope (instantaneous amplitude)
-   - Gaussian smoothing with configurable sigma
-   - Combine signals (varies by detector - Kay uses consensus trace, Karlsson uses per-channel)
-3. **Normalization**: Z-score the transformed signal
-4. **Threshold Detection**: Find segments above z-score threshold that persist for minimum duration
-5. **Extension to Mean**: Extend threshold crossings to where signal crosses mean
-6. **Movement Exclusion**: Remove events where animal speed exceeds threshold
-7. **Post-processing**: Exclude events too close together, calculate statistics
-8. **Output**: Return DataFrame with event times and comprehensive statistics (duration, max_thresh, mean/median/max/min z-score, area, total_energy, speed metrics)
+1. **Preprocessing**: Validate shapes, units and time order; mark samples with NaN in any signal as missing (NaN speed is unknown speed, handled by the movement rules, and splits nothing) and split the rest into contiguous blocks (`_valid_blocks`), ending a block also wherever the timestamp step exceeds 1.5 times the median step
+2. **Signal Transformation**: Hilbert envelope and Gaussian smoothing within each contiguous block (`_smoothed_envelope`); combine channels (Kay: consensus trace; Karlsson and Shvartsman: per channel; Roumis: mean; HSE: population rate)
+3. **Normalization**: Z-score (or median/MAD) the trace; a zero or undefined scale raises
+4. **Threshold Detection**: Runs at or above the threshold for at least `minimum_sample_count` samples
+5. **Extension to Mean**: Extend each run to where the trace returns to the mean
+6. **Movement Exclusion**: Speed at the first and last sample at or below `speed_threshold` (Shvartsman: majority of samples)
+7. **Post-processing**: Drop close events, then over-long events; compute statistics with `_get_event_stats`
+8. **Output**: DataFrame indexed by `event_number` with the columns listed under "Output Format" in the README
+
+Yu, Zugaro, Long and Carey use their own segmentation rules but the same blocks: every step of every detector runs within a block, no event spans a gap, and `_get_event_stats` flags events cut off by a block edge in `clipped_start` and `clipped_end` (Zugaro supplies its own flags, meaning a missing crossing). A block too short for a detector's transform, or for an event of `minimum_duration` (`_valid_blocks(..., minimum_duration=...)`), is treated as missing with a warning, and no block left raises (`_drop_short_blocks`): Zugaro's smoothing window, Long's sharp-wave low-pass kernel, and Carey's theta filter pad length when `theta_lfp` is given.
 
 ### Key Algorithm Differences
 
@@ -189,156 +111,49 @@ All ripple detectors follow a common pipeline:
 - **Roumis detector**: Averages square-root of squared envelopes across channels
 - **Yu detector**: Median of per-channel z-scored envelopes; threshold from the mirrored immobility-noise histogram
 - **Zugaro detector**: Two thresholds (bounds and peak) on the z-scored squared sum; merges close events
-- **Long detector**: Raw two-channel input; sharp-wave difference and ripple power clustered by k-means with local statistics
-- **Carey detector**: Geometric mean of a ripple-power score and a capped multiunit score; whole event inside a low-speed interval
+- **Long detector**: Raw input, the pyramidal-layer channel and `sharp_wave_lfp` by name; sharp-wave difference and ripple power clustered by k-means with local statistics
+- **Carey detector**: Geometric mean of a ripple-envelope score and a capped multiunit score; whole event inside a low-speed interval
 - **HSE detector**: Z-scored smoothed population spike rate, no LFP
-- Missing-sample policy differs (row-drop and stitch; block-wise; raise) and is stated in each docstring's Notes
+- One missing-sample policy for every detector: NaN in any signal, or a gap in time, ends a block; nothing crosses a gap; clipped events are flagged. NaN speed is unknown speed and splits no block: it fails the endpoint rule, is left out of Shvartsman's majority, and interrupts Carey's low-speed intervals
 
 ### Pre-computed Filter
 
-The package includes a pre-computed ripple bandpass filter ([ripple_detection/ripplefilter.mat](ripple_detection/ripplefilter.mat)) from the Frank lab with specific characteristics:
+The package includes a pre-computed ripple bandpass filter ([ripple_detection/ripplefilter.mat](src/ripple_detection/ripplefilter.mat)) from the Frank lab with specific characteristics:
 
 - 150-250 Hz bandpass
 - 40 dB roll-off
 - 10 Hz sidebands
 - Sampling frequency: 1500 Hz
 
-Alternative: `ripple_bandpass_filter()` can generate filters at arbitrary sampling rates using `scipy.signal.remez`.
-
-### Event Statistics
-
-All detectors return rich event statistics via `_get_event_stats()`:
-
-- Temporal: start_time, end_time, duration
-- Z-score metrics: mean, median, max, min, max_thresh (max threshold sustained for minimum duration)
-- Signal metrics: area (integral), total_energy (integral of squared signal)
-- Speed metrics: speed at start/end, max/min/median/mean speed during event
-
-## Testing Strategy
-
-**Test Coverage: 93%** (100% on core and detector modules)
-
-The test suite is organized into six modules:
-
-1. **[tests/conftest.py](tests/conftest.py)** - Shared pytest fixtures
-   - 15+ fixtures providing reusable test data
-   - LFP simulations with various ripple patterns
-   - Speed data (stationary and movement scenarios)
-   - Multiunit spike train data
-   - Edge cases (no ripples, short duration, close ripples)
-
-2. **[tests/test_core.py](tests/test_core.py)** - Core signal processing (70 tests, 100% coverage)
-   - Boolean series segmentation (start/end time extraction)
-   - Interval finding and extension
-   - Overlapping range merging
-   - Z-score thresholding and movement exclusion
-   - Signal normalization (z-score and median/MAD methods)
-   - Ripple band filtering
-   - Hilbert transform envelope extraction
-   - Gaussian smoothing
-   - Multiunit population firing rate
-   - Error handling for edge cases
-
-3. **[tests/test_detectors.py](tests/test_detectors.py)** - Detector behavior and conventions, one test class per detector plus shared error-handling, participation, and duration-convention classes; `tests/test_public_api.py` pins the exported names
-4. **[tests/test_simulate.py](tests/test_simulate.py)** - Simulation module (36 tests, 100% coverage)
-   - Time array generation
-   - Noise generation (white, pink, brown) with frequency analysis
-   - LFP simulation with embedded ripples
-   - Parameter validation (amplitude, duration, noise types)
-   - Statistical validation and power spectrum analysis
-   - Error handling for edge cases
-
-5. **[tests/test_properties.py](tests/test_properties.py)** - Property-based tests (23 tests)
-   - Hypothesis-driven tests for signal processing functions
-   - Tests invariants and properties across parameter ranges
-
-6. **[tests/test_snapshots.py](tests/test_snapshots.py)** - Snapshot/regression tests (9 tests)
-   - Detector output consistency tests
-   - Prevents regression in detector behavior
-
-**Test Execution**: 163 tests (157 passed, 6 skipped) in ~2 seconds
-
-The package also validates that example notebooks run without errors in CI.
-
-## Build System
-
-**Modern pyproject.toml-based build**:
-
-- Uses `hatchling` as build backend (PEP 517/518/621 compliant)
-- Dynamic versioning via `hatch-vcs` from git tags
-- Version automatically determined from git tags (e.g., `v1.5.1`)
-- Fallback version in `ripple_detection/_version.py`
-- Pure pyproject.toml - no setup.py or setup.cfg needed
-
-**Python version**: Requires Python >= 3.10
-
-**Optional dependencies**:
-
-- `dev` - Development tools (pytest, pytest-cov, ruff, mypy, hypothesis, pytest-snapshot)
-- `examples` - Jupyter and visualization tools (matplotlib, jupyter, jupyterlab)
-
-## Dependencies
-
-**Core** (minimum versions):
-
-- numpy >= 1.24
-- scipy >= 1.10
-- pandas >= 2.0
-
-**Development** (minimum versions):
-
-- pytest >= 7.0.0
-- pytest-cov >= 4.0.0
-- ruff >= 0.3.0
-- mypy >= 1.8.0
-- hypothesis >= 6.0.0 (property-based testing)
-- pytest-snapshot >= 0.9.0 (snapshot testing)
-
-**Examples** (minimum versions):
-
-- matplotlib >= 3.5.0
-- jupyter >= 1.0.0
-- jupyterlab >= 3.0.0
+The shipped kernel is used only at 1500 Hz with the default band; for any other rate or band, `filter_ripple_band` designs an equiripple FIR with `ripple_bandpass_filter()` (`scipy.signal.remez`), scaling the tap count with the rate.
 
 ## Standards
 
-- Follows PEP 8 style guide
 - **Type hints for all function signatures** (using modern Python 3.10+ syntax)
 - Numpy Docstrings for all public functions and classes using numpy docstring best practices
-- Uses f-strings for formatting
-- Modular functions with single responsibility
-- Comprehensive test coverage: 93% overall, 100% on core and detector modules
-- **Code quality tools**: Ruff (formatting and linting), Mypy (type checking)
-- Continuous integration with GitHub Actions (tests on Python 3.10, 3.11, 3.12, 3.13)
+- Tests for every behavior a change touches, including the error paths
 
 ### Type Hints
 
-All functions in the codebase use type hints with modern Python 3.10+ syntax:
-- `X | Y` instead of `Union[X, Y]`
-- `X | None` instead of `Optional[X]`
-- `list[X]`, `dict[K, V]`, `tuple[X, Y]` instead of `List[X]`, `Dict[K, V]`, `Tuple[X, Y]`
-- `collections.abc.Generator` for generators
-- `numpy.typing.ArrayLike` and `NDArray` for numpy array parameters and return types
+Array annotations:
+- `numpy.typing.ArrayLike` for array parameters (each function casts with `np.asarray` first) and the aliases `FloatArray`, `BoolArray` and `IntArray` from `core.py` for arrays it returns or holds, so the dtype is part of the signature
 
-The mypy configuration in `pyproject.toml` includes pragmatic overrides to avoid false positives with numpy's `ArrayLike` type while maintaining type safety.
+mypy runs in strict mode with no per-module overrides, and `py.typed` ships so downstream type checkers see the same annotations.
 
 ### Tool Configuration
 
 All code quality tools are configured in [pyproject.toml](pyproject.toml):
 
-**Ruff** (`[tool.ruff]` and `[tool.ruff.lint]`) — the single formatter and linter:
-- Line length: 95
-- Target: Python 3.10
-- Enabled checks: pycodestyle (E/W), pyflakes (F), isort (I), flake8-bugbear (B), comprehensions (C4), pyupgrade (UP)
-- Ignores E501 (line too long) since `ruff format` handles wrapping
-
-**Mypy** (`[tool.mypy]`):
-- Target: Python 3.10
-- `ignore_missing_imports = true` (for scipy, pandas - no stubs installed)
-- Module overrides disable specific error codes that cause false positives with `ArrayLike`
-
 **Pytest** (`[tool.pytest.ini_options]`):
-- Auto coverage reporting to terminal with missing lines
-- Test path: `tests/`
+- Strict: every warning is an error (`filterwarnings = ["error"]`), `--strict-config --strict-markers`, `xfail_strict`
+- `--doctest-modules` over `testpaths = ["tests", "src"]`: every public detector's docstring example runs, so what a reader copies works. Examples print column names and booleans, not event counts, which move with NumPy's random streams
+- Coverage of `src/ripple_detection` reported to the terminal with missing lines
 
-Use the `ripple_detection` conda environment if available for testing and development to ensure consistent dependency versions.
+**Pre-commit** (`.pre-commit-config.yaml`):
+- The standard file hooks, `ruff-check --fix` and `ruff-format` on `src/` and `tests/` (the paths CI checks), codespell (configured under `[tool.codespell]`), and mypy through `uv run`
+- `uvx pre-commit install` once; `uvx pre-commit run --all-files` runs everything by hand
+- CI runs the same tools directly, so the hooks are a convenience, not a second source of truth
+
+**Task runner.** There is no `nox` or `tox` file, on purpose. `uv run <command>` against the locked environment is the task runner. This, and having no documentation site (the README and the docstrings are the documentation), are the deliberate departures from the Scientific Python development guide.
+
+For testing and development use `uv run` (the environment `uv sync` builds from `uv.lock`) or the `ripple_detection` conda environment if available, so dependency versions are consistent.

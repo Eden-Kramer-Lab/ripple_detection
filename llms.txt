@@ -1,0 +1,81 @@
+# ripple_detection
+
+> Detects sharp-wave ripples (150-250 Hz events in hippocampal LFP) and
+> multiunit high-synchrony events, with nine published and lab detectors behind
+> one calling convention. Version 2.x; calls and results differ from 1.x (see
+> MIGRATING.md).
+
+Units everywhere: time in seconds, rates in Hz, speed in cm/s, durations and
+gaps in seconds. A duration that looks like milliseconds (`minimum_duration=15`)
+raises and says what to pass. Thresholds are in standard deviations (SD) of
+each detector's own normalized trace, so they are not comparable across
+detectors.
+
+The pipeline: filter the raw LFP to the ripple band with the rate it was
+recorded at, then detect. Every detector takes `time`, its signal(s), `speed`
+and `sampling_frequency` positionally, then keyword-only tunables, and returns a
+pandas DataFrame with one row per event, indexed by `event_number`.
+
+```python
+from ripple_detection import Kay_ripple_detector, filter_ripple_band
+from ripple_detection.simulate import simulate_session, simulate_time
+
+time = simulate_time(45_000, 1500)  # 30 s at 1500 Hz; use your own timestamps
+session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], rng=0)
+filtered_lfps = filter_ripple_band(session.lfps, sampling_frequency=1500)
+events = Kay_ripple_detector(
+    time, filtered_lfps, session.speed, 1500, zscore_threshold=2.0, minimum_duration=0.015
+)
+events[["start_time", "end_time", "duration", "max_sustained_zscore"]]
+```
+
+## Detectors
+
+Each takes `(time, <signal>, speed, sampling_frequency, **tunables)`. The signal is
+ripple-band LFP of shape (n_time, n_channels) unless stated.
+
+- `Kay_ripple_detector`: z-scored consensus of the channels' envelopes (Kay et al. 2016). Default 2 SD held for 15 ms.
+- `Karlsson_ripple_detector`: each channel's envelope, per-channel events merged (Karlsson & Frank 2009). 3 SD.
+- `Roumis_ripple_detector`: mean over channels of the square root of each channel's smoothed squared envelope (Frank-lab variant). 2 SD.
+- `Shvartsman_ripple_detector`: per-channel events kept when at least `minimum_participating_channels` (2) channels detect them; needs 2 or more channels by default. 3 SD.
+- `Yu_ripple_detector`: median of per-channel z-scored envelopes; the threshold is estimated per call from immobility noise (Yu et al. 2017). Needs immobile samples.
+- `Zugaro_ripple_detector`: FMAToolbox FindRipples two-threshold rule, bounds 2 SD, peak 5 SD; events of 20-100 ms by default.
+- `Long_sharp_wave_ripple_detector`: takes RAW, unfiltered LFP: the pyramidal-layer channel, shape (n_time,), and a stratum radiatum channel by name, `sharp_wave_lfp=`. Ripple-band input raises nothing and returns nonsense.
+- `Carey_candidate_detector`: takes ripple-band LFP and multiunit spike counts (n_time, n_units); joint ripple and multiunit score (Carey, Tanaka & van der Meer 2019).
+- `multiunit_HSE_detector`: takes multiunit spike counts (n_time, n_units), no LFP; z-scored population rate.
+
+`DETECTORS[name].describe()` returns any detector's inputs, tunables (default,
+unit, meaning) and output columns as JSON-ready data, and `get_detector(name)`
+resolves a stored name.
+
+## Rules that are easy to get wrong
+
+- `filter_ripple_band(data, sampling_frequency)` needs the rate; there is no default.
+- Tunables are keyword-only: `Kay_ripple_detector(time, lfps, speed, 1500, speed_threshold=4.0)`.
+- Multiunit input is spike counts or indicators per sample (non-negative whole numbers), not a rate in Hz.
+- NaN in a signal is a missing sample: nothing is computed across it, and events cut off by one are flagged in `clipped_start` / `clipped_end`. NaN in speed is an unknown speed. Do not fill gaps with zeros.
+- A time range for the normalization statistics is a mask: `normalization_mask=(time >= start) & (time <= end)`.
+- `speed_threshold=np.inf` turns the speed criterion off; a large finite number does not cover unknown speed.
+
+## Migrating from 1.x
+
+Code written for 1.x needs changes, and results differ on the same recording;
+[MIGRATING.md](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/MIGRATING.md)
+is the full guide. Most 1.x calls fail with a message naming the replacement;
+these changes cannot raise: the column `max_thresh` is `max_sustained_zscore`,
+`simulate_LFP` draws pink noise by default where 1.x drew brown, the event
+helpers return an empty `(0, 2)` array where they returned `[]`, and a seed
+gives different noise, since every draw goes through `numpy.random.default_rng`.
+
+## Docs
+
+- [README](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/README.md): usage, output columns, parameter guide
+- [Choosing a detector](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/README.md#choosing-a-detector): how the detectors' conventions differ
+- [Published parameter values](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/README.md#published-parameter-values): the literature survey, also `load_literature_parameters()`
+- [MIGRATING.md](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/MIGRATING.md): upgrading from 1.x
+- [CHANGELOG](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/CHANGELOG.md): every 2.0 change
+
+## Optional
+
+- [Simulation study](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/simulation_study.ipynb): every detector's recall, precision and false positives on simulated sessions
+- [Tutorial](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/ripple_detection_tutorial.ipynb)

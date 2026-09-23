@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling>=1.27", "hatch-vcs"]  # 1.27: PEP 639 license expressions
 build-backend = "hatchling.build"
 
 [project]
@@ -7,25 +7,28 @@ name = "ripple_detection"
 dynamic = ["version"]
 description = "Tools for finding sharp-wave ripple events (150-250 Hz) from local field potentials."
 readme = "README.md"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "Eric Denovellis", email = "edeno@bu.edu" }]
 keywords = ["neuroscience", "hippocampus", "ripple", "LFP", "sharp-wave"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering",
 ]
 dependencies = ["numpy>=1.24", "pandas>=2.0", "scipy>=1.10"]
 
 [project.optional-dependencies]
+# `pip install -e .[dev,examples]`. Keep `dev` identical to the `dev` dependency
+# group below, which `uv sync` installs by default.
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
@@ -36,6 +39,18 @@ dev = [
 ]
 examples = ["matplotlib>=3.5.0", "jupyter>=1.0.0", "jupyterlab>=3.0.0"]
 
+[dependency-groups]
+# `uv sync` installs the package in editable mode plus this group; add
+# `--extra examples` for the notebooks. Keep identical to the `dev` extra above.
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "hypothesis>=6.0.0",
+    "pytest-snapshot>=0.9.0",
+    "ruff>=0.16,<0.17",
+    "mypy>=1.8.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/Eden-Kramer-Lab/ripple_detection"
 Repository = "https://github.com/Eden-Kramer-Lab/ripple_detection"
@@ -45,25 +60,43 @@ Issues = "https://github.com/Eden-Kramer-Lab/ripple_detection/issues"
 source = "vcs"
 
 [tool.hatch.build.hooks.vcs]
-version-file = "ripple_detection/_version.py"
+version-file = "src/ripple_detection/_version.py"
 
 [tool.hatch.build.targets.sdist]
-include = ["/ripple_detection", "/tests", "/examples", "README.md", "LICENSE"]
+include = [
+    "/src", "/tests", "/examples", "README.md", "LICENSE", "CITATION.cff", "llms.txt",
+    "MIGRATING.md", "CHANGELOG.md",
+]  # llms.txt: tests/test_public_api.py runs its example
 
 [tool.hatch.build.targets.wheel]
-packages = ["ripple_detection"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"ripple_detection/ripplefilter.mat" = "ripple_detection/ripplefilter.mat"
-"ripple_detection/data/literature_detection_parameters.csv" = "ripple_detection/data/literature_detection_parameters.csv"
+# every file under the package ships, including ripplefilter.mat and the
+# literature CSV; a force-include would also copy them into site-packages on
+# an editable install, where they shadow the package for coverage
+packages = ["src/ripple_detection"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = ["--cov=ripple_detection", "--cov-report=term-missing", "--verbose"]
+minversion = "7"
+# src/ for the docstring examples, which a reader (or a model) copies verbatim
+testpaths = ["tests", "src"]
+pythonpath = ["tests"]
+addopts = [
+    "-ra",
+    "--doctest-modules",
+    "--strict-config",
+    "--strict-markers",
+    "--cov=src/ripple_detection",
+    "--cov-report=term-missing",
+]
+xfail_strict = true
+log_level = "INFO"
+# every warning is an error: a test that expects one says so with pytest.warns
+filterwarnings = ["error"]
 
 [tool.coverage.run]
 branch = true
-source = ["ripple_detection"]
+# by path: with the src layout, the module name resolves ambiguously between the
+# project root and src on sys.path, and coverage then reports the package unmeasured
+source = ["src/ripple_detection"]
 omit = ["*/tests/*", "*/_version.py"]
 
 [tool.coverage.report]
@@ -77,36 +110,19 @@ exclude_lines = [
 ]
 
 [tool.mypy]
+files = ["src/ripple_detection"]
+mypy_path = "src"
 # Target 3.12 so mypy can parse NumPy's stubs, which use PEP 695 `type`
 # statements (only valid for python_version >= 3.12). Runtime 3.10 support is
 # verified by the test matrix.
 python_version = "3.12"
-warn_return_any = false
-warn_unused_configs = true
-disallow_untyped_defs = false
-ignore_missing_imports = true
-check_untyped_defs = true
-strict_optional = false
-warn_redundant_casts = true
-warn_unused_ignores = false
-allow_redefinition = true
-
-# Disable specific checks that cause false positives with ArrayLike
-[[tool.mypy.overrides]]
-module = "ripple_detection.*"
-disable_error_code = [
-    "index",
-    "operator",
-    "union-attr",
-    "arg-type",
-    "assignment",
-    "call-overload",
-    "no-any-return",
-]
+strict = true
+warn_unreachable = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+ignore_missing_imports = true  # scipy and pandas ship no stubs we use
 
 [tool.ruff]
 line-length = 95
-target-version = "py310"
 exclude = [
     ".eggs",
     ".git",
@@ -117,28 +133,52 @@ exclude = [
     "_build",
     "build",
     "dist",
-    "ripple_detection/_version.py", # Auto-generated by setuptools-scm
+    "src/ripple_detection/_version.py", # Auto-generated by hatch-vcs
 ]
 
 [tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "B",   # flake8-bugbear
-    "C4",  # flake8-comprehensions
-    "UP",  # pyupgrade
-    "NPY", # numpy-specific rules
-    "PD",  # pandas-vet
-    "RUF", # ruff-specific rules
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "NPY",  # numpy-specific rules
+    "PD",   # pandas-vet
+    "RUF",  # ruff-specific rules
+    "ARG",  # unused arguments
+    "EM",   # exception messages assigned before the raise
+    "EXE",  # shebangs
+    "FURB", # refurb modernizations
+    "G",    # logging format
+    "ICN",  # import conventions
+    "ISC",  # implicit string concatenation
+    "PERF", # performance anti-patterns
+    "PGH",  # pygrep hooks (blanket noqa, type: ignore without code)
+    "PIE",  # misc lints
+    "PT",   # pytest style
+    "PTH",  # pathlib over os.path
+    "RET",  # return statements
+    "SIM",  # simplifications
+    "T20",  # print statements
+    "YTT",  # sys.version misuse
 ]
 ignore = [
-    "E501", # line too long (handled by ruff format)
+    "E501",    # line too long (handled by ruff format)
+    "ISC001",  # conflicts with the formatter
 ]
+
 
 # Per-file ignores for notebooks
 [tool.ruff.lint.per-file-ignores]
 "*.ipynb" = [
     "NPY002",  # Allow legacy np.random in notebooks for pedagogical simplicity
 ]
+"tests/*" = ["ARG"]  # pytest fixtures are used by name, not by value
+"examples/*.py" = ["T201"]  # a study script reports its progress
+
+[tool.codespell]
+skip = "uv.lock,*.ipynb,*.csv,*.mat,tests/snapshots"
+ignore-words-list = "bu,trough"

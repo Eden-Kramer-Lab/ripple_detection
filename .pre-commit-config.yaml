@@ -1,0 +1,47 @@
+# Run `uvx pre-commit install` once; then every commit runs these. `uvx
+# pre-commit run --all-files` runs them by hand. CI runs the same tools directly.
+ci:
+  autoupdate_schedule: monthly
+  autofix_commit_msg: "pre-commit: apply automatic fixes"
+  autoupdate_commit_msg: "pre-commit: update hook versions"
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+        exclude: '^(uv\.lock|tests/snapshots/.*|.*\.ipynb)$'
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+        exclude: '^(tests/snapshots/.*|.*\.ipynb|.*\.csv)$'
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.0
+    hooks:
+      - id: ruff-check
+        args: ["--fix", "--show-fixes"]
+        files: '^(src|tests)/'
+      - id: ruff-format
+        files: '^(src|tests)/'
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        additional_dependencies: [tomli]
+        exclude: '^(uv\.lock|.*\.ipynb|.*\.csv|.*\.mat|tests/snapshots/.*)$'
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (strict, in the uv environment)
+        entry: uv run --no-sync mypy
+        language: system
+        pass_filenames: false
+        files: '^(src/.*\.py|pyproject\.toml)$'

@@ -35,7 +35,7 @@ class TestFilterRippleBandProperties:
     def test_filter_preserves_shape(self, data):
         """Filtering should preserve the shape of the input."""
         data_2d = data.reshape(-1, 1)
-        filtered = filter_ripple_band(data_2d)
+        filtered = filter_ripple_band(data_2d, 1500)
         assert filtered.shape == data_2d.shape
 
     @given(n_samples=st.integers(min_value=2000, max_value=5000))
@@ -44,7 +44,7 @@ class TestFilterRippleBandProperties:
         """Filtering should work with multiple channels."""
         rng = np.random.default_rng(42)
         data = rng.standard_normal((n_samples, 3))
-        filtered = filter_ripple_band(data)
+        filtered = filter_ripple_band(data, 1500)
         assert filtered.shape == data.shape
 
     @given(
@@ -60,7 +60,7 @@ class TestFilterRippleBandProperties:
     def test_filter_output_finite(self, data):
         """Filtered output should always be finite."""
         data_2d = data.reshape(-1, 1)
-        filtered = filter_ripple_band(data_2d)
+        filtered = filter_ripple_band(data_2d, 1500)
         assert np.all(np.isfinite(filtered))
 
 
@@ -164,9 +164,8 @@ class TestGaussianSmoothProperties:
         """Smoothing a constant signal should return approximately the same constant."""
         data = np.full(n_samples, value)
         smoothed = gaussian_smooth(data, sigma, sampling_frequency=1500)
-        # Check central region to avoid edge effects
-        middle = slice(500, -500)
-        assert np.allclose(smoothed[middle], value, rtol=1e-3, atol=1e-4)
+        # every sample, the ends included: the kernel is renormalized there
+        assert np.allclose(smoothed, value, rtol=1e-9, atol=1e-12)
 
 
 class TestThresholdByZscoreProperties:
@@ -364,10 +363,7 @@ class TestSimulationProperties:
         time = np.arange(0, duration, 1 / 1500)
 
         # Generate ripple times that don't overlap
-        if n_ripples > 0:
-            ripple_times = np.linspace(0.5, duration - 0.5, n_ripples)
-        else:
-            ripple_times = []
+        ripple_times = np.linspace(0.5, duration - 0.5, n_ripples) if n_ripples > 0 else []
 
         lfp = simulate_LFP(time, ripple_times=ripple_times)
 
