@@ -700,12 +700,13 @@ ruff check src/ tests/
 mypy src/
 
 # 2. Update CHANGELOG.md with new version and changes
-# - Add ## [X.Y.Z] - YYYY-MM-DD section
+# - Add ## [X.Y.Z] - YYYY-MM-DD section, dated the day you tag
 # - Document changes under Added/Changed/Deprecated/Removed/Fixed/Security
 # - Update comparison links at bottom
+# - Set CITATION.cff's version and date-released to match (a test checks)
 
 # 3. Commit and push changelog
-git add CHANGELOG.md
+git add CHANGELOG.md CITATION.cff
 git commit -m "Update CHANGELOG for vX.Y.Z release"
 git push origin master
 

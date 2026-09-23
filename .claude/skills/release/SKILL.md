@@ -18,7 +18,7 @@ mypy src/
 
 # 3. Update CHANGELOG.md (and MIGRATING.md for a major version: the calls to
 #    change and why results differ; the changelog links it rather than repeating it)
-# - Add new version section with date: ## [X.Y.Z] - YYYY-MM-DD
+# - Add new version section with date: ## [X.Y.Z] - YYYY-MM-DD, the day you tag
 # - Document all changes under appropriate headers:
 #   - Added (new features)
 #   - Changed (changes to existing functionality)
@@ -28,9 +28,11 @@ mypy src/
 #   - Security (security fixes)
 # - List closed issues: "Closes #N"
 # - Update comparison links at bottom of file
+# - Set CITATION.cff's version and date-released to match; a test
+#   (test_the_citation_is_the_latest_release) fails until they do
 
 # 4. Commit the changelog
-git add CHANGELOG.md
+git add CHANGELOG.md CITATION.cff
 git commit -m "Update CHANGELOG for vX.Y.Z release"
 git push origin master
 

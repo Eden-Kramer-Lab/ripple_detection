@@ -383,3 +383,20 @@ def test_links_resolve_off_github(document):
         if not target.startswith(("https://", "http://", "#", "mailto:"))
     ]
     assert relative == []
+
+
+def test_the_citation_is_the_latest_release():
+    """CITATION.cff's version and date follow the newest CHANGELOG entry; the
+    release checklist updates all three together."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).parents[1]
+    version, date = re.search(
+        r"^## \[(\d+\.\d+\.\d+)\] - (\d{4}-\d{2}-\d{2})$",
+        (root / "CHANGELOG.md").read_text(),
+        re.MULTILINE,
+    ).groups()
+    citation = (root / "CITATION.cff").read_text()
+    assert re.search(r"^version: (.+)$", citation, re.MULTILINE).group(1) == version
+    assert re.search(r'^date-released: "(.+)"$', citation, re.MULTILINE).group(1) == date
