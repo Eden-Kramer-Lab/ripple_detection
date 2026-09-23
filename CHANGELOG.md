@@ -288,6 +288,8 @@ raises on zero rows; that is hdmf's, not this package's.
 
 ### Fixed
 
+- `speed_threshold=np.inf` no longer warns that speed "appears very small":
+  with the criterion off, speed decides nothing, so its unit is not judged.
 - `get_Kay_ripple_consensus_trace` raises a `ValueError` that says to reshape
   for a one-dimensional input, and for an input with no finite sample, as
   `get_Yu_ripple_consensus_trace` does; before, the first failed with NumPy's

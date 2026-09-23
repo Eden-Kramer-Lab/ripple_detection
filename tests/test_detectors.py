@@ -4358,6 +4358,16 @@ class TestValidationPaths:
         with pytest.warns(UserWarning, match="cm/s, not m/s"):
             Kay_ripple_detector(time, lfps, speed, self.FS)
 
+    def test_the_unit_is_not_judged_when_the_speed_criterion_is_off(self, time):
+        """With ``speed_threshold=np.inf`` speed decides nothing, so a small
+        unit is no error; under ``filterwarnings = error`` a warning would be."""
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2000, 2060, 20.0)])
+        speed = np.full(self.N_TIME, 0.02)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            events = Kay_ripple_detector(time, lfps, speed, self.FS, speed_threshold=np.inf)
+        assert len(events) == 1
+
     def test_a_mask_that_selects_only_missing_samples_raises(self, time, stationary):
         lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2000, 2060, 20.0)])
         lfps[:1000] = np.nan

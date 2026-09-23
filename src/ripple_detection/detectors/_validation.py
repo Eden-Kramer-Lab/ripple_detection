@@ -168,8 +168,8 @@ def _validate_speed_units(speed: FloatArray, speed_threshold: float) -> None:
 
     """
     moving = speed[speed > 0]  # NaN compares False, so it drops out here
-    if moving.size == 0 or speed_threshold <= 1.0:
-        return
+    if moving.size == 0 or speed_threshold <= 1.0 or np.isposinf(speed_threshold):
+        return  # a threshold at or below 1 is not in cm/s; infinity ignores speed
     median_speed = np.median(moving)
     # a median under 0.5 against a typical threshold (> 1 cm/s) is m/s
     if median_speed < 0.5:
