@@ -40,24 +40,6 @@ Releasing: the `release` skill ([.claude/skills/release/SKILL.md](.claude/skills
 # Run all tests with coverage, and the docstring examples in src/ (testpaths)
 pytest
 
-# Run one module
-pytest tests/test_core.py          # signal processing
-pytest tests/test_detectors.py     # detector behavior and conventions
-pytest tests/test_simulate.py      # synthetic LFP
-pytest tests/test_registry.py      # the detector registry
-pytest tests/test_literature.py    # the published-parameter survey
-pytest tests/test_public_api.py    # what the package exports
-pytest tests/test_properties.py    # property-based (hypothesis)
-pytest tests/test_snapshots.py     # regression snapshots
-
-# Run specific test class or function
-pytest tests/test_core.py::TestGetEnvelope
-pytest tests/test_detectors.py::TestKayRippleDetector::test_single_channel_with_ripples
-
-# Generate HTML coverage report
-pytest --cov-report=html tests/
-open htmlcov/index.html
-
 # Test notebooks (as done in CI)
 jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/detection_examples.ipynb
 jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/test_individual_algorithm_components.ipynb
@@ -68,38 +50,6 @@ jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --exec
 uv run python examples/simulation_study.py
 ```
 
-### Code Quality
-
-```bash
-# Format code with ruff
-ruff format src/ tests/
-
-# Check formatting without modifying files
-ruff format --check src/ tests/
-
-# Lint code with ruff
-ruff check src/ tests/
-
-# Auto-fix ruff issues where possible
-ruff check --fix src/ tests/
-
-# Type check with mypy
-mypy src/
-
-# Everything pre-commit runs, on every file
-uvx pre-commit run --all-files
-```
-
-### Building
-
-```bash
-# Build package using modern build tools (recommended)
-python -m build
-
-# Build with hatch (if installed)
-hatch build
-```
-
 ## Architecture
 
 ### Core Module Structure
@@ -107,12 +57,6 @@ hatch build
 The package lives under `src/` (the Scientific Python guide's layout, so tests import the installed package, never the checkout) and is organized into five modules, one of them a package:
 
 1. **[src/ripple_detection/core.py](src/ripple_detection/core.py)** - Low-level signal processing utilities
-   - Bandpass filtering for ripple band (150-250 Hz)
-   - Envelope extraction via Hilbert transform
-   - Gaussian smoothing
-   - Threshold detection and segment extraction
-   - Movement exclusion based on speed
-   - Utility functions for time series segmentation
 
 2. **[src/ripple_detection/detectors/](src/ripple_detection/detectors/)** - High-level detection algorithms, a package whose `__init__` re-exports the public names so `from ripple_detection.detectors import Kay_ripple_detector` still works
    - `_validation.py` - shape, length, unit and duration-limit checks
@@ -183,75 +127,15 @@ The package includes a pre-computed ripple bandpass filter ([ripple_detection/ri
 
 The shipped kernel is used only at 1500 Hz with the default band; for any other rate or band, `filter_ripple_band` designs an equiripple FIR with `ripple_bandpass_filter()` (`scipy.signal.remez`), scaling the tap count with the rate.
 
-### Event Statistics
-
-All detectors return rich event statistics via `_get_event_stats()`:
-
-- Temporal: start_time, end_time, duration (elapsed), n_samples (the count the duration limits test)
-- Z-score metrics: mean, median, max, min, max_sustained_zscore (largest z-score sustained for the minimum duration; `max_thresh` before 2.0)
-- Signal metrics: area (integral), total_energy (integral of squared signal)
-- Speed metrics: speed at start/end, max/min/median/mean speed during event
-- Missing data: clipped_start, clipped_end (the event was cut off by a gap or the recording edge)
-- Detector-specific extras: Shvartsman `participants` (sorted tuple), `n_participants`, `frac_participants`; Yu `n_suprathreshold_samples`, `detection_threshold_zscore`; Zugaro and Long `peak_time`; Long sharp-wave and ripple statistics; Carey and HSE `n_active_units`. The README's "Output Format" tables are the reference.
-
-## Build System
-
-**Modern pyproject.toml-based build**:
-
-- Uses `hatchling` as build backend (PEP 517/518/621 compliant)
-- Dynamic versioning via `hatch-vcs` from git tags
-- Version automatically determined from git tags (e.g., `v1.5.1`)
-- Fallback version in `src/ripple_detection/_version.py`
-- Pure pyproject.toml - no setup.py or setup.cfg needed
-
-**Python version**: Requires Python >= 3.10
-
-**Optional dependencies**:
-
-- `dev` - Development tools (pytest, pytest-cov, ruff, mypy, hypothesis, pytest-snapshot)
-- `examples` - Jupyter and visualization tools (matplotlib, jupyter, jupyterlab)
-
-## Dependencies
-
-**Core** (minimum versions):
-
-- numpy >= 1.24
-- scipy >= 1.10
-- pandas >= 2.0
-
-**Development** (minimum versions):
-
-- pytest >= 7.0.0
-- pytest-cov >= 4.0.0
-- ruff >= 0.16, < 0.17 (format output is stable within a minor version)
-- mypy >= 1.8.0
-- hypothesis >= 6.0.0 (property-based testing)
-- pytest-snapshot >= 0.9.0 (snapshot testing)
-
-**Examples** (minimum versions):
-
-- matplotlib >= 3.5.0
-- jupyter >= 1.0.0
-- jupyterlab >= 3.0.0
-
 ## Standards
 
-- Follows PEP 8 style guide
 - **Type hints for all function signatures** (using modern Python 3.10+ syntax)
 - Numpy Docstrings for all public functions and classes using numpy docstring best practices
-- Uses f-strings for formatting
-- Modular functions with single responsibility
 - Tests for every behavior a change touches, including the error paths
-- **Code quality tools**: Ruff (formatting and linting), Mypy (type checking)
-- Continuous integration with GitHub Actions (tests on Python 3.10 through 3.14, and at the minimum dependency pins)
 
 ### Type Hints
 
-All functions in the codebase use type hints with modern Python 3.10+ syntax:
-- `X | Y` instead of `Union[X, Y]`
-- `X | None` instead of `Optional[X]`
-- `list[X]`, `dict[K, V]`, `tuple[X, Y]` instead of `List[X]`, `Dict[K, V]`, `Tuple[X, Y]`
-- `collections.abc.Generator` for generators
+Array annotations:
 - `numpy.typing.ArrayLike` for array parameters (each function casts with `np.asarray` first) and the aliases `FloatArray`, `BoolArray` and `IntArray` from `core.py` for arrays it returns or holds, so the dtype is part of the signature
 
 mypy runs in strict mode with no per-module overrides, and `py.typed` ships so downstream type checkers see the same annotations.
@@ -259,18 +143,6 @@ mypy runs in strict mode with no per-module overrides, and `py.typed` ships so d
 ### Tool Configuration
 
 All code quality tools are configured in [pyproject.toml](pyproject.toml):
-
-**Ruff** (`[tool.ruff]` and `[tool.ruff.lint]`) — the single formatter and linter:
-- Line length: 95
-- Target: inferred from `requires-python` (3.10)
-- Enabled checks: the Scientific Python development guide's rule set; `select` lists each family with a comment. Applied to `src/` and `tests/`; the notebooks are not linted.
-- Ignores E501 (line too long) since `ruff format` handles wrapping, and ISC001, which conflicts with the formatter
-
-**Mypy** (`[tool.mypy]`):
-- `strict = true`, plus `warn_unreachable` and the `ignore-without-code`, `redundant-expr` and `truthy-bool` error codes
-- Target: Python 3.12 (NumPy's stubs use PEP 695 syntax; runtime support for 3.10 is verified by the test matrix)
-- `ignore_missing_imports = true` (for scipy, pandas - no stubs installed)
-- Checks `src/ripple_detection` only; the tests are not type-checked
 
 **Pytest** (`[tool.pytest.ini_options]`):
 - Strict: every warning is an error (`filterwarnings = ["error"]`), `--strict-config --strict-markers`, `xfail_strict`
@@ -282,6 +154,6 @@ All code quality tools are configured in [pyproject.toml](pyproject.toml):
 - `uvx pre-commit install` once; `uvx pre-commit run --all-files` runs everything by hand
 - CI runs the same tools directly, so the hooks are a convenience, not a second source of truth
 
-**Task runner.** There is no `nox` or `tox` file, on purpose. `uv run <command>` against the locked environment is the task runner, and the commands in this file are the whole list. This, and having no documentation site (the README and the docstrings are the documentation), are the deliberate departures from the Scientific Python development guide.
+**Task runner.** There is no `nox` or `tox` file, on purpose. `uv run <command>` against the locked environment is the task runner. This, and having no documentation site (the README and the docstrings are the documentation), are the deliberate departures from the Scientific Python development guide.
 
 For testing and development use `uv run` (the environment `uv sync` builds from `uv.lock`) or the `ripple_detection` conda environment if available, so dependency versions are consistent.
