@@ -124,12 +124,36 @@ so the values of a positional 1.x call can be named as that call meant them;
 2.0's keyword order differs from it (HSE's flag sat sixth)."""
 
 REQUIRED_SINCE_2 = {
-    "sampling_frequency": (
+    ("filter_ripple_band", "sampling_frequency"): (
         "is required since 2.0; 1.x assumed 1500 Hz whatever the data's rate. Pass the "
         "rate the samples were recorded at, in Hz"
     ),
 }
-"""Arguments 1.x let a caller leave out."""
+"""Arguments a 1.x function let a caller leave out, by function and name."""
+
+SAME_ROLE = (
+    (
+        "zscore_threshold",
+        "low_threshold",
+        "high_threshold",
+        "percentile",
+        "sharp_wave_thresholds",
+        "ripple_thresholds",
+    ),
+    ("minimum_duration", "minimum_sharp_wave_duration", "minimum_ripple_duration"),
+    ("maximum_duration", "maximum_sharp_wave_duration"),
+    (
+        "close_ripple_threshold",
+        "close_event_threshold",
+        "minimum_inter_ripple_interval",
+        "minimum_separation",
+    ),
+    ("smoothing_sigma", "ripple_smoothing_sigma", "smoothing_window"),
+)
+"""Parameters that play one role under different names in different detectors:
+the detection threshold, the duration limits, the rule for close events, the
+smoothing width. A keyword from another detector is matched to this one's by
+role, not by spelling, which sent ``zscore_threshold`` to ``speed_threshold``."""
 
 
 def explain_call_errors(function: Callable[P, R]) -> Callable[P, R]:
@@ -178,6 +202,17 @@ def _explain(
             if replacement is None or replacement in parameters:
                 notes.append(f"{key} {note}.")
                 continue
+        roles = [group for group in SAME_ROLE if key in group]
+        same_role = [
+            parameter for group in roles for parameter in group if parameter in parameters
+        ]
+        if roles:
+            notes.append(
+                f"{name} takes no {key}; did you mean {' or '.join(same_role)}?"
+                if same_role
+                else f"{name} takes no {key}; its parameters are {', '.join(parameters)}."
+            )
+            continue
         close = difflib.get_close_matches(key, list(parameters), n=1, cutoff=0.6)
         notes.append(
             f"{name} takes no {key}; did you mean {close[0]}?"
@@ -206,13 +241,21 @@ def _explain(
                 for parameter in order[: len(extra)]
                 if parameter in REMOVED_ARGUMENTS
             )
-    notes.extend(
-        f"{parameter.name} {REQUIRED_SINCE_2[parameter.name]}."
+    missing = [
+        parameter.name
         for parameter in positional[len(args) :]
-        if parameter.default is inspect.Parameter.empty
-        and parameter.name not in kwargs
-        and parameter.name in REQUIRED_SINCE_2
-    )
+        if parameter.default is inspect.Parameter.empty and parameter.name not in kwargs
+    ]
+    since_2 = [
+        f"{parameter} {REQUIRED_SINCE_2[name, parameter]}."
+        for parameter in missing
+        if (name, parameter) in REQUIRED_SINCE_2
+    ]
+    if missing:
+        notes.extend(
+            since_2
+            or [f"{name} takes {', '.join(item.name for item in positional)} positionally."]
+        )
     return f"{name}(): {error}." + (f" {' '.join(notes)}" if notes else "")
 
 

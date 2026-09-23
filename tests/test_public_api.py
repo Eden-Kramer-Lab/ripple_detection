@@ -161,6 +161,52 @@ class TestCallsWrittenFor1x:
         with pytest.raises(TypeError, match="did you mean close_ripple_threshold"):
             ripple_detection.Kay_ripple_detector(*inputs, 1500, close_event_threshold=0.05)
 
+    @pytest.mark.parametrize(
+        ("detector", "keyword", "suggestion"),
+        [
+            ("Zugaro_ripple_detector", "zscore_threshold", "low_threshold or high_threshold"),
+            ("Yu_ripple_detector", "zscore_threshold", "percentile"),
+            (
+                "Long_sharp_wave_ripple_detector",
+                "minimum_duration",
+                "minimum_sharp_wave_duration or minimum_ripple_duration",
+            ),
+            (
+                "Zugaro_ripple_detector",
+                "close_ripple_threshold",
+                "minimum_inter_ripple_interval",
+            ),
+            ("Zugaro_ripple_detector", "smoothing_sigma", "smoothing_window"),
+            ("Kay_ripple_detector", "high_threshold", "zscore_threshold"),
+        ],
+    )
+    def test_another_detectors_name_for_the_same_role(self, detector, keyword, suggestion):
+        """String similarity sent zscore_threshold on Zugaro to speed_threshold;
+        a keyword another detector takes is matched by what it does."""
+        spec = ripple_detection.get_detector(detector)
+        with pytest.raises(
+            TypeError, match=rf"takes no {keyword}; did you mean {suggestion}\?"
+        ):
+            spec.detector(**{keyword: 1.0})
+
+    def test_a_role_the_detector_does_not_have_is_said_plainly(self):
+        with pytest.raises(TypeError) as raised:
+            ripple_detection.Carey_candidate_detector(close_ripple_threshold=0.05)
+        assert "did you mean" not in str(raised.value)
+        assert "takes no close_ripple_threshold; its parameters are" in str(raised.value)
+
+    def test_a_missing_rate_on_a_detector_new_in_2_does_not_mention_1x(self, inputs):
+        """Carey never existed in 1.x; leaving out its spikes shifts the rate
+        out of its slot, and the message says what the positions are."""
+        time, lfps, speed = inputs
+        with pytest.raises(TypeError) as raised:
+            ripple_detection.Carey_candidate_detector(time, lfps, speed, 1500)
+        assert "1.x" not in str(raised.value)
+        assert (
+            "takes time, filtered_lfps, multiunit, speed, sampling_frequency positionally"
+            in str(raised.value)
+        )
+
     def test_normalize_signal_with_time(self, inputs):
         time, lfps, _ = inputs
         with pytest.raises(TypeError, match="no longer takes time"):
