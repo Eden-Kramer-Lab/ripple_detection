@@ -13,7 +13,7 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
 - **Multiple Detection Algorithms**
   - `Kay_ripple_detector` - Multi-channel consensus approach (Kay et al. 2016)
   - `Karlsson_ripple_detector` - Per-channel detection with merging (Karlsson & Frank 2009)
-  - `Shvartsman_ripple_detector` - Per-channel detection requiring a minimum number of participating channels (unpublished)
+  - `Shvartsman_ripple_detector` - Per-channel detection requiring a minimum number of participating channels (Gillespie-lab variant, unpublished)
   - `Roumis_ripple_detector` - Per-channel envelopes averaged across channels (Frank-lab variant, unpublished)
   - `Yu_ripple_detector` - Median consensus with a data-driven noise-percentile threshold (Yu et al. 2017)
   - `Carey_candidate_detector` - Joint ripple-power x multiunit candidate events (Carey, Tanaka & van der Meer 2019); takes LFP and spikes
@@ -280,16 +280,16 @@ What it shows:
   diluted by silent channels (Kay by the channel count, Roumis worse), and a median cannot see a
   ripple on a minority of channels at any amplitude (Yu). Karlsson's per-channel rule is the only
   one that does not pay for silent channels, at the price of inheriting every channel's noise.
-- **The spike detectors' recall is set by the population burst, not the LFP**, and their precision
+- **The spike detectors' recall is set by the population burst**, and their precision
   by the population size: with 20 units instead of 100, Carey's falls from 1.0 to 0.40 and HSE's
   from 0.83 to 0.32. HSE at 2 SD gives 50 events a minute on noise.
 - **Long's recall plateaus near 0.9** by construction: its percentile cuts drop the weakest tenth
   of the sharp-wave cluster, and it does not evaluate candidates within 5 s of a block edge. Its
   events mark the sharp wave, so they start about 18 ms after the ripple window and end 18 ms
   before it.
-- **Common-mode artifacts silence the ripple-band detectors at their defaults, except Yu**,
+- **Common-mode artifacts silence the ripple-band detectors at their defaults, except Yu and Long**,
   whose threshold is read off the noise side of the histogram. Long cancels them in its channel
-  difference, and the spike detectors barely notice them. The notebook shows what
+  difference. The notebook shows what
   `normalization_method="median_mad"` recovers for Kay and Karlsson.
 
 What it cannot show: the simulator's ripples are sinusoids under a Gaussian envelope, its
@@ -394,8 +394,7 @@ events = Kay_ripple_detector(session.time, filtered, session.speed, session.samp
 session.ripple_windows      # (n_ripples, 2): the interval each event should overlap
 ```
 
-Brown (1/f²) noise, the default before 2.0, has almost no ripple-band power, so any ripple
-dominated the band; pass `noise_type="brown"` for it. The z-score a detector reports is larger
+The z-score a detector reports is larger
 than `ripple_snr` by a factor that depends on its smoothing and consensus rule; measure it for
 the detector you use rather than assuming a mapping. The
 [simulation study](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/simulation_study.ipynb) runs every detector on these sessions.
@@ -786,16 +785,8 @@ your recordings span the layers that way, they detect events no amplitude
 threshold will separate, and they need no threshold chosen per recording. If you
 record with tetrodes, they do not apply.
 
-**Replay scoring**, which is the step after detection and outside this package's
-scope: [RnR_methods](https://github.com/DavidTingley/RnR_methods) implements
-Bayesian replay scores (Radon and weighted correlation), rank-order correlation,
-and reactivation strength, together with scripts comparing those methods against
-each other, across bin sizes, under added noise, and for rank-order false
-positives. It accompanies Tingley & Peyrache (2020), *Phil Trans R Soc B*
-375:20190231, [10.1098/rstb.2019.0231](https://doi.org/10.1098/rstb.2019.0231).
-
-Both de la Prida's `cnn-ripple` and `RnR_methods` are GPL-3, and `rippl-AI` ships
-no license file, so none of them is translated into this MIT package.
+de la Prida's `cnn-ripple` is GPL-3, and `rippl-AI` ships
+no license file, so none of them is translated into this MIT licensed package.
 
 ## License
 
@@ -804,11 +795,6 @@ This project is licensed under the MIT License - see the [LICENSE](https://githu
 ## Authors
 
 - **Eric Denovellis** - [edeno@bu.edu](mailto:edeno@bu.edu)
-
-## Acknowledgments
-
-- Frank Lab for the pre-computed ripple filter
-- Original algorithm implementations by Karlsson & Frank and Kay et al.
 
 ## Support
 
