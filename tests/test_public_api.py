@@ -93,9 +93,30 @@ class TestCallsWrittenFor1x:
 
     def test_positional_tunables(self, inputs):
         with pytest.raises(
-            TypeError, match=r"keyword-only.*speed_threshold=4.0, minimum_duration=0.015"
+            TypeError, match=r"1.x's order.*speed_threshold=4.0, minimum_duration=0.015"
         ):
             ripple_detection.Kay_ripple_detector(*inputs, 1500, 4.0, 0.015)
+
+    def test_positional_values_are_named_in_the_1x_order(self):
+        """HSE's 1.x flag sat sixth, before normalization_method; the hint
+        follows that order, not 2.0's, and says the flag was removed."""
+        time = np.arange(3000) / 1500
+        spikes = np.zeros((3000, 3))
+        with pytest.raises(
+            TypeError,
+            match=r"use_speed_threshold_for_zscore=True, normalization_method='zscore'.*"
+            r"use_speed_threshold_for_zscore was removed",
+        ):
+            ripple_detection.multiunit_HSE_detector(
+                time, spikes, np.zeros(3000), 1500, 4.0, 0.015, 2.0, 0.015, 0.0, True, "zscore"
+            )
+
+    def test_a_function_new_in_2_does_not_guess_a_1x_order(self):
+        time = np.arange(3000) / 1500
+        with pytest.raises(TypeError, match=r"pass the 1 extra value\(s\) by name"):
+            ripple_detection.Zugaro_ripple_detector(
+                time, np.zeros((3000, 2)), np.zeros(3000), 1500, 4.0
+            )
 
     def test_a_near_miss_keyword(self, inputs):
         with pytest.raises(TypeError, match="did you mean close_ripple_threshold"):

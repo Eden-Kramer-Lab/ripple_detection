@@ -37,29 +37,67 @@ REMOVED_ARGUMENTS: dict[str, tuple[str | None, str]] = {
             "rather than a RandomState"
         ),
     ),
-    "edge_threshold": ("low_threshold", "was renamed low_threshold in 2.0"),
-    "peak_threshold": ("high_threshold", "was renamed high_threshold in 2.0"),
+    "edge_threshold": ("low_threshold", "was renamed low_threshold before 2.0 was released"),
+    "peak_threshold": ("high_threshold", "was renamed high_threshold before 2.0 was released"),
     "participation_threshold": (
         "minimum_participating_channels",
         (
-            "was split in 2.0 into minimum_participating_channels, a count, and "
+            "was split before 2.0 was released into minimum_participating_channels, a "
+            "count, and "
             "minimum_participating_fraction, a fraction of the channels in [0, 1]"
         ),
     ),
     "manual_normalization": (
         "channel_baselines",  # Shvartsman's alone; Kay has normalization_method too
         (
-            "was removed in 2.0: pass normalization_method='manual' with "
+            "was removed before 2.0 was released: pass normalization_method='manual' with "
             "channel_baselines and channel_deviations"
         ),
     ),
-    "elec_baselines": ("channel_baselines", "was renamed channel_baselines in 2.0"),
-    "elec_deviations": ("channel_deviations", "was renamed channel_deviations in 2.0"),
+    "elec_baselines": (
+        "channel_baselines",
+        "was renamed channel_baselines before 2.0 was released",
+    ),
+    "elec_deviations": (
+        "channel_deviations",
+        "was renamed channel_deviations before 2.0 was released",
+    ),
 }
-"""Keywords 1.x accepted that 2.0 does not: the parameter that replaces each,
+"""Keywords that 1.x, or the development versions before 2.0 (the Carey and
+Shvartsman names), accepted and 2.0 does not: the parameter that replaces each,
 or None for one with no replacement, and what to pass instead. A note applies
 only to a function that has the replacement, so a keyword one function
 renamed is not explained that way on a function that never took it."""
+
+POSITIONAL_ORDER_1X = {
+    **dict.fromkeys(
+        ("Kay_ripple_detector", "Karlsson_ripple_detector", "Roumis_ripple_detector"),
+        (
+            "speed_threshold",
+            "minimum_duration",
+            "zscore_threshold",
+            "smoothing_sigma",
+            "close_ripple_threshold",
+            "normalization_method",
+            "normalization_mask",
+            "normalization_time_range",
+        ),
+    ),
+    "multiunit_HSE_detector": (
+        "speed_threshold",
+        "minimum_duration",
+        "zscore_threshold",
+        "smoothing_sigma",
+        "close_event_threshold",
+        "use_speed_threshold_for_zscore",
+        "normalization_method",
+        "normalization_mask",
+        "normalization_time_range",
+    ),
+}
+"""The order 1.7 took each detector's tunables in after ``sampling_frequency``,
+so the values of a positional 1.x call can be named as that call meant them;
+2.0's keyword order differs from it (HSE's flag sat sixth)."""
 
 REQUIRED_SINCE_2 = {
     "sampling_frequency": (
@@ -124,15 +162,26 @@ def _explain(
         )
     if len(args) > len(positional) and keyword_only:
         extra = args[len(positional) :]
-        named = ", ".join(
-            f"{parameter}={_short(value)}"
-            for parameter, value in zip(keyword_only, extra, strict=False)
-        )
-        notes.append(
-            f"Since 2.0 every argument after {positional[-1].name} is keyword-only; "
-            f"in the order of the keywords the extra values would be {named}. "
-            "Pass each by name."
-        )
+        order = POSITIONAL_ORDER_1X.get(name)
+        if order is None:
+            notes.append(
+                f"Every argument after {positional[-1].name} is keyword-only; pass the "
+                f"{len(extra)} extra value(s) by name."
+            )
+        else:
+            named = ", ".join(
+                f"{parameter}={_short(value)}"
+                for parameter, value in zip(order, extra, strict=False)
+            )
+            notes.append(
+                f"Since 2.0 every argument after {positional[-1].name} is keyword-only; "
+                f"in 1.x's order the extra values were {named}. Pass each by name."
+            )
+            notes.extend(
+                f"{parameter} {REMOVED_ARGUMENTS[parameter][1]}."
+                for parameter in order[: len(extra)]
+                if parameter in REMOVED_ARGUMENTS
+            )
     notes.extend(
         f"{parameter.name} {REQUIRED_SINCE_2[parameter.name]}."
         for parameter in positional[len(args) :]
