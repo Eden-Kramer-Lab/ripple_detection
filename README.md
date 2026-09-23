@@ -92,7 +92,7 @@ pip install -e .[dev,examples]
 ## Migrating from 1.x
 
 2.0 changes results as well as calls, so detect again rather than mixing events
-from the two versions. [MIGRATING.md](MIGRATING.md) lists the calls to change
+from the two versions. [MIGRATING.md](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/MIGRATING.md) lists the calls to change
 (most fail with a message naming the replacement), the three changes that cannot
 raise, the inputs that now raise, and why the same recording gives different
 events.
@@ -236,7 +236,7 @@ catalog = json.dumps({name: spec.describe() for name, spec in DETECTORS.items()}
 
 ## How the detectors compare on simulated data
 
-[`examples/simulation_study.py`](examples/simulation_study.py) runs every detector at its
+[`examples/simulation_study.py`](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/simulation_study.py) runs every detector at its
 defaults on `simulate_session` output: pink noise, 40 ripples in 120 s of known time, duration
 and frequency, sized by `ripple_snr` (their filtered peak over the filtered background's SD),
 4, 16 or 32 channels sharing half their noise, a sharp wave under each ripple for Long, and 100
@@ -244,7 +244,7 @@ Poisson units bursting with each ripple for Carey and HSE; three seeds per condi
 conditions put the ripple on only a quarter or half of 32 channels, sweep the thresholds of
 Kay, Karlsson and Zugaro, shrink the population to 20 units, and add 20 common-mode artifacts.
 An event is a hit when it overlaps the ripple's window. The
-[notebook](examples/simulation_study.ipynb) plots the whole sweep; 16 channels, means over
+[notebook](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/simulation_study.ipynb) plots the whole sweep; 16 channels, means over
 seeds:
 
 | Detector | Recall, `ripple_snr` 2 | Recall, `ripple_snr` 4 | False positives per minute, no ripples (4 / 16 / 32 ch) | Recall with the ripple on a quarter of 32 channels, `ripple_snr` 3 | Precision with 20 common-mode artifacts |
@@ -392,14 +392,14 @@ Brown (1/f²) noise, the default before 2.0, has almost no ripple-band power, so
 dominated the band; pass `noise_type="brown"` for it. The z-score a detector reports is larger
 than `ripple_snr` by a factor that depends on its smoothing and consensus rule; measure it for
 the detector you use rather than assuming a mapping. The
-[simulation study](examples/simulation_study.ipynb) runs every detector on these sessions.
+[simulation study](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/simulation_study.ipynb) runs every detector on these sessions.
 
-See the [examples](examples/) directory for Jupyter notebooks demonstrating:
+See the [examples](https://github.com/Eden-Kramer-Lab/ripple_detection/tree/master/examples/) directory for Jupyter notebooks demonstrating:
 
-- [Tutorial](examples/ripple_detection_tutorial.ipynb) - A walk through detection on simulated data
-- [Detection Examples](examples/detection_examples.ipynb) - Using different detectors
-- [Algorithm Components](examples/test_individual_algorithm_components.ipynb) - Testing individual components
-- [Simulation Study](examples/simulation_study.ipynb) - Recall, precision, timing and false positives of every detector on simulated sessions
+- [Tutorial](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/ripple_detection_tutorial.ipynb) - A walk through detection on simulated data
+- [Detection Examples](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/detection_examples.ipynb) - Using different detectors
+- [Algorithm Components](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/test_individual_algorithm_components.ipynb) - Testing individual components
+- [Simulation Study](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/simulation_study.ipynb) - Recall, precision, timing and false positives of every detector on simulated sessions
 
 ## Troubleshooting
 
@@ -546,9 +546,11 @@ Three cautions before treating this as a recipe:
 
 ## Documentation
 
-For detailed documentation on the detection algorithms and signal processing pipeline, see [CLAUDE.md](CLAUDE.md).
+Each detector's docstring documents its algorithm, its source, and where it departs from
+the original (`help(ripple_detection.Kay_ripple_detector)`); `get_detector(name).describe()`
+gives its inputs, tunables and output columns as data.
 
-[`llms.txt`](llms.txt) is a short map of the package for language models: the
+[`llms.txt`](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/llms.txt) is a short map of the package for language models: the
 units, the one pipeline, the nine detectors, the migration from 1.x and the
 rules that are easy to get wrong. A test runs its example and checks that it
 names every detector.
@@ -595,7 +597,7 @@ Notes:
   whose distribution depends on the channel count; Karlsson's 3.0 is on one channel's envelope;
   Zugaro's 2 and 5 are on a squared sum, which has a heavier tail; Carey's 1 and 3 are on a
   geometric mean; Yu's is estimated from the data. The false-positive rates on ripple-free
-  simulations in the [simulation study](examples/simulation_study.ipynb) show how far apart the
+  simulations in the [simulation study](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/simulation_study.ipynb) show how far apart the
   defaults sit. Kay, Karlsson, Roumis, Shvartsman, Yu and HSE keep a sample at or above the
   threshold; Zugaro and Carey require strictly above.
 - **One channel.** Kay and Roumis return identical events on a single channel, since both reduce
@@ -790,7 +792,7 @@ no license file, so none of them is translated into this MIT package.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/LICENSE) file for details.
 
 ## Authors
 

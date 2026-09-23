@@ -360,3 +360,19 @@ class TestLlmsTxt:
     def test_it_names_every_registered_detector(self):
         missing = [name for name in ripple_detection.DETECTORS if f"`{name}`" not in self.TEXT]
         assert missing == []
+
+
+@pytest.mark.parametrize("document", ["README.md", "llms.txt"])
+def test_links_resolve_off_github(document):
+    """PyPI renders the README (pyproject's `readme`) and llms.txt ships in the
+    sdist; a relative link resolves against neither, so each is absolute."""
+    import re
+    from pathlib import Path
+
+    text = (Path(__file__).parents[1] / document).read_text()
+    relative = [
+        target
+        for target in re.findall(r"\]\(([^)\s]+)\)", text)
+        if not target.startswith(("https://", "http://", "#", "mailto:"))
+    ]
+    assert relative == []
