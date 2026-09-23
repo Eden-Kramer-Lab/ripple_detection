@@ -767,47 +767,16 @@ def exclude_movement(
     return events[keep]
 
 
-def exclude_movement_by_majority(
-    candidate_ripple_times: ArrayLike | pd.DataFrame,
+def _is_immobile_by_majority(
+    events: FloatArray,
     speed: ArrayLike,
     time: ArrayLike,
-    speed_threshold: float = 4.0,
-    majority_threshold: float = 0.5,
-) -> tuple[FloatArray, IntArray]:
-    """Filter out candidate ripples that occur during animal movement.
-
-    Retains an event only if the animal's speed is at or below `speed_threshold`
-    for at least `majority_threshold` of the samples within the event whose
-    speed is known (not NaN); an event with no known speed is removed, unless
-    `speed_threshold` is ``np.inf``, which keeps every event.
-    `exclude_movement` instead tests only the event's first and last sample.
-
-    Parameters
-    ----------
-    candidate_ripple_times : array_like, shape (n_ripples, 2), or pd.DataFrame
-        Candidate event times with columns [start_time, end_time], or a
-        detector's DataFrame (its ``start_time`` and ``end_time`` are read).
-    speed : array_like, shape (n_time,)
-        Animal's speed at each time point.
-    time : array_like, shape (n_time,)
-        Time values corresponding to speed measurements.
-    speed_threshold : float, optional
-        Maximum speed (in same units as `speed`) for a sample to count as
-        immobile. Default is 4.0 (cm/s).
-    majority_threshold : float, optional
-        Fraction of within-event samples that must be at or below
-        `speed_threshold` for the event to be retained. Default is 0.5.
-
-    Returns
-    -------
-    included_ripple_times : ndarray, shape (n_kept, 2)
-        Retained event times; shape ``(0, 2)`` if no events remain.
-    included_ripple_inds : ndarray of int, shape (n_kept,)
-        Indices of the retained ripples in the original candidate list, useful
-        for filtering associated data arrays.
-
-    """
-    events = _event_bounds(candidate_ripple_times)
+    speed_threshold: float,
+    majority_threshold: float,
+) -> BoolArray:
+    """Whether at least ``majority_threshold`` of each event's samples with a
+    known speed are at or below ``speed_threshold``; see
+    :func:`exclude_movement_by_majority`."""
     time = np.asarray(time, dtype=float)
     speed = np.asarray(speed, dtype=float)
     # samples with start_time <= time <= end_time, by bisection; the count of
@@ -832,8 +801,57 @@ def exclude_movement_by_majority(
     fraction = np.divide(
         n_below_threshold, n_known, out=np.zeros(len(events)), where=n_known > 0
     )
-    keep = (n_known > 0) & (fraction >= majority_threshold)
-    return events[keep], np.flatnonzero(keep)
+    return np.asarray((n_known > 0) & (fraction >= majority_threshold))
+
+
+def exclude_movement_by_majority(
+    candidate_ripple_times: ArrayLike | pd.DataFrame,
+    speed: ArrayLike,
+    time: ArrayLike,
+    speed_threshold: float = 4.0,
+    majority_threshold: float = 0.5,
+) -> FloatArray | pd.DataFrame:
+    """Filter out candidate ripples that occur during animal movement.
+
+    Retains an event only if the animal's speed is at or below `speed_threshold`
+    for at least `majority_threshold` of the samples within the event whose
+    speed is known (not NaN); an event with no known speed is removed, unless
+    `speed_threshold` is ``np.inf``, which keeps every event.
+    `exclude_movement` instead tests only the event's first and last sample.
+
+    Parameters
+    ----------
+    candidate_ripple_times : array_like, shape (n_ripples, 2), or pd.DataFrame
+        Candidate event times with columns [start_time, end_time], or a
+        detector's DataFrame, which is returned filtered with every column.
+    speed : array_like, shape (n_time,)
+        Animal's speed at each time point.
+    time : array_like, shape (n_time,)
+        Time values corresponding to speed measurements.
+    speed_threshold : float, optional
+        Maximum speed (in same units as `speed`) for a sample to count as
+        immobile. Default is 4.0 (cm/s).
+    majority_threshold : float, optional
+        Fraction of within-event samples that must be at or below
+        `speed_threshold` for the event to be retained. Default is 0.5.
+
+    Returns
+    -------
+    ripple_times : ndarray, shape (n_kept, 2), or pd.DataFrame
+        The retained events, in the input's type. Shape ``(0, 2)`` when none
+        remain.
+
+    Raises
+    ------
+    ValueError
+        If no sample of ``time`` falls within an event.
+
+    """
+    events = _event_bounds(candidate_ripple_times)
+    keep = _is_immobile_by_majority(events, speed, time, speed_threshold, majority_threshold)
+    if isinstance(candidate_ripple_times, pd.DataFrame):
+        return candidate_ripple_times.iloc[np.flatnonzero(keep)].copy()
+    return events[keep]
 
 
 def get_envelope(data: ArrayLike, axis: int = 0) -> FloatArray:

@@ -15,10 +15,10 @@ from ripple_detection.core import (
     IntArray,
     _is_immobile,
     _is_immobile_at_endpoints,
+    _is_immobile_by_majority,
     _normalization_statistics,
     _runs_extended_to_mean,
     estimate_noise_threshold,
-    exclude_movement_by_majority,
     gaussian_smooth,
     get_envelope,
     merge_overlapping_ranges,
@@ -586,10 +586,7 @@ def Shvartsman_ripple_detector(
     candidate_bounds = np.asarray(
         merged_candidates[participation_mask, :2], dtype=float
     ).reshape(-1, 2)
-    keep = np.zeros(len(candidate_bounds), dtype=bool)
-    keep[exclude_movement_by_majority(candidate_bounds, speed, time, speed_threshold)[1]] = (
-        True
-    )
+    keep = _is_immobile_by_majority(candidate_bounds, speed, time, speed_threshold, 0.5)
     ripple_times, kept = _finish_events(
         candidate_bounds, keep, time, close_ripple_threshold, maximum_duration
     )

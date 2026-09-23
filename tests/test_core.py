@@ -1701,17 +1701,11 @@ class TestEndpointSpeedRule:
         time = np.arange(100) / 1000.0
         speed = np.full(100, 1.0)
         speed[15:20] = 10.0  # 5 of the 10 samples in [10, 19]
-        kept, inds = exclude_movement_by_majority(
-            np.array([[time[10], time[19]]]), speed, time, 4.0
-        )
+        kept = exclude_movement_by_majority(np.array([[time[10], time[19]]]), speed, time, 4.0)
         assert len(kept) == 1
-        assert inds.tolist() == [0]
         speed[14] = 10.0
-        kept, inds = exclude_movement_by_majority(
-            np.array([[time[10], time[19]]]), speed, time, 4.0
-        )
+        kept = exclude_movement_by_majority(np.array([[time[10], time[19]]]), speed, time, 4.0)
         assert kept.shape == (0, 2)
-        assert inds.shape == (0,)
 
     def test_the_majority_is_of_the_samples_whose_speed_is_known(self):
         time = np.arange(100) / 1000.0
@@ -1719,16 +1713,16 @@ class TestEndpointSpeedRule:
         speed = np.full(100, 1.0)
         speed[10:14] = np.nan
         speed[14:17] = 10.0  # 3 of the 6 known samples moving
-        kept, _ = exclude_movement_by_majority(event, speed, time, 4.0, majority_threshold=0.5)
+        kept = exclude_movement_by_majority(event, speed, time, 4.0, majority_threshold=0.5)
         assert len(kept) == 1
-        kept, _ = exclude_movement_by_majority(event, speed, time, 4.0, majority_threshold=0.6)
+        kept = exclude_movement_by_majority(event, speed, time, 4.0, majority_threshold=0.6)
         assert len(kept) == 0
 
     def test_three_of_ten_meets_a_threshold_of_three_tenths(self):
         time = np.arange(100) / 1000.0
         speed = np.full(100, 10.0)
         speed[10:13] = 1.0
-        kept, _ = exclude_movement_by_majority(
+        kept = exclude_movement_by_majority(
             np.array([[time[10], time[19]]]), speed, time, 4.0, majority_threshold=0.3
         )
         assert len(kept) == 1
@@ -1737,9 +1731,9 @@ class TestEndpointSpeedRule:
         time = np.arange(100) / 1000.0
         event = np.array([[time[10], time[19]]])
         speed = np.full(100, np.nan)
-        assert len(exclude_movement_by_majority(event, speed, time, 4.0)[0]) == 0
+        assert len(exclude_movement_by_majority(event, speed, time, 4.0)) == 0
         assert len(exclude_movement(event, speed, time, 4.0)) == 0
-        assert len(exclude_movement_by_majority(event, speed, time, np.inf)[0]) == 1
+        assert len(exclude_movement_by_majority(event, speed, time, np.inf)) == 1
         assert len(exclude_movement(event, speed, time, np.inf)) == 1
 
 
@@ -1876,11 +1870,14 @@ class TestEventHelpersAcceptADetectorDataFrame:
         merged = merge_close_events(events, 0.5)
         np.testing.assert_allclose(merged, [[0.0, 0.1], [1.0, 1.2], [3.0, 3.1]])
 
-    def test_majority_rule_reads_the_frame(self, events):
+    def test_majority_rule_filters_the_frame(self, events):
+        """As exclude_movement does: the frame back, with every column."""
         time = np.arange(0, 4, 0.01)
-        kept, inds = exclude_movement_by_majority(events, np.full(len(time), 1.0), time, 4.0)
-        assert kept.shape == (4, 2)
-        assert inds.tolist() == [0, 1, 2, 3]
+        speed = np.full(len(time), 1.0)
+        speed[(time >= 0.95) & (time <= 1.25)] = 10.0
+        kept = exclude_movement_by_majority(events, speed, time, 4.0)
+        assert isinstance(kept, pd.DataFrame)
+        pd.testing.assert_frame_equal(kept, events.loc[[1, 4]])
 
     @pytest.mark.parametrize("helper", [exclude_close_events, merge_close_events])
     def test_a_wide_array_raises_instead_of_being_paired_up(self, events, helper):
