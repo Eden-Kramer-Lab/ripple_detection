@@ -102,6 +102,21 @@ def normalize(y: FloatArray, x: FloatArray | None = None) -> FloatArray:
     return np.asarray(y * np.sqrt(np.divide(reference_power, mean_squared(y))), dtype=float)
 
 
+def _generator(seed: int | np.random.Generator | None) -> np.random.Generator:
+    """``numpy.random.default_rng(seed)``, refusing the legacy ``RandomState``
+    that 1.x's noise functions took: ``default_rng`` accepts one and silently
+    draws a different stream from it."""
+    given: object = seed  # a caller without a type checker can pass anything
+    if isinstance(given, np.random.RandomState):
+        msg = (
+            "Pass a seed or a numpy.random.Generator, not a RandomState: since 2.0 the "
+            "simulators draw through numpy.random.default_rng, so a RandomState would "
+            "give a different stream than it did in 1.x."
+        )
+        raise TypeError(msg)
+    return np.random.default_rng(seed)
+
+
 @explain_call_errors
 def pink(N: int, rng: int | np.random.Generator | None = None) -> FloatArray:
     """Generate pink (1/f) noise.
@@ -131,7 +146,7 @@ def pink(N: int, rng: int | np.random.Generator | None = None) -> FloatArray:
     Adapted from python-acoustics library.
 
     """
-    rng = np.random.default_rng(rng)
+    rng = _generator(rng)
     uneven = N % 2
     X = rng.standard_normal(N // 2 + 1 + uneven) + 1j * rng.standard_normal(
         N // 2 + 1 + uneven
@@ -164,7 +179,7 @@ def white(N: int, rng: int | np.random.Generator | None = None) -> FloatArray:
         White noise signal from standard normal distribution.
 
     """
-    rng = np.random.default_rng(rng)
+    rng = _generator(rng)
     return rng.standard_normal(N)
 
 
@@ -198,7 +213,7 @@ def brown(N: int, rng: int | np.random.Generator | None = None) -> FloatArray:
     Adapted from python-acoustics library.
 
     """
-    rng = np.random.default_rng(rng)
+    rng = _generator(rng)
     uneven = N % 2
     X = rng.standard_normal(N // 2 + 1 + uneven) + 1j * rng.standard_normal(
         N // 2 + 1 + uneven
@@ -367,7 +382,7 @@ def simulate_LFP(
 
     """
     _validate_sizes(ripple_amplitude, ripple_snr, noise_amplitude)
-    rng = np.random.default_rng(random_state)
+    rng = _generator(random_state)
     noise = (noise_amplitude / 2) * NOISE_FUNCTION[noise_type](time.size, rng=rng)
     return noise + _ripple_waveform(
         time,
@@ -692,7 +707,7 @@ def simulate_multichannel_LFP(
         msg = f"n_channels must be at least 1, got {n_channels}."
         raise ValueError(msg)
     gains = _channel_gains(channel_gains, n_channels)
-    rng = np.random.default_rng(random_state)
+    rng = _generator(random_state)
     lfps = _correlated_noise(
         time.size, n_channels, noise_type, noise_amplitude, shared_noise_fraction, rng
     )
@@ -883,7 +898,7 @@ def simulate_multiunit(
     if ripple_rate_gain < 1.0:
         msg = f"ripple_rate_gain must be at least 1, got {ripple_rate_gain}."
         raise ValueError(msg)
-    rng = np.random.default_rng(random_state)
+    rng = _generator(random_state)
     ripple_times = _as_ripple_times(ripple_times)
     n_ripples = ripple_times.size
     rates = _draw_per_ripple(baseline_rate, n_units, rng)
@@ -1053,7 +1068,7 @@ def simulate_session(
     if ripple_amplitude is not None:
         ripple_snr = None
     time = np.asarray(time, dtype=float)
-    rng = np.random.default_rng(random_state)
+    rng = _generator(random_state)
     centers = _as_ripple_times(ripple_times)
     frequencies = _draw_per_ripple(ripple_frequency, centers.size, rng)
     durations = _draw_per_ripple(ripple_duration, centers.size, rng)

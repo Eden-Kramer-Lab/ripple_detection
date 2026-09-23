@@ -3862,6 +3862,14 @@ class TestUnknownSpeed:
         kept = self._run(detector, time, speed, speed_threshold=np.inf)
         pd.testing.assert_frame_equal(self._bounds(kept), self._bounds(known))
 
+    def test_yu_with_no_known_speed_and_the_criterion_off_uses_every_sample(self, time):
+        """speed_threshold=np.inf turns the speed rule off for Yu's noise sample
+        too, so all-NaN speed works there as the validation message says."""
+        events = self._run(
+            Yu_ripple_detector, time, np.full(self.N_TIME, np.nan), speed_threshold=np.inf
+        )
+        assert len(events) >= 1
+
     def test_speed_nan_everywhere_raises_unless_the_criterion_is_off(self, time):
         speed = np.full(self.N_TIME, np.nan)
         with pytest.raises(ValueError, match="speed is NaN at every sample"):

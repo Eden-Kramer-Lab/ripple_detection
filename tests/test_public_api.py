@@ -106,6 +106,12 @@ class TestCallsWrittenFor1x:
         with pytest.raises(TypeError, match="no longer takes time"):
             ripple_detection.normalize_signal(lfps[:, 0], time)
 
+    def test_a_random_state_passed_by_position(self):
+        from ripple_detection.simulate import pink
+
+        with pytest.raises(TypeError, match="not a RandomState"):
+            pink(100, np.random.RandomState(0))
+
     def test_the_noise_generator_keyword(self):
         from ripple_detection.simulate import pink
 

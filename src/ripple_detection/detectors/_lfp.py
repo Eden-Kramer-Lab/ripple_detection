@@ -13,6 +13,7 @@ from ripple_detection.core import (
     BoolArray,
     FloatArray,
     IntArray,
+    _is_immobile,
     _is_immobile_at_endpoints,
     _normalization_statistics,
     _runs_extended_to_mean,
@@ -929,7 +930,9 @@ def Yu_ripple_detector(
     )
 
     if normalization_mask is None:
-        normalization_mask = speed <= speed_threshold
+        # _is_immobile, so speed_threshold=np.inf takes every valid sample as
+        # noise, unknown speed included, as it turns the speed rule off elsewhere
+        normalization_mask = _is_immobile(speed, speed_threshold)
         if not np.any(normalization_mask & is_valid):
             msg = (
                 "No sample with valid LFP has speed at or below speed_threshold "
