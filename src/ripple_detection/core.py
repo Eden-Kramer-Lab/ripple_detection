@@ -20,7 +20,7 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.signal import hilbert, oaconvolve, remez
 from scipy.stats import median_abs_deviation
 
-from ripple_detection._call_hints import explain_call_errors
+from ripple_detection._call_hints import NORMALIZE_SIGNAL_WITHOUT_TIME, explain_call_errors
 
 FloatArray = NDArray[np.floating]
 """A NumPy array of floats, the shape stated in each docstring."""
@@ -1161,9 +1161,7 @@ def normalize_signal(
     if not isinstance(given, str):
         msg = (
             f"method must be 'zscore' or 'median_mad', got a {type(method).__name__}. "
-            "normalize_signal no longer takes time (removed in 2.0); call "
-            "normalize_signal(data, method, normalization_mask), with a time range as "
-            "normalization_mask=(time >= start) & (time <= end)."
+            f"{NORMALIZE_SIGNAL_WITHOUT_TIME}"
         )
         raise TypeError(msg)
     if method not in ("zscore", "median_mad"):

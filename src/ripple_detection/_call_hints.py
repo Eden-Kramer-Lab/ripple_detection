@@ -131,6 +131,18 @@ REQUIRED_SINCE_2 = {
 }
 """Arguments a 1.x function let a caller leave out, by function and name."""
 
+NORMALIZE_SIGNAL_WITHOUT_TIME = (
+    "normalize_signal no longer takes time (removed in 2.0); call "
+    "normalize_signal(data, method, normalization_mask), with a time range as "
+    "normalization_mask=(time >= start) & (time <= end)."
+)
+"""What to write instead of 1.x's ``normalize_signal(data, time, ...)``."""
+
+TOO_MANY_POSITIONAL_1X = {"normalize_signal": NORMALIZE_SIGNAL_WITHOUT_TIME}
+"""The note for a 1.x function called with more positional arguments than
+2.0 takes, where the extra one was removed from the middle rather than made
+keyword-only."""
+
 SAME_ROLE = (
     (
         "zscore_threshold",
@@ -219,6 +231,8 @@ def _explain(
             if close
             else f"{name} takes no {key}; its parameters are {', '.join(parameters)}."
         )
+    if len(args) > len(positional) and name in TOO_MANY_POSITIONAL_1X:
+        notes.append(TOO_MANY_POSITIONAL_1X[name])
     if len(args) > len(positional) and keyword_only:
         extra = args[len(positional) :]
         order = POSITIONAL_ORDER_1X.get(name)

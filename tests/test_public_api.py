@@ -212,6 +212,13 @@ class TestCallsWrittenFor1x:
         with pytest.raises(TypeError, match="no longer takes time"):
             ripple_detection.normalize_signal(lfps[:, 0], time)
 
+    def test_normalize_signal_with_1x_four_positional_arguments(self, inputs):
+        """1.x's normalize_signal(data, time, method, mask): one argument too
+        many for 2.0, and the hint has to say which one went."""
+        time, lfps, _ = inputs
+        with pytest.raises(TypeError, match="no longer takes time"):
+            ripple_detection.normalize_signal(lfps[:, 0], time, "zscore", time < 5)
+
     def test_a_random_state_passed_by_position(self):
         from ripple_detection.simulate import pink
 
