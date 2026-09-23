@@ -455,6 +455,5 @@ def get_detector(name: str) -> DetectorSpec:
     try:
         return DETECTORS[name]
     except KeyError:
-        known = "\n  ".join(sorted(DETECTORS))
-        msg = f"No detector named {name!r}. This package has:\n  {known}"
+        msg = f"No detector named {name!r}. This package has {', '.join(sorted(DETECTORS))}."
         raise KeyError(msg) from None

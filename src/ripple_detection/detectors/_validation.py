@@ -7,7 +7,7 @@ from ripple_detection.core import FloatArray, _check_non_negative, _warn_at_call
 
 
 def _validate_lfp_dimensions(filtered_lfps: FloatArray) -> None:
-    """Validate that LFP array is 2D with shape (n_time, n_channels).
+    """Validate that LFP array is 2-D with shape (n_time, n_channels).
 
     Parameters
     ----------
@@ -17,7 +17,7 @@ def _validate_lfp_dimensions(filtered_lfps: FloatArray) -> None:
     Raises
     ------
     ValueError
-        If array is not 2D with appropriate shape.
+        If array is not 2-D with appropriate shape.
 
     """
     if filtered_lfps.ndim != 2:
@@ -28,8 +28,8 @@ def _validate_lfp_dimensions(filtered_lfps: FloatArray) -> None:
             else ""
         )
         msg = (
-            "filtered_lfps must be a 2D array with shape (n_time, n_channels).\n"
-            f"Received a {filtered_lfps.ndim}D array with shape {filtered_lfps.shape}.{hint}"
+            "filtered_lfps must be a 2-D array with shape (n_time, n_channels).\n"
+            f"Received a {filtered_lfps.ndim}-D array with shape {filtered_lfps.shape}.{hint}"
         )
         raise ValueError(msg)
 
@@ -350,7 +350,7 @@ def _validate_multiunit(multiunit: FloatArray, what: str = "multiunit") -> None:
     """
     if multiunit.ndim != 2:
         msg = (
-            f"{what} must be a 2D array of shape (n_time, n_units), got shape "
+            f"{what} must be a 2-D array of shape (n_time, n_units), got shape "
             f"{multiunit.shape}. For a single unit, pass multiunit[:, np.newaxis]."
         )
         raise ValueError(msg)

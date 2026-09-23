@@ -358,7 +358,7 @@ def filter_ripple_band(
     Parameters
     ----------
     data : array_like, shape (n_time,) or (n_time, n_channels)
-        Input signal(s) to be filtered. Can be 1D or 2D.
+        Input signal(s) to be filtered. Can be 1-D or 2-D.
     sampling_frequency : float
         Sampling rate of the input data in Hz.
     band : tuple of (float, float), optional
@@ -886,7 +886,7 @@ def gaussian_smooth(
     axis: int = 0,
     truncate: float = 8,
 ) -> FloatArray:
-    """Apply 1D Gaussian smoothing to data.
+    """Apply 1-D Gaussian smoothing to data.
 
     Convolves the data with a Gaussian kernel. The standard deviation is
     specified in time units (e.g., seconds) and converted to samples using
@@ -1064,7 +1064,7 @@ def normalize_signal(
     Parameters
     ----------
     data : array_like, shape (n_time,) or (n_time, n_channels)
-        Input signal to normalize. Can be 1D or 2D.
+        Input signal to normalize. Can be 1-D or 2-D.
     method : {'zscore', 'median_mad'}, optional
         Normalization method:
 
@@ -1192,7 +1192,7 @@ def normalize_signal_manually(
     Parameters
     ----------
     data : array_like, shape (n_time,) or (n_time, n_channels)
-        Input signal to normalize. Can be 1D or 2D.
+        Input signal to normalize. Can be 1-D or 2-D.
     channel_baselines : array_like, shape (n_channels,)
         Baseline (center) value for each channel; a scalar for 1-D data.
     channel_deviations : array_like, shape (n_channels,)

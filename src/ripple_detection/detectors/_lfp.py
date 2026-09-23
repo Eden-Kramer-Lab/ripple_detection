@@ -494,6 +494,12 @@ def Shvartsman_ripple_detector(
     True
 
     """
+    if normalization_method not in ("zscore", "median_mad", "manual"):
+        msg = (
+            "normalization_method must be 'zscore', 'median_mad' or 'manual', "
+            f"got {normalization_method!r}."
+        )
+        raise ValueError(msg)
     manual = normalization_method == "manual"
     if manual:
         if channel_baselines is None or channel_deviations is None:

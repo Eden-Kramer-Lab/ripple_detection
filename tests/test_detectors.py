@@ -1052,7 +1052,7 @@ class TestMultiunitHSEValidation:
 
     def test_one_dimensional_multiunit_raises(self, inputs):
         time, multiunit, speed, fs = inputs
-        with pytest.raises(ValueError, match="2D"):
+        with pytest.raises(ValueError, match="2-D"):
             multiunit_HSE_detector(time, multiunit[:, 0], speed, fs)
 
     def test_time_in_samples_raises(self, inputs):
@@ -1217,7 +1217,7 @@ class TestYuConsensusTrace:
         assert peak_z(yu) < 0.5 * peak_z(kay)
 
     def test_rejects_non_2d_input(self, sampling_frequency):
-        with pytest.raises(ValueError, match="2D"):
+        with pytest.raises(ValueError, match="2-D"):
             get_Yu_ripple_consensus_trace(np.zeros(100), sampling_frequency)
 
     def test_time_length_mismatch_raises(self, triple_lfp, sampling_frequency):
@@ -1881,6 +1881,16 @@ class TestFirfilt:
         assert _firfilt(x, kernel).shape == (300,)
 
 
+class TestShvartsmanNormalizationMethod:
+    def test_an_unknown_method_lists_all_three(self):
+        time = np.arange(3000) / 1500
+        lfps = np.random.default_rng(0).standard_normal((3000, 2))
+        with pytest.raises(ValueError, match="'zscore', 'median_mad' or 'manual'"):
+            Shvartsman_ripple_detector(
+                time, lfps, np.zeros(3000), 1500, normalization_method="bogus"
+            )
+
+
 class TestLongSharpWaveRippleDetector:
     FS = 1000
     N_TIME = 40_000  # 40 s; events must sit more than 5 s from either end
@@ -2293,7 +2303,7 @@ class TestCareyCandidateDetector:
         lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
         with pytest.raises(ValueError, match="length"):
             Carey_candidate_detector(time, lfps, multiunit[:-1], stationary, self.FS)
-        with pytest.raises(ValueError, match="2D"):
+        with pytest.raises(ValueError, match="2-D"):
             Carey_candidate_detector(time, lfps, multiunit[:, 0], stationary, self.FS)
 
     def test_a_theta_run_shorter_than_the_theta_filter_is_treated_as_missing(
@@ -4492,7 +4502,7 @@ class TestRemainingErrorPaths:
             )
 
     @pytest.mark.parametrize(
-        ("lfps", "match"), [(np.float64(1.0), "0D"), (np.zeros((10, 2, 2)), "3D")]
+        ("lfps", "match"), [(np.float64(1.0), "0-D"), (np.zeros((10, 2, 2)), "3-D")]
     )
     def test_lfp_of_the_wrong_rank_raises(self, lfps, match):
         with pytest.raises(ValueError, match=match):

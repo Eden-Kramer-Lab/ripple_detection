@@ -57,8 +57,9 @@ def test_get_detector_returns_the_spec():
 
 
 def test_unknown_name_raises_and_names_the_alternatives():
-    with pytest.raises(KeyError, match="Kay_ripple_detector"):
+    with pytest.raises(KeyError, match="Kay_ripple_detector") as raised:
         get_detector("Kay_detector")
+    assert "\\n" not in repr(raised.value), "a KeyError shows its message by repr"
 
 
 @pytest.mark.parametrize(
