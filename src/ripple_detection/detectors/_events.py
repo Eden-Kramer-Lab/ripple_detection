@@ -10,8 +10,9 @@ from ripple_detection.core import (
     BoolArray,
     FloatArray,
     IntArray,
+    _check_non_negative,
+    _is_clear_of_close_events,
     _is_immobile_at_endpoints,
-    exclude_close_events,
     minimum_sample_count,
     nearest_sample_index,
     normalize_signal,
@@ -132,10 +133,10 @@ def _finish_events(
         alongside the candidates.
 
     """
+    _check_non_negative(close_event_threshold=close_event_threshold)
     indices = np.flatnonzero(keep)
-    kept, indices = exclude_close_events(
-        event_times[indices], close_event_threshold, included_ripple_inds=indices
-    )
+    indices = indices[_is_clear_of_close_events(event_times[indices], close_event_threshold)]
+    kept = event_times[indices]
     kept, within = _exclude_long_events(kept, time, maximum_duration)
     return kept, indices[within]
 

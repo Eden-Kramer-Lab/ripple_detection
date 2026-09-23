@@ -1407,11 +1407,27 @@ def _check_non_negative(**values: float) -> None:
             raise ValueError(msg)
 
 
+def _is_clear_of_close_events(events: FloatArray, close_event_threshold: float) -> BoolArray:
+    """Which of the sorted ``(n_events, 2)`` events to keep: each is compared
+    with the last *retained* event, so a cluster is reduced to its first
+    event. Comparing with the immediately preceding candidate instead would
+    let a dropped event go on excluding its successors, removing more than
+    the first-of-each-cluster rule."""
+    keep = np.zeros(len(events), dtype=bool)
+    if len(events):
+        keep[0] = True
+        last_retained_end = events[0, 1]
+        for event in range(1, len(events)):
+            if not _is_gap_below(events[event, 0] - last_retained_end, close_event_threshold):
+                keep[event] = True
+                last_retained_end = events[event, 1]
+    return keep
+
+
 def exclude_close_events(
     candidate_event_times: ArrayLike | pd.DataFrame,
     close_event_threshold: float = 1.0,
-    included_ripple_inds: ArrayLike | None = None,
-) -> FloatArray | pd.DataFrame | tuple[FloatArray, NDArray[Any]]:
+) -> FloatArray | pd.DataFrame:
     """Remove events that occur too close together in time.
 
     Filters out successive events that start within `close_event_threshold`
@@ -1433,20 +1449,12 @@ def exclude_close_events(
         Minimum time between events. Events starting within this time after
         a previous event ends are excluded. Non-negative. Default is 1.0
         (seconds).
-    included_ripple_inds : array_like, shape (n_events,), optional
-        Values that run alongside the events, such as their indices in an
-        earlier candidate list. Returned filtered the same way, so data
-        aligned with the events stays aligned.
 
     Returns
     -------
     filtered_event_times : ndarray, shape (n_filtered_events, 2), or pd.DataFrame
         The retained events, in the input's type; shape ``(0, 2)`` when none
-        remain. Returned alone when `included_ripple_inds` is None (the
-        default).
-    included_ripple_inds : ndarray, shape (n_filtered_events,)
-        Only when `included_ripple_inds` was given: its retained entries, in
-        the tuple ``(filtered_event_times, included_ripple_inds)``.
+        remain.
 
     Notes
     -----
@@ -1456,20 +1464,7 @@ def exclude_close_events(
     """
     _check_non_negative(close_event_threshold=close_event_threshold)
     events = _event_bounds(candidate_event_times)
-    # Each event is compared with the last *retained* event, so a cluster is
-    # reduced to its first event. Comparing with the immediately preceding
-    # candidate instead would let a dropped event go on excluding its
-    # successors, removing more than the first-of-each-cluster rule.
-    keep = np.zeros(len(events), dtype=bool)
-    if len(events):
-        keep[0] = True
-        last_retained_end = events[0, 1]
-        for event in range(1, len(events)):
-            if not _is_gap_below(events[event, 0] - last_retained_end, close_event_threshold):
-                keep[event] = True
-                last_retained_end = events[event, 1]
-    if included_ripple_inds is not None:
-        return events[keep], np.asarray(included_ripple_inds)[keep]
+    keep = _is_clear_of_close_events(events, close_event_threshold)
     if isinstance(candidate_event_times, pd.DataFrame):
         return candidate_event_times.iloc[np.flatnonzero(keep)].copy()
     return events[keep]

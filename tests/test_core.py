@@ -1199,11 +1199,16 @@ class TestExcludeCloseEventsChaining:
         events = np.array([[0.0, 0.1], [0.5, 0.6], [1.2, 1.3]])
         np.testing.assert_allclose(exclude_close_events(events, 1.0), [[0.0, 0.1], [1.2, 1.3]])
 
-    def test_indices_track_the_retained_events(self):
+    def test_it_returns_the_events_alone(self):
+        """Its signature is 1.x's; the detectors track indices privately."""
+        import inspect
+
+        assert list(inspect.signature(exclude_close_events).parameters) == [
+            "candidate_event_times",
+            "close_event_threshold",
+        ]
         events = np.array([[0.0, 0.1], [0.5, 0.6], [1.2, 1.3]])
-        kept, inds = exclude_close_events(events, 1.0, included_ripple_inds=[10, 11, 12])
-        assert len(kept) == 2
-        np.testing.assert_array_equal(np.asarray(inds), [10, 12])
+        assert isinstance(exclude_close_events(events, 1.0), np.ndarray)
 
 
 class TestCoreInputConversion:
