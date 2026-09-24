@@ -387,6 +387,45 @@ A zero-length interval has no duration to overlap, so point events, such as
 the peak times of interictal spikes, veto nothing until widened into windows:
 `exclude_overlap(ripples, peak_times[:, np.newaxis] + [-0.1, 0.1])`.
 
+### Detecting on a trace you build
+
+Published detectors differ mostly in the trace they threshold: the mean or the
+sum of ripple envelopes across tetrodes, an RMS or wavelet power, a population
+rate of chosen cells. `detect_events_from_trace` takes any such trace and does
+the rest the way the detectors do: missing samples split the recording, the
+trace is optionally smoothed and normalized, runs at or above `threshold` for
+`minimum_duration` become events that extend to `bound_threshold`, and the speed,
+duration and close-event rules follow. The result has the detectors' columns.
+
+```python
+from ripple_detection import detect_events_from_trace, filter_ripple_band, get_envelope
+
+# Pfeiffer & Foster 2015: the ripple envelope averaged over tetrodes, smoothed
+# 12.5 ms, above 3 SD of the still periods, bounded at the mean, 50 ms to 2 s
+envelope = get_envelope(filter_ripple_band(lfps, sampling_frequency)).mean(axis=1)
+events = detect_events_from_trace(
+    time, envelope, speed, sampling_frequency,
+    threshold=3.0, smoothing_sigma=0.0125, normalization_mask=speed < 5,
+    minimum_duration=0.0, minimum_event_duration=0.05, maximum_duration=2.0,
+    speed_threshold=5.0,
+)
+```
+
+The arguments the detectors do not have cover what published rules vary:
+
+- `bound_threshold`: where an event ends, for papers that bound events at 0.5, 1
+  or 2 SD rather than at the mean.
+- `normalization_method="none"`: threshold the trace as given, for a trace
+  scaled the way a paper specifies (by its baseline mean, or by its maximum).
+- `minimum_event_duration`: a minimum on the whole event, which is what most
+  published minimums mean. It runs before close events are dropped, unlike a
+  filter on the result's `duration` column.
+- `speed_rule`: the endpoint rule, or every sample, the mean or the median speed
+  (as in `exclude_movement(..., rule=...)`), or `"restrict"`, which detects only on
+  slow samples and cuts an event where movement starts.
+- `close_event_rule="merge"`: join close events before the other rules, where
+  `"drop"` keeps the first of them after.
+
 ### Simulating realistic ripples
 
 The simulator's noise is pink (1/f) by default, whose ripple-band background is closest to

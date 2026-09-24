@@ -4630,3 +4630,351 @@ class TestValidationPaths:
         mask[:1000] = True
         with pytest.raises(ValueError, match="no sample that is finite"):
             Kay_ripple_detector(time, lfps, stationary, self.FS, normalization_mask=mask)
+
+
+class TestDetectEventsFromTrace:
+    """The shared thresholding, on a trace the caller builds."""
+
+    FS = 1000
+
+    @staticmethod
+    def _bumps(n_time, centers, half_widths, fs=1000):
+        """Integer triangles on a zero baseline: a bump of half-width w samples
+        is w high at its center and falls by one per sample, so the samples at
+        or above a level L are those within w - L of the center, exactly.
+        Tests on the raw trace set bound_threshold above the baseline."""
+        trace = np.zeros(n_time)
+        index = np.arange(n_time)
+        for center, half_width in zip(centers, half_widths, strict=True):
+            c, w = round(center * fs), round(half_width * fs)
+            trace = np.maximum(trace, np.clip(w - np.abs(index - c), 0, None))
+        return trace
+
+    def _time(self, n_time):
+        return np.arange(n_time) / self.FS
+
+    def test_matches_kay_on_kays_trace(
+        self, dual_lfp_with_ripples, time_3s, stationary_speed, sampling_frequency
+    ):
+        from ripple_detection import detect_events_from_trace
+
+        filtered = filter_ripple_band(dual_lfp_with_ripples, sampling_frequency)
+        kay = Kay_ripple_detector(time_3s, filtered, stationary_speed, sampling_frequency)
+        trace = get_Kay_ripple_consensus_trace(filtered, sampling_frequency)
+        events = detect_events_from_trace(time_3s, trace, stationary_speed, sampling_frequency)
+        assert len(kay) > 0
+        pd.testing.assert_frame_equal(events, kay)
+
+    def test_matches_the_multiunit_detector_on_its_rate(self):
+        from ripple_detection import (
+            detect_events_from_trace,
+            get_multiunit_population_firing_rate,
+        )
+        from ripple_detection.simulate import simulate_session, simulate_time
+
+        time = simulate_time(30_000, self.FS)
+        session = simulate_session(time, [5.0, 12.0, 20.0], rng=1)
+        hse = multiunit_HSE_detector(time, session.multiunit, session.speed, self.FS)
+        rate = get_multiunit_population_firing_rate(session.multiunit, self.FS, 0.015)
+        events = detect_events_from_trace(time, rate, session.speed, self.FS)
+        pd.testing.assert_frame_equal(events, hse.drop(columns="n_active_units"))
+
+    def test_events_end_at_the_bound_threshold(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(1000)
+        trace = self._bumps(1000, [0.5], [0.05])  # 50 at 0.500, 10 at 0.460 and 0.540
+        events = detect_events_from_trace(
+            time, trace, np.zeros(1000), self.FS,
+            threshold=30.0, bound_threshold=10.0, normalization_method="none",
+            minimum_duration=0.0,
+        )  # fmt: skip
+        assert len(events) == 1
+        assert events.start_time.iloc[0] == pytest.approx(0.460)
+        assert events.end_time.iloc[0] == pytest.approx(0.540)
+        assert events.peak_time.iloc[0] == pytest.approx(0.500)
+
+    def test_a_bound_equal_to_the_threshold_ends_at_the_crossings(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(1000)
+        trace = self._bumps(1000, [0.5], [0.05])  # 30 at 0.480 and 0.520
+        events = detect_events_from_trace(
+            time, trace, np.zeros(1000), self.FS,
+            threshold=30.0, bound_threshold=30.0, normalization_method="none",
+            minimum_duration=0.0,
+        )  # fmt: skip
+        assert events.start_time.iloc[0] == pytest.approx(0.480)
+        assert events.end_time.iloc[0] == pytest.approx(0.520)
+
+    def test_minimum_duration_is_time_above_threshold(self):
+        """41 samples at or above 30; the event itself spans 99."""
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(1000)
+        trace = self._bumps(1000, [0.5], [0.05])
+        common = {"threshold": 30.0, "bound_threshold": 1.0, "normalization_method": "none"}
+        kept = detect_events_from_trace(
+            time, trace, np.zeros(1000), self.FS, minimum_duration=0.041, **common
+        )
+        dropped = detect_events_from_trace(
+            time, trace, np.zeros(1000), self.FS, minimum_duration=0.042, **common
+        )
+        assert len(kept) == 1
+        assert len(dropped) == 0
+
+    def test_minimum_event_duration_is_the_whole_event(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(2000)
+        trace = self._bumps(2000, [0.5, 1.5], [0.015, 0.05])  # events of 29 and 99 samples
+        events = detect_events_from_trace(
+            time, trace, np.zeros(2000), self.FS,
+            threshold=10.0, bound_threshold=1.0, normalization_method="none",
+            minimum_duration=0.0,
+            minimum_event_duration=0.05,
+        )  # fmt: skip
+        assert events.peak_time.tolist() == pytest.approx([1.5])
+
+    def test_a_short_event_does_not_suppress_its_neighbour(self):
+        """The too-short event comes first and within the gap; it is removed
+        before the close-event rule, so the long one survives."""
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(2000)
+        trace = self._bumps(2000, [0.50, 0.62], [0.015, 0.05])
+        events = detect_events_from_trace(
+            time, trace, np.zeros(2000), self.FS,
+            threshold=10.0, bound_threshold=1.0, normalization_method="none",
+            minimum_duration=0.0,
+            minimum_event_duration=0.05, close_event_threshold=0.2,
+        )  # fmt: skip
+        assert events.peak_time.tolist() == pytest.approx([0.62])
+
+    def test_close_events_are_dropped_or_merged(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(2000)
+        trace = self._bumps(2000, [0.50, 0.62], [0.05, 0.05])  # 22 ms apart at the bound
+        common = {
+            "threshold": 10.0, "bound_threshold": 1.0, "normalization_method": "none",
+            "minimum_duration": 0.0,
+            "close_event_threshold": 0.03,
+        }  # fmt: skip
+        dropped = detect_events_from_trace(
+            time, trace, np.zeros(2000), self.FS, close_event_rule="drop", **common
+        )
+        merged = detect_events_from_trace(
+            time, trace, np.zeros(2000), self.FS, close_event_rule="merge", **common
+        )
+        assert dropped.peak_time.tolist() == pytest.approx([0.50])
+        assert len(merged) == 1
+        assert merged.start_time.iloc[0] == pytest.approx(0.451)
+        assert merged.end_time.iloc[0] == pytest.approx(0.669)
+
+    def test_a_merged_event_is_what_the_minimum_tests(self):
+        """Two 29-sample events 10 ms apart are each too short, merged not."""
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(2000)
+        trace = self._bumps(2000, [0.50, 0.54], [0.015, 0.015])
+        common = {
+            "threshold": 10.0, "bound_threshold": 1.0, "normalization_method": "none",
+            "minimum_duration": 0.0,
+            "minimum_event_duration": 0.05, "close_event_threshold": 0.02,
+        }  # fmt: skip
+        assert (
+            len(detect_events_from_trace(time, trace, np.zeros(2000), self.FS, **common)) == 0
+        )
+        merged = detect_events_from_trace(
+            time, trace, np.zeros(2000), self.FS, close_event_rule="merge", **common
+        )
+        assert len(merged) == 1
+
+    def test_nothing_is_merged_across_a_missing_sample(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(2000)
+        trace = self._bumps(2000, [0.50, 0.62], [0.05, 0.05])
+        trace[560] = np.nan
+        events = detect_events_from_trace(
+            time, trace, np.zeros(2000), self.FS,
+            threshold=10.0, bound_threshold=1.0, normalization_method="none",
+            minimum_duration=0.0,
+            close_event_threshold=0.05, close_event_rule="merge",
+        )  # fmt: skip
+        assert len(events) == 2
+
+    def test_smoothing_stays_within_a_block(self):
+        """A spike just before a gap must not raise the trace after it."""
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(2000)
+        trace = np.zeros(2000)
+        trace[995:1000] = 100.0
+        trace[1000] = np.nan
+        events = detect_events_from_trace(
+            time, trace, np.zeros(2000), self.FS,
+            threshold=1.0, bound_threshold=0.5, normalization_method="none",
+            minimum_duration=0.0, smoothing_sigma=0.01,
+        )  # fmt: skip
+        assert len(events) == 1
+        assert events.end_time.iloc[0] < 1.0
+        assert bool(events.clipped_end.iloc[0])
+
+    def test_the_mask_sets_the_statistics(self):
+        """A trace five times as variable while moving: z-scoring over the
+        still samples alone finds the still bump, which the whole-session z
+        misses."""
+        from ripple_detection import detect_events_from_trace
+
+        rng = np.random.default_rng(0)
+        time = self._time(20_000)
+        speed = np.where(time < 10, 20.0, 0.0)
+        trace = rng.normal(0, np.where(time < 10, 5.0, 1.0))
+        trace[15_000:15_030] += 6.0
+        still = speed < 4
+        common = {"threshold": 3.0, "minimum_duration": 0.02, "speed_threshold": 4.0}
+        with_mask = detect_events_from_trace(
+            time, trace, speed, self.FS, normalization_mask=still, **common
+        )
+        without = detect_events_from_trace(time, trace, speed, self.FS, **common)
+        assert with_mask.peak_time.between(15.0, 15.03).any()
+        assert not without.peak_time.between(15.0, 15.03).any()
+
+    def test_restrict_cuts_an_event_at_movement(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(2000)
+        trace = self._bumps(2000, [0.5, 1.5], [0.05, 0.05])
+        speed = np.where((time > 0.52) & (time < 1.0), 20.0, 0.0)
+        events = detect_events_from_trace(
+            time, trace, speed, self.FS,
+            threshold=10.0, bound_threshold=1.0, normalization_method="none",
+            minimum_duration=0.0,
+            speed_rule="restrict",
+        )  # fmt: skip
+        assert len(events) == 2
+        first = events.iloc[0]
+        assert first.end_time == pytest.approx(0.520)
+        assert bool(first.clipped_end)
+        assert not bool(events.iloc[1].clipped_end)
+
+    def test_restrict_with_no_slow_sample_raises(self):
+        from ripple_detection import detect_events_from_trace
+
+        with pytest.raises(ValueError, match="no sample is"):
+            detect_events_from_trace(
+                self._time(1000), np.zeros(1000), np.full(1000, 20.0), self.FS,
+                speed_rule="restrict",
+            )  # fmt: skip
+
+    def test_the_all_rule_tests_every_sample(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(1000)
+        trace = self._bumps(1000, [0.5], [0.05])
+        speed = np.zeros(1000)
+        speed[500] = 20.0
+        common = {
+            "threshold": 30.0,
+            "bound_threshold": 1.0,
+            "normalization_method": "none",
+            "minimum_duration": 0.0,
+        }
+        assert len(detect_events_from_trace(time, trace, speed, self.FS, **common)) == 1
+        assert (
+            len(
+                detect_events_from_trace(
+                    time, trace, speed, self.FS, speed_rule="all", **common
+                )
+            )
+            == 0
+        )
+
+    def test_the_ceiling_applies_to_the_event_as_reported(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(1000)
+        trace = self._bumps(1000, [0.5], [0.05])  # 99 samples, bound to bound
+        common = {
+            "threshold": 30.0,
+            "bound_threshold": 1.0,
+            "normalization_method": "none",
+            "minimum_duration": 0.0,
+        }
+        kept = detect_events_from_trace(
+            time, trace, np.zeros(1000), self.FS, maximum_duration=0.099, **common
+        )
+        dropped = detect_events_from_trace(
+            time, trace, np.zeros(1000), self.FS, maximum_duration=0.098, **common
+        )
+        assert len(kept) == 1
+        assert len(dropped) == 0
+
+    def test_a_column_trace_is_accepted(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(1000)
+        trace = self._bumps(1000, [0.5], [0.05])
+        common = {
+            "threshold": 30.0,
+            "bound_threshold": 1.0,
+            "normalization_method": "none",
+            "minimum_duration": 0.0,
+        }
+        flat = detect_events_from_trace(time, trace, np.zeros(1000), self.FS, **common)
+        column = detect_events_from_trace(
+            time, trace[:, None], np.zeros(1000), self.FS, **common
+        )
+        pd.testing.assert_frame_equal(flat, column)
+
+    def test_an_empty_result_has_the_same_columns(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(1000)
+        trace = self._bumps(1000, [0.5], [0.05])
+        common = {
+            "bound_threshold": 1.0,
+            "normalization_method": "none",
+            "minimum_duration": 0.0,
+        }
+        full = detect_events_from_trace(time, trace, np.zeros(1000), self.FS, **common)
+        empty = detect_events_from_trace(
+            time, trace, np.zeros(1000), self.FS, threshold=100.0, **common
+        )
+        assert len(empty) == 0
+        assert list(empty.columns) == list(full.columns)
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"threshold": 1.0, "bound_threshold": 2.0}, "bound_threshold .* is above"),
+            ({"threshold": np.nan}, "threshold must be finite"),
+            ({"normalization_method": "mad"}, "normalization_method must be one of"),
+            ({"speed_rule": "majority"}, "speed_rule must be one of"),
+            ({"close_event_rule": "join"}, "close_event_rule must be one of"),
+            (
+                {"normalization_method": "none", "normalization_mask": np.ones(1000, bool)},
+                "computes none",
+            ),
+            ({"minimum_event_duration": 15.0}, "minimum_event_duration is in seconds"),
+            ({"close_event_threshold": -0.1}, "close_event_threshold must be"),
+            ({"smoothing_sigma": 0.0}, "smoothing_sigma must be positive"),
+        ],
+    )
+    def test_invalid_arguments_raise(self, kwargs, message):
+        from ripple_detection import detect_events_from_trace
+
+        with pytest.raises(ValueError, match=message):
+            detect_events_from_trace(
+                self._time(1000), np.zeros(1000), np.zeros(1000), self.FS, **kwargs
+            )
+
+    def test_a_multichannel_trace_raises_with_a_hint(self):
+        from ripple_detection import detect_events_from_trace
+
+        with pytest.raises(ValueError, match="Combine channels into one trace"):
+            detect_events_from_trace(
+                self._time(1000), np.zeros((1000, 3)), np.zeros(1000), self.FS
+            )

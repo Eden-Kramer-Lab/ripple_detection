@@ -27,6 +27,7 @@ REGISTRY = [
 ]
 HELPERS = [
     "DEFAULT_RIPPLE_BAND",
+    "detect_events_from_trace",
     "DEFAULT_TRANSITION_WIDTH",
     "filter_ripple_band",
     "ripple_bandpass_filter",
@@ -128,6 +129,7 @@ class TestCallsWrittenFor1x:
 
     WRAPPED = (
         *(getattr(ripple_detection, name) for name in DETECTORS),
+        ripple_detection.detect_events_from_trace,
         ripple_detection.filter_ripple_band,
         ripple_detection.normalize_signal,
         ripple_detection.simulate_LFP,

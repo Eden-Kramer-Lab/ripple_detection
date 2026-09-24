@@ -109,13 +109,20 @@ keyword-only."""
 SAME_ROLE = (
     (
         "zscore_threshold",
+        "threshold",
+        "bound_threshold",
         "low_threshold",
         "high_threshold",
         "percentile",
         "sharp_wave_thresholds",
         "ripple_thresholds",
     ),
-    ("minimum_duration", "minimum_sharp_wave_duration", "minimum_ripple_duration"),
+    (
+        "minimum_duration",
+        "minimum_event_duration",
+        "minimum_sharp_wave_duration",
+        "minimum_ripple_duration",
+    ),
     ("maximum_duration", "maximum_sharp_wave_duration"),
     (
         "close_ripple_threshold",
