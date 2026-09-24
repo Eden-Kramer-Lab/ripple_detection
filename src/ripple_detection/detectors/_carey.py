@@ -160,13 +160,24 @@ def Carey_candidate_detector(
 ) -> pd.DataFrame:
     """Detect candidate replay events from ripple power and multiunit activity jointly.
 
-    The candidate-event detector of Carey, Tanaka & van der Meer 2019 [1]_
-    (vandermeerlab ``GenCandidateEvents`` with its Hilbert ripple score
-    ``OldWizard`` and multiunit score ``amMUA`` by Elyot Grant and A. Carey)
-    [2]_. A ripple score and a multiunit score are combined as their
-    **geometric mean**, so an event needs both a ripple and a population
-    burst, then z-scored and segmented with two thresholds. Reimplemented
-    from the code as read.
+    The van der Meer lab's candidate-event code, written for the data of
+    Carey, Tanaka & van der Meer 2019 [1]_: ``GenCandidateEvents`` with its
+    Hilbert ripple score (``OldWizard``, the code's ``'HT'`` option) and its
+    multiunit score ``amMUA`` by Elyot Grant and A. Carey [2]_. A ripple score
+    and a multiunit score are combined as their **geometric mean**, so an
+    event needs both a ripple and a population burst, then z-scored and
+    segmented with two thresholds. Reimplemented from the code as read.
+
+    This is not the configuration behind the paper's published candidates.
+    The candidate files released with the paper [3]_ were made by the code's
+    earlier ``precand`` step on its spectral ripple score, ``amSWR``: the dot
+    product of a sliding 60 ms spectrum with a per-session SWR spectrum built
+    from ripples picked by hand, corrected by a noise spectrum. There the joint
+    score, rescaled to mean 0.5, is thresholded once at 4 (eight times its
+    mean, not a z-score), and an event runs between the crossings of that same
+    level. The multiunit score, the geometric mean, the low-speed and (with
+    ``theta_lfp``) low-theta intervals, the 20 ms minimum and the five active
+    units are the same as here.
 
     - **Ripple score**: Hilbert envelope of the ripple-band signal, averaged
       across channels, smoothed with a Gaussian (10 ms SD, +/-3 SD), rescaled
@@ -290,6 +301,10 @@ def Carey_candidate_detector(
     .. [2] van der Meer lab, ``code-matlab/tasks/Alyssa_Tmaze/GenCandidateEvents.m``
        with ``beta/OldWizard.m``, ``beta/amMUA.m``, and ``beta/TSDtoIV2.m``.
        https://github.com/vandermeerlab/vandermeerlab/blob/82ba3fe29cc3912575b32a0fcdaaa1c4fe097231/code-matlab/tasks/Alyssa_Tmaze/GenCandidateEvents.m
+    .. [3] Candidate events released with [1]_, ``Carey_etal_submitted/SWRcandidates``
+       in https://github.com/vandermeerlab/papers, made with
+       ``code-matlab/tasks/Alyssa_Tmaze/precand.m`` and ``beta/amSWR.m`` at
+       vandermeerlab commit ad0bbd4d01726a436b36671c0a8b2db81476e946.
 
     Examples
     --------

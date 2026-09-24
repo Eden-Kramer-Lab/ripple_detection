@@ -26,8 +26,11 @@ here is relative to 1.7.1.
   - `Long_sharp_wave_ripple_detector` (J. D. Long II's `DetectSWR`), which takes
     **raw** LFP from a pyramidal-layer channel and, as `sharp_wave_lfp=`, a
     stratum radiatum channel.
-  - `Carey_candidate_detector` (Carey, Tanaka & van der Meer 2019), a joint
-    ripple and multiunit score, optionally restricted to low theta.
+  - `Carey_candidate_detector`, the van der Meer lab's candidate-event code
+    (`GenCandidateEvents`, Hilbert option) for the data of Carey, Tanaka & van
+    der Meer 2019: a joint ripple and multiunit score, optionally restricted to
+    low theta. The paper's published candidates used the code's spectral score
+    and a single threshold instead, as the docstring describes.
   - `Shvartsman_ripple_detector`, a laboratory variant that keeps an event when
     `minimum_participating_channels` (or `minimum_participating_fraction`) of the
     channels detect it, and can take its statistics from elsewhere
