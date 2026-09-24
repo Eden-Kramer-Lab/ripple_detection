@@ -41,12 +41,20 @@ ripple-band LFP of shape (n_time, n_channels) unless stated.
 - `Yu_ripple_detector`: median of per-channel z-scored envelopes; the threshold is estimated per call from immobility noise (Yu et al. 2017). Needs immobile samples.
 - `Zugaro_ripple_detector`: FMAToolbox FindRipples two-threshold rule, bounds 2 SD, peak 5 SD; events of 20-100 ms by default.
 - `Long_sharp_wave_ripple_detector`: takes RAW, unfiltered LFP: the pyramidal-layer channel, shape (n_time,), and a stratum radiatum channel by name, `sharp_wave_lfp=`. Ripple-band input raises nothing and returns nonsense.
-- `Carey_candidate_detector`: takes ripple-band LFP and multiunit spike counts (n_time, n_units); joint ripple and multiunit score (Carey, Tanaka & van der Meer 2019).
+- `Carey_candidate_detector`: takes ripple-band LFP and multiunit spike counts (n_time, n_units); joint ripple and multiunit score (the van der Meer lab's code for Carey, Tanaka & van der Meer 2019). The paper's published candidates: `ripple_score=carey_spectral_ripple_score(...)`, `threshold_method="mean"`, thresholds 4.
 - `multiunit_HSE_detector`: takes multiunit spike counts (n_time, n_units), no LFP; z-scored population rate.
 
 `DETECTORS[name].describe()` returns any detector's inputs, tunables (default,
 unit, meaning) and output columns as JSON-ready data, and `get_detector(name)`
 resolves a stored name.
+
+## Building blocks for published variants
+
+- `detect_events_from_trace(time, trace, speed, fs, ...)`: the detectors' thresholding on a trace you build (mean envelope, RMS power, a rate of chosen cells), with `bound_threshold` (where events end), `normalization_method="none"`, `minimum_event_duration`, `speed_rule` and `close_event_rule="merge"`.
+- `detect_silence_bounded_events(time, multiunit, fs, minimum_silence=...)`: spiking set off by silence, as groups or as the `window` after each silence.
+- On any event table (DataFrame or (n, 2) array): `require_active_units` / `count_spikes_in_events` (participation of chosen units), `require_overlap` / `exclude_overlap`, `require_trace_peak`, `require_times_inside` (e.g. a ripple's `peak_time`), `require_isolation`, `merge_close_events` (`inclusive=`, `measure="peak"`), `exclude_close_events` (`measure_from=`), `exclude_movement` (`rule="all" | "mean" | "median"`), `windows_around_times`.
+- State: `theta_delta_ratio`, `state_intervals`, `two_cluster_threshold`, `histogram_minimum_threshold`.
+- Every detector's result has `peak_time`.
 
 ## Rules that are easy to get wrong
 

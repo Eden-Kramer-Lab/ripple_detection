@@ -120,7 +120,59 @@ What the dataset has to supply:
 | [18](papers/18_Kaefer_2020.md) | Kaefer 2020 | All immobility is decoded. A secondary SWR detector (5 SD / 1.5 SD) is B |
 | [48](papers/48_Gupta_2010.md) | Gupta 2010 | Windows are grown by a spike-order score; an SWR power gate of 2 SD applies, but how is not stated |
 
-## Package additions, ranked by the papers they would move
+## Since this review: what the additions change
+
+The tiers above describe the package at commit ac23a58. The additions made after it
+are listed below, followed by the tier each tier-B or tier-C paper would now have.
+Those new tiers are an assessment from the notes, not recipes run paper by paper.
+
+| Addition | Covers |
+|---|---|
+| `detect_events_from_trace`: `bound_threshold`, `normalization_method="none"`, `minimum_event_duration`, `speed_rule` (with `"restrict"`), `close_event_rule="merge"` | mean-amplitude and RMS traces, events ending at k SD or at the threshold, raw or range-scaled thresholds, whole-event minimums, detection on slow samples only |
+| `require_active_units`, `count_spikes_in_events` | counts, fractions and spike totals of chosen units |
+| `theta_delta_ratio`, `state_intervals`, `two_cluster_threshold` | theta/delta and speed state gates, k-means sleep scoring |
+| `detect_silence_bounded_events` | silence-bounded groups and windows, burst collapse |
+| `peak_time` on every detector, `require_trace_peak`, `require_times_inside`, `windows_around_times` | "a ripple peak inside the burst", fixed windows around peaks or crossings |
+| `merge_close_events(inclusive=, measure="peak")`, `exclude_close_events(measure_from="start")`, `require_isolation` | inclusive and peak-to-peak merges, onset-timed exclusion, isolation |
+| `exclude_movement(rule=)` | every-sample, mean and median speed rules |
+| `histogram_minimum_threshold` | a threshold at a distribution's first trough (Ji 2007) |
+| `carey_spectral_ripple_score`, `Carey_candidate_detector(ripple_score=, threshold_method="mean")` | the rule behind Carey 2019's published candidates |
+
+**Now tier A** (public functions, plus traces or intervals built with a few lines of
+NumPy where noted):
+
+- **Foster/Redish mean-amplitude traces:** Pfeiffer 2015, Ambrose 2016 (the well-proximity
+  intervals are the user's), Berners-Lee 2021.
+- **Two-level bounds or bounds at the threshold:** Bendor 2012, Chenani 2019, Mou 2022
+  (range-scaled trace), Farooq 2019 (Neuron and Science), Michon 2019 and 2021 (with a
+  trace detrended by a 3 s moving median outside the package).
+- **Silence-bounded:** Ólafsdóttir 2015, Diba 2007 (its "5 cells or 30%" is an OR: the
+  union of two calls), Foster 2006, Lee 2002, Liu 2019, and Bhattarai 2020 (with a 50 ms
+  boxcar power trace).
+- **State-gated:** Drieu 2018, Muessig 2019 (a 7 ms RMS trace, a percentile threshold,
+  100 ms windows around peaks), Wikenheiser 2013, Ji 2007, Stella 2019 (a wavelet power
+  trace built outside the package). State definitions stay approximate: the papers'
+  bands, estimators and cutoffs differ and are often unreported.
+- **Others:** Bush 2022, Mallory 2025's linear-track candidates, and Carey 2019 (the
+  template's example ripples were picked by hand in the paper; detected ones stand in).
+
+**Still tier B:**
+
+- Krause 2022 and Pfeiffer 2013: trims of event bounds to the population burst, or to
+  windows with two spikes.
+- Tirole 2022 and Huelin Gorriz 2023: a bound search within ±300 ms with fallback levels.
+- Gridchyn 2020: its per-minute rate controller; the fixed-threshold version is A.
+- Yamamoto 2017: the paper does not say how its ripple and multiunit criteria combine.
+- Harvey 2023, as written: needs a radiatum channel. Its code's FindRipples path is A.
+- Kudrimoti 1999: its threshold is not reported.
+
+**Still tier C:** Igata 2021, whose GMM step is under-specified.
+
+**Tier D is unchanged:** the four decoding-defined papers.
+
+Resulting counts: about 44 A, 8 B, 1 C, 4 D.
+
+## Package additions, ranked by the papers they would move (as proposed at the review)
 
 1. **A public trace detector with a bound level.** The shared machinery already exists privately as `detectors/_events.py::_detect_from_trace`. Exposing it would give any user-built trace the package's blocks, speed rule, duration and close-event handling, and statistics columns. Three arguments would be needed:
    - `bound_threshold`, where events end (default 0, the mean);
