@@ -48,6 +48,8 @@ here is relative to 1.7.1.
   complement `exclude_overlap` (a veto: drop the events that coincide with
   intervals marked elsewhere, such as artifacts), `merge_close_events` and
   `exclude_movement_by_majority`.
+- `rule` on `exclude_movement`: besides the endpoint rule, every sample (`'all'`),
+  the mean (`'mean'`) or the median (`'median'`) speed at or below the threshold.
 - A detector registry for pipelines that store a detector by name:
   `get_detector(name)` returns a `DetectorSpec` whose `spec.inputs` and
   `spec.keyword_inputs` name the signals (`RIPPLE_BAND_LFP`, `RAW_LFP`,

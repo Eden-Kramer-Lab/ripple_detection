@@ -726,18 +726,79 @@ def _is_immobile_at_endpoints(
     return np.asarray(at_start & at_end, dtype=bool)
 
 
+SPEED_RULES = ("endpoints", "all", "mean", "median")
+"""The ways :func:`exclude_movement` can test an event's speed."""
+
+
+def _samples_within(events: FloatArray, time: ArrayLike) -> tuple[IntArray, IntArray]:
+    """Half-open sample ranges ``[first, last)`` of the samples with
+    ``start_time <= time <= end_time``, found by bisection.
+
+    Raises
+    ------
+    ValueError
+        If no sample of ``time`` falls within an event.
+
+    """
+    time = np.asarray(time, dtype=float)
+    first = np.searchsorted(time, events[:, 0], side="left")
+    last = np.searchsorted(time, events[:, 1], side="right")
+    if np.any(last == first):
+        start_time, end_time = events[np.flatnonzero(last == first)[0]]
+        msg = (
+            f"No speed samples fall within event [{start_time}, {end_time}]; "
+            "speed and time do not cover the candidate event."
+        )
+        raise ValueError(msg)
+    return first, last
+
+
+def _is_immobile_by_rule(
+    events: FloatArray,
+    speed: ArrayLike,
+    time: ArrayLike,
+    speed_threshold: float,
+    rule: str,
+) -> BoolArray:
+    """Whether each event passes the speed test ``rule`` (see
+    :func:`exclude_movement`); a bool mask over events."""
+    if rule not in SPEED_RULES:
+        msg = f"rule must be one of {', '.join(map(repr, SPEED_RULES))}; got {rule!r}."
+        raise ValueError(msg)
+    if rule == "endpoints":
+        return _is_immobile_at_endpoints(events, speed, time, speed_threshold)
+    if len(events) == 0:
+        return np.zeros(0, dtype=bool)
+    first, last = _samples_within(events, time)
+    if np.isposinf(speed_threshold):
+        return np.ones(len(events), dtype=bool)
+    speed = np.asarray(speed, dtype=float)
+    if rule == "all":
+        # a NaN is not known to be at or below the threshold, so it fails too
+        not_immobile = np.concatenate([[0], np.cumsum(~_is_immobile(speed, speed_threshold))])
+        return np.asarray(not_immobile[last] - not_immobile[first] == 0)
+    summarize = np.mean if rule == "mean" else np.median
+    keep = np.zeros(len(events), dtype=bool)
+    for event, (a, b) in enumerate(zip(first, last, strict=True)):
+        known = speed[a:b][np.isfinite(speed[a:b])]
+        keep[event] = known.size > 0 and bool(summarize(known) <= speed_threshold)
+    return keep
+
+
 def exclude_movement(
     candidate_ripple_times: ArrayLike | pd.DataFrame,
     speed: ArrayLike,
     time: ArrayLike,
     speed_threshold: float = 4.0,
+    rule: str = "endpoints",
 ) -> FloatArray | pd.DataFrame:
     """Filter out candidate ripples that occur during animal movement.
 
-    Removes events where the animal's speed at either the start or end of the
-    event exceeds the specified threshold. Speed inside the event is not
-    tested. A NaN speed at either end is unknown, so that event is removed
-    too, unless ``speed_threshold`` is ``np.inf``, which keeps every event.
+    By default removes events where the animal's speed at either the start or
+    end of the event exceeds the specified threshold; speed inside the event
+    is not tested. A NaN speed at either end is unknown, so that event is
+    removed too, unless ``speed_threshold`` is ``np.inf``, which keeps every
+    event. ``rule`` selects one of the other tests published papers use.
 
     Parameters
     ----------
@@ -750,18 +811,49 @@ def exclude_movement(
         Time values corresponding to speed measurements.
     speed_threshold : float, optional
         Maximum speed (in same units as `speed`) for event to be retained.
-        Events with speed > threshold at start or end are excluded.
         Default is 4.0 (cm/s).
+    rule : {'endpoints', 'all', 'mean', 'median'}, optional
+        Which speeds must be at or below `speed_threshold`, over the samples
+        with ``start_time <= time <= end_time``:
+
+        - ``'endpoints'`` (default): the first and last sample's, the rule
+          every detector here applies. A NaN at either end fails.
+        - ``'all'``: every sample's, as in "no speed above 3 cm/s during the
+          event". A NaN anywhere fails.
+        - ``'mean'``: the mean of the known (not NaN) speeds.
+        - ``'median'``: the median of the known speeds, as in "median speed
+          below 10 cm/s". :func:`exclude_movement_by_majority` with its
+          default of one half is the same test but for how it breaks a tie
+          on an even number of samples.
+
+        With ``'mean'`` or ``'median'`` an event with no known speed fails.
 
     Returns
     -------
     ripple_times : ndarray, shape (n_stationary_ripples, 2), or pd.DataFrame
-        Events where animal speed is at or below the threshold at both ends,
-        in the input's type. Shape ``(0, 2)`` when none remain.
+        The events that pass, in the input's type. Shape ``(0, 2)`` when none
+        remain.
+
+    Raises
+    ------
+    ValueError
+        If `rule` is not one of the four, or, for a rule other than
+        ``'endpoints'``, no sample of `time` falls within an event.
+
+    Examples
+    --------
+    >>> time = np.arange(0, 1, 0.1)
+    >>> speed = np.array([1, 1, 9, 1, 1, 1, 1, 1, 1, 1.0])
+    >>> events = np.array([(0.0, 0.4), (0.5, 0.9)])
+    >>> exclude_movement(events, speed, time, rule="endpoints")
+    array([[0. , 0.4],
+           [0.5, 0.9]])
+    >>> exclude_movement(events, speed, time, rule="all")
+    array([[0.5, 0.9]])
 
     """
     events = _event_bounds(candidate_ripple_times)
-    keep = _is_immobile_at_endpoints(events, speed, time, speed_threshold)
+    keep = _is_immobile_by_rule(events, speed, time, speed_threshold, rule)
     if isinstance(candidate_ripple_times, pd.DataFrame):
         return candidate_ripple_times.iloc[np.flatnonzero(keep)].copy()
     return events[keep]
@@ -777,20 +869,10 @@ def _is_immobile_by_majority(
     """Whether at least ``majority_threshold`` of each event's samples with a
     known speed are at or below ``speed_threshold``; see
     :func:`exclude_movement_by_majority`."""
-    time = np.asarray(time, dtype=float)
     speed = np.asarray(speed, dtype=float)
-    # samples with start_time <= time <= end_time, by bisection; the count of
-    # immobile ones is a difference of the cumulative sum at those bounds
-    first = np.searchsorted(time, events[:, 0], side="left")
-    last = np.searchsorted(time, events[:, 1], side="right")
-    n_total = last - first
-    if np.any(n_total == 0):
-        start_time, end_time = events[np.flatnonzero(n_total == 0)[0]]
-        msg = (
-            f"No speed samples fall within event [{start_time}, {end_time}]; "
-            "speed and time do not cover the candidate event."
-        )
-        raise ValueError(msg)
+    # the count of immobile samples is a difference of the cumulative sum at
+    # each event's sample bounds
+    first, last = _samples_within(events, time)
     is_immobile = _is_immobile(speed, speed_threshold)
     # with the criterion off (an infinite threshold) every sample counts as known
     immobile = np.concatenate([[0], np.cumsum(is_immobile)])

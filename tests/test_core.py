@@ -1129,6 +1129,84 @@ class TestExcludeMovementEventLookup:
         assert len(exclude_movement(np.empty((0, 2)), speed, time)) == 0
 
 
+class TestExcludeMovementRules:
+    """The speed tests published papers use besides the endpoint rule."""
+
+    TIME = np.arange(0, 1, 0.1)
+    EVENTS = np.array([(0.0, 0.4), (0.5, 0.9)])
+
+    def test_all_drops_an_event_with_one_fast_sample_inside(self):
+        speed = np.array([1, 1, 9, 1, 1, 1, 1, 1, 1, 1.0])
+        np.testing.assert_allclose(
+            exclude_movement(self.EVENTS, speed, self.TIME, rule="endpoints"), self.EVENTS
+        )
+        np.testing.assert_allclose(
+            exclude_movement(self.EVENTS, speed, self.TIME, rule="all"), self.EVENTS[1:]
+        )
+
+    def test_all_includes_both_endpoints(self):
+        speed = np.array([1, 1, 1, 1, 9, 1, 1, 1, 1, 1.0])
+        np.testing.assert_allclose(
+            exclude_movement(self.EVENTS, speed, self.TIME, rule="all"), self.EVENTS[1:]
+        )
+
+    @pytest.mark.parametrize(("fast", "kept"), [(16.0, True), (16.5, False)])
+    def test_mean_is_at_or_below_the_threshold(self, fast, kept):
+        """Mean of (1, 1, 1, 1, 16) is exactly 4."""
+        speed = np.array([1, 1, fast, 1, 1, 1, 1, 1, 1, 1.0])
+        result = exclude_movement(self.EVENTS, speed, self.TIME, rule="mean")
+        assert (0.0 in result[:, 0]) == kept
+
+    def test_median_ignores_a_minority_of_fast_samples(self):
+        speed = np.array([1, 9, 9, 1, 1, 9, 9, 9, 1, 1.0])
+        np.testing.assert_allclose(
+            exclude_movement(self.EVENTS, speed, self.TIME, rule="median"), self.EVENTS[:1]
+        )
+
+    def test_unknown_speed_fails_all_but_is_skipped_by_mean_and_median(self):
+        speed = np.array([1, np.nan, 1, 1, 1, 1, 1, 1, 1, 1.0])
+        assert len(exclude_movement(self.EVENTS[:1], speed, self.TIME, rule="all")) == 0
+        for rule in ("mean", "median"):
+            assert len(exclude_movement(self.EVENTS[:1], speed, self.TIME, rule=rule)) == 1
+
+    @pytest.mark.parametrize("rule", ["mean", "median"])
+    def test_an_event_with_no_known_speed_fails(self, rule):
+        speed = np.array([np.nan] * 5 + [1.0] * 5)
+        np.testing.assert_allclose(
+            exclude_movement(self.EVENTS, speed, self.TIME, rule=rule), self.EVENTS[1:]
+        )
+
+    @pytest.mark.parametrize("rule", ["all", "mean", "median"])
+    def test_an_infinite_threshold_keeps_every_event(self, rule):
+        speed = np.full(10, np.nan)
+        result = exclude_movement(self.EVENTS, speed, self.TIME, np.inf, rule=rule)
+        np.testing.assert_allclose(result, self.EVENTS)
+
+    @pytest.mark.parametrize("rule", ["all", "mean", "median"])
+    def test_no_events(self, rule):
+        result = exclude_movement(np.empty((0, 2)), np.ones(10), self.TIME, rule=rule)
+        assert result.shape == (0, 2)
+
+    def test_a_frame_keeps_its_columns_and_index(self):
+        frame = pd.DataFrame(
+            {"start_time": [0.0, 0.5], "end_time": [0.4, 0.9], "tag": ["a", "b"]},
+            index=pd.Index([7, 8], name="event_number"),
+        )
+        speed = np.array([1, 1, 9, 1, 1, 1, 1, 1, 1, 1.0])
+        result = exclude_movement(frame, speed, self.TIME, rule="all")
+        assert list(result.index) == [8]
+        assert list(result.tag) == ["b"]
+
+    def test_an_unknown_rule_raises(self):
+        with pytest.raises(ValueError, match="rule must be one of 'endpoints'"):
+            exclude_movement(self.EVENTS, np.ones(10), self.TIME, rule="majority")
+
+    @pytest.mark.parametrize("rule", ["all", "mean", "median"])
+    def test_an_event_with_no_sample_raises(self, rule):
+        with pytest.raises(ValueError, match="No speed samples fall within"):
+            exclude_movement(np.array([(5.0, 6.0)]), np.ones(10), self.TIME, rule=rule)
+
+
 class TestRippleBandpassFilterAcrossRates:
     """The designed filter must hold its specification at every sampling rate."""
 
