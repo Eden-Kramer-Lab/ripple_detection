@@ -71,6 +71,8 @@ HELPERS = [
     "simulate_sharp_wave_ripple_pair",
     "simulate_multiunit",
     "simulate_session",
+    "simulate_speed",
+    "simulate_theta_delta",
     "SimulatedSession",
     "simulate_time",
     "pink",
@@ -154,6 +156,8 @@ class TestCallsWrittenFor1x:
         ripple_detection.simulate_sharp_wave_ripple_pair,
         ripple_detection.simulate_multiunit,
         ripple_detection.simulate_session,
+        ripple_detection.simulate_speed,
+        ripple_detection.simulate_theta_delta,
     )
 
     @pytest.mark.parametrize("function", WRAPPED, ids=lambda function: function.__name__)

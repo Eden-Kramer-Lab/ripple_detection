@@ -78,6 +78,8 @@ from ripple_detection.simulate import (
     simulate_multiunit,
     simulate_session,
     simulate_sharp_wave_ripple_pair,
+    simulate_speed,
+    simulate_theta_delta,
     simulate_time,
     white,
 )
@@ -146,6 +148,8 @@ __all__ = [
     "simulate_multiunit",
     "simulate_session",
     "simulate_sharp_wave_ripple_pair",
+    "simulate_speed",
+    "simulate_theta_delta",
     "simulate_time",
     "state_intervals",
     "theta_delta_ratio",

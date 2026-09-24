@@ -79,7 +79,7 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
    - `simulate_multichannel_LFP`: channels sharing one ripple (per-channel gains) in noise that is part shared, part their own; optional common-mode artifacts
    - `simulate_sharp_wave_ripple_pair`: the raw pyramidal-layer and stratum radiatum channels the Long detector takes
    - `simulate_multiunit`: Poisson units that burst with the ripples
-   - `simulate_session`: all of the above from one draw of per-ripple durations and frequencies, returned with the ground truth as a `SimulatedSession` (`ripple_windows` are the intervals a detected event should overlap)
+   - `simulate_session`: all of the above from one draw of per-ripple durations and frequencies, returned with the ground truth as a `SimulatedSession` (`ripple_windows` are the intervals a detected event should overlap); `running_intervals` gives it running bouts (`simulate_speed`) and `theta_amplitude`/`delta_amplitude` add theta while running and delta at rest to every channel, radiatum included (`simulate_theta_delta`), all after the random draws so the defaults are unchanged
    - The basis of the integration tests and of `examples/simulation_study.py`
 
 4. **[src/ripple_detection/registry.py](src/ripple_detection/registry.py)** - `DETECTORS`, `get_detector`, `DetectorSpec`

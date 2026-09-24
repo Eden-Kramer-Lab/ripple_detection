@@ -552,6 +552,18 @@ events = Kay_ripple_detector(session.time, filtered, session.speed, session.samp
 session.ripple_windows      # (n_ripples, 2): the interval each event should overlap
 ```
 
+To exercise the speed and state rules, give the session running bouts: the speed then rises
+and falls smoothly within each (`simulate_speed`), and `theta_amplitude` and
+`delta_amplitude` add 8 Hz theta while running and 2 Hz delta at rest to every channel
+(`simulate_theta_delta`), which `theta_delta_ratio` tells apart:
+
+```python
+session = simulate_session(
+    time, [2.0, 5.0, 8.0], running_intervals=[(10.0, 20.0)],
+    theta_amplitude=4.0, delta_amplitude=4.0, rng=0,
+)
+```
+
 The z-score a detector reports is larger
 than `ripple_snr` by a factor that depends on its smoothing and consensus rule; measure it for
 the detector you use rather than assuming a mapping. The

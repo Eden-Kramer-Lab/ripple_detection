@@ -88,7 +88,9 @@ here is relative to 1.7.1.
   `ripple_frequency` and `ripple_duration` on `simulate_LFP`, and `simulate_multichannel_LFP`,
   `simulate_sharp_wave_ripple_pair`, `simulate_multiunit` and
   `simulate_session`, which share one set of ripples and return the ground
-  truth.
+  truth. `simulate_speed` and `simulate_theta_delta`, and `running_intervals`,
+  `theta_amplitude` and `delta_amplitude` on `simulate_session`, give a session
+  running bouts with theta and rest with delta.
 - `load_literature_parameters`, the detection parameters of 57 replay papers,
   and a simulation study comparing every detector (`examples/simulation_study.py`).
 - The package root exports the helpers the detectors are built from, such as

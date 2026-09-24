@@ -20,6 +20,8 @@ from ripple_detection.simulate import (
     simulate_multiunit,
     simulate_session,
     simulate_sharp_wave_ripple_pair,
+    simulate_speed,
+    simulate_theta_delta,
     simulate_time,
     white,
 )
@@ -1000,3 +1002,127 @@ class TestSimulateSession:
         t = simulate_time(6000, self.FS)
         session = simulate_session(t, [1.0], artifact_times=[3.0], rng=4)
         np.testing.assert_array_equal(session.artifact_times, [3.0])
+
+
+class TestSimulateSpeed:
+    TIME = simulate_time(10_000, 1000)
+
+    def test_still_outside_the_bouts_and_peak_at_their_middle(self):
+        speed = simulate_speed(self.TIME, [(2.0, 4.0), (6.0, 7.0)], peak_speed=20.0)
+        assert speed[1000] == 0.0
+        assert speed[3000] == pytest.approx(20.0)
+        assert speed[6500] == pytest.approx(20.0)
+        assert speed[5000] == 0.0
+
+    def test_a_bout_begins_and_ends_slow(self):
+        speed = simulate_speed(self.TIME, [(2.0, 4.0)])
+        assert speed[2000] == pytest.approx(0.0)
+        assert speed[2100] < 4.0 < speed[2300]
+
+    def test_a_still_speed(self):
+        speed = simulate_speed(self.TIME, [(2.0, 4.0)], still_speed=1.5)
+        assert speed[0] == 1.5
+        assert speed.min() == pytest.approx(1.5)
+
+    def test_no_bouts_is_still_throughout(self):
+        assert (simulate_speed(self.TIME, []) == 0).all()
+
+    @pytest.mark.parametrize(
+        ("intervals", "message"),
+        [
+            ([(4.0, 2.0)], "start before its end"),
+            ([(1.0, 3.0), (2.0, 4.0)], "must not overlap"),
+            ([(1.0, 2.0, 3.0)], "shape \\(n, 2\\)"),
+            ([(np.nan, 2.0)], "finite start"),
+        ],
+    )
+    def test_bad_intervals_raise(self, intervals, message):
+        with pytest.raises(ValueError, match=message):
+            simulate_speed(self.TIME, intervals)
+
+    def test_a_negative_speed_raises(self):
+        with pytest.raises(ValueError, match="peak_speed must be finite and non-negative"):
+            simulate_speed(self.TIME, [(2.0, 4.0)], peak_speed=-1.0)
+
+
+class TestSimulateThetaDelta:
+    TIME = simulate_time(20_000, 1000)
+
+    def test_theta_while_running_and_delta_at_rest(self):
+        from ripple_detection import theta_delta_ratio
+
+        slow = simulate_theta_delta(self.TIME, [(5.0, 15.0)], theta_amplitude=3.0)
+        ratio = theta_delta_ratio(slow, 1000)
+        assert np.median(ratio[8000:12000]) > 10
+        assert np.median(ratio[1000:3000]) < 0.1
+
+    def test_amplitudes_and_the_cross_fade(self):
+        slow = simulate_theta_delta(
+            self.TIME, [(5.0, 15.0)], theta_amplitude=3.0, delta_amplitude=2.0
+        )
+        assert np.abs(slow[8000:12000]).max() == pytest.approx(3.0, rel=1e-3)
+        assert np.abs(slow[0:4000]).max() == pytest.approx(2.0, rel=1e-3)
+        assert np.abs(slow[5000:5500]).max() < 3.0
+
+    def test_a_short_bout_fades_over_half_its_length(self):
+        """Full theta only at the bout's centre, 5.2 s, where 8 Hz crosses zero,
+        so the peak falls a little short of full amplitude; none outside it."""
+        slow = simulate_theta_delta(
+            self.TIME, [(5.0, 5.4)], delta_amplitude=0.0, transition=0.5
+        )
+        assert 0.9 < np.abs(slow).max() < 1.0
+        assert (slow[:5000] == 0).all()
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"theta_amplitude": -1.0}, "theta_amplitude must be finite and non-negative"),
+            ({"delta_frequency": 0.0}, "delta_frequency must be positive"),
+            ({"transition": np.inf}, "transition must be positive"),
+        ],
+    )
+    def test_invalid_arguments_raise(self, kwargs, message):
+        with pytest.raises(ValueError, match=message):
+            simulate_theta_delta(self.TIME, [(5.0, 15.0)], **kwargs)
+
+
+class TestSessionStates:
+    TIME = simulate_time(30_000, 1000)
+
+    def test_the_defaults_are_unchanged(self):
+        default = simulate_session(self.TIME, [3.0, 9.0], rng=0)
+        explicit = simulate_session(
+            self.TIME, [3.0, 9.0], rng=0, running_intervals=None,
+            theta_amplitude=0.0, delta_amplitude=0.0,
+        )  # fmt: skip
+        np.testing.assert_array_equal(default.lfps, explicit.lfps)
+        assert (default.speed == 0).all()
+
+    def test_running_bouts_set_the_speed(self):
+        session = simulate_session(
+            self.TIME, [3.0, 9.0], rng=0, running_intervals=[(12.0, 20.0)]
+        )
+        np.testing.assert_array_equal(session.speed, simulate_speed(self.TIME, [(12.0, 20.0)]))
+
+    def test_theta_and_delta_are_added_to_every_channel_alike(self):
+        plain = simulate_session(self.TIME, [3.0, 9.0], rng=0)
+        stated = simulate_session(
+            self.TIME, [3.0, 9.0], rng=0, running_intervals=[(12.0, 20.0)],
+            theta_amplitude=3.0, delta_amplitude=3.0,
+        )  # fmt: skip
+        slow = simulate_theta_delta(
+            self.TIME, [(12.0, 20.0)], theta_amplitude=3.0, delta_amplitude=3.0
+        )
+        np.testing.assert_allclose(
+            stated.lfps - plain.lfps, np.repeat(slow[:, None], 4, axis=1), atol=1e-12
+        )
+        np.testing.assert_allclose(stated.raw_lfp, stated.lfps[:, 0])
+        np.testing.assert_allclose(
+            stated.sharp_wave_lfp - plain.sharp_wave_lfp, slow, atol=1e-12
+        )
+        np.testing.assert_allclose(
+            stated.raw_lfp - stated.sharp_wave_lfp,
+            plain.raw_lfp - plain.sharp_wave_lfp,
+            atol=1e-12,
+        )
+        np.testing.assert_array_equal(stated.multiunit, plain.multiunit)
