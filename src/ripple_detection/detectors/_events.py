@@ -361,6 +361,9 @@ def _get_event_stats(
         - clipped_start, clipped_end: Whether the event's first or last sample
             is the first or last sample of its block, i.e. the event was cut
             off by missing data or the recording edge
+        - peak_time: Time of the largest value of ``zscore_metric`` in the
+            event (of the participating channels' mean with participants),
+            the first such sample on a tie
         - participants, n_participants, frac_participants: Information on
             which channels exhibited a ripple during the detected event
             (returned if 'participants' input is not None)
@@ -390,6 +393,7 @@ def _get_event_stats(
     first = np.searchsorted(time_arr, events[:, 0], side="left")
     last = np.searchsorted(time_arr, events[:, 1], side="right")
     rows = []
+    peak_times = np.empty(len(events))
     for index, ((start_time, end_time), a, b) in enumerate(
         zip(events, first, last, strict=True)
     ):
@@ -400,6 +404,7 @@ def _get_event_stats(
         else:
             channels = np.asarray(participant_channels[index], dtype=int)
             z = metric[a:b][:, channels].mean(axis=1)
+        peak_times[index] = event_time[np.argmax(z)]
         rows.append(
             (
                 start_time,
@@ -451,6 +456,7 @@ def _get_event_stats(
     clipped = np.asarray(clipped, dtype=bool).reshape(-1, 2)
     event_stats["clipped_start"] = clipped[:, 0]
     event_stats["clipped_end"] = clipped[:, 1]
+    event_stats["peak_time"] = peak_times
     if participant_channels is not None:
         n_participants = np.array(
             [len(channels) for channels in participant_channels], dtype=int

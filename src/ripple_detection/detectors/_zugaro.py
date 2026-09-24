@@ -250,7 +250,7 @@ def Zugaro_ripple_detector(
     -------
     ripple_times : pd.DataFrame
         One row per event, indexed by ``event_number``, with the columns of
-        the other detectors plus ``peak_time``, the time of the maximum
+        the other detectors; ``peak_time`` is the time of the maximum
         normalized power within the event.
 
     References

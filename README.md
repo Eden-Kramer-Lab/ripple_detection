@@ -325,6 +325,7 @@ All detectors return a pandas DataFrame with comprehensive event statistics:
 | `mean_speed` | Mean speed during event |
 | `clipped_start` | The event begins on the first sample of its block: it was cut off by missing data or the recording edge. For Zugaro, that the run has no crossing below `low_threshold` on that side |
 | `clipped_end` | The event ends on the last sample of its block |
+| `peak_time` | Time of the largest value of the detection trace in the event, the first such sample on a tie. For Long, the time of the sharp-wave peak |
 
 The z-score columns describe the trace each detector thresholds: the consensus trace for Kay and Roumis, the per-sample maximum over channels for Karlsson, the mean over participating channels for Shvartsman, the immobility-normalized median for Yu, the z-scored squared power for Zugaro, the joint score for Carey, the population rate for HSE, and the globally z-scored ripple power for Long. Their scales differ, so a `mean_zscore` of 3 from one detector is not 3 from another.
 
@@ -334,8 +335,7 @@ The index is `event_number`. Some detectors add columns:
 |---|---|
 | `Shvartsman_ripple_detector` | `participants` (sorted tuple of channel indices), `n_participants`, `frac_participants` |
 | `Yu_ripple_detector` | `n_suprathreshold_samples`, `detection_threshold_zscore` |
-| `Zugaro_ripple_detector` | `peak_time` |
-| `Long_sharp_wave_ripple_detector` | `peak_time`, `sharp_wave_zscore`, `sharp_wave_local_percentile`, `ripple_power_zscore`, `ripple_power_local_percentile`, `sharp_wave_duration`, `ripple_duration` |
+| `Long_sharp_wave_ripple_detector` | `sharp_wave_zscore`, `sharp_wave_local_percentile`, `ripple_power_zscore`, `ripple_power_local_percentile`, `sharp_wave_duration`, `ripple_duration` |
 | `Carey_candidate_detector` | `n_active_units` |
 | `multiunit_HSE_detector` | `n_active_units` |
 

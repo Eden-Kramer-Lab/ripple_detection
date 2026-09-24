@@ -709,6 +709,7 @@ def Kay_ripple_detector(
         - speed metrics: speed_at_start, speed_at_end, max/min/median/mean_speed
         - clipped_start, clipped_end: whether the event was cut off by missing
           data or the recording edge
+        - peak_time: time of the consensus trace's largest value in the event
 
         Returns empty DataFrame if no ripples detected. If this occurs, try:
         - Lowering zscore_threshold (e.g., from 2.0 to 1.5)

@@ -3278,6 +3278,56 @@ class TestEventStatisticsShapeValidation:
             )
 
 
+class TestPeakTime:
+    """Every detector reports when its trace peaks inside each event."""
+
+    FS = 1000
+
+    def test_the_time_of_the_largest_value(self):
+        time = np.arange(1000) / self.FS
+        metric = np.zeros(1000)
+        metric[120] = 5.0
+        stats = _get_event_stats(
+            [[0.100, 0.150]], time, metric, np.zeros(1000), 0.0, [(0, 1000)]
+        )
+        assert stats.peak_time.iloc[0] == pytest.approx(0.120)
+
+    def test_a_tie_takes_the_first_sample(self):
+        time = np.arange(1000) / self.FS
+        metric = np.zeros(1000)
+        metric[[110, 130]] = 5.0
+        stats = _get_event_stats(
+            [[0.100, 0.150]], time, metric, np.zeros(1000), 0.0, [(0, 1000)]
+        )
+        assert stats.peak_time.iloc[0] == pytest.approx(0.110)
+
+    def test_with_participants_the_peak_of_their_mean(self):
+        """Channel 2 peaks alone at 0.140 but does not take part, so the
+        peak is the participants' shared one at 0.120."""
+        time = np.arange(1000) / self.FS
+        metric = np.zeros((1000, 3))
+        metric[120, [0, 1]] = 4.0
+        metric[140, 2] = 50.0
+        stats = _get_event_stats(
+            [[0.100, 0.150]],
+            time,
+            metric,
+            np.zeros(1000),
+            0.0,
+            [(0, 1000)],
+            participants=[(0, 1)],
+        )
+        assert stats.peak_time.iloc[0] == pytest.approx(0.120)
+
+    def test_no_events_gives_an_empty_float_column(self):
+        time = np.arange(1000) / self.FS
+        stats = _get_event_stats(
+            np.empty((0, 2)), time, np.zeros(1000), np.zeros(1000), 0.0, [(0, 1000)]
+        )
+        assert "peak_time" in stats.columns
+        assert stats.peak_time.dtype == np.float64
+
+
 LFP_DETECTORS_WITHOUT_A_CEILING = [
     Kay_ripple_detector,
     Karlsson_ripple_detector,

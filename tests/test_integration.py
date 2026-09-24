@@ -99,7 +99,7 @@ BASE_COLUMNS = [
     "start_time", "end_time", "duration", "n_samples", "max_sustained_zscore",
     "mean_zscore", "median_zscore", "max_zscore", "min_zscore", "area", "total_energy",
     "speed_at_start", "speed_at_end", "max_speed", "min_speed", "median_speed",
-    "mean_speed", "clipped_start", "clipped_end",
+    "mean_speed", "clipped_start", "clipped_end", "peak_time",
 ]  # fmt: skip
 
 
@@ -335,6 +335,8 @@ class TestOutputContract:
                 assert events[column].dtype == np.float64, column
         assert events.start_time.is_monotonic_increasing
         assert (events.end_time >= events.start_time).all()
+        assert events.start_time.le(events.peak_time).all()
+        assert events.peak_time.le(events.end_time).all()
 
     @pytest.mark.parametrize("name", ALL_DETECTORS)
     def test_an_empty_result_has_the_same_schema(self, name, session, filtered):

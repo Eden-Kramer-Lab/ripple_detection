@@ -360,6 +360,10 @@ COLUMN_OVERRIDES = {
         why="events come from clustering, and it is NaN for an event shorter than "
         "minimum_sharp_wave_duration"
     ),
+    ("Long_sharp_wave_ripple_detector", "peak_time"): (
+        "s. Time of the sharp-wave peak, not of the ripple power the other statistics "
+        "describe."
+    ),
 }
 """Where a column means something particular in one detector."""
 
@@ -387,6 +391,10 @@ COLUMNS = {
     "mean_speed": "cm/s. Over the samples with known speed; NaN if none.",
     "clipped_start": "The event was cut off at its start by missing data or the recording edge.",
     "clipped_end": "The event was cut off at its end by missing data or the recording edge.",
+    "peak_time": (
+        "s. Time of the largest value of the detection trace in the event; the first "
+        "such sample on a tie."
+    ),
 }
 """The columns every detector returns, in order; the index is event_number."""
 
@@ -400,11 +408,7 @@ EXTRA_COLUMNS = {
         "n_suprathreshold_samples": "Longest run at or above the threshold inside the event.",
         "detection_threshold_zscore": "SD. The threshold estimated for this call.",
     },
-    "Zugaro_ripple_detector": {
-        "peak_time": "s. Time of the maximum normalized power in the event.",
-    },
     "Long_sharp_wave_ripple_detector": {
-        "peak_time": "s. Time of the sharp-wave peak.",
         "sharp_wave_zscore": "Local SD. Peak sharp-wave feature against its local window.",
         "sharp_wave_local_percentile": (
             "Fraction (0-1) of the local window below the peak sharp wave."

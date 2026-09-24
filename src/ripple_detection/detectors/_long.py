@@ -229,7 +229,8 @@ def Long_sharp_wave_ripple_detector(
     -------
     ripple_times : pd.DataFrame
         One row per event, indexed by ``event_number``: ``start_time``,
-        ``end_time``, ``peak_time`` (sharp-wave peak), ``duration``, the
+        ``end_time``, ``peak_time`` (the sharp-wave peak, where the other
+        detectors report their trace's peak), ``duration``, the
         package's z-score statistics computed on the globally z-scored ripple
         power, the speed statistics, and ``sharp_wave_zscore``,
         ``sharp_wave_local_percentile``, ``ripple_power_zscore``,

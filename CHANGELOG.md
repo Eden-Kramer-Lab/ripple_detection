@@ -38,8 +38,9 @@ here is relative to 1.7.1.
 - `maximum_duration` on every detector but Long, which limits the sharp wave
   instead (`maximum_sharp_wave_duration`), and `minimum_active_units` (with
   `n_active_units` in the result) on `multiunit_HSE_detector`.
-- `n_samples`, `clipped_start` and `clipped_end` in every result; `n_samples` is
-  the fourth column.
+- `n_samples`, `clipped_start`, `clipped_end` and `peak_time` in every result;
+  `n_samples` is the fourth column. `peak_time` was a Zugaro and Long column; Long's
+  is still the sharp-wave peak.
 - `band` and `transition_width` on `filter_ripple_band` and
   `ripple_bandpass_filter`, to design a filter for another band; the shipped
   kernel stays in use at 1500 Hz with the default 150-250 Hz band.
