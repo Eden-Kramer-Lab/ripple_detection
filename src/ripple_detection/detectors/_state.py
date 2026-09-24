@@ -7,6 +7,7 @@ from scipy.signal import butter, sosfiltfilt
 from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import (
     FloatArray,
+    _check_choice,
     gaussian_smooth,
     get_envelope,
     merge_close_events,
@@ -115,11 +116,7 @@ def theta_delta_ratio(
     _check_band("delta_band", delta_band, sampling_frequency)
     if smoothing_sigma is not None:
         _check_positive(smoothing_sigma=smoothing_sigma)
-    if measure not in RATIO_MEASURES:
-        msg = (
-            f"measure must be one of {', '.join(map(repr, RATIO_MEASURES))}; got {measure!r}."
-        )
-        raise ValueError(msg)
+    _check_choice("measure", measure, RATIO_MEASURES)
     values = np.asarray(lfp, dtype=float)
     if values.ndim == 2 and values.shape[1] == 1:
         values = values[:, 0]
@@ -226,12 +223,7 @@ def state_intervals(
     if not np.isfinite(threshold):
         msg = f"threshold must be finite, got {threshold}."
         raise ValueError(msg)
-    if comparison not in STATE_COMPARISONS:
-        msg = (
-            f"comparison must be one of {', '.join(map(repr, STATE_COMPARISONS))}; "
-            f"got {comparison!r}."
-        )
-        raise ValueError(msg)
+    _check_choice("comparison", comparison, STATE_COMPARISONS)
     for name, value in (("minimum_duration", minimum_duration), ("merge_gap", merge_gap)):
         if not 0 <= value < np.inf:
             msg = f"{name} must be finite and non-negative, got {value}."
@@ -251,5 +243,6 @@ def state_intervals(
     )
     if merge_gap > 0:
         intervals = merge_close_events(intervals, merge_gap)
-    long_enough = (intervals[:, 1] - intervals[:, 0]) >= minimum_duration
+    lengths = intervals[:, 1] - intervals[:, 0]
+    long_enough = (lengths >= minimum_duration) | np.isclose(lengths, minimum_duration)
     return intervals[long_enough]

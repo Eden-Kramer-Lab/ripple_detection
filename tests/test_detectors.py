@@ -5268,6 +5268,16 @@ class TestStateIntervals:
             [[1, 3], [7, 9]],
         )
 
+    def test_a_length_equal_to_the_minimum_is_kept_despite_rounding(self):
+        """0.7 - 0.4 is 0.2999...96 in binary floating point."""
+        from ripple_detection import state_intervals
+
+        time = np.arange(10) / 10
+        values = np.array([3, 3, 3, 3, 1, 1, 1, 1, 3, 3.0])
+        np.testing.assert_allclose(
+            state_intervals(values, time, 2.0, minimum_duration=0.3), [[0.4, 0.7]]
+        )
+
     def test_unknown_values_are_not_in_the_state(self):
         from ripple_detection import state_intervals
 

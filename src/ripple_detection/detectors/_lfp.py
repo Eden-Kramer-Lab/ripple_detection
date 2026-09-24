@@ -872,8 +872,8 @@ def Yu_ripple_detector(
     ripple_times : pd.DataFrame
         One row per event, indexed by ``event_number``, with the columns of
         the other detectors (``start_time``, ``end_time``, ``duration``,
-        ``max_sustained_zscore``, z-score and speed statistics, ``clipped_start`` and
-        ``clipped_end``) plus ``n_suprathreshold_samples`` (longest run at or
+        ``max_sustained_zscore``, z-score and speed statistics, ``clipped_start``,
+        ``clipped_end`` and ``peak_time``) plus ``n_suprathreshold_samples`` (longest run at or
         above the threshold) and ``detection_threshold_zscore`` (the threshold
         in the normalized units the statistics are reported in).
 

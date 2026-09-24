@@ -1208,6 +1208,11 @@ class TestExcludeMovementRules:
             exclude_movement(self.EVENTS, np.ones(10), self.TIME, rule="majority")
 
     @pytest.mark.parametrize("rule", ["all", "mean", "median"])
+    def test_speed_and_time_of_different_lengths_raise(self, rule):
+        with pytest.raises(ValueError, match="they must match"):
+            exclude_movement(self.EVENTS, np.ones(5), self.TIME, rule=rule)
+
+    @pytest.mark.parametrize("rule", ["all", "mean", "median"])
     def test_an_event_with_no_sample_raises(self, rule):
         with pytest.raises(ValueError, match="No speed samples fall within"):
             exclude_movement(np.array([(5.0, 6.0)]), np.ones(10), self.TIME, rule=rule)

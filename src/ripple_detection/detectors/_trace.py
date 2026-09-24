@@ -8,6 +8,7 @@ from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import (
     SPEED_RULES,
     FloatArray,
+    _check_choice,
     _is_immobile,
     _is_immobile_by_rule,
     _runs_extended_to_mean,
@@ -52,12 +53,6 @@ def _one_trace(trace: ArrayLike) -> FloatArray:
         )
         raise ValueError(msg)
     return values[:, np.newaxis]
-
-
-def _check_choice(name: str, value: str, choices: tuple[str, ...]) -> None:
-    if value not in choices:
-        msg = f"{name} must be one of {', '.join(map(repr, choices))}; got {value!r}."
-        raise ValueError(msg)
 
 
 def _check_trace_thresholds(threshold: float, bound_threshold: float) -> None:

@@ -13,6 +13,7 @@ from ripple_detection.core import (
     FloatArray,
     IntArray,
     _boolean_run_bounds,
+    _check_choice,
     _event_bounds,
     _is_immobile,
     _unit_area_gaussian,
@@ -200,6 +201,7 @@ def _smooth_spectrum(spectrum: FloatArray) -> FloatArray:
     return np.convolve(spectrum, CAREY_SMOOTHING_KERNEL, mode="same")
 
 
+@explain_call_errors
 def carey_spectral_ripple_score(
     lfp: ArrayLike,
     sampling_frequency: float,
@@ -298,11 +300,7 @@ def carey_spectral_ripple_score(
         high_pass_cutoff=high_pass_cutoff,
         noise_offset=noise_offset,
     )
-    if weight_by not in WEIGHTINGS:
-        msg = (
-            f"weight_by must be one of {', '.join(map(repr, WEIGHTINGS))}; got {weight_by!r}."
-        )
-        raise ValueError(msg)
+    _check_choice("weight_by", weight_by, WEIGHTINGS)
     if not (step >= 1 and step == int(step)):
         msg = f"step must be a whole number of at least 1, got {step}."
         raise ValueError(msg)
@@ -600,12 +598,7 @@ def Carey_candidate_detector(
     if not np.isfinite(theta_threshold):
         msg = f"theta_threshold must be finite, got {theta_threshold}."
         raise ValueError(msg)
-    if threshold_method not in CAREY_THRESHOLD_METHODS:
-        msg = (
-            f"threshold_method must be one of {', '.join(map(repr, CAREY_THRESHOLD_METHODS))}; "
-            f"got {threshold_method!r}."
-        )
-        raise ValueError(msg)
+    _check_choice("threshold_method", threshold_method, CAREY_THRESHOLD_METHODS)
     one_of_the_two = (
         "Pass filtered_lfps, from which the Hilbert ripple score is formed, or "
         "ripple_score with filtered_lfps=None; exactly one of the two."

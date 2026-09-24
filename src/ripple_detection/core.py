@@ -762,17 +762,18 @@ def _is_immobile_by_rule(
 ) -> BoolArray:
     """Whether each event passes the speed test ``rule`` (see
     :func:`exclude_movement`); a bool mask over events."""
-    if rule not in SPEED_RULES:
-        msg = f"rule must be one of {', '.join(map(repr, SPEED_RULES))}; got {rule!r}."
-        raise ValueError(msg)
+    _check_choice("rule", rule, SPEED_RULES)
     if rule == "endpoints":
         return _is_immobile_at_endpoints(events, speed, time, speed_threshold)
     if len(events) == 0:
         return np.zeros(0, dtype=bool)
+    speed = np.asarray(speed, dtype=float)
+    if speed.shape != np.shape(time):
+        msg = f"speed has shape {speed.shape} and time {np.shape(time)}; they must match."
+        raise ValueError(msg)
     first, last = _samples_within(events, time)
     if np.isposinf(speed_threshold):
         return np.ones(len(events), dtype=bool)
-    speed = np.asarray(speed, dtype=float)
     if rule == "all":
         # a NaN is not known to be at or below the threshold, so it fails too
         not_immobile = np.concatenate([[0], np.cumsum(~_is_immobile(speed, speed_threshold))])
@@ -1509,6 +1510,13 @@ CLOSE_EVENT_REFERENCES = ("end", "start")
 """What :func:`exclude_close_events` measures a gap from, in the last kept event."""
 
 
+def _check_choice(name: str, value: str, choices: tuple[str, ...]) -> None:
+    """Raise unless ``value`` is one of ``choices``, naming them."""
+    if value not in choices:
+        msg = f"{name} must be one of {', '.join(map(repr, choices))}; got {value!r}."
+        raise ValueError(msg)
+
+
 def _is_clear_of_close_events(
     events: FloatArray, close_event_threshold: float, measure_from: str = "end"
 ) -> BoolArray:
@@ -1518,12 +1526,7 @@ def _is_clear_of_close_events(
     let a dropped event go on excluding its successors, removing more than
     the first-of-each-cluster rule. The gap runs to each event's start from
     the retained event's end, or from its start with ``measure_from='start'``."""
-    if measure_from not in CLOSE_EVENT_REFERENCES:
-        msg = (
-            f"measure_from must be one of {', '.join(map(repr, CLOSE_EVENT_REFERENCES))}; "
-            f"got {measure_from!r}."
-        )
-        raise ValueError(msg)
+    _check_choice("measure_from", measure_from, CLOSE_EVENT_REFERENCES)
     column = 1 if measure_from == "end" else 0
     keep = np.zeros(len(events), dtype=bool)
     if len(events):
@@ -1660,9 +1663,8 @@ def require_isolation(
     if len(events) > 1:
         latest_end_before = np.maximum.accumulate(events[:-1, 1])
         gap_before = events[1:, 0] - latest_end_before
+        # at a separation of 0 this is gap_before < 0: only overlaps are close
         too_close = np.asarray(_is_gap_below(gap_before, minimum_separation), dtype=bool)
-        if minimum_separation == 0:
-            too_close = gap_before < 0
         # a close pair loses its second member through the gap before it and
         # its first through the same gap, read as the gap after
         keep[1:] &= ~too_close
@@ -1750,11 +1752,7 @@ def merge_close_events(
 
     """
     _check_non_negative(close_event_threshold=close_event_threshold)
-    if measure not in MERGE_MEASURES:
-        msg = (
-            f"measure must be one of {', '.join(map(repr, MERGE_MEASURES))}; got {measure!r}."
-        )
-        raise ValueError(msg)
+    _check_choice("measure", measure, MERGE_MEASURES)
     if measure == "peak" and not (
         isinstance(event_times, pd.DataFrame) and "peak_time" in event_times
     ):

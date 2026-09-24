@@ -143,6 +143,7 @@ class TestCallsWrittenFor1x:
         *(getattr(ripple_detection, name) for name in DETECTORS),
         ripple_detection.detect_events_from_trace,
         ripple_detection.detect_silence_bounded_events,
+        ripple_detection.carey_spectral_ripple_score,
         ripple_detection.theta_delta_ratio,
         ripple_detection.filter_ripple_band,
         ripple_detection.normalize_signal,
