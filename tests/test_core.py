@@ -30,10 +30,13 @@ from ripple_detection.core import (
     normalize_signal_manually,
     require_isolation,
     require_overlap,
+    require_times_inside,
+    require_trace_peak,
     ripple_bandpass_filter,
     sample_count_within,
     segment_boolean_series,
     threshold_by_zscore,
+    windows_around_times,
 )
 
 
@@ -1410,6 +1413,128 @@ class TestRequireIsolation:
     def test_a_negative_separation_raises(self):
         with pytest.raises(ValueError, match="minimum_separation must be non-negative"):
             require_isolation(np.array([(0.0, 0.1)]), -1.0)
+
+
+class TestRequireTracePeak:
+    TIME = np.arange(10) / 10
+    EVENTS = np.array([(0.0, 0.3), (0.5, 0.9)])
+
+    def test_keeps_the_events_where_the_trace_reaches_the_threshold(self):
+        trace = np.array([0, 1, 4, 1, 0, 0, 1, 2, 1, 0.0])
+        np.testing.assert_allclose(
+            require_trace_peak(self.EVENTS, trace, self.TIME, 3.0), self.EVENTS[:1]
+        )
+
+    def test_at_the_threshold_counts_and_endpoints_are_inside(self):
+        trace = np.array([0, 0, 0, 3, 0, 3, 0, 0, 0, 0.0])
+        np.testing.assert_allclose(
+            require_trace_peak(self.EVENTS, trace, self.TIME, 3.0), self.EVENTS
+        )
+
+    def test_nan_is_skipped_and_an_all_nan_event_is_dropped(self):
+        trace = np.array(
+            [np.nan, 4, np.nan, np.nan, 0, np.nan, np.nan, np.nan, np.nan, np.nan]
+        )
+        np.testing.assert_allclose(
+            require_trace_peak(self.EVENTS, trace, self.TIME, 3.0), self.EVENTS[:1]
+        )
+
+    def test_a_frame_keeps_its_columns_and_index(self):
+        frame = pd.DataFrame(
+            {"start_time": [0.0, 0.5], "end_time": [0.3, 0.9], "tag": list("ab")}, index=[3, 4]
+        )
+        trace = np.array([0, 0, 0, 0, 0, 0, 5, 0, 0, 0.0])
+        kept = require_trace_peak(frame, trace, self.TIME, 3.0)
+        assert list(kept.index) == [4]
+        assert list(kept.tag) == ["b"]
+
+    def test_bad_inputs_raise(self):
+        with pytest.raises(ValueError, match="must match"):
+            require_trace_peak(self.EVENTS, np.zeros(5), self.TIME, 3.0)
+        with pytest.raises(ValueError, match="threshold must be finite"):
+            require_trace_peak(self.EVENTS, np.zeros(10), self.TIME, np.nan)
+        with pytest.raises(ValueError, match="No sample of time falls within"):
+            require_trace_peak(np.array([(5.0, 6.0)]), np.zeros(10), self.TIME, 3.0)
+
+
+class TestRequireTimesInside:
+    EVENTS = np.array([(0.0, 0.3), (0.5, 0.9), (1.2, 1.4)])
+
+    def test_keeps_the_events_containing_a_time(self):
+        np.testing.assert_allclose(
+            require_times_inside(self.EVENTS, [0.7, 2.0]), self.EVENTS[[1]]
+        )
+
+    def test_the_bounds_are_inside(self):
+        np.testing.assert_allclose(
+            require_times_inside(self.EVENTS, [0.3, 1.2]), self.EVENTS[[0, 2]]
+        )
+
+    def test_times_in_any_order_and_several_per_event(self):
+        np.testing.assert_allclose(
+            require_times_inside(self.EVENTS, [1.3, 0.1, 0.2]), self.EVENTS[[0, 2]]
+        )
+
+    def test_a_series_of_peak_times(self):
+        ripples = pd.DataFrame({"peak_time": [0.6, 1.25]})
+        np.testing.assert_allclose(
+            require_times_inside(self.EVENTS, ripples.peak_time), self.EVENTS[1:]
+        )
+
+    def test_no_times_keeps_nothing_and_no_events_is_empty(self):
+        assert require_times_inside(self.EVENTS, []).shape == (0, 2)
+        assert require_times_inside(np.empty((0, 2)), [0.1]).shape == (0, 2)
+
+    def test_a_frame_complement_is_a_drop(self):
+        frame = pd.DataFrame({"start_time": self.EVENTS[:, 0], "end_time": self.EVENTS[:, 1]})
+        kept = require_times_inside(frame, [0.7])
+        assert list(frame.drop(kept.index).index) == [0, 2]
+
+    def test_nan_times_raise(self):
+        with pytest.raises(ValueError, match="NaN or infinity"):
+            require_times_inside(self.EVENTS, [0.1, np.nan])
+
+
+class TestWindowsAroundTimes:
+    def test_symmetric_windows_merge_when_they_overlap(self):
+        np.testing.assert_allclose(
+            windows_around_times([1.0, 1.05, 3.0], 0.05), [[0.95, 1.1], [2.95, 3.05]]
+        )
+
+    def test_asymmetric_windows(self):
+        np.testing.assert_allclose(windows_around_times([1.0], 0.01, 0.1), [[0.99, 1.1]])
+
+    def test_without_merging_one_window_per_time_sorted(self):
+        np.testing.assert_allclose(
+            windows_around_times([3.0, 1.0, 1.05], 0.05, merge_overlapping=False),
+            [[0.95, 1.05], [1.0, 1.1], [2.95, 3.05]],
+        )
+
+    def test_touching_windows_merge(self):
+        np.testing.assert_allclose(windows_around_times([1.0, 1.1], 0.05), [[0.95, 1.15]])
+
+    def test_every_sample_above_threshold_as_centers(self):
+        """150 ms windows on each supra-threshold sample join into one run."""
+        time = np.arange(0, 2, 0.01)
+        trace = np.zeros(len(time))
+        trace[100:105] = 5.0
+        np.testing.assert_allclose(
+            windows_around_times(time[trace >= 3.0], 0.075), [[0.925, 1.115]]
+        )
+
+    def test_no_times(self):
+        assert windows_around_times([], 0.05).shape == (0, 2)
+
+    @pytest.mark.parametrize(
+        ("before", "after"), [(-0.1, None), (0.1, np.inf), (np.nan, None)]
+    )
+    def test_bad_extents_raise(self, before, after):
+        with pytest.raises(ValueError, match="must be finite and non-negative"):
+            windows_around_times([1.0], before, after)
+
+    def test_nan_times_raise(self):
+        with pytest.raises(ValueError, match="NaN or infinity"):
+            windows_around_times([1.0, np.nan], 0.05)
 
 
 class TestCoreInputConversion:

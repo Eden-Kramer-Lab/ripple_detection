@@ -27,10 +27,13 @@ from ripple_detection.core import (
     normalize_signal_manually,
     require_isolation,
     require_overlap,
+    require_times_inside,
+    require_trace_peak,
     ripple_bandpass_filter,
     sample_count_within,
     segment_boolean_series,
     threshold_by_zscore,
+    windows_around_times,
 )
 from ripple_detection.detectors import (
     Carey_candidate_detector,
@@ -122,6 +125,8 @@ __all__ = [
     "require_active_units",
     "require_isolation",
     "require_overlap",
+    "require_times_inside",
+    "require_trace_peak",
     "ripple_bandpass_filter",
     "sample_count_within",
     "segment_boolean_series",
@@ -133,4 +138,5 @@ __all__ = [
     "simulate_time",
     "threshold_by_zscore",
     "white",
+    "windows_around_times",
 ]

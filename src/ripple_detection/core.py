@@ -1975,6 +1975,194 @@ def exclude_overlap(
     return events[keep]
 
 
+def require_trace_peak(
+    event_times: ArrayLike | pd.DataFrame,
+    trace: ArrayLike,
+    time: ArrayLike,
+    threshold: float,
+) -> FloatArray | pd.DataFrame:
+    """Keep the events in which a trace reaches a threshold.
+
+    For rules that confirm one signal's events with another, such as "a
+    multiunit burst with a ripple-band z-score of at least 3 inside it".
+    Pass the trace already normalized the way the rule states, for example
+    ``normalize_signal(get_Kay_ripple_consensus_trace(lfps, fs))``.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2), or pd.DataFrame
+        ``[start_time, end_time]`` per event, or a detector's DataFrame,
+        returned filtered with every column and its index. An event holds
+        the samples with ``start_time <= time <= end_time``.
+    trace : array_like, shape (n_time,)
+        The confirming trace. NaN samples are skipped; an event whose samples
+        are all NaN is dropped.
+    time : array_like, shape (n_time,)
+        Sample timestamps, increasing.
+    threshold : float
+        Level the trace must reach, at or above, somewhere in the event.
+
+    Returns
+    -------
+    kept_events : ndarray, shape (n_kept, 2), or pd.DataFrame
+        The events in which the trace reaches `threshold`, in the input's
+        type and order.
+
+    Raises
+    ------
+    ValueError
+        If `trace` and `time` differ in shape, `threshold` is not finite, or
+        no sample falls within an event.
+
+    Examples
+    --------
+    >>> time = np.arange(10) / 10
+    >>> ripple_z = np.array([0, 1, 4, 1, 0, 0, 1, 2, 1, 0.0])
+    >>> bursts = np.array([(0.0, 0.3), (0.5, 0.9)])
+    >>> require_trace_peak(bursts, ripple_z, time, 3.0)
+    array([[0. , 0.3]])
+
+    """
+    values = np.asarray(trace, dtype=float)
+    time = np.asarray(time, dtype=float)
+    if values.shape != time.shape:
+        msg = f"trace has shape {values.shape} and time {time.shape}; they must match."
+        raise ValueError(msg)
+    if not np.isfinite(threshold):
+        msg = f"threshold must be finite, got {threshold}."
+        raise ValueError(msg)
+    events = _event_bounds(event_times)
+    first = np.searchsorted(time, events[:, 0], side="left")
+    last = np.searchsorted(time, events[:, 1], side="right")
+    if np.any(last == first):
+        start_time, end_time = events[np.flatnonzero(last == first)[0]]
+        msg = f"No sample of time falls within event [{start_time}, {end_time}]."
+        raise ValueError(msg)
+    keep = np.zeros(len(events), dtype=bool)
+    for event, (a, b) in enumerate(zip(first, last, strict=True)):
+        inside = values[a:b]
+        keep[event] = bool(np.any(inside[np.isfinite(inside)] >= threshold))
+    if isinstance(event_times, pd.DataFrame):
+        return event_times.iloc[np.flatnonzero(keep)].copy()
+    return events[keep]
+
+
+def require_times_inside(
+    event_times: ArrayLike | pd.DataFrame,
+    times: ArrayLike,
+) -> FloatArray | pd.DataFrame:
+    """Keep the events that contain at least one of the given times.
+
+    For rules such as "population bursts that contain the peak of at least
+    one ripple": ``require_times_inside(bursts, ripples.peak_time)``. A point
+    has no duration, so :func:`require_overlap` cannot ask this; here an
+    event ``[start, end]`` contains a time ``t`` when ``start <= t <= end``.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2), or pd.DataFrame
+        ``[start_time, end_time]`` per event, or a detector's DataFrame,
+        returned filtered with every column and its index.
+    times : array_like, shape (n_times,)
+        The times to look for, in any order.
+
+    Returns
+    -------
+    kept_events : ndarray, shape (n_kept, 2), or pd.DataFrame
+        The events containing a time, in the input's type and order. The
+        rest are ``events.drop(kept.index)`` for a DataFrame.
+
+    Raises
+    ------
+    ValueError
+        If `times` holds NaN or infinity, which no event could contain.
+
+    Examples
+    --------
+    >>> bursts = np.array([(0.0, 0.3), (0.5, 0.9)])
+    >>> require_times_inside(bursts, [0.7, 2.0])
+    array([[0.5, 0.9]])
+
+    """
+    points = np.sort(np.asarray(times, dtype=float).ravel())
+    if not np.all(np.isfinite(points)):
+        msg = (
+            "times holds NaN or infinity; drop those before asking which events contain them."
+        )
+        raise ValueError(msg)
+    events = _event_bounds(event_times)
+    if len(points) == 0:
+        keep = np.zeros(len(events), dtype=bool)
+    else:
+        first_after_start = np.searchsorted(points, events[:, 0], side="left")
+        candidate = points[np.clip(first_after_start, 0, len(points) - 1)]
+        keep = (first_after_start < len(points)) & (candidate <= events[:, 1])
+    if isinstance(event_times, pd.DataFrame):
+        return event_times.iloc[np.flatnonzero(keep)].copy()
+    return events[keep]
+
+
+def windows_around_times(
+    times: ArrayLike,
+    before: float,
+    after: float | None = None,
+    *,
+    merge_overlapping: bool = True,
+) -> FloatArray:
+    """Fixed windows around times, such as each event's peak.
+
+    For rules that define an event as a fixed window rather than by where a
+    trace falls back: "a 100 ms window centered on the peak" is
+    ``windows_around_times(events.peak_time, 0.05)``, and "150 ms windows
+    centered on every sample above threshold, overlapping windows joined" is
+    ``windows_around_times(time[trace >= threshold], 0.075)``.
+
+    Parameters
+    ----------
+    times : array_like, shape (n_times,)
+        Window centers, in any order.
+    before : float
+        Extent of each window before its time, in the units of `times`.
+    after : float, optional
+        Extent after it. Default None, the same as `before`.
+    merge_overlapping : bool, optional
+        Join windows that overlap or touch into one (default). With False,
+        one window per time, sorted.
+
+    Returns
+    -------
+    windows : ndarray, shape (n_windows, 2)
+        ``[start, end]`` per window, sorted by start. Windows are not clipped
+        to the recording or to its missing samples.
+
+    Raises
+    ------
+    ValueError
+        If `before` or `after` is negative or not finite, or `times` holds NaN
+        or infinity.
+
+    Examples
+    --------
+    >>> windows_around_times([1.0, 1.05, 3.0], 0.05)
+    array([[0.95, 1.1 ],
+           [2.95, 3.05]])
+
+    """
+    after = before if after is None else after
+    for name, value in (("before", before), ("after", after)):
+        if not 0 <= value < np.inf:
+            msg = f"{name} must be finite and non-negative, got {value}."
+            raise ValueError(msg)
+    centers = np.sort(np.asarray(times, dtype=float).ravel())
+    if not np.all(np.isfinite(centers)):
+        msg = "times holds NaN or infinity, which has no window."
+        raise ValueError(msg)
+    windows = np.column_stack([centers - before, centers + after]).reshape(-1, 2)
+    if merge_overlapping:
+        return merge_close_events(windows)
+    return windows
+
+
 YU_HISTOGRAM_EDGES = np.round(np.arange(-10.0, 50.0 + 0.005, 0.01), 6)
 """Histogram grid of the Yu et al. 2017 noise-threshold estimator.
 

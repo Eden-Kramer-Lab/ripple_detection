@@ -370,6 +370,14 @@ ripples_with_a_burst = require_overlap(ripples, bursts)  # the other direction
 `require_overlap` takes a detector's DataFrame or an `(n_events, 2)` array of
 start and end times, and `minimum_overlap` raises the bar above "any overlap".
 
+Two more filters confirm one signal's events with another. `require_trace_peak`
+keeps the events in which a trace reaches a level ("a burst with a ripple z-score of
+at least 3 inside it"), and `require_times_inside` keeps the events that contain one of
+a set of times ("bursts containing a ripple's peak",
+`require_times_inside(bursts, ripples.peak_time)`). `windows_around_times` makes the
+fixed windows some papers use instead of trace crossings ("100 ms around each
+peak").
+
 Participation criteria work the same way on any inventory. `require_active_units`
 keeps the events in which enough of chosen units fire, and `count_spikes_in_events`
 returns the per-event, per-unit spike counts they are read from:
