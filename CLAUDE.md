@@ -67,6 +67,7 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
    - `_long.py` - `Long_sharp_wave_ripple_detector`, sharp wave + ripple power on two raw channels, k-means split (Long, `DetectSWR`)
    - `_carey.py` - `Carey_candidate_detector`, joint ripple-envelope × multiunit score (Carey, Tanaka & van der Meer 2019)
    - `_hse.py` - `multiunit_HSE_detector`, multiunit High Synchrony Events (spikes only)
+   - `_silence.py` - `detect_silence_bounded_events`, spiking set off by silence (groups between silences, or the window after each); not a registered detector, since it takes no speed and returns its own columns
    - `_state.py` - `theta_delta_ratio` and `state_intervals`, for detection restricted to a brain or behavioural state
    - `_units.py` - `count_spikes_in_events` and `require_active_units`, participation criteria on any event inventory
    - `_trace.py` - `detect_events_from_trace`, the shared thresholding on a trace the caller builds (bound level, raw thresholds, whole-event minimum, speed and close-event rules); not a registered detector, since its signal is whatever trace the caller passes

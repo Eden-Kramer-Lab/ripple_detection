@@ -446,6 +446,24 @@ The arguments the detectors do not have cover what published rules vary:
 - `close_event_rule="merge"`: join close events before the other rules, where
   `"drop"` keeps the first of them after.
 
+### Events bounded by silence
+
+Some detectors use no rate threshold: an event is spiking from chosen cells set off by
+silence. `detect_silence_bounded_events` splits the pooled spike train wherever no
+selected unit fires for `minimum_silence` (Foster & Wilson 2006, Liu et al. 2019), or,
+with `window`, takes the window after each silence (Diba & Buzsáki 2007: 60 ms of
+silence, then at least 5 cells in the next 300 ms). `maximum_isi` first collapses each
+unit's bursts to their first spike, as Lee & Wilson 2002 did:
+
+```python
+from ripple_detection import detect_silence_bounded_events
+
+events = detect_silence_bounded_events(
+    time, multiunit, sampling_frequency,
+    minimum_silence=0.06, window=0.3, units=template_cells, minimum_active_units=5,
+)
+```
+
 ### Restricting detection to a brain state
 
 Many papers detect only in slow-wave sleep or quiet rest, where theta is low

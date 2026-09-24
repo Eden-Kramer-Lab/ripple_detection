@@ -28,6 +28,7 @@ REGISTRY = [
 HELPERS = [
     "DEFAULT_RIPPLE_BAND",
     "detect_events_from_trace",
+    "detect_silence_bounded_events",
     "count_spikes_in_events",
     "require_active_units",
     "DEFAULT_TRANSITION_WIDTH",
@@ -140,6 +141,7 @@ class TestCallsWrittenFor1x:
     WRAPPED = (
         *(getattr(ripple_detection, name) for name in DETECTORS),
         ripple_detection.detect_events_from_trace,
+        ripple_detection.detect_silence_bounded_events,
         ripple_detection.theta_delta_ratio,
         ripple_detection.filter_ripple_band,
         ripple_detection.normalize_signal,

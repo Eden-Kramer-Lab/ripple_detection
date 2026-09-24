@@ -5310,3 +5310,250 @@ class TestStateIntervals:
             state_intervals(self.RATIO, self.TIME[:5], 2.0)
         with pytest.raises(ValueError, match="threshold must be finite"):
             state_intervals(self.RATIO, self.TIME, np.nan)
+
+
+class TestSilenceBoundedEvents:
+    """Events as spiking set off by silence, with no rate threshold."""
+
+    FS = 1000
+
+    def _spikes(self, n_time, n_units, spikes):
+        """``spikes`` is a list of (sample, unit)."""
+        multiunit = np.zeros((n_time, n_units))
+        for sample, unit in spikes:
+            multiunit[sample, unit] += 1
+        return np.arange(n_time) / self.FS, multiunit
+
+    def test_groups_split_at_silences(self):
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(
+            3000, 3, [(500, 0), (520, 1), (540, 2), (1200, 0), (1210, 1), (1300, 2)]
+        )
+        events = detect_silence_bounded_events(time, multiunit, self.FS, minimum_silence=0.1)
+        assert events.start_time.tolist() == pytest.approx([0.5, 1.2])
+        assert events.end_time.tolist() == pytest.approx([0.54, 1.3])
+        assert events.n_active_units.tolist() == [3, 3]
+        assert events.n_spikes.tolist() == [3, 3]
+        assert not events.clipped_start.any()
+        assert not events.clipped_end.any()
+
+    def test_a_silence_equal_to_the_minimum_splits(self):
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(3000, 2, [(1000, 0), (1100, 1)])
+        events = detect_silence_bounded_events(time, multiunit, self.FS, minimum_silence=0.1)
+        assert len(events) == 2
+        joined = detect_silence_bounded_events(time, multiunit, self.FS, minimum_silence=0.101)
+        assert len(joined) == 1
+
+    def test_participation_selects_events(self):
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(
+            3000, 4, [(500, 0), (520, 1), (540, 2), (1200, 0), (1210, 1)]
+        )
+        common = {"minimum_silence": 0.1}
+        three = detect_silence_bounded_events(
+            time, multiunit, self.FS, minimum_active_units=3, **common
+        )
+        half = detect_silence_bounded_events(
+            time, multiunit, self.FS, minimum_active_fraction=0.5, **common
+        )
+        assert three.start_time.tolist() == pytest.approx([0.5])
+        assert half.start_time.tolist() == pytest.approx([0.5, 1.2])
+
+    def test_only_the_selected_units_segment_and_count(self):
+        """Unit 3 fires between the groups; left out, it neither joins them
+        nor counts."""
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(
+            3000, 4, [(500, 0), (540, 1), (580, 3), (620, 3), (660, 0), (700, 1)]
+        )
+        every = detect_silence_bounded_events(time, multiunit, self.FS, minimum_silence=0.1)
+        chosen = detect_silence_bounded_events(
+            time, multiunit, self.FS, minimum_silence=0.1, units=[0, 1]
+        )
+        assert len(every) == 1
+        assert len(chosen) == 2
+        assert chosen.n_active_units.tolist() == [2, 2]
+
+    def test_bursts_collapse_to_their_first_spike(self):
+        """One unit bursting every 10 ms from 1.0 to 1.2 s joins everything
+        into one group; collapsed to its first spike, the next unit's spike
+        at 1.25 s stands apart."""
+        from ripple_detection import detect_silence_bounded_events
+
+        burst = [(sample, 0) for sample in range(1000, 1201, 10)]
+        time, multiunit = self._spikes(3000, 2, [*burst, (1250, 1)])
+        whole = detect_silence_bounded_events(time, multiunit, self.FS, minimum_silence=0.1)
+        letters = detect_silence_bounded_events(
+            time, multiunit, self.FS, minimum_silence=0.1, maximum_isi=0.05
+        )
+        assert whole.start_time.tolist() == pytest.approx([1.0])
+        assert whole.end_time.tolist() == pytest.approx([1.25])
+        assert letters.start_time.tolist() == pytest.approx([1.0, 1.25])
+        assert letters.n_spikes.tolist() == [1, 1]
+
+    def test_windows_after_silence(self):
+        """After 60 ms of silence, a 300 ms window; the spike at 1.34 s falls
+        outside the first window and follows 50 ms of silence, too little to
+        start one."""
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(
+            3000, 3, [(1000, 0), (1100, 1), (1290, 2), (1340, 0), (2000, 1), (2050, 2)]
+        )
+        events = detect_silence_bounded_events(
+            time, multiunit, self.FS, minimum_silence=0.06, window=0.3
+        )
+        assert events.start_time.tolist() == pytest.approx([1.0, 2.0])
+        assert events.end_time.tolist() == pytest.approx([1.29, 2.05])
+        assert events.n_active_units.tolist() == [3, 2]
+
+    def test_a_silence_equal_to_the_minimum_starts_a_window(self):
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(3000, 2, [(1000, 0), (1290, 1), (1350, 0)])
+        events = detect_silence_bounded_events(
+            time, multiunit, self.FS, minimum_silence=0.06, window=0.3
+        )
+        assert events.start_time.tolist() == pytest.approx([1.0, 1.35])
+
+    def test_no_onset_and_no_spike_give_no_event(self):
+        from ripple_detection import detect_silence_bounded_events
+
+        dense = [(sample, 0) for sample in range(0, 1000, 20)]
+        time, multiunit = self._spikes(1000, 2, dense)
+        assert (
+            len(
+                detect_silence_bounded_events(
+                    time, multiunit, self.FS, minimum_silence=0.06, window=0.3
+                )
+            )
+            == 0
+        )
+        silent_time, silent = self._spikes(1000, 2, [])
+        assert (
+            len(
+                detect_silence_bounded_events(
+                    silent_time, silent, self.FS, minimum_silence=0.1, maximum_isi=0.05
+                )
+            )
+            == 0
+        )
+
+    def test_a_silent_unit_does_not_stop_the_burst_collapse(self):
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(3000, 3, [(1000, 0), (1010, 0), (1020, 1)])
+        events = detect_silence_bounded_events(
+            time, multiunit, self.FS, minimum_silence=0.1, maximum_isi=0.05
+        )
+        assert events.n_active_units.tolist() == [2]
+        assert events.n_spikes.tolist() == [3]
+
+    def test_a_spike_at_the_window_end_is_inside(self):
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(3000, 2, [(1000, 0), (1300, 1)])
+        events = detect_silence_bounded_events(
+            time, multiunit, self.FS, minimum_silence=0.06, window=0.3
+        )
+        assert events.end_time.tolist() == pytest.approx([1.3])
+
+    def test_a_silence_cut_by_the_recording_start_is_no_onset(self):
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(3000, 2, [(30, 0), (2000, 1)])
+        events = detect_silence_bounded_events(
+            time, multiunit, self.FS, minimum_silence=0.06, window=0.3
+        )
+        assert events.start_time.tolist() == pytest.approx([2.0])
+
+    def test_a_window_past_the_end_is_clipped(self):
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(3000, 2, [(2900, 0), (2950, 1)])
+        events = detect_silence_bounded_events(
+            time, multiunit, self.FS, minimum_silence=0.06, window=0.3
+        )
+        assert events.clipped_end.tolist() == [True]
+
+    def test_a_group_whose_silence_runs_into_missing_data_is_clipped(self):
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(3000, 2, [(1030, 0), (1040, 1), (2000, 0)])
+        multiunit[1000, 0] = np.nan
+        events = detect_silence_bounded_events(time, multiunit, self.FS, minimum_silence=0.1)
+        assert events.start_time.tolist() == pytest.approx([1.03, 2.0])
+        assert events.clipped_start.tolist() == [True, False]
+
+    def test_nothing_spans_a_missing_sample(self):
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(3000, 2, [(1000, 0), (1020, 1)])
+        multiunit[1010, 1] = np.nan
+        events = detect_silence_bounded_events(time, multiunit, self.FS, minimum_silence=0.1)
+        assert len(events) == 2
+        assert events.end_time.iloc[0] < 1.01 < events.start_time.iloc[1]
+
+    def test_duration_limits_are_inclusive_sample_counts(self):
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(3000, 2, [(1000, 0), (1040, 1), (2000, 0), (2100, 1)])
+        common = {"minimum_silence": 0.2}
+        kept = detect_silence_bounded_events(
+            time, multiunit, self.FS, minimum_duration=0.041, maximum_duration=0.101, **common
+        )
+        assert kept.start_time.tolist() == pytest.approx([1.0, 2.0])
+        short = detect_silence_bounded_events(
+            time, multiunit, self.FS, maximum_duration=0.1, **common
+        )
+        assert short.start_time.tolist() == pytest.approx([1.0])
+
+    def test_no_spikes_gives_an_empty_frame_with_the_columns(self):
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(1000, 2, [])
+        events = detect_silence_bounded_events(time, multiunit, self.FS, minimum_silence=0.1)
+        assert len(events) == 0
+        assert list(events.columns) == [
+            "start_time", "end_time", "duration", "n_samples", "n_spikes",
+            "n_active_units", "clipped_start", "clipped_end",
+        ]  # fmt: skip
+        assert events.index.name == "event_number"
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"minimum_silence": 0.0}, "minimum_silence must be positive"),
+            ({"minimum_silence": 0.1, "window": -1.0}, "window must be positive"),
+            ({"minimum_silence": 0.1, "maximum_isi": 0.0}, "maximum_isi must be positive"),
+            (
+                {"minimum_silence": 0.1, "minimum_active_units": 3},
+                "2 unit\\(s\\) are selected",
+            ),
+            ({"minimum_silence": 0.1, "minimum_active_fraction": 2.0}, "between 0 and 1"),
+            (
+                {"minimum_silence": 0.1, "minimum_duration": 50.0},
+                "minimum_duration is in seconds",
+            ),
+        ],
+    )
+    def test_invalid_arguments_raise(self, kwargs, message):
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(1000, 2, [(500, 0)])
+        with pytest.raises(ValueError, match=message):
+            detect_silence_bounded_events(time, multiunit, self.FS, **kwargs)
+
+    def test_bad_inputs_raise(self):
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(1000, 2, [(500, 0)])
+        with pytest.raises(ValueError, match="must match"):
+            detect_silence_bounded_events(time[:500], multiunit, self.FS, minimum_silence=0.1)
+        with pytest.raises(ValueError, match="not a rate"):
+            detect_silence_bounded_events(time, multiunit * 0.5, self.FS, minimum_silence=0.1)

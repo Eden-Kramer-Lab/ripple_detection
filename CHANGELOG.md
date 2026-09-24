@@ -52,6 +52,9 @@ here is relative to 1.7.1.
   builds, with `bound_threshold` (where events end), `normalization_method="none"`,
   `minimum_event_duration` (on the whole event), `speed_rule` (including
   `"restrict"`, detection on slow samples only) and `close_event_rule="merge"`.
+- `detect_silence_bounded_events`: events as spiking from chosen units set off by
+  silence, either the groups between silences or the window after each, with
+  bursts optionally collapsed to their first spike.
 - `theta_delta_ratio` and `state_intervals`, for detection restricted to a brain
   or behavioural state, and two data-driven thresholds: `two_cluster_threshold`
   (one-dimensional k-means) and `histogram_minimum_threshold` (the first trough

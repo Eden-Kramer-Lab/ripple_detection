@@ -12,6 +12,7 @@ from ripple_detection.detectors._lfp import (
     get_Yu_ripple_consensus_trace,
 )
 from ripple_detection.detectors._long import Long_sharp_wave_ripple_detector
+from ripple_detection.detectors._silence import detect_silence_bounded_events
 from ripple_detection.detectors._state import state_intervals, theta_delta_ratio
 from ripple_detection.detectors._trace import detect_events_from_trace
 from ripple_detection.detectors._units import count_spikes_in_events, require_active_units
@@ -28,6 +29,7 @@ __all__ = [
     "Zugaro_ripple_detector",
     "count_spikes_in_events",
     "detect_events_from_trace",
+    "detect_silence_bounded_events",
     "get_Kay_ripple_consensus_trace",
     "get_Yu_ripple_consensus_trace",
     "multiunit_HSE_detector",
