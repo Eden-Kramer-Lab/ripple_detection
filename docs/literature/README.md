@@ -148,8 +148,8 @@ NumPy where noted):
 - **Two-level bounds or bounds at the threshold:** Bendor 2012, Chenani 2019, Mou 2022
   (range-scaled trace), Farooq 2019 (Neuron and Science), Michon 2019 and 2021 (with a
   trace detrended by a 3 s moving median outside the package).
-- **Silence-bounded:** Ólafsdóttir 2015, Diba 2007 (its "5 cells or 30%" is an OR: the
-  union of two calls), Foster 2006, Lee 2002, Liu 2019, and Bhattarai 2020 (with a 50 ms
+- **Silence-bounded:** Ólafsdóttir 2015, Diba 2007 (its "30% or 5 cells, whichever is
+  greater": both at once), Foster 2006, Lee 2002, Liu 2019, and Bhattarai 2020 (with a 50 ms
   boxcar power trace).
 - **State-gated:** Drieu 2018, Muessig 2019 (a 7 ms RMS trace, a percentile threshold,
   100 ms windows around peaks), Wikenheiser 2013, Ji 2007, Stella 2019 (a wavelet power

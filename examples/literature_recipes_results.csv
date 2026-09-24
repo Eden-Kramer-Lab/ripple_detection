@@ -1,9 +1,9 @@
 row,paper,trigger,n_events,recall,false_positives
 0,Mallory 2025,MUA,16,1.0,0
-1,Widloski 2025,decoding (ripple label),12,0.6875,1
+1,Widloski 2025,decoding (ripple label),13,0.6875,2
 2,Yang 2024,SWR+MUA,7,0.4375,0
 3,Huelin Gorriz 2023,SWR+MUA,16,1.0,0
-4,Harvey 2023 (code),SWR,89,1.0,73
+4,Harvey 2023 (code),SWR,24,1.0,8
 4,Harvey 2023 (text),SWR (needs radiatum),9,0.5625,0
 5,Liu 2023,SWR+MUA (needs radiatum),11,0.6875,0
 6,Tirole 2022,SWR+MUA,16,1.0,0
@@ -22,13 +22,13 @@ row,paper,trigger,n_events,recall,false_positives
 20,Stella 2019,SWR,17,1.0,1
 21,Xu 2019,MUA,16,1.0,0
 22,Farooq 2019 (Neuron),MUA,5,0.3125,0
-23,Farooq 2019 (Science),MUA,5,0.3125,0
+23,Farooq 2019 (Science),MUA,4,0.25,0
 24,Chenani 2019,MUA,15,0.9375,0
 25,Michon 2019,SWR+MUA,8,0.5,0
-26,Liu 2019,MUA,96,1.0,80
+26,Liu 2019,MUA,94,1.0,78
 27,Shin 2019,SWR,16,1.0,0
 28,Carey 2019,SWR+MUA,19,1.0,3
-29,Muessig 2019,SWR+MUA,16,1.0,0
+29,Muessig 2019,SWR+MUA,2,0.125,0
 30,Drieu 2018,MUA,18,1.0,2
 31,Maboudi 2018,MUA,16,1.0,0
 32,Olafsdottir 2017,MUA,15,0.9375,0
@@ -39,20 +39,20 @@ row,paper,trigger,n_events,recall,false_positives
 37,Ambrose 2016,SWR,16,1.0,0
 38,Jadhav 2016,SWR,16,1.0,0
 39,Olafsdottir 2016,MUA,16,0.9375,1
-40,Silva 2015,MUA,14,0.875,0
-41,Olafsdottir 2015,MUA,42,1.0,13
+40,Silva 2015,MUA,15,0.9375,0
+41,Olafsdottir 2015,MUA,16,0.8125,1
 42,Pfeiffer 2015,SWR,16,1.0,0
 43,Wu 2014,MUA,31,1.0,14
-44,Wikenheiser 2013,SWR,83,1.0,68
+44,Wikenheiser 2013,SWR,88,1.0,73
 45,Pfeiffer 2013,MUA,16,1.0,0
 46,Carr 2012,SWR,16,1.0,0
 47,Bendor 2012,MUA,16,1.0,0
-48,Gupta 2010,sequence (SWR gate),184,0.75,166
+48,Gupta 2010,sequence (SWR gate),277,0.75,259
 49,Karlsson 2009,SWR,17,1.0,1
 50,Davidson 2009,MUA,16,1.0,0
-51,Diba 2007,MUA,77,0.9375,62
+51,Diba 2007,MUA,7,0.4375,0
 52,Ji 2007,MUA,16,1.0,0
 53,Foster 2006,MUA,9,0.5625,0
-54,Lee 2002,MUA,140,1.0,124
-55,Nadasdy 1999,SWR,5,0.3125,0
-56,Kudrimoti 1999,SWR,1,0.0625,0
+54,Lee 2002,MUA,205,1.0,189
+55,Nadasdy 1999,SWR,12,0.75,0
+56,Kudrimoti 1999,SWR,0,0.0,0
