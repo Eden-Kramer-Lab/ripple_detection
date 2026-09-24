@@ -65,7 +65,7 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
    - `_lfp.py` - `Kay_ripple_detector` (Kay et al. 2016), `Karlsson_ripple_detector` (Karlsson & Frank 2009), `Roumis_ripple_detector` (Frank-lab variant, unpublished), `Shvartsman_ripple_detector` (unpublished), `Yu_ripple_detector` (Yu et al. 2017), and the two consensus traces
    - `_zugaro.py` - `Zugaro_ripple_detector`, the FMAToolbox `FindRipples` two-threshold rule
    - `_long.py` - `Long_sharp_wave_ripple_detector`, sharp wave + ripple power on two raw channels, k-means split (Long, `DetectSWR`)
-   - `_carey.py` - `Carey_candidate_detector`, joint ripple-envelope × multiunit score (Carey, Tanaka & van der Meer 2019)
+   - `_carey.py` - `Carey_candidate_detector`, joint ripple-envelope × multiunit score (the van der Meer lab's `GenCandidateEvents` for Carey, Tanaka & van der Meer 2019), and `carey_spectral_ripple_score`, the lab's `amSWR` score behind the paper's published candidates (with `ripple_score=` and `threshold_method="mean"`)
    - `_hse.py` - `multiunit_HSE_detector`, multiunit High Synchrony Events (spikes only)
    - `_silence.py` - `detect_silence_bounded_events`, spiking set off by silence (groups between silences, or the window after each); not a registered detector, since it takes no speed and returns its own columns
    - `_state.py` - `theta_delta_ratio` and `state_intervals`, for detection restricted to a brain or behavioural state

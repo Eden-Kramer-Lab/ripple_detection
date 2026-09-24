@@ -1,6 +1,9 @@
 """High-level detectors for sharp-wave ripple events and multiunit synchrony events."""
 
-from ripple_detection.detectors._carey import Carey_candidate_detector
+from ripple_detection.detectors._carey import (
+    Carey_candidate_detector,
+    carey_spectral_ripple_score,
+)
 from ripple_detection.detectors._hse import multiunit_HSE_detector
 from ripple_detection.detectors._lfp import (
     Karlsson_ripple_detector,
@@ -27,6 +30,7 @@ __all__ = [
     "Shvartsman_ripple_detector",
     "Yu_ripple_detector",
     "Zugaro_ripple_detector",
+    "carey_spectral_ripple_score",
     "count_spikes_in_events",
     "detect_events_from_trace",
     "detect_silence_bounded_events",

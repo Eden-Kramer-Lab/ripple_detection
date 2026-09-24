@@ -104,6 +104,21 @@ PARAMETERS = {
             "keeps every event."
         ),
     ),
+    "ripple_score": (
+        "",
+        (
+            "Array of shape (n_time,): a non-negative ripple score used in place of the "
+            "Hilbert score of the LFP, e.g. carey_spectral_ripple_score; pass the LFP as "
+            "None with it. None forms the score from the LFP."
+        ),
+    ),
+    "threshold_method": (
+        "",
+        (
+            "'zscore' thresholds the z-scored joint score; 'mean' rescales it to mean 0.5, "
+            "as the original precand step did, so 4 is eight times the mean."
+        ),
+    ),
     "normalization_method": (
         "",
         (
@@ -331,12 +346,18 @@ OVERRIDES = {
         "Standard deviation of the Gaussian that smooths each channel's squared envelope.",
     ),
     ("Carey_candidate_detector", "low_threshold"): (
-        "SD",
-        "Bounds on the z-scored joint score: an event is a run strictly above this.",
+        "SD, or multiples of half the mean",
+        (
+            "Bounds on the joint score, z-scored or scaled as threshold_method says: an "
+            "event is a run strictly above this."
+        ),
     ),
     ("Carey_candidate_detector", "high_threshold"): (
-        "SD",
-        "The event's peak on the z-scored joint score must be strictly above this.",
+        "SD, or multiples of half the mean",
+        (
+            "The event's peak on the joint score, scaled as threshold_method says, must be "
+            "strictly above this."
+        ),
     ),
 }
 """Where a tunable means something particular in one detector."""

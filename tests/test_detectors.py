@@ -5557,3 +5557,278 @@ class TestSilenceBoundedEvents:
             detect_silence_bounded_events(time[:500], multiunit, self.FS, minimum_silence=0.1)
         with pytest.raises(ValueError, match="not a rate"):
             detect_silence_bounded_events(time, multiunit * 0.5, self.FS, minimum_silence=0.1)
+
+
+def _windowed_fft_reference(data, sampwin, idx1, fs, high_pass_cutoff, weight_by):
+    """vandermeerlab windowedFFT.m, transliterated line by line; idx1 is
+    MATLAB's 1-based index."""
+    n_smooth = round(fs / high_pass_cutoff)
+    new = sampwin - n_smooth
+    rise = 0.5 - 0.5 * np.cos(np.pi / n_smooth * np.arange(n_smooth))
+    fall = 0.5 - 0.5 * np.cos(np.pi / n_smooth * np.arange(n_smooth - 1, -1, -1))
+    window = np.concatenate([rise, np.ones(new), fall])
+    low = idx1 - int(np.floor(new / 2)) - n_smooth
+    high = idx1 + int(np.ceil(new / 2)) + n_smooth - 1
+    windowed = data[low - 1 : high] * window
+    windowed[:n_smooth] = windowed[:n_smooth] + windowed[new + n_smooth : new + 2 * n_smooth]
+    windowed = windowed[: n_smooth + new]
+    magnitude = np.abs(np.fft.fft(windowed))
+    magnitude = magnitude[: int(np.floor(len(magnitude) / 2 + 0.5))]
+    if weight_by == "power":
+        magnitude = magnitude * np.arange(1, len(magnitude) + 1)
+    return magnitude
+
+
+def _am_swr_reference(data, fs, examples, weight_by, window=0.06, cutoff=100.0, offset=2.0):
+    """SWRfreak.m then amSWR.m (stepSize 1), transliterated."""
+    sampwin = round(window * fs)
+    t = np.arange(len(data)) / fs
+    kernel = np.array([0.1, 0.2, 0.4, 0.2, 0.1])
+
+    def smooth(x):
+        return np.convolve(x, kernel)[2 : len(x) + 2]
+
+    centers = examples.mean(axis=1)
+    swr = sum(
+        _windowed_fft_reference(
+            data, sampwin, int(np.argmin(np.abs(t - c))) + 1, fs, cutoff, weight_by
+        )
+        for c in centers
+    )
+    noise = sum(
+        _windowed_fft_reference(
+            data, sampwin, int(np.argmin(np.abs(t - (c + offset)))) + 1, fs, cutoff, weight_by
+        )
+        for c in centers
+    )
+    swr, noise = smooth(swr), smooth(noise)
+    freqs = smooth(swr / swr.sum() - noise / noise.sum())
+    n_cut = int(np.floor(cutoff * window + 0.5))
+    score = np.full(len(data), np.nan)
+    for idx1 in range(sampwin, len(data) - sampwin + 1):
+        spectrum = _windowed_fft_reference(data, sampwin, idx1, fs, cutoff, weight_by)
+        spectrum[:n_cut] = 0
+        score[idx1 - 1] = np.sum(spectrum * freqs)
+    score = np.where(np.isnan(score), 0.0, np.maximum(0.0, score))  # MATLAB max(0, NaN) is 0
+    return score / score.mean()
+
+
+class TestCareySpectralScore:
+    """The amSWR score of the paper's published candidates."""
+
+    FS = 2000
+
+    def _lfp(self, seconds=6.0, ripples=(1.0, 2.0, 3.0), rng=0):
+        rng = np.random.default_rng(rng)
+        n = round(seconds * self.FS)
+        data = rng.normal(size=n)
+        burst = 3 * np.sin(2 * np.pi * 180 * np.arange(80) / self.FS)
+        for center in ripples:
+            data[round(center * self.FS) - 40 : round(center * self.FS) + 40] += burst
+        examples = np.array([(c - 0.02, c + 0.02) for c in ripples])
+        return data, examples
+
+    @pytest.mark.parametrize("weight_by", ["amplitude", "power"])
+    def test_equals_the_original_line_by_line(self, weight_by):
+        from ripple_detection import carey_spectral_ripple_score
+
+        data, examples = self._lfp()
+        score = carey_spectral_ripple_score(data, self.FS, examples, weight_by=weight_by)
+        np.testing.assert_allclose(
+            score,
+            _am_swr_reference(data, self.FS, examples, weight_by),
+            rtol=1e-10,
+            atol=1e-12,
+        )
+
+    def test_it_peaks_at_the_ripples(self):
+        from ripple_detection import carey_spectral_ripple_score
+
+        data, examples = self._lfp()
+        score = carey_spectral_ripple_score(data, self.FS, examples)
+        for center in (1.0, 2.0, 3.0):
+            assert score[round(center * self.FS)] > 5 * np.median(score)
+        assert np.nanmean(score) == pytest.approx(1.0)
+        assert (score >= 0).all()
+
+    def test_a_step_interpolates_close_to_every_sample(self):
+        from ripple_detection import carey_spectral_ripple_score
+
+        data, examples = self._lfp()
+        every = carey_spectral_ripple_score(data, self.FS, examples)
+        stepped = carey_spectral_ripple_score(data, self.FS, examples, step=11)
+        assert np.corrcoef(every, stepped)[0, 1] > 0.99
+        # a step of 7 divides the run's 11760 intervals, so it ends on a computed sample
+        dividing = carey_spectral_ripple_score(data, self.FS, examples, step=7)
+        assert np.corrcoef(every, dividing)[0, 1] > 0.99
+        # sample 4002 (119 + 11 * 353, at a ripple) and the run's last scored
+        # sample are computed, not interpolated, so they differ only by the two
+        # scores' rescaling to mean 1
+        computed, last = 4002, len(data) - 121
+        assert stepped[last] / every[last] == pytest.approx(
+            stepped[computed] / every[computed]
+        )
+
+    def test_missing_samples_are_nan_and_zero_nearby(self):
+        from ripple_detection import carey_spectral_ripple_score
+
+        data, examples = self._lfp()
+        data[5000] = np.nan
+        score = carey_spectral_ripple_score(data, self.FS, examples)
+        assert np.isnan(score[5000])
+        assert (score[4900:5000] == 0).all()
+        assert (score[5001:5100] == 0).all()
+
+    def test_a_run_too_short_for_a_window_scores_zero(self):
+        from ripple_detection import carey_spectral_ripple_score
+
+        data, examples = self._lfp()
+        data[[5000, 5050]] = np.nan  # a run of 49 samples, under one window's 120
+        score = carey_spectral_ripple_score(data, self.FS, examples)
+        assert (score[5001:5050] == 0).all()
+
+    def test_an_example_without_a_full_stretch_is_left_out_with_a_warning(self):
+        from ripple_detection import carey_spectral_ripple_score
+
+        data, examples = self._lfp()
+        data[round(1.0 * self.FS)] = np.nan  # the first example's stretch, no one's noise
+        with pytest.warns(UserWarning, match="1 of 3 example"):
+            score = carey_spectral_ripple_score(data, self.FS, examples)
+        assert np.nanmax(score) > 5
+
+    def test_no_usable_example_raises(self):
+        from ripple_detection import carey_spectral_ripple_score
+
+        data, _ = self._lfp()
+        with pytest.raises(ValueError, match="No example ripple can build the template"):
+            carey_spectral_ripple_score(data, self.FS, np.array([(5.5, 5.6)]))
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"weight_by": "db"}, "weight_by must be one of"),
+            ({"step": 0}, "step must be a whole number"),
+            ({"window": 0.005}, "must be longer than one period"),
+            ({"high_pass_cutoff": 1500.0}, "below the Nyquist"),
+            ({"noise_offset": 0.0}, "noise_offset must be positive"),
+        ],
+    )
+    def test_invalid_arguments_raise(self, kwargs, message):
+        from ripple_detection import carey_spectral_ripple_score
+
+        data, examples = self._lfp()
+        with pytest.raises(ValueError, match=message):
+            carey_spectral_ripple_score(data, self.FS, examples, **kwargs)
+
+    def test_bad_shapes_raise(self):
+        from ripple_detection import carey_spectral_ripple_score
+
+        data, examples = self._lfp()
+        with pytest.raises(ValueError, match="one channel"):
+            carey_spectral_ripple_score(np.column_stack([data, data]), self.FS, examples)
+        np.testing.assert_allclose(
+            carey_spectral_ripple_score(data[:, None], self.FS, examples),
+            carey_spectral_ripple_score(data, self.FS, examples),
+        )
+
+    def test_a_template_that_matches_nothing_raises(self):
+        """A pure 10 Hz signal has no power above the 100 Hz cutoff."""
+        from ripple_detection import carey_spectral_ripple_score
+
+        t = np.arange(12000) / self.FS
+        data = np.sin(2 * np.pi * 10 * t)
+        with pytest.raises(ValueError, match="zero everywhere"):
+            carey_spectral_ripple_score(data, self.FS, np.array([(1.0, 1.04)]))
+
+
+class TestCareyPublishedConfiguration:
+    """ripple_score and threshold_method reproduce precand's rule."""
+
+    FS = 1500
+    N_TIME = 45_000
+
+    def _session(self):
+        from ripple_detection.simulate import simulate_session, simulate_time
+
+        time = simulate_time(self.N_TIME, self.FS)
+        return time, simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], rng=0)
+
+    def test_a_given_score_replaces_the_hilbert_one(self):
+        """The Hilbert score passed back in gives the same candidates."""
+        time, session = self._session()
+        filtered = filter_ripple_band(session.lfps, self.FS)
+        from scipy.ndimage import gaussian_filter1d
+
+        hilbert = gaussian_filter1d(
+            get_envelope(filtered).mean(axis=1), 0.010 * self.FS, truncate=3.0, mode="constant"
+        )
+        direct = Carey_candidate_detector(
+            time, filtered, session.multiunit, session.speed, self.FS
+        )
+        given = Carey_candidate_detector(
+            time, None, session.multiunit, session.speed, self.FS, ripple_score=hilbert
+        )
+        pd.testing.assert_frame_equal(direct, given)
+
+    def test_mean_scaling_thresholds_multiples_of_half_the_mean(self):
+        """With 'mean' the joint score has mean 0.5: its mean_zscore column
+        is on that scale, and a single threshold of 4 bounds each event where
+        the scaled score crosses 4."""
+        time, session = self._session()
+        filtered = filter_ripple_band(session.lfps, self.FS)
+        events = Carey_candidate_detector(
+            time, filtered, session.multiunit, session.speed, self.FS,
+            threshold_method="mean", low_threshold=4.0, high_threshold=4.0,
+        )  # fmt: skip
+        assert len(events) > 0
+        assert (events.min_zscore > 4.0).all()
+        assert (events.max_zscore > 4.0).all()
+
+    def test_the_mean_rule_differs_from_the_zscore_rule(self):
+        time, session = self._session()
+        filtered = filter_ripple_band(session.lfps, self.FS)
+        zscored = Carey_candidate_detector(
+            time, filtered, session.multiunit, session.speed, self.FS,
+            low_threshold=1.0, high_threshold=1.0,
+        )  # fmt: skip
+        scaled = Carey_candidate_detector(
+            time, filtered, session.multiunit, session.speed, self.FS,
+            threshold_method="mean", low_threshold=1.0, high_threshold=1.0,
+        )  # fmt: skip
+        assert not zscored[["start_time", "end_time"]].equals(
+            scaled[["start_time", "end_time"]]
+        )
+
+    def test_exactly_one_of_lfp_and_score(self):
+        time, session = self._session()
+        filtered = filter_ripple_band(session.lfps, self.FS)
+        with pytest.raises(ValueError, match="exactly one of the two"):
+            Carey_candidate_detector(time, None, session.multiunit, session.speed, self.FS)
+        with pytest.raises(ValueError, match="exactly one of the two"):
+            Carey_candidate_detector(
+                time, filtered, session.multiunit, session.speed, self.FS,
+                ripple_score=np.ones(self.N_TIME),
+            )  # fmt: skip
+
+    @pytest.mark.parametrize(
+        ("score", "message"),
+        [
+            (-np.ones(45_000), "must be non-negative"),
+            (np.ones((45_000, 2)), "must have shape \\(n_time,\\)"),
+        ],
+    )
+    def test_a_bad_score_raises(self, score, message):
+        time, session = self._session()
+        with pytest.raises(ValueError, match=message):
+            Carey_candidate_detector(
+                time, None, session.multiunit, session.speed, self.FS, ripple_score=score
+            )
+
+    def test_an_unknown_threshold_method_raises(self):
+        time, session = self._session()
+        filtered = filter_ripple_band(session.lfps, self.FS)
+        with pytest.raises(ValueError, match="threshold_method must be one of"):
+            Carey_candidate_detector(
+                time, filtered, session.multiunit, session.speed, self.FS,
+                threshold_method="raw",
+            )  # fmt: skip

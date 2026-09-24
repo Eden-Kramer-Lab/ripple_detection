@@ -52,6 +52,10 @@ here is relative to 1.7.1.
   builds, with `bound_threshold` (where events end), `normalization_method="none"`,
   `minimum_event_duration` (on the whole event), `speed_rule` (including
   `"restrict"`, detection on slow samples only) and `close_event_rule="merge"`.
+- `carey_spectral_ripple_score`, the van der Meer lab's spectral ripple score
+  (`SWRfreak` and `amSWR`), and `ripple_score` and `threshold_method="mean"` on
+  `Carey_candidate_detector`, which together reproduce the rule behind the
+  candidates released with Carey, Tanaka & van der Meer 2019.
 - `detect_silence_bounded_events`: events as spiking from chosen units set off by
   silence, either the groups between silences or the window after each, with
   bursts optionally collapsed to their first spike.

@@ -464,6 +464,27 @@ events = detect_silence_bounded_events(
 )
 ```
 
+### Carey's published candidates
+
+`Carey_candidate_detector` follows the van der Meer lab's `GenCandidateEvents` with its
+Hilbert ripple score. The candidates released with Carey, Tanaka & van der Meer 2019 used
+the code's spectral score instead, matched against a template built from example ripples,
+and a single threshold at 4 on the joint score rescaled to mean 0.5.
+`carey_spectral_ripple_score` reimplements that score (it equals the original's to
+rounding) and `threshold_method="mean"` that scaling:
+
+```python
+from ripple_detection import Carey_candidate_detector, carey_spectral_ripple_score
+
+# example_ripples: (n, 2) start and end times; the paper picked them by hand
+score = carey_spectral_ripple_score(raw_lfp, sampling_frequency, example_ripples)
+events = Carey_candidate_detector(
+    time, None, multiunit, speed, sampling_frequency,
+    ripple_score=score, threshold_method="mean", low_threshold=4.0, high_threshold=4.0,
+    theta_lfp=theta_lfp,
+)
+```
+
 ### Restricting detection to a brain state
 
 Many papers detect only in slow-wave sleep or quiet rest, where theta is low
@@ -704,7 +725,7 @@ conventions below.
 | `Yu_ripple_detector` | same | median over channels of each channel's z-scored 4 ms-smoothed envelope | `percentile` 99.99 of the mirrored immobility-noise distribution, estimated per call | ≥ 0.020 s | `close_ripple_threshold` 0.0 | noise from `speed <= threshold`; event endpoints ≤ threshold | Yu et al. 2017 |
 | `Zugaro_ripple_detector` | same, channels summed | z-scored smoothed squared signal, two thresholds (strictly above) | `low_threshold` 2.0 (bounds), `high_threshold` 5.0 (peak) | 0.020–0.100 s | `minimum_inter_ripple_interval` 0.030 s, merges | endpoints ≤ threshold | FMAToolbox `FindRipples` (Hirase; Zugaro) |
 | `Long_sharp_wave_ripple_detector` | **raw** LFP of the pyramidal-layer channel, and of a stratum radiatum channel as `sharp_wave_lfp=` | sharp-wave difference and ripple power, split by k-means with local (±5 s) statistics | `sharp_wave_thresholds`, `ripple_thresholds` (0.5, 2.5) | sharp wave 0.020–0.500 s **or** ripple ≥ 0.025 s: either minimum suffices; a sharp wave over 0.500 s is dropped | `minimum_separation` 0.050 s from the previous candidate, kept or not; drops | endpoints ≤ threshold | Long, buzcode/neurocode `DetectSWR` |
-| `Carey_candidate_detector` | ripple-band LFP **and** spikes `(n_time, n_units)` | geometric mean of a ripple-envelope score and a multiunit score, two thresholds (strictly above) | `low_threshold` 1.0, `high_threshold` 3.0; ≥ `minimum_active_units` 5 | ≥ 0.020 s | none | whole event inside a low-speed interval (`speed <= threshold`) | van der Meer lab `GenCandidateEvents`, Hilbert option, for Carey, Tanaka & van der Meer 2019 (whose published candidates used `amSWR` and `precand`) |
+| `Carey_candidate_detector` | ripple-band LFP **and** spikes `(n_time, n_units)` | geometric mean of a ripple-envelope score and a multiunit score, two thresholds (strictly above) | `low_threshold` 1.0, `high_threshold` 3.0; ≥ `minimum_active_units` 5 | ≥ 0.020 s | none | whole event inside a low-speed interval (`speed <= threshold`) | van der Meer lab `GenCandidateEvents`, Hilbert option, for Carey, Tanaka & van der Meer 2019; the published candidates' `amSWR` score and `precand` threshold are `ripple_score=carey_spectral_ripple_score(...)` with `threshold_method="mean"` |
 | `multiunit_HSE_detector` | spikes `(n_time, n_units)`, no LFP | z-scored 15 ms-smoothed population rate | `zscore_threshold` 2.0 | ≥ 0.015 s | `close_event_threshold` 0.0 | endpoints ≤ threshold | package convention; Davidson et al. 2009 lineage |
 
 Notes:

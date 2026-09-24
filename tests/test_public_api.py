@@ -28,6 +28,7 @@ REGISTRY = [
 HELPERS = [
     "DEFAULT_RIPPLE_BAND",
     "detect_events_from_trace",
+    "carey_spectral_ripple_score",
     "detect_silence_bounded_events",
     "count_spikes_in_events",
     "require_active_units",
