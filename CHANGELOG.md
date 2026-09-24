@@ -52,6 +52,9 @@ here is relative to 1.7.1.
   builds, with `bound_threshold` (where events end), `normalization_method="none"`,
   `minimum_event_duration` (on the whole event), `speed_rule` (including
   `"restrict"`, detection on slow samples only) and `close_event_rule="merge"`.
+- `require_active_units` (a count, a fraction, or a spike total of chosen units,
+  such as place cells) and `count_spikes_in_events`, for participation criteria
+  on any event inventory.
 - Close-event variants: `inclusive` and `measure="peak"` on `merge_close_events`,
   `measure_from="start"` on `exclude_close_events`, and `require_isolation`, which
   drops every event of a close pair.

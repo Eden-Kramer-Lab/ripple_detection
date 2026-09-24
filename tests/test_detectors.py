@@ -4978,3 +4978,156 @@ class TestDetectEventsFromTrace:
             detect_events_from_trace(
                 self._time(1000), np.zeros((1000, 3)), np.zeros(1000), self.FS
             )
+
+
+class TestActiveUnits:
+    """Participation criteria on any event inventory."""
+
+    TIME = np.arange(10) / 10
+    EVENTS = np.array([(0.0, 0.3), (0.5, 0.9)])
+
+    @classmethod
+    def _spikes(cls):
+        multiunit = np.zeros((10, 4))
+        multiunit[1, [0, 1, 2]] = 1
+        multiunit[2, 0] = 2
+        multiunit[6, 3] = 1
+        return multiunit
+
+    def test_counts_per_event_and_unit(self):
+        from ripple_detection import count_spikes_in_events
+
+        counts = count_spikes_in_events(self.EVENTS, self._spikes(), self.TIME)
+        np.testing.assert_array_equal(counts, [[3, 1, 1, 0], [0, 0, 0, 1]])
+        assert counts.dtype.kind == "i"
+
+    def test_both_ends_of_an_event_are_inside_it(self):
+        from ripple_detection import count_spikes_in_events
+
+        multiunit = np.zeros((10, 1))
+        multiunit[[0, 3], 0] = 1
+        counts = count_spikes_in_events(np.array([(0.0, 0.3)]), multiunit, self.TIME)
+        assert counts[0, 0] == 2
+
+    def test_a_missing_sample_counts_no_spike(self):
+        from ripple_detection import count_spikes_in_events
+
+        multiunit = self._spikes()
+        multiunit[1, 1] = np.nan
+        counts = count_spikes_in_events(self.EVENTS, multiunit, self.TIME)
+        assert counts[0, 1] == 0
+
+    def test_a_frame_is_read_by_its_bounds(self):
+        from ripple_detection import count_spikes_in_events
+
+        frame = pd.DataFrame({"start_time": [0.0], "end_time": [0.3], "other": [9.0]})
+        counts = count_spikes_in_events(frame, self._spikes(), self.TIME)
+        np.testing.assert_array_equal(counts, [[3, 1, 1, 0]])
+
+    def test_an_event_holding_no_sample_raises(self):
+        from ripple_detection import count_spikes_in_events
+
+        with pytest.raises(ValueError, match="No sample of time falls within"):
+            count_spikes_in_events(np.array([(5.0, 6.0)]), self._spikes(), self.TIME)
+
+    def test_a_rate_is_rejected(self):
+        from ripple_detection import count_spikes_in_events
+
+        with pytest.raises(ValueError, match="not a rate"):
+            count_spikes_in_events(self.EVENTS, self._spikes() * 0.5, self.TIME)
+
+    def test_mismatched_lengths_raise(self):
+        from ripple_detection import count_spikes_in_events
+
+        with pytest.raises(ValueError, match="must match"):
+            count_spikes_in_events(self.EVENTS, self._spikes()[:5], self.TIME)
+
+    def test_a_count_of_active_units(self):
+        from ripple_detection import require_active_units
+
+        kept = require_active_units(
+            self.EVENTS, self._spikes(), self.TIME, minimum_active_units=3
+        )
+        np.testing.assert_allclose(kept, self.EVENTS[:1])
+
+    def test_only_the_selected_units_count(self):
+        from ripple_detection import require_active_units
+
+        mask = np.array([False, False, False, True])
+        for units in (mask, [3]):
+            kept = require_active_units(self.EVENTS, self._spikes(), self.TIME, units=units)
+            np.testing.assert_allclose(kept, self.EVENTS[1:])
+
+    def test_a_fraction_of_the_selected_units(self):
+        """Three of four units is 0.75, exactly the threshold."""
+        from ripple_detection import require_active_units
+
+        spikes = self._spikes()
+        kept = require_active_units(
+            self.EVENTS, spikes, self.TIME, minimum_active_fraction=0.75
+        )
+        np.testing.assert_allclose(kept, self.EVENTS[:1])
+        assert (
+            len(
+                require_active_units(
+                    self.EVENTS, spikes, self.TIME, minimum_active_fraction=0.76
+                )
+            )
+            == 0
+        )
+
+    def test_a_count_and_a_fraction_must_both_hold(self):
+        """'At least 5 or 15%, whichever is larger' of 40 units is 6."""
+        from ripple_detection import require_active_units
+
+        time = np.arange(20) / 10
+        multiunit = np.zeros((20, 40))
+        multiunit[2, :5] = 1  # 5 active: meets 5, not 15% of 40
+        multiunit[12, :6] = 1  # 6 active: meets both
+        events = np.array([(0.0, 0.5), (1.0, 1.5)])
+        kept = require_active_units(
+            events, multiunit, time, minimum_active_units=5, minimum_active_fraction=0.15
+        )
+        np.testing.assert_allclose(kept, events[1:])
+
+    def test_a_total_of_spikes(self):
+        from ripple_detection import require_active_units
+
+        kept = require_active_units(self.EVENTS, self._spikes(), self.TIME, minimum_spikes=5)
+        np.testing.assert_allclose(kept, self.EVENTS[:1])
+
+    def test_a_frame_keeps_its_columns_and_index(self):
+        from ripple_detection import require_active_units
+
+        frame = pd.DataFrame(
+            {"start_time": [0.0, 0.5], "end_time": [0.3, 0.9], "tag": ["a", "b"]},
+            index=pd.Index([4, 9], name="event_number"),
+        )
+        kept = require_active_units(frame, self._spikes(), self.TIME, minimum_active_units=2)
+        assert list(kept.index) == [4]
+        assert list(kept.tag) == ["a"]
+
+    def test_no_events(self):
+        from ripple_detection import require_active_units
+
+        kept = require_active_units(np.empty((0, 2)), self._spikes(), self.TIME)
+        assert kept.shape == (0, 2)
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"minimum_active_units": 5}, "4 unit\\(s\\) are selected"),
+            ({"minimum_active_units": 2, "units": [0]}, "1 unit\\(s\\) are selected"),
+            ({"minimum_active_units": 1.5}, "whole number"),
+            ({"minimum_active_fraction": 1.5}, "between 0 and 1"),
+            ({"minimum_spikes": -1}, "whole number"),
+            ({"units": np.ones(3, bool)}, "one entry per unit, 4"),
+            ({"units": [0, 7]}, "outside 0 to 3"),
+            ({"units": [0.5]}, "boolean mask over the units or a 1-D array"),
+        ],
+    )
+    def test_invalid_criteria_raise(self, kwargs, message):
+        from ripple_detection import require_active_units
+
+        with pytest.raises(ValueError, match=message):
+            require_active_units(self.EVENTS, self._spikes(), self.TIME, **kwargs)

@@ -370,6 +370,18 @@ ripples_with_a_burst = require_overlap(ripples, bursts)  # the other direction
 `require_overlap` takes a detector's DataFrame or an `(n_events, 2)` array of
 start and end times, and `minimum_overlap` raises the bar above "any overlap".
 
+Participation criteria work the same way on any inventory. `require_active_units`
+keeps the events in which enough of chosen units fire, and `count_spikes_in_events`
+returns the per-event, per-unit spike counts they are read from:
+
+```python
+# "at least 5 place cells, or 15% of them, whichever is larger"
+kept = require_active_units(
+    ripples, multiunit, time,
+    minimum_active_units=5, minimum_active_fraction=0.15, units=is_place_cell,
+)
+```
+
 `exclude_overlap` is its complement, for vetoes: it keeps the events
 `require_overlap` would drop. The intervals to avoid come from outside this
 package: artifacts marked by hand or by another tool, periods of high muscle

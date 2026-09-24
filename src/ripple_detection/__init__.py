@@ -41,10 +41,12 @@ from ripple_detection.detectors import (
     Shvartsman_ripple_detector,
     Yu_ripple_detector,
     Zugaro_ripple_detector,
+    count_spikes_in_events,
     detect_events_from_trace,
     get_Kay_ripple_consensus_trace,
     get_Yu_ripple_consensus_trace,
     multiunit_HSE_detector,
+    require_active_units,
 )
 from ripple_detection.literature import load_literature_parameters
 from ripple_detection.registry import (
@@ -95,6 +97,7 @@ __all__ = [
     "Zugaro_ripple_detector",
     "__version__",
     "brown",
+    "count_spikes_in_events",
     "detect_events_from_trace",
     "estimate_noise_threshold",
     "exclude_close_events",
@@ -116,6 +119,7 @@ __all__ = [
     "normalize_signal",
     "normalize_signal_manually",
     "pink",
+    "require_active_units",
     "require_isolation",
     "require_overlap",
     "ripple_bandpass_filter",

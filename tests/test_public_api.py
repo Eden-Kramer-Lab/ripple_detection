@@ -28,6 +28,8 @@ REGISTRY = [
 HELPERS = [
     "DEFAULT_RIPPLE_BAND",
     "detect_events_from_trace",
+    "count_spikes_in_events",
+    "require_active_units",
     "DEFAULT_TRANSITION_WIDTH",
     "filter_ripple_band",
     "ripple_bandpass_filter",
