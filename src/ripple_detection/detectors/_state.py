@@ -2,13 +2,12 @@
 
 import numpy as np
 from numpy.typing import ArrayLike
-from scipy.signal import butter, sosfiltfilt
+from scipy.signal import butter, oaconvolve, sosfiltfilt
 
 from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import (
     FloatArray,
     _check_choice,
-    gaussian_smooth,
     get_envelope,
     merge_close_events,
 )
@@ -20,6 +19,20 @@ STATE_COMPARISONS = ("<", "<=", ">", ">=")
 
 RATIO_MEASURES = ("amplitude", "power")
 """What :func:`theta_delta_ratio` divides: band envelopes, or their squares."""
+
+
+def _smooth_slow(values: FloatArray, sigma: float, fs: float) -> FloatArray:
+    """A unit-area Gaussian (standard deviation ``sigma`` seconds, +/- 6 SD)
+    applied by FFT convolution with zero padding. The kernel of a smoothing of
+    seconds has thousands of taps, too many to convolve directly over hours;
+    the zero padding lowers both envelopes alike near an edge, which the
+    ratio cancels."""
+    sigma_samples = sigma * fs
+    half = int(np.ceil(6 * sigma_samples))
+    offsets = np.arange(-half, half + 1)
+    kernel = np.exp(-0.5 * (offsets / sigma_samples) ** 2)
+    smoothed: FloatArray = oaconvolve(values, kernel / kernel.sum(), mode="same")
+    return smoothed
 
 
 def _band_envelope(
@@ -74,8 +87,11 @@ def theta_delta_ratio(
         Pass-bands in Hz. Defaults (6, 12) and (1, 4).
     smoothing_sigma : float, optional
         Standard deviation in **seconds** of a Gaussian applied to each
-        band's envelope before dividing. Default 1.0; published smoothing runs
-        from about 1 to 10 s. None for no smoothing.
+        band's envelope before dividing, within each run of finite samples.
+        Default 1.0; published smoothing runs from about 1 to 10 s. None for
+        no smoothing. Near a run's edge both envelopes are averaged over the
+        part of the kernel inside the run, which the ratio makes no
+        difference to.
     measure : {'amplitude', 'power'}, optional
         Divide the envelopes (default), or their squares, the ratio of band
         powers. The power ratio is the amplitude ratio squared, so a
@@ -140,10 +156,10 @@ def theta_delta_ratio(
     delta = _band_envelope(values, runs, delta_band, sampling_frequency)
     if smoothing_sigma is not None:
         for start, stop in runs:
-            theta[start:stop] = gaussian_smooth(
+            theta[start:stop] = _smooth_slow(
                 theta[start:stop], smoothing_sigma, sampling_frequency
             )
-            delta[start:stop] = gaussian_smooth(
+            delta[start:stop] = _smooth_slow(
                 delta[start:stop], smoothing_sigma, sampling_frequency
             )
     if measure == "power":
