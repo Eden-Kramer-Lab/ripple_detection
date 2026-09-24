@@ -20,6 +20,7 @@ from ripple_detection.core import (
     gaussian_smooth,
     get_envelope,
     get_multiunit_population_firing_rate,
+    histogram_minimum_threshold,
     merge_close_events,
     merge_overlapping_ranges,
     merge_overlapping_ranges_track_participation,
@@ -36,6 +37,7 @@ from ripple_detection.core import (
     sample_count_within,
     segment_boolean_series,
     threshold_by_zscore,
+    two_cluster_threshold,
     windows_around_times,
 )
 
@@ -1535,6 +1537,72 @@ class TestWindowsAroundTimes:
     def test_nan_times_raise(self):
         with pytest.raises(ValueError, match="NaN or infinity"):
             windows_around_times([1.0, np.nan], 0.05)
+
+
+class TestTwoClusterThreshold:
+    def test_splits_two_groups_at_the_midpoint_of_their_means(self):
+        values = np.array([0.5, 0.6, 0.7, 2.0, 2.2, 2.4])
+        assert two_cluster_threshold(values) == pytest.approx((0.6 + 2.2) / 2)
+
+    def test_unequal_groups_move_the_boundary_from_the_range_midpoint(self):
+        """The range midpoint is 5; the cluster means (1.1, 10) put it at 5.55."""
+        values = np.array([1.0] * 9 + [2.0] + [10.0])
+        assert two_cluster_threshold(values) == pytest.approx((1.1 + 10.0) / 2)
+
+    def test_nan_is_ignored_and_any_shape_is_flattened(self):
+        values = np.array([[0.5, np.nan], [2.0, 2.2]])
+        assert two_cluster_threshold(values) == pytest.approx((0.5 + 2.1) / 2)
+
+    def test_fewer_than_two_distinct_values_raise(self):
+        with pytest.raises(ValueError, match="two distinct finite values"):
+            two_cluster_threshold([1.0, 1.0, np.nan])
+
+    def test_the_iteration_cap_returns_the_last_boundary(self):
+        """From 4.8 the first update moves 4.6 to the upper cluster; the split
+        settles at the means of (0.4, 0.6) and (4.6, 5.3, 9.2)."""
+        values = np.array([0.4, 0.6, 4.6, 5.3, 9.2])
+        first = ((0.4 + 0.6 + 4.6) / 3 + (5.3 + 9.2) / 2) / 2
+        assert two_cluster_threshold(values, maximum_iterations=1) == pytest.approx(first)
+        assert two_cluster_threshold(values) == pytest.approx(
+            (0.5 + (4.6 + 5.3 + 9.2) / 3) / 2
+        )
+
+
+class TestHistogramMinimumThreshold:
+    def test_the_trough_between_silence_and_bursts(self):
+        rng = np.random.default_rng(0)
+        counts = np.concatenate([rng.normal(0.2, 0.1, 5000), rng.normal(1.5, 0.3, 1000)])
+        threshold = histogram_minimum_threshold(counts, bins=50, smoothing_window=3)
+        assert 0.4 < threshold < 1.1
+
+    def test_the_first_trough_after_the_mode(self):
+        edges = np.arange(8.0)
+        values = np.repeat(np.arange(7) + 0.5, [2, 9, 4, 1, 5, 0, 3])
+        assert histogram_minimum_threshold(values, bins=edges) == pytest.approx(3.5)
+
+    def test_a_flat_trough_counts_from_its_first_bin(self):
+        edges = np.arange(7.0)
+        values = np.repeat(np.arange(6) + 0.5, [9, 3, 1, 1, 4, 2])
+        assert histogram_minimum_threshold(values, bins=edges) == pytest.approx(2.5)
+
+    def test_a_level_step_that_falls_again_is_not_yet_the_trough(self):
+        """Counts 9, 5, 5, 3, 7: the level stretch at 5 falls further to 3."""
+        values = np.repeat(np.arange(5) + 0.5, [9, 5, 5, 3, 7])
+        assert histogram_minimum_threshold(values, bins=np.arange(6.0)) == pytest.approx(3.5)
+
+    def test_a_falling_histogram_has_no_trough(self):
+        values = np.repeat(np.arange(5) + 0.5, [9, 5, 3, 2, 1])
+        with pytest.raises(ValueError, match="no first minimum"):
+            histogram_minimum_threshold(values, bins=np.arange(6.0))
+
+    @pytest.mark.parametrize("window", [0, 2, 1.5])
+    def test_a_bad_smoothing_window_raises(self, window):
+        with pytest.raises(ValueError, match="positive odd whole number"):
+            histogram_minimum_threshold(np.arange(10.0), smoothing_window=window)
+
+    def test_no_finite_values_raise(self):
+        with pytest.raises(ValueError, match="needs finite values"):
+            histogram_minimum_threshold([np.nan])
 
 
 class TestCoreInputConversion:

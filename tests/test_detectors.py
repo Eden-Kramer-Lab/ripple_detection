@@ -5131,3 +5131,182 @@ class TestActiveUnits:
 
         with pytest.raises(ValueError, match=message):
             require_active_units(self.EVENTS, self._spikes(), self.TIME, **kwargs)
+
+
+class TestThetaDeltaRatio:
+    FS = 500
+
+    def _signal(self, theta_amplitude, delta_amplitude, seconds=20):
+        t = np.arange(seconds * self.FS) / self.FS
+        return t, theta_amplitude * np.sin(2 * np.pi * 8 * t) + delta_amplitude * np.sin(
+            2 * np.pi * 2 * t
+        )
+
+    def test_the_ratio_of_band_amplitudes(self):
+        from ripple_detection import theta_delta_ratio
+
+        _, lfp = self._signal(3.0, 1.0)
+        ratio = theta_delta_ratio(lfp, self.FS)
+        middle = ratio[2 * self.FS : -2 * self.FS]
+        np.testing.assert_allclose(middle, 3.0, rtol=0.05)
+
+    def test_power_is_the_amplitude_ratio_squared(self):
+        from ripple_detection import theta_delta_ratio
+
+        _, lfp = self._signal(3.0, 1.0)
+        amplitude = theta_delta_ratio(lfp, self.FS)
+        power = theta_delta_ratio(lfp, self.FS, measure="power")
+        np.testing.assert_allclose(power, amplitude**2, rtol=1e-12)
+
+    def test_it_follows_a_change_of_state(self):
+        from ripple_detection import theta_delta_ratio
+
+        _, theta_state = self._signal(3.0, 1.0)
+        _, delta_state = self._signal(1.0, 3.0)
+        lfp = np.concatenate([theta_state, delta_state])
+        ratio = theta_delta_ratio(lfp, self.FS)
+        assert np.median(ratio[: 15 * self.FS]) > 2
+        assert np.median(ratio[25 * self.FS :]) < 0.5
+
+    def test_missing_samples_are_missing_and_filtering_restarts(self):
+        from ripple_detection import theta_delta_ratio
+
+        _, lfp = self._signal(3.0, 1.0)
+        lfp[5000] = np.nan
+        ratio = theta_delta_ratio(lfp, self.FS)
+        assert np.isnan(ratio[5000])
+        assert np.isfinite(np.delete(ratio, 5000)).all()
+
+    def test_a_gap_in_time_splits_the_recording(self):
+        """Without time the two halves are filtered as one run; with it, the
+        filter restarts at the jump, so the samples beside it differ."""
+        from ripple_detection import theta_delta_ratio
+
+        t, lfp = self._signal(3.0, 1.0)
+        t = np.where(t >= 10, t + 5.0, t)
+        joined = theta_delta_ratio(lfp, self.FS, smoothing_sigma=None)
+        split = theta_delta_ratio(lfp, self.FS, time=t, smoothing_sigma=None)
+        assert not np.allclose(joined[4990:5010], split[4990:5010])
+
+    def test_a_run_too_short_to_filter_is_missing_with_a_warning(self):
+        from ripple_detection import theta_delta_ratio
+
+        _, lfp = self._signal(3.0, 1.0)
+        lfp[10] = np.nan  # leaves a run of 10 samples, under the filter's pad of 15
+        with pytest.warns(UserWarning, match="treated as missing"):
+            ratio = theta_delta_ratio(lfp, self.FS)
+        assert np.isnan(ratio[:11]).all()
+        assert np.isfinite(ratio[11:]).all()
+
+    def test_a_column_is_one_channel(self):
+        from ripple_detection import theta_delta_ratio
+
+        _, lfp = self._signal(3.0, 1.0)
+        np.testing.assert_allclose(
+            theta_delta_ratio(lfp[:, None], self.FS), theta_delta_ratio(lfp, self.FS)
+        )
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"theta_band": (12.0, 6.0)}, "theta_band must be"),
+            ({"delta_band": (1.0, 300.0)}, "delta_band must be"),
+            ({"smoothing_sigma": 0.0}, "smoothing_sigma must be positive"),
+            ({"measure": "db"}, "measure must be one of"),
+        ],
+    )
+    def test_invalid_arguments_raise(self, kwargs, message):
+        from ripple_detection import theta_delta_ratio
+
+        _, lfp = self._signal(3.0, 1.0)
+        with pytest.raises(ValueError, match=message):
+            theta_delta_ratio(lfp, self.FS, **kwargs)
+
+    def test_bad_shapes_raise(self):
+        from ripple_detection import theta_delta_ratio
+
+        with pytest.raises(ValueError, match="one channel"):
+            theta_delta_ratio(np.zeros((100, 2)), self.FS)
+        with pytest.raises(ValueError, match="must match"):
+            theta_delta_ratio(np.zeros(100), self.FS, time=np.arange(50) / self.FS)
+        with pytest.raises(ValueError, match="no finite sample"):
+            theta_delta_ratio(np.full(100, np.nan), self.FS)
+
+
+class TestStateIntervals:
+    TIME = np.arange(10.0)
+    RATIO = np.array([3, 1, 1, 1, 3, 1, 3, 1, 1, 1.0])
+
+    def test_runs_below_the_threshold(self):
+        from ripple_detection import state_intervals
+
+        np.testing.assert_allclose(
+            state_intervals(self.RATIO, self.TIME, 2.0), [[1, 3], [5, 5], [7, 9]]
+        )
+
+    @pytest.mark.parametrize(
+        ("comparison", "expected"),
+        [("<", [[1, 3]]), ("<=", [[0, 4]]), (">", [[5, 5]]), (">=", [[0, 0], [4, 5]])],
+    )
+    def test_each_comparison(self, comparison, expected):
+        from ripple_detection import state_intervals
+
+        values = np.array([2, 1, 1, 1, 2, 3, 1, 1, 1, 1.0])[:6]
+        np.testing.assert_allclose(
+            state_intervals(values, self.TIME[:6], 2.0, comparison=comparison), expected
+        )
+
+    def test_merging_then_the_minimum(self):
+        from ripple_detection import state_intervals
+
+        np.testing.assert_allclose(
+            state_intervals(self.RATIO, self.TIME, 2.0, merge_gap=2.5, minimum_duration=3.0),
+            [[1, 9]],
+        )
+        np.testing.assert_allclose(
+            state_intervals(self.RATIO, self.TIME, 2.0, minimum_duration=2.0),
+            [[1, 3], [7, 9]],
+        )
+
+    def test_unknown_values_are_not_in_the_state(self):
+        from ripple_detection import state_intervals
+
+        values = self.RATIO.copy()
+        values[2] = np.nan
+        np.testing.assert_allclose(
+            state_intervals(values, self.TIME, 2.0), [[1, 1], [3, 3], [5, 5], [7, 9]]
+        )
+
+    def test_a_gap_in_time_ends_an_interval(self):
+        from ripple_detection import state_intervals
+
+        time = np.array([0, 1, 2, 3, 10, 11, 12.0])
+        values = np.ones(7)
+        np.testing.assert_allclose(state_intervals(values, time, 2.0), [[0, 3], [10, 12]])
+
+    def test_nothing_in_the_state(self):
+        from ripple_detection import state_intervals
+
+        assert state_intervals(self.RATIO, self.TIME, 0.5).shape == (0, 2)
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"comparison": "=="}, "comparison must be one of"),
+            ({"minimum_duration": -1.0}, "minimum_duration must be"),
+            ({"merge_gap": np.inf}, "merge_gap must be"),
+        ],
+    )
+    def test_invalid_arguments_raise(self, kwargs, message):
+        from ripple_detection import state_intervals
+
+        with pytest.raises(ValueError, match=message):
+            state_intervals(self.RATIO, self.TIME, 2.0, **kwargs)
+
+    def test_bad_inputs_raise(self):
+        from ripple_detection import state_intervals
+
+        with pytest.raises(ValueError, match="both must be"):
+            state_intervals(self.RATIO, self.TIME[:5], 2.0)
+        with pytest.raises(ValueError, match="threshold must be finite"):
+            state_intervals(self.RATIO, self.TIME, np.nan)

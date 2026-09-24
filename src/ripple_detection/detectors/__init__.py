@@ -12,6 +12,7 @@ from ripple_detection.detectors._lfp import (
     get_Yu_ripple_consensus_trace,
 )
 from ripple_detection.detectors._long import Long_sharp_wave_ripple_detector
+from ripple_detection.detectors._state import state_intervals, theta_delta_ratio
 from ripple_detection.detectors._trace import detect_events_from_trace
 from ripple_detection.detectors._units import count_spikes_in_events, require_active_units
 from ripple_detection.detectors._zugaro import Zugaro_ripple_detector
@@ -31,4 +32,6 @@ __all__ = [
     "get_Yu_ripple_consensus_trace",
     "multiunit_HSE_detector",
     "require_active_units",
+    "state_intervals",
+    "theta_delta_ratio",
 ]

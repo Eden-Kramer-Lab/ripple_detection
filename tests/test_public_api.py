@@ -54,6 +54,10 @@ HELPERS = [
     "require_times_inside",
     "require_trace_peak",
     "windows_around_times",
+    "theta_delta_ratio",
+    "state_intervals",
+    "two_cluster_threshold",
+    "histogram_minimum_threshold",
     "segment_boolean_series",
     "threshold_by_zscore",
     "minimum_sample_count",
@@ -136,6 +140,7 @@ class TestCallsWrittenFor1x:
     WRAPPED = (
         *(getattr(ripple_detection, name) for name in DETECTORS),
         ripple_detection.detect_events_from_trace,
+        ripple_detection.theta_delta_ratio,
         ripple_detection.filter_ripple_band,
         ripple_detection.normalize_signal,
         ripple_detection.simulate_LFP,

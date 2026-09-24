@@ -52,6 +52,10 @@ here is relative to 1.7.1.
   builds, with `bound_threshold` (where events end), `normalization_method="none"`,
   `minimum_event_duration` (on the whole event), `speed_rule` (including
   `"restrict"`, detection on slow samples only) and `close_event_rule="merge"`.
+- `theta_delta_ratio` and `state_intervals`, for detection restricted to a brain
+  or behavioural state, and two data-driven thresholds: `two_cluster_threshold`
+  (one-dimensional k-means) and `histogram_minimum_threshold` (the first trough
+  after a distribution's peak).
 - `require_trace_peak` and `require_times_inside`, which confirm one signal's
   events with another (a ripple z-score inside a burst, a ripple peak inside it),
   and `windows_around_times`, fixed windows around peaks or crossings.

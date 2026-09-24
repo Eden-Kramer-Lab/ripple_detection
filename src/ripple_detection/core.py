@@ -2464,6 +2464,135 @@ def noise_threshold_diagnostics(
     )
 
 
+def two_cluster_threshold(values: ArrayLike, maximum_iterations: int = 100) -> float:
+    """The boundary that splits values into two clusters by one-dimensional k-means.
+
+    For state rules that split a signal into two states by clustering rather
+    than at a fixed level, such as slow-wave sleep found by k-means on a
+    theta/delta ratio. Lloyd's algorithm with two clusters, started from the
+    smallest and largest values so the result is deterministic: the boundary
+    is the midpoint of the two cluster means, and it is updated until the
+    assignment no longer changes.
+
+    Parameters
+    ----------
+    values : array_like
+        The values to split; NaN and infinity are ignored. Any shape; it is
+        flattened.
+    maximum_iterations : int, optional
+        Cap on the updates. Default 100; the split usually settles in a few.
+
+    Returns
+    -------
+    threshold : float
+        Midpoint of the two cluster means. The lower cluster is the values at
+        or below it.
+
+    Raises
+    ------
+    ValueError
+        If fewer than two distinct finite values are given.
+
+    Examples
+    --------
+    >>> ratio = np.array([0.5, 0.6, 0.7, 2.0, 2.2, 2.4])
+    >>> round(two_cluster_threshold(ratio), 3)
+    1.4
+
+    """
+    finite = np.asarray(values, dtype=float).ravel()
+    finite = finite[np.isfinite(finite)]
+    if np.unique(finite).size < 2:
+        msg = "two_cluster_threshold needs at least two distinct finite values to split."
+        raise ValueError(msg)
+    threshold = (finite.min() + finite.max()) / 2
+    for _ in range(maximum_iterations):
+        lower = finite <= threshold
+        updated = (finite[lower].mean() + finite[~lower].mean()) / 2
+        if np.array_equal(finite <= updated, lower):
+            return float(updated)
+        threshold = updated
+    return float(threshold)
+
+
+def histogram_minimum_threshold(
+    values: ArrayLike,
+    bins: int | ArrayLike = 100,
+    smoothing_window: int = 1,
+) -> float:
+    """The first minimum of a histogram after its mode.
+
+    For thresholds read off a distribution rather than set in standard
+    deviations, such as a population spike count's: most samples are near
+    silence, and the first trough after that peak separates them from
+    bursts (Ji & Wilson 2007 [1]_ took their frame threshold there).
+
+    Parameters
+    ----------
+    values : array_like
+        The values; NaN and infinity are ignored. Flattened.
+    bins : int or array_like, optional
+        Passed to ``numpy.histogram``: a number of equal bins over the range
+        (default 100), or the bin edges.
+    smoothing_window : int, optional
+        Width in bins of a centered moving average applied to the counts
+        before the trough is sought, to step over sampling noise. Odd.
+        Default 1, no smoothing.
+
+    Returns
+    -------
+    threshold : float
+        Center of the first bin after the mode whose count is below both
+        neighbours' (a flat trough counts from its first bin).
+
+    Raises
+    ------
+    ValueError
+        If there are no finite values, `smoothing_window` is not a positive
+        odd whole number, or the counts have no trough after the mode.
+
+    References
+    ----------
+    .. [1] Ji, D., & Wilson, M. A. (2007). Coordinated memory replay in the
+       visual cortex and hippocampus during sleep. Nature Neuroscience,
+       10(1), 100-107. doi:10.1038/nn1825
+
+    Examples
+    --------
+    >>> rng = np.random.default_rng(0)
+    >>> counts = np.concatenate([rng.normal(0.2, 0.1, 5000), rng.normal(1.5, 0.3, 1000)])
+    >>> 0.4 < histogram_minimum_threshold(counts, bins=50, smoothing_window=3) < 1.1
+    True
+
+    """
+    finite = np.asarray(values, dtype=float).ravel()
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        msg = "histogram_minimum_threshold needs finite values."
+        raise ValueError(msg)
+    if not (smoothing_window >= 1 and smoothing_window == int(smoothing_window)) or (
+        smoothing_window % 2 == 0
+    ):
+        msg = f"smoothing_window must be a positive odd whole number, got {smoothing_window}."
+        raise ValueError(msg)
+    counts, edges = np.histogram(finite, bins=bins)
+    counts = counts.astype(float)
+    if smoothing_window > 1:
+        counts = np.convolve(counts, np.ones(smoothing_window) / smoothing_window, mode="same")
+    mode = int(np.argmax(counts))
+    for index in range(mode + 1, len(counts) - 1):
+        if counts[index] < counts[index - 1]:
+            following = counts[index + 1 :]
+            rises = following > counts[index]
+            level = following == counts[index]
+            # a trough ends at the first rise, and a flat stretch before it
+            # belongs to the trough
+            if rises.any() and np.all(level[: int(np.argmax(rises))]):
+                return float((edges[index] + edges[index + 1]) / 2)
+    msg = "The histogram falls without a trough after its mode, so it has no first minimum."
+    raise ValueError(msg)
+
+
 def _unit_area_gaussian(sigma_samples: float, n_sd: float) -> FloatArray:
     """Unit-area Gaussian kernel truncated at ``n_sd`` standard deviations
     (vandermeerlab ``gausskernel(R, S)`` with ``R = n_sd * S``)."""

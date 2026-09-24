@@ -20,6 +20,7 @@ from ripple_detection.core import (
     gaussian_smooth,
     get_envelope,
     get_multiunit_population_firing_rate,
+    histogram_minimum_threshold,
     merge_close_events,
     minimum_sample_count,
     noise_threshold_diagnostics,
@@ -33,6 +34,7 @@ from ripple_detection.core import (
     sample_count_within,
     segment_boolean_series,
     threshold_by_zscore,
+    two_cluster_threshold,
     windows_around_times,
 )
 from ripple_detection.detectors import (
@@ -50,6 +52,8 @@ from ripple_detection.detectors import (
     get_Yu_ripple_consensus_trace,
     multiunit_HSE_detector,
     require_active_units,
+    state_intervals,
+    theta_delta_ratio,
 )
 from ripple_detection.literature import load_literature_parameters
 from ripple_detection.registry import (
@@ -114,6 +118,7 @@ __all__ = [
     "get_detector",
     "get_envelope",
     "get_multiunit_population_firing_rate",
+    "histogram_minimum_threshold",
     "load_literature_parameters",
     "merge_close_events",
     "minimum_sample_count",
@@ -136,7 +141,10 @@ __all__ = [
     "simulate_session",
     "simulate_sharp_wave_ripple_pair",
     "simulate_time",
+    "state_intervals",
+    "theta_delta_ratio",
     "threshold_by_zscore",
+    "two_cluster_threshold",
     "white",
     "windows_around_times",
 ]

@@ -446,6 +446,31 @@ The arguments the detectors do not have cover what published rules vary:
 - `close_event_rule="merge"`: join close events before the other rules, where
   `"drop"` keeps the first of them after.
 
+### Restricting detection to a brain state
+
+Many papers detect only in slow-wave sleep or quiet rest, where theta is low
+relative to delta. `theta_delta_ratio` gives the ratio of the two bands' Hilbert
+envelopes from one raw channel, and `state_intervals` the periods a signal stays
+below (or above) a threshold, merged across short gaps and kept when long enough.
+The intervals keep or drop events, or restrict the normalization statistics:
+
+```python
+from ripple_detection import exclude_overlap, require_overlap, state_intervals, theta_delta_ratio
+
+ratio = theta_delta_ratio(raw_lfp, sampling_frequency, theta_band=(6, 12), delta_band=(1, 4))
+low_theta = state_intervals(ratio, time, 2.0)                        # ratio below 2
+still = state_intervals(speed, time, 1.0, minimum_duration=300.0)    # < 1 cm/s for 5 min
+sleep = require_overlap(low_theta, still)                            # both
+
+events = require_overlap(events, sleep, minimum_overlap=0.0)
+```
+
+`two_cluster_threshold(ratio)` splits a signal into two states by k-means instead of
+at a fixed level, and `histogram_minimum_threshold` takes a threshold at the first
+trough of a distribution after its peak, as for a population spike count. Published
+state rules differ in the bands, the power estimate and the threshold, and rarely
+report all of them, so these reproduce a rule's shape rather than its numbers.
+
 ### Simulating realistic ripples
 
 The simulator's noise is pink (1/f) by default, whose ripple-band background is closest to
