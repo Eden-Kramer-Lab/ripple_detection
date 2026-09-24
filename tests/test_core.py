@@ -37,6 +37,7 @@ from ripple_detection.core import (
     sample_count_within,
     segment_boolean_series,
     threshold_by_zscore,
+    trim_events_to_trace,
     two_cluster_threshold,
     windows_around_times,
 )
@@ -1608,6 +1609,73 @@ class TestHistogramMinimumThreshold:
     def test_no_finite_values_raise(self):
         with pytest.raises(ValueError, match="needs finite values"):
             histogram_minimum_threshold([np.nan])
+
+
+class TestTrimEventsToTrace:
+    TIME = np.arange(10) / 10
+    RATE = np.array([0, 1, 3, 4, 1, 3, 0, 0, 0, 0.0])
+    EVENT = np.array([(0.0, 0.9)])
+
+    def test_both_bounds_move_to_the_first_and_last_sample_at_or_above(self):
+        np.testing.assert_allclose(
+            trim_events_to_trace(self.EVENT, self.RATE, self.TIME, 3.0), [[0.2, 0.5]]
+        )
+
+    @pytest.mark.parametrize(
+        ("sides", "expected"), [("start", [[0.2, 0.9]]), ("end", [[0.0, 0.5]])]
+    )
+    def test_one_side_only(self, sides, expected):
+        np.testing.assert_allclose(
+            trim_events_to_trace(self.EVENT, self.RATE, self.TIME, 3.0, sides=sides), expected
+        )
+
+    def test_an_event_never_reaching_the_threshold_is_dropped(self):
+        events = np.array([(0.0, 0.4), (0.6, 0.9)])
+        np.testing.assert_allclose(
+            trim_events_to_trace(events, self.RATE, self.TIME, 3.0), [[0.2, 0.3]]
+        )
+
+    def test_nan_is_never_above(self):
+        rate = self.RATE.copy()
+        rate[5] = np.nan
+        np.testing.assert_allclose(
+            trim_events_to_trace(self.EVENT, rate, self.TIME, 3.0), [[0.2, 0.3]]
+        )
+
+    def test_the_minimum_is_an_inclusive_sample_count(self):
+        """Trimmed to 0.2-0.5, four samples: 0.4 s rounds to four at 10 Hz, 0.5 s to five."""
+        kept = trim_events_to_trace(
+            self.EVENT, self.RATE, self.TIME, 3.0, minimum_duration=0.4
+        )
+        dropped = trim_events_to_trace(
+            self.EVENT, self.RATE, self.TIME, 3.0, minimum_duration=0.5
+        )
+        assert len(kept) == 1
+        assert len(dropped) == 0
+
+    def test_a_frame_returns_bare_bounds(self):
+        frame = pd.DataFrame({"start_time": [0.0], "end_time": [0.9], "max_zscore": [9.0]})
+        result = trim_events_to_trace(frame, self.RATE, self.TIME, 3.0)
+        assert isinstance(result, np.ndarray)
+        np.testing.assert_allclose(result, [[0.2, 0.5]])
+
+    def test_no_events(self):
+        assert trim_events_to_trace(np.empty((0, 2)), self.RATE, self.TIME, 3.0).shape == (
+            0,
+            2,
+        )
+
+    def test_bad_inputs_raise(self):
+        with pytest.raises(ValueError, match="must match"):
+            trim_events_to_trace(self.EVENT, self.RATE[:5], self.TIME, 3.0)
+        with pytest.raises(ValueError, match="threshold must be finite"):
+            trim_events_to_trace(self.EVENT, self.RATE, self.TIME, np.inf)
+        with pytest.raises(ValueError, match="sides must be one of"):
+            trim_events_to_trace(self.EVENT, self.RATE, self.TIME, 3.0, sides="middle")
+        with pytest.raises(ValueError, match="minimum_duration must be non-negative"):
+            trim_events_to_trace(self.EVENT, self.RATE, self.TIME, 3.0, minimum_duration=-1)
+        with pytest.raises(ValueError, match="No sample of time falls within"):
+            trim_events_to_trace(np.array([(5.0, 6.0)]), self.RATE, self.TIME, 3.0)
 
 
 class TestCoreInputConversion:

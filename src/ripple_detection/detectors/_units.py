@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
 
-from ripple_detection.core import FloatArray, IntArray, _event_bounds
+from ripple_detection.core import FloatArray, IntArray, _event_bounds, sample_count_within
 from ripple_detection.detectors._validation import _check_whole_number, _validate_multiunit
 
 
@@ -193,3 +193,120 @@ def require_active_units(
     if isinstance(event_times, pd.DataFrame):
         return event_times.iloc[np.flatnonzero(keep)].copy()
     return _event_bounds(event_times)[keep]
+
+
+def trim_events_to_spike_windows(
+    event_times: ArrayLike | pd.DataFrame,
+    multiunit: ArrayLike,
+    time: ArrayLike,
+    *,
+    window: float = 0.02,
+    step: float = 0.005,
+    minimum_spikes: int = 2,
+    units: ArrayLike | None = None,
+    minimum_duration: float = 0.0,
+) -> FloatArray:
+    """Move each event's bounds inward until its edge windows hold enough spikes.
+
+    For decoding rules that need spikes in an event's first and last time
+    bins, such as "boundaries adjusted inward to ensure that the first and
+    last estimation bins contained a minimum of 2 spikes" with 20 ms bins
+    advanced in 5 ms steps (Pfeiffer & Foster 2013). The start moves forward
+    by `step` until ``[start, start + window)`` holds `minimum_spikes` spikes
+    of the selected units; the end moves back by `step` until
+    ``(end - window, end]`` does. An event with no such start or end, or
+    whose end window would begin before its start, is dropped.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2), or pd.DataFrame
+        ``[start_time, end_time]`` per event, or a detector's DataFrame.
+    multiunit : array_like, shape (n_time, n_units)
+        Spike counts or indicators per sample. A NaN counts no spike.
+    time : array_like, shape (n_time,)
+        Sample timestamps in seconds, increasing.
+    window : float, optional
+        Length of each edge window in seconds. Default 0.02.
+    step : float, optional
+        How far a bound moves each time, in seconds. Default 0.005.
+    minimum_spikes : int, optional
+        Spikes each edge window must hold. Default 2.
+    units : array_like, optional
+        The units whose spikes count, a boolean mask or indices. Default all.
+    minimum_duration : float, optional
+        Trimmed events holding fewer samples than this spans are dropped.
+        Default 0.0.
+
+    Returns
+    -------
+    trimmed_events : ndarray, shape (n_kept, 2)
+        The trimmed bounds, in input order.
+
+    Raises
+    ------
+    ValueError
+        If `window` or `step` is not positive, `minimum_spikes` is not a
+        whole number of at least 1, or the inputs fail
+        :func:`count_spikes_in_events`'s checks.
+
+    Examples
+    --------
+    >>> time = np.arange(100) / 100
+    >>> multiunit = np.zeros((100, 2))
+    >>> multiunit[[30, 32, 60, 61], 0] = 1
+    >>> events = np.array([(0.0, 0.99)])
+    >>> trim_events_to_spike_windows(events, multiunit, time, window=0.05, step=0.01)
+    array([[0.28, 0.64]])
+
+    """
+    for name, value in (("window", window), ("step", step)):
+        if not 0 < value < np.inf:
+            msg = f"{name} must be positive and finite, got {value}."
+            raise ValueError(msg)
+    _check_whole_number("minimum_spikes", minimum_spikes, 1)
+    if minimum_duration < 0:
+        msg = f"minimum_duration must be non-negative, got {minimum_duration}."
+        raise ValueError(msg)
+    count_spikes_in_events(np.empty((0, 2)), multiunit, time)  # validates the inputs
+    spikes = np.asarray(multiunit, dtype=float)
+    time = np.asarray(time, dtype=float)
+    pooled = np.nansum(spikes[:, _selected_units(units, spikes.shape[1])], axis=1)
+    cumulative = np.concatenate([[0.0], np.cumsum(pooled)])
+
+    def spikes_between(low: float, high: float, closed_on: str) -> float:
+        """Spikes in [low, high) or (low, high], by the cumulative count; the
+        edges are compared with a tolerance so a bound reached by stepping
+        is not moved across a sample by rounding."""
+        low_tol, high_tol = 1e-9 * max(1.0, abs(low)), 1e-9 * max(1.0, abs(high))
+        if closed_on == "left":
+            a = np.searchsorted(time, low - low_tol, "left")
+            b = np.searchsorted(time, high - high_tol, "left")
+        else:
+            a = np.searchsorted(time, low + low_tol, "right")
+            b = np.searchsorted(time, high + high_tol, "right")
+        return float(cumulative[b] - cumulative[a])
+
+    trimmed = []
+    for start_time, end_time in _event_bounds(event_times):
+        n_steps = int(np.floor((end_time - start_time - window) / step + 1e-9))
+        if n_steps < 0:
+            continue
+        # count steps from each bound rather than accumulating them, so the
+        # window edges land on the intended times
+        starts = start_time + step * np.arange(n_steps + 1)
+        ends = end_time - step * np.arange(n_steps + 1)
+        start = next(
+            (s for s in starts if spikes_between(s, s + window, "left") >= minimum_spikes),
+            None,
+        )
+        end = next(
+            (e for e in ends if spikes_between(e - window, e, "right") >= minimum_spikes), None
+        )
+        if start is None or end is None or end - window < start - 1e-9:
+            continue
+        first = int(np.searchsorted(time, start - 1e-9 * max(1.0, abs(start)), "left"))
+        last = int(np.searchsorted(time, end + 1e-9 * max(1.0, abs(end)), "right")) - 1
+        if not sample_count_within(last - first + 1, time, minimum_duration):
+            continue
+        trimmed.append((time[first], time[last]))
+    return np.asarray(trimmed, dtype=float).reshape(-1, 2)

@@ -5842,3 +5842,98 @@ class TestCareyPublishedConfiguration:
                 time, filtered, session.multiunit, session.speed, self.FS,
                 threshold_method="raw",
             )  # fmt: skip
+
+
+class TestTrimEventsToSpikeWindows:
+    """Edge windows must hold enough spikes (Pfeiffer & Foster 2013)."""
+
+    TIME = np.arange(100) / 100
+
+    def _spikes(self, samples, unit=0, n_units=2):
+        multiunit = np.zeros((100, n_units))
+        for sample in samples:
+            multiunit[sample, unit] += 1
+        return multiunit
+
+    def test_both_edges_move_inward(self):
+        """Start: [0.28, 0.33) is the first window from 0 in 10 ms steps with
+        spikes at 0.30 and 0.32; end: (0.59, 0.64] the first back from 0.99."""
+        from ripple_detection import trim_events_to_spike_windows
+
+        spikes = self._spikes([30, 32, 60, 61])
+        result = trim_events_to_spike_windows(
+            np.array([(0.0, 0.99)]), spikes, self.TIME, window=0.05, step=0.01
+        )
+        np.testing.assert_allclose(result, [[0.28, 0.64]])
+
+    def test_edges_that_already_hold_enough_do_not_move(self):
+        from ripple_detection import trim_events_to_spike_windows
+
+        spikes = self._spikes([20, 21, 48, 49])
+        result = trim_events_to_spike_windows(
+            np.array([(0.2, 0.49)]), spikes, self.TIME, window=0.05, step=0.01
+        )
+        np.testing.assert_allclose(result, [[0.2, 0.49]])
+
+    def test_an_event_without_enough_spikes_is_dropped(self):
+        from ripple_detection import trim_events_to_spike_windows
+
+        spikes = self._spikes([30])
+        result = trim_events_to_spike_windows(
+            np.array([(0.0, 0.99), (0.5, 0.52)]), spikes, self.TIME, window=0.05, step=0.01
+        )
+        assert result.shape == (0, 2)
+
+    def test_only_the_selected_units_count(self):
+        from ripple_detection import trim_events_to_spike_windows
+
+        spikes = self._spikes([30, 32]) + self._spikes([10, 11], unit=1)
+        every = trim_events_to_spike_windows(
+            np.array([(0.0, 0.99)]), spikes, self.TIME, window=0.05, step=0.01
+        )
+        chosen = trim_events_to_spike_windows(
+            np.array([(0.0, 0.99)]), spikes, self.TIME, window=0.05, step=0.01, units=[0]
+        )
+        assert every[0, 0] == pytest.approx(0.07)
+        assert chosen[0, 0] == pytest.approx(0.28)
+
+    def test_a_missing_sample_counts_no_spike(self):
+        from ripple_detection import trim_events_to_spike_windows
+
+        spikes = self._spikes([30, 32, 60, 61])
+        spikes[32, 1] = np.nan
+        result = trim_events_to_spike_windows(
+            np.array([(0.0, 0.99)]), spikes, self.TIME, window=0.05, step=0.01
+        )
+        np.testing.assert_allclose(result, [[0.28, 0.64]])
+
+    def test_a_minimum_duration_on_the_trimmed_event(self):
+        from ripple_detection import trim_events_to_spike_windows
+
+        spikes = self._spikes([30, 32, 60, 61])
+        common = {"window": 0.05, "step": 0.01}
+        kept = trim_events_to_spike_windows(
+            np.array([(0.0, 0.99)]), spikes, self.TIME, minimum_duration=0.37, **common
+        )
+        dropped = trim_events_to_spike_windows(
+            np.array([(0.0, 0.99)]), spikes, self.TIME, minimum_duration=0.38, **common
+        )
+        assert len(kept) == 1
+        assert len(dropped) == 0
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"window": 0.0}, "window must be positive"),
+            ({"step": np.inf}, "step must be positive"),
+            ({"minimum_spikes": 0}, "minimum_spikes must be a whole number"),
+            ({"minimum_duration": -1.0}, "minimum_duration must be non-negative"),
+        ],
+    )
+    def test_invalid_arguments_raise(self, kwargs, message):
+        from ripple_detection import trim_events_to_spike_windows
+
+        with pytest.raises(ValueError, match=message):
+            trim_events_to_spike_windows(
+                np.array([(0.0, 0.99)]), self._spikes([30]), self.TIME, **kwargs
+            )

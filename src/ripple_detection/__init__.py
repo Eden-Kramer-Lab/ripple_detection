@@ -34,6 +34,7 @@ from ripple_detection.core import (
     sample_count_within,
     segment_boolean_series,
     threshold_by_zscore,
+    trim_events_to_trace,
     two_cluster_threshold,
     windows_around_times,
 )
@@ -56,6 +57,7 @@ from ripple_detection.detectors import (
     require_active_units,
     state_intervals,
     theta_delta_ratio,
+    trim_events_to_spike_windows,
 )
 from ripple_detection.literature import load_literature_parameters
 from ripple_detection.registry import (
@@ -148,6 +150,8 @@ __all__ = [
     "state_intervals",
     "theta_delta_ratio",
     "threshold_by_zscore",
+    "trim_events_to_spike_windows",
+    "trim_events_to_trace",
     "two_cluster_threshold",
     "white",
     "windows_around_times",

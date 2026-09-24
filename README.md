@@ -376,7 +376,11 @@ at least 3 inside it"), and `require_times_inside` keeps the events that contain
 a set of times ("bursts containing a ripple's peak",
 `require_times_inside(bursts, ripples.peak_time)`). `windows_around_times` makes the
 fixed windows some papers use instead of trace crossings ("100 ms around each
-peak").
+peak"). Two functions narrow detected events to their core: `trim_events_to_trace`
+moves each bound to the first or last sample where a trace is at or above a level
+("the first upward to the last downward crossing of 2 spikes/s per cell", or "onset
+at the first spike"), and `trim_events_to_spike_windows` moves them until the first
+and last decoding windows hold enough spikes.
 
 Participation criteria work the same way on any inventory. `require_active_units`
 keeps the events in which enough of chosen units fire, and `count_spikes_in_events`

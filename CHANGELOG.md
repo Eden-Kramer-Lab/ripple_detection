@@ -63,6 +63,8 @@ here is relative to 1.7.1.
   or behavioural state, and two data-driven thresholds: `two_cluster_threshold`
   (one-dimensional k-means) and `histogram_minimum_threshold` (the first trough
   after a distribution's peak).
+- `trim_events_to_trace` and `trim_events_to_spike_windows`, which narrow events
+  to where a trace stays high or to edge windows holding enough spikes.
 - `require_trace_peak` and `require_times_inside`, which confirm one signal's
   events with another (a ripple z-score inside a burst, a ripple peak inside it),
   and `windows_around_times`, fixed windows around peaks or crossings.

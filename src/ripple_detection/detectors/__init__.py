@@ -18,7 +18,11 @@ from ripple_detection.detectors._long import Long_sharp_wave_ripple_detector
 from ripple_detection.detectors._silence import detect_silence_bounded_events
 from ripple_detection.detectors._state import state_intervals, theta_delta_ratio
 from ripple_detection.detectors._trace import detect_events_from_trace
-from ripple_detection.detectors._units import count_spikes_in_events, require_active_units
+from ripple_detection.detectors._units import (
+    count_spikes_in_events,
+    require_active_units,
+    trim_events_to_spike_windows,
+)
 from ripple_detection.detectors._zugaro import Zugaro_ripple_detector
 
 __all__ = [
@@ -40,4 +44,5 @@ __all__ = [
     "require_active_units",
     "state_intervals",
     "theta_delta_ratio",
+    "trim_events_to_spike_windows",
 ]

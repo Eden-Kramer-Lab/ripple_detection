@@ -60,6 +60,8 @@ HELPERS = [
     "state_intervals",
     "two_cluster_threshold",
     "histogram_minimum_threshold",
+    "trim_events_to_trace",
+    "trim_events_to_spike_windows",
     "segment_boolean_series",
     "threshold_by_zscore",
     "minimum_sample_count",

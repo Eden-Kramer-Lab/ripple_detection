@@ -2045,6 +2045,100 @@ def require_trace_peak(
     return events[keep]
 
 
+TRIM_SIDES = ("both", "start", "end")
+"""Which bounds :func:`trim_events_to_trace` moves."""
+
+
+def trim_events_to_trace(
+    event_times: ArrayLike | pd.DataFrame,
+    trace: ArrayLike,
+    time: ArrayLike,
+    threshold: float,
+    *,
+    sides: str = "both",
+    minimum_duration: float = 0.0,
+) -> FloatArray:
+    """Move each event's bounds inward to where a trace is at or above a threshold.
+
+    For rules that narrow a detected event to its core: "the period from the
+    first upward crossing to the last downward crossing of 2 spikes/s per
+    neuron within the SWR" (pass that rate as the trace), or "onset moved to
+    the time of the first spike" (the pooled spike count, threshold 1,
+    ``sides='start'``). Each bound moves to the first (start) or last (end)
+    sample in the event at or above `threshold`; an event with none is
+    dropped.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2), or pd.DataFrame
+        ``[start_time, end_time]`` per event, or a detector's DataFrame. An
+        event holds the samples with ``start_time <= time <= end_time``.
+    trace : array_like, shape (n_time,)
+        The trace that sets the new bounds. NaN is never at or above the
+        threshold.
+    time : array_like, shape (n_time,)
+        Sample timestamps, increasing.
+    threshold : float
+        Level at or above which a sample stays in the event.
+    sides : {'both', 'start', 'end'}, optional
+        Which bounds move. Default both.
+    minimum_duration : float, optional
+        Trimmed events holding fewer samples than this spans
+        (``sample_count_within``) are dropped. Default 0.0, none.
+
+    Returns
+    -------
+    trimmed_events : ndarray, shape (n_kept, 2)
+        The trimmed bounds, in input order. Always an array: the other
+        columns of a detector's DataFrame describe the untrimmed event.
+
+    Raises
+    ------
+    ValueError
+        If `trace` and `time` differ in shape, `threshold` is not finite,
+        `sides` is not one of the three, `minimum_duration` is negative, or
+        no sample falls within an event.
+
+    Examples
+    --------
+    >>> time = np.arange(10) / 10
+    >>> rate = np.array([0, 1, 3, 4, 1, 3, 0, 0, 0, 0.0])
+    >>> trim_events_to_trace(np.array([(0.0, 0.9)]), rate, time, 2.0)
+    array([[0.2, 0.5]])
+    >>> trim_events_to_trace(np.array([(0.0, 0.9)]), rate, time, 2.0, sides="start")
+    array([[0.2, 0.9]])
+
+    """
+    values = np.asarray(trace, dtype=float)
+    time = np.asarray(time, dtype=float)
+    if values.shape != time.shape:
+        msg = f"trace has shape {values.shape} and time {time.shape}; they must match."
+        raise ValueError(msg)
+    if not np.isfinite(threshold):
+        msg = f"threshold must be finite, got {threshold}."
+        raise ValueError(msg)
+    _check_choice("sides", sides, TRIM_SIDES)
+    _check_non_negative(minimum_duration=minimum_duration)
+    events = _event_bounds(event_times)
+    first = np.searchsorted(time, events[:, 0], side="left")
+    last = np.searchsorted(time, events[:, 1], side="right")
+    if np.any(last == first):
+        start_time, end_time = events[np.flatnonzero(last == first)[0]]
+        msg = f"No sample of time falls within event [{start_time}, {end_time}]."
+        raise ValueError(msg)
+    trimmed = []
+    for a, b in zip(first, last, strict=True):
+        with np.errstate(invalid="ignore"):
+            above = np.flatnonzero(values[a:b] >= threshold)
+        if above.size == 0:
+            continue
+        start = a + above[0] if sides in ("both", "start") else a
+        stop = a + above[-1] if sides in ("both", "end") else b - 1
+        if sample_count_within(stop - start + 1, time, minimum_duration):
+            trimmed.append((time[start], time[stop]))
+    return np.asarray(trimmed, dtype=float).reshape(-1, 2)
+
+
 def require_times_inside(
     event_times: ArrayLike | pd.DataFrame,
     times: ArrayLike,
