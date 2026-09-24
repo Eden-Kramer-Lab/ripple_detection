@@ -48,6 +48,9 @@ jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --exec
 
 # Re-run the simulation study sweep the notebook reads (about two minutes)
 uv run python examples/simulation_study.py
+
+# Run every surveyed paper's recipe on a simulated session (seconds)
+uv run python examples/literature_recipes.py
 ```
 
 ## Architecture

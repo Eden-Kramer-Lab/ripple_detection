@@ -65,6 +65,8 @@ here is relative to 1.7.1.
   or behavioural state, and two data-driven thresholds: `two_cluster_threshold`
   (one-dimensional k-means) and `histogram_minimum_threshold` (the first trough
   after a distribution's peak).
+- `examples/literature_recipes.py`: each surveyed paper's event rule written with
+  the package and run on a simulated session.
 - `trim_events_to_trace` and `trim_events_to_spike_windows`, which narrow events
   to where a trace stays high or to edge windows holding enough spikes.
 - `require_trace_peak` and `require_times_inside`, which confirm one signal's

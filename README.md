@@ -575,6 +575,7 @@ See the [examples](https://github.com/Eden-Kramer-Lab/ripple_detection/tree/mast
 - [Detection Examples](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/detection_examples.ipynb) - Using different detectors
 - [Algorithm Components](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/test_individual_algorithm_components.ipynb) - Testing individual components
 - [Simulation Study](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/simulation_study.ipynb) - Recall, precision, timing and false positives of every detector on simulated sessions
+- [Literature recipes](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/literature_recipes.py) - One function per surveyed paper, its event rule written with the package, run on a simulated session (`uv run python examples/literature_recipes.py`)
 
 ## Troubleshooting
 

@@ -137,6 +137,8 @@ Those new tiers are an assessment from the notes, not recipes run paper by paper
 | `exclude_movement(rule=)` | every-sample, mean and median speed rules |
 | `histogram_minimum_threshold` | a threshold at a distribution's first trough (Ji 2007) |
 | `carey_spectral_ripple_score`, `Carey_candidate_detector(ripple_score=, threshold_method="mean")` | the rule behind Carey 2019's published candidates |
+| `trim_events_to_trace`, `trim_events_to_spike_windows` | events narrowed to the population burst, to edge windows holding enough spikes, or to the first spike |
+| `detect_events_from_trace(threshold=<array>, bound_search_window=, bound_threshold=(levels))` | a threshold that changes over the recording, bounds sought within a window with fallback levels |
 
 **Now tier A** (public functions, plus traces or intervals built with a few lines of
 NumPy where noted):
@@ -156,13 +158,16 @@ NumPy where noted):
 - **Others:** Bush 2022, Mallory 2025's linear-track candidates, and Carey 2019 (the
   template's example ripples were picked by hand in the paper; detected ones stand in).
 
-**Still tier B:**
+- **Trims and bound searches, added later:** Krause 2022, Pfeiffer 2013 (`trim_events_to_trace`,
+  `trim_events_to_spike_windows`), Tirole 2022 and Huelin Gorriz 2023 (`bound_search_window` with
+  fallback levels).
 
-- Krause 2022 and Pfeiffer 2013: trims of event bounds to the population burst, or to
-  windows with two spikes.
-- Tirole 2022 and Huelin Gorriz 2023: a bound search within ±300 ms with fallback levels.
-- Gridchyn 2020: its per-minute rate controller; the fixed-threshold version is A.
-- Yamamoto 2017: the paper does not say how its ripple and multiunit criteria combine.
+**Short of tier A for reasons outside the package:**
+
+- Gridchyn 2020: the online per-minute rate controller is not implemented; its fixed-threshold
+  version is A, and a per-sample `threshold` array can carry a controller's output.
+- Yamamoto 2017: the paper does not say how its ripple and multiunit criteria combine; each
+  reading can be written.
 - Harvey 2023, as written: needs a radiatum channel. Its code's FindRipples path is A.
 - Kudrimoti 1999: its threshold is not reported.
 
@@ -170,7 +175,19 @@ NumPy where noted):
 
 **Tier D is unchanged:** the four decoding-defined papers.
 
-Resulting counts: about 44 A, 8 B, 1 C, 4 D.
+Resulting counts: about 48 A, 4 short for the reasons above, 1 C, 4 D.
+
+### Recipes
+
+[examples/literature_recipes.py](../../examples/literature_recipes.py) writes each paper's rule
+with the package, one function per paper, with its row, its source and where it departs from the
+paper in the docstring; papers defined by decoding contribute the detection they label events
+with, if any. It runs every recipe on a simulated session (running bouts with theta, rest with
+delta, replay-length ripples with bursting place cells and a radiatum sharp wave) and writes the
+events found, the fraction of ripples overlapped, and the events that overlap none to
+`literature_recipes_results.csv`. The simulation says whether a recipe runs and behaves, not
+whether it matches the paper's events. `tests/test_literature_recipes.py` runs every recipe and
+checks that each surveyed paper has a recipe or a stated reason for none.
 
 ## Package additions, ranked by the papers they would move (as proposed at the review)
 

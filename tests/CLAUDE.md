@@ -12,5 +12,6 @@ The suite, with its shared fixtures:
 8. **[tests/test_registry.py](test_registry.py)** - Every exported detector is registered; each spec matches its signature by kind and position
 9. **[tests/test_literature.py](test_literature.py)** - The shipped survey loads with the documented shape and types
 10. **[tests/test_integration.py](test_integration.py)** - Every detector driven by name from the registry on `simulate_session` output and judged against the ground truth: the registry path and the parameter set Spyglass stores, recall with a false-positive budget per detector, event bounds against the ripple windows, the filter-then-detect chain at 1000, 2000 and 30000 Hz, cross-detector agreement on one ripple, the output contract including the empty-result schema, time-offset, scale and channel-order invariance, clipped flags at the recording edges, Long's seeding, and Yu's threshold under shared channel noise
+11. **[tests/test_literature_recipes.py](test_literature_recipes.py)** - Every recipe in `examples/literature_recipes.py` runs on a short simulated session and returns events inside it, and every surveyed paper has a recipe or a stated reason for none
 
 The whole suite runs in seconds; `pytest` reports coverage of `src/ripple_detection` with the missing lines. The package also validates that example notebooks run without errors in CI.
