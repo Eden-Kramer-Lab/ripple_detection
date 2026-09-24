@@ -1,5 +1,7 @@
 """Detect events on any trace with the package's thresholding and conventions."""
 
+from collections.abc import Sequence
+
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
@@ -7,7 +9,10 @@ from numpy.typing import ArrayLike
 from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import (
     SPEED_RULES,
+    BoolArray,
     FloatArray,
+    IntArray,
+    _boolean_run_bounds,
     _check_choice,
     _is_immobile,
     _is_immobile_by_rule,
@@ -26,6 +31,7 @@ from ripple_detection.detectors._blocks import (
 from ripple_detection.detectors._events import _finish_events, _get_event_stats
 from ripple_detection.detectors._validation import (
     _check_gap,
+    _check_positive,
     _check_smoothing_sigma,
     _validate_detector_inputs,
     _validate_duration_limits,
@@ -55,18 +61,109 @@ def _one_trace(trace: ArrayLike) -> FloatArray:
     return values[:, np.newaxis]
 
 
-def _check_trace_thresholds(threshold: float, bound_threshold: float) -> None:
-    for name, value in (("threshold", threshold), ("bound_threshold", bound_threshold)):
-        if not np.isfinite(value):
-            msg = f"{name} must be finite, got {value}."
+def _check_trace_thresholds(
+    threshold: FloatArray, levels: tuple[float, ...], bound_search_window: float | None
+) -> None:
+    """Finite thresholds, at least one bound level, and every level no higher
+    than the lowest threshold, so each run at or above the threshold lies in
+    a stretch at or above every level."""
+    if not np.all(np.isfinite(threshold)):
+        msg = f"threshold must be finite, got {threshold if threshold.ndim == 0 else 'a non-finite value'}."
+        raise ValueError(msg)
+    if not levels:
+        msg = "bound_threshold needs at least one level."
+        raise ValueError(msg)
+    for level in levels:
+        if not np.isfinite(level):
+            msg = f"bound_threshold must be finite, got {level}."
             raise ValueError(msg)
-    if bound_threshold > threshold:
+    lowest = float(np.min(threshold))
+    if max(levels) > lowest:
         msg = (
-            f"bound_threshold ({bound_threshold}) is above threshold ({threshold}). Events "
-            "end where the trace falls below bound_threshold, so it must not exceed the "
-            "threshold that finds them."
+            f"bound_threshold ({max(levels)}) is above threshold ({lowest}). Events end where "
+            "the trace falls below bound_threshold, so it must not exceed the threshold "
+            "that finds them."
         )
         raise ValueError(msg)
+    if len(levels) > 1 and bound_search_window is None:
+        msg = (
+            "Several bound_threshold levels are fallbacks for a bound not found within "
+            "bound_search_window; pass bound_search_window, or a single level."
+        )
+        raise ValueError(msg)
+
+
+def _search_bounds(
+    segment: FloatArray,
+    is_above_threshold: BoolArray,
+    n_minimum: int,
+    levels: tuple[float, ...],
+    n_search: int,
+) -> tuple[IntArray, BoolArray]:
+    """Bounds sought within ``n_search`` samples of each run's first sample.
+
+    For each run at or above the threshold of ``n_minimum`` samples or more,
+    the start is the sample after the last one below the first level within
+    ``n_search`` samples before the run's first sample, and the stop the first
+    one below it within ``n_search`` after; a side that finds none tries the
+    next level, and with none left takes the edge of the search. Runs that
+    share an event give one. Returns half-open ``[start, stop)`` bounds and,
+    per side, whether the search ended at its edge inside the block."""
+    runs = _boolean_run_bounds(is_above_threshold)
+    runs = runs[(runs[:, 1] - runs[:, 0]) >= n_minimum]
+    n = len(segment)
+    found: list[tuple[int, int, bool, bool]] = []
+    for anchor in runs[:, 0]:
+        low = max(0, anchor - n_search)
+        start, capped_start = low, low > 0
+        for level in levels:
+            below = np.flatnonzero(segment[low:anchor] < level)
+            if below.size:
+                start, capped_start = low + int(below[-1]) + 1, False
+                break
+        high = min(n, anchor + n_search + 1)
+        stop, capped_end = high, high < n
+        for level in levels:
+            below = np.flatnonzero(segment[anchor + 1 : high] < level)
+            if below.size:
+                stop, capped_end = anchor + 1 + int(below[0]), False
+                break
+        if found and start < found[-1][1]:
+            previous = found[-1]
+            if stop > previous[1]:
+                found[-1] = (previous[0], stop, previous[2], capped_end)
+            continue
+        found.append((start, stop, capped_start, capped_end))
+    table = np.asarray(found, dtype=int).reshape(-1, 4)
+    return table[:, :2], table[:, 2:].astype(bool)
+
+
+def _merge_with_flags(
+    events: FloatArray, flags: BoolArray, gap: float
+) -> tuple[FloatArray, BoolArray]:
+    """``merge_close_events`` within a block, carrying each merged event's
+    flags: the start's from its first member, the end's from the member that
+    ends it."""
+    merged = merge_close_events(events, gap)
+    first = np.searchsorted(events[:, 0], merged[:, 0], side="left")
+    after = np.searchsorted(events[:, 0], merged[:, 1], side="right")
+    merged_flags = np.zeros((len(merged), 2), dtype=bool)
+    for index, (a, b) in enumerate(zip(first, after, strict=True)):
+        last = a + int(np.argmax(events[a:b, 1]))
+        merged_flags[index] = (flags[a, 0], flags[last, 1])
+    return merged, merged_flags
+
+
+def _block_edges(
+    event_times: FloatArray, time: FloatArray, blocks: list[tuple[int, int]]
+) -> BoolArray:
+    """Whether each event starts on its block's first sample or ends on its last."""
+    first = np.searchsorted(time, event_times[:, 0], side="left")
+    last = np.searchsorted(time, event_times[:, 1], side="right")
+    block_starts = np.array([start for start, _ in blocks], dtype=int)
+    block_stops = np.array([stop for _, stop in blocks], dtype=int)
+    which = np.clip(np.searchsorted(block_starts, first, side="right") - 1, 0, None)
+    return np.column_stack([first == block_starts[which], last == block_stops[which]])
 
 
 @explain_call_errors
@@ -76,8 +173,9 @@ def detect_events_from_trace(
     speed: ArrayLike,
     sampling_frequency: float,
     *,
-    threshold: float = 2.0,
-    bound_threshold: float = 0.0,
+    threshold: float | ArrayLike = 2.0,
+    bound_threshold: float | Sequence[float] = 0.0,
+    bound_search_window: float | None = None,
     smoothing_sigma: float | None = None,
     normalization_method: str = "zscore",
     normalization_mask: ArrayLike | None = None,
@@ -116,18 +214,31 @@ def detect_events_from_trace(
         nothing; ``speed_rule`` says how it is treated.
     sampling_frequency : float
         Sampling rate in Hz.
-    threshold : float, optional
+    threshold : float or array_like of shape (n_time,), optional
         Level the trace must reach, in the units ``normalization_method``
         gives it: standard deviations for ``'zscore'``, scaled MADs for
         ``'median_mad'``, the trace's own units for ``'none'``. A sample
-        counts when it is at or above the level. Default 2.0.
-    bound_threshold : float, optional
+        counts when it is at or above the level. An array gives each sample
+        its own level, for a threshold that changes over the recording (per
+        session, or as an online rule updated it). Default 2.0.
+    bound_threshold : float or sequence of float, optional
         Level at which an event ends, in the same units: each event runs over
         the contiguous samples at or above it that contain a run at or above
         ``threshold``. Default 0.0, the mean (``'zscore'``) or median
         (``'median_mad'``), the rule every z-score detector here uses; papers
         that end events at 0.5, 1 or 2 SD pass that. Must not exceed
-        ``threshold``; equal to it, events end at the threshold crossings.
+        ``threshold`` anywhere; equal to it, events end at the threshold
+        crossings. With ``bound_search_window``, a sequence gives fallback
+        levels, tried in order on each side that does not find the one
+        before, such as ``(0.0, 0.25, 0.5)``.
+    bound_search_window : float, optional
+        Seconds before and after each run's first sample at or above
+        ``threshold`` within which its bounds are sought, as Tirole et al.
+        (2022) did: the start follows the last sample below the level before
+        that sample, the end is the first sample after it that is below it.
+        A side with no such sample at any level ends at the edge of the
+        search, and is flagged in ``clipped_start`` or ``clipped_end``. Default
+        None: events extend as far as the trace stays at or above the level.
     smoothing_sigma : float, optional
         Standard deviation in **seconds** of a Gaussian applied to the trace
         within each block of valid samples, before normalizing. Default None,
@@ -181,13 +292,17 @@ def detect_events_from_trace(
         One row per event, indexed by ``event_number``, with the columns the
         detectors return (see ``Kay_ripple_detector``). The ``*_zscore``
         columns, ``area`` and ``total_energy`` describe the normalized trace,
-        and so are in the trace's own units with ``'none'``.
+        and so are in the trace's own units with ``'none'``. ``clipped_start``
+        and ``clipped_end`` flag a bound set by missing data, the recording
+        edge, or the edge of ``bound_search_window``.
 
     Raises
     ------
     ValueError
-        If the trace is not one value per sample, the lengths differ,
-        ``bound_threshold`` exceeds ``threshold``, a choice is not one of
+        If the trace is not one value per sample, the lengths differ, a
+        threshold array is not one value per sample, ``bound_threshold``
+        exceeds ``threshold``, fallback levels are given without
+        ``bound_search_window``, a choice is not one of
         those listed, a duration or gap is not a plausible number of
         seconds, or ``normalization_mask`` is given with ``'none'``.
 
@@ -217,7 +332,12 @@ def detect_events_from_trace(
     (True, True)
 
     """
-    _check_trace_thresholds(threshold, bound_threshold)
+    threshold_values = np.asarray(threshold, dtype=float)
+    levels = tuple(float(level) for level in np.atleast_1d(np.asarray(bound_threshold, float)))
+    _check_trace_thresholds(threshold_values, levels, bound_search_window)
+    if bound_search_window is not None:
+        _check_positive(bound_search_window=bound_search_window)
+        _check_gap(bound_search_window=bound_search_window)
     _check_choice("normalization_method", normalization_method, TRACE_NORMALIZATION_METHODS)
     _check_choice("speed_rule", speed_rule, TRACE_SPEED_RULES)
     _check_choice("close_event_rule", close_event_rule, CLOSE_EVENT_RULES)
@@ -241,6 +361,12 @@ def detect_events_from_trace(
     time, values, speed = _validate_detector_inputs(
         time, _one_trace(trace), speed, sampling_frequency, speed_threshold
     )
+    if threshold_values.ndim != 0 and threshold_values.shape != time.shape:
+        msg = (
+            f"threshold as an array must give one level per sample, shape {time.shape}; "
+            f"got {threshold_values.shape}."
+        )
+        raise ValueError(msg)
     if speed_rule == "restrict":
         is_slow = _is_immobile(speed, speed_threshold)
         if not np.any(is_slow):
@@ -266,19 +392,35 @@ def detect_events_from_trace(
         )
 
     n_minimum = minimum_sample_count(time, minimum_duration)
-    candidate_blocks = []
+    n_search = (
+        None
+        if bound_search_window is None
+        else minimum_sample_count(time, bound_search_window)
+    )
+    candidate_blocks, flag_blocks = [], []
     for start, stop in blocks:
         segment = detection_trace[start:stop]
-        bounds, _ = _runs_extended_to_mean(
-            segment >= bound_threshold, segment >= threshold, n_minimum
+        level = (
+            threshold_values if threshold_values.ndim == 0 else threshold_values[start:stop]
         )
+        if n_search is None:
+            bounds, _ = _runs_extended_to_mean(
+                segment >= levels[0], segment >= level, n_minimum
+            )
+            flags = np.zeros((len(bounds), 2), dtype=bool)
+        else:
+            bounds, flags = _search_bounds(
+                segment, segment >= level, n_minimum, levels, n_search
+            )
         block_events = np.column_stack(
             [time[start + bounds[:, 0]], time[start + bounds[:, 1] - 1]]
         ).reshape(-1, 2)
         if close_event_rule == "merge" and len(block_events):
-            block_events = merge_close_events(block_events, close_event_threshold)
+            block_events, flags = _merge_with_flags(block_events, flags, close_event_threshold)
         candidate_blocks.append(block_events)
+        flag_blocks.append(flags)
     candidates = np.concatenate([np.empty((0, 2)), *candidate_blocks])
+    capped = np.concatenate([np.empty((0, 2), dtype=bool), *flag_blocks])
 
     if speed_rule == "restrict":
         keep = np.ones(len(candidates), dtype=bool)
@@ -292,7 +434,10 @@ def detect_events_from_trace(
         )
         keep &= np.asarray(sample_count_within(n_samples, time, minimum_event_duration))
     gap = close_event_threshold if close_event_rule == "drop" else 0.0
-    event_times, _ = _finish_events(candidates, keep, time, gap, maximum_duration)
+    event_times, kept = _finish_events(candidates, keep, time, gap, maximum_duration)
+    clipped = (
+        None if n_search is None else _block_edges(event_times, time, blocks) | capped[kept]
+    )
     return _get_event_stats(
-        event_times, time, detection_trace, speed, minimum_duration, blocks
+        event_times, time, detection_trace, speed, minimum_duration, blocks, clipped=clipped
     )

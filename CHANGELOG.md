@@ -51,7 +51,9 @@ here is relative to 1.7.1.
 - `detect_events_from_trace`, the detectors' thresholding on a trace the caller
   builds, with `bound_threshold` (where events end), `normalization_method="none"`,
   `minimum_event_duration` (on the whole event), `speed_rule` (including
-  `"restrict"`, detection on slow samples only) and `close_event_rule="merge"`.
+  `"restrict"`, detection on slow samples only), `close_event_rule="merge"`, a
+  per-sample `threshold` array, and `bound_search_window` with fallback
+  `bound_threshold` levels.
 - `carey_spectral_ripple_score`, the van der Meer lab's spectral ripple score
   (`SWRfreak` and `amSWR`), and `ripple_score` and `threshold_method="mean"` on
   `Carey_candidate_detector`, which together reproduce the rule behind the

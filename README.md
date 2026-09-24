@@ -438,7 +438,12 @@ events = detect_events_from_trace(
 The arguments the detectors do not have cover what published rules vary:
 
 - `bound_threshold`: where an event ends, for papers that bound events at 0.5, 1
-  or 2 SD rather than at the mean.
+  or 2 SD rather than at the mean. With `bound_search_window`, the bounds are sought
+  only that far from the run's first sample, and a sequence of levels gives fallbacks
+  for a side that finds none, as Tirole et al. 2022 did (`(0.0, 0.25, 0.5)` within
+  300 ms); a bound set at the search's edge is flagged in `clipped_start` or `clipped_end`.
+- `threshold` as an array: a level per sample, for a threshold that changes over the
+  recording.
 - `normalization_method="none"`: threshold the trace as given, for a trace
   scaled the way a paper specifies (by its baseline mean, or by its maximum).
 - `minimum_event_duration`: a minimum on the whole event, which is what most

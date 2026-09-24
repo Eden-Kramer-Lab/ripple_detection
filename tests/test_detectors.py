@@ -4971,6 +4971,196 @@ class TestDetectEventsFromTrace:
                 self._time(1000), np.zeros(1000), np.zeros(1000), self.FS, **kwargs
             )
 
+    def test_a_threshold_per_sample(self):
+        """The same two bumps: 40 high at 0.5 s and 20 high at 1.5 s. A level of
+        30 in the first second and 10 in the second finds both."""
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(2000)
+        trace = self._bumps(2000, [0.5, 1.5], [0.04, 0.02])
+        common = {
+            "bound_threshold": 1.0,
+            "normalization_method": "none",
+            "minimum_duration": 0.0,
+        }
+        flat = detect_events_from_trace(
+            time, trace, np.zeros(2000), self.FS, threshold=30.0, **common
+        )
+        varying = detect_events_from_trace(
+            time, trace, np.zeros(2000), self.FS,
+            threshold=np.where(time < 1.0, 30.0, 10.0), **common,
+        )  # fmt: skip
+        assert flat.peak_time.tolist() == pytest.approx([0.5])
+        assert varying.peak_time.tolist() == pytest.approx([0.5, 1.5])
+
+    def test_a_scalar_array_threshold_matches_the_scalar(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(2000)
+        trace = self._bumps(2000, [0.5, 1.5], [0.04, 0.02])
+        common = {
+            "bound_threshold": 1.0,
+            "normalization_method": "none",
+            "minimum_duration": 0.0,
+        }
+        scalar = detect_events_from_trace(
+            time, trace, np.zeros(2000), self.FS, threshold=15.0, **common
+        )
+        array = detect_events_from_trace(
+            time, trace, np.zeros(2000), self.FS, threshold=np.full(2000, 15.0), **common
+        )
+        pd.testing.assert_frame_equal(scalar, array)
+
+    def test_bounds_found_within_the_search_window_are_the_same(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(2000)
+        trace = self._bumps(2000, [0.5], [0.05])
+        common = {
+            "threshold": 30.0, "bound_threshold": 1.0, "normalization_method": "none",
+            "minimum_duration": 0.0,
+        }  # fmt: skip
+        free = detect_events_from_trace(time, trace, np.zeros(2000), self.FS, **common)
+        searched = detect_events_from_trace(
+            time, trace, np.zeros(2000), self.FS, bound_search_window=0.3, **common
+        )
+        pd.testing.assert_frame_equal(free, searched)
+
+    @staticmethod
+    def _plateau(n_time=3000, fs=1000):
+        """A step to 5 at 1.0 s, a shoulder at 0.3 from 1.1 to 1.9 s, then 0:
+        the bound at 0 lies 900 ms from the run's first sample."""
+        trace = np.full(n_time, -1.0)
+        index = np.arange(n_time)
+        trace[(index >= 1000) & (index < 1100)] = 5.0
+        trace[(index >= 1100) & (index < 1900)] = 0.3
+        return trace
+
+    def test_a_fallback_level_ends_an_event_the_first_level_cannot(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(3000)
+        events = detect_events_from_trace(
+            time, self._plateau(), np.zeros(3000), self.FS,
+            threshold=3.0, bound_threshold=(0.0, 0.25, 0.5), bound_search_window=0.3,
+            normalization_method="none", minimum_duration=0.0,
+        )  # fmt: skip
+        assert events.start_time.tolist() == pytest.approx([1.0])
+        assert events.end_time.tolist() == pytest.approx([1.099])
+        assert not events.clipped_start.iloc[0]
+        assert not events.clipped_end.iloc[0]
+
+    def test_without_a_fallback_the_search_edge_ends_the_event_and_is_flagged(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(3000)
+        events = detect_events_from_trace(
+            time, self._plateau(), np.zeros(3000), self.FS,
+            threshold=3.0, bound_threshold=0.0, bound_search_window=0.3,
+            normalization_method="none", minimum_duration=0.0,
+        )  # fmt: skip
+        assert events.end_time.tolist() == pytest.approx([1.3])
+        assert bool(events.clipped_end.iloc[0])
+        assert not bool(events.clipped_start.iloc[0])
+        unlimited = detect_events_from_trace(
+            time, self._plateau(), np.zeros(3000), self.FS,
+            threshold=3.0, bound_threshold=0.0,
+            normalization_method="none", minimum_duration=0.0,
+        )  # fmt: skip
+        assert unlimited.end_time.tolist() == pytest.approx([1.899])
+
+    def test_runs_sharing_an_event_give_one(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(2000)
+        trace = np.full(2000, -1.0)
+        trace[500:600] = 1.0
+        trace[510:520] = 5.0
+        trace[560:570] = 5.0
+        events = detect_events_from_trace(
+            time, trace, np.zeros(2000), self.FS,
+            threshold=3.0, bound_search_window=0.3,
+            normalization_method="none", minimum_duration=0.0,
+        )  # fmt: skip
+        assert events.start_time.tolist() == pytest.approx([0.5])
+        assert events.end_time.tolist() == pytest.approx([0.599])
+
+    def test_a_later_run_extends_an_event_its_first_run_capped(self):
+        """A plateau from 0.5 to 1.5 s with runs at 0.51 and 0.70 s: the first
+        run's search ends at 0.81 s, the second's at 1.0 s, which ends the event."""
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(2000)
+        trace = np.full(2000, -1.0)
+        trace[500:1500] = 1.0
+        trace[510:520] = 5.0
+        trace[700:710] = 5.0
+        events = detect_events_from_trace(
+            time, trace, np.zeros(2000), self.FS,
+            threshold=3.0, bound_search_window=0.3,
+            normalization_method="none", minimum_duration=0.0,
+        )  # fmt: skip
+        assert events.start_time.tolist() == pytest.approx([0.5])
+        assert events.end_time.tolist() == pytest.approx([1.0])
+        assert bool(events.clipped_end.iloc[0])
+        assert not bool(events.clipped_start.iloc[0])
+
+    def test_a_search_reaching_the_block_edge_is_clipped_there(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(2000)
+        trace = np.full(2000, -1.0)
+        trace[:100] = 5.0
+        events = detect_events_from_trace(
+            time, trace, np.zeros(2000), self.FS,
+            threshold=3.0, bound_search_window=0.3,
+            normalization_method="none", minimum_duration=0.0,
+        )  # fmt: skip
+        assert events.start_time.tolist() == pytest.approx([0.0])
+        assert bool(events.clipped_start.iloc[0])
+
+    def test_merged_events_carry_the_flags_of_their_ends(self):
+        """The first event's start is capped by the search; merged with the
+        second, the start keeps that flag and the end takes the second's."""
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(3000)
+        trace = np.full(3000, -1.0)
+        trace[500:1000] = 0.3  # a long shoulder before the first run
+        trace[1000:1050] = 5.0
+        trace[1060:1100] = 5.0
+        events = detect_events_from_trace(
+            time, trace, np.zeros(3000), self.FS,
+            threshold=3.0, bound_search_window=0.3, bound_threshold=0.0,
+            normalization_method="none", minimum_duration=0.0,
+            close_event_threshold=0.02, close_event_rule="merge",
+        )  # fmt: skip
+        assert len(events) == 1
+        assert events.start_time.iloc[0] == pytest.approx(0.7)
+        assert bool(events.clipped_start.iloc[0])
+        assert not bool(events.clipped_end.iloc[0])
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"threshold": np.full(10, 2.0)}, "one level per sample"),
+            ({"threshold": np.array([2.0] * 999 + [np.nan])}, "threshold must be finite"),
+            ({"threshold": np.array([2.0] * 999 + [-1.0])}, "bound_threshold .* is above"),
+            ({"bound_threshold": (0.0, 0.25)}, "pass bound_search_window"),
+            ({"bound_threshold": ()}, "at least one level"),
+            ({"bound_threshold": (0.0, np.nan), "bound_search_window": 0.3}, "must be finite"),
+            ({"bound_search_window": 0.0}, "bound_search_window must be positive"),
+            ({"bound_search_window": 20.0}, "bound_search_window is in seconds"),
+        ],
+    )
+    def test_invalid_threshold_arguments_raise(self, kwargs, message):
+        from ripple_detection import detect_events_from_trace
+
+        with pytest.raises(ValueError, match=message):
+            detect_events_from_trace(
+                self._time(1000), np.zeros(1000), np.zeros(1000), self.FS, **kwargs
+            )
+
     def test_a_multichannel_trace_raises_with_a_hint(self):
         from ripple_detection import detect_events_from_trace
 

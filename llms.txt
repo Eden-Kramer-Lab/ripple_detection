@@ -50,7 +50,7 @@ resolves a stored name.
 
 ## Building blocks for published variants
 
-- `detect_events_from_trace(time, trace, speed, fs, ...)`: the detectors' thresholding on a trace you build (mean envelope, RMS power, a rate of chosen cells), with `bound_threshold` (where events end), `normalization_method="none"`, `minimum_event_duration`, `speed_rule` and `close_event_rule="merge"`.
+- `detect_events_from_trace(time, trace, speed, fs, ...)`: the detectors' thresholding on a trace you build (mean envelope, RMS power, a rate of chosen cells), with `bound_threshold` (where events end; fallback levels with `bound_search_window`), a per-sample `threshold` array, `normalization_method="none"`, `minimum_event_duration`, `speed_rule` and `close_event_rule="merge"`.
 - `detect_silence_bounded_events(time, multiunit, fs, minimum_silence=...)`: spiking set off by silence, as groups or as the `window` after each silence.
 - On any event table (DataFrame or (n, 2) array): `require_active_units` / `count_spikes_in_events` (participation of chosen units), `require_overlap` / `exclude_overlap`, `require_trace_peak`, `require_times_inside` (e.g. a ripple's `peak_time`), `require_isolation`, `trim_events_to_trace`, `trim_events_to_spike_windows`, `merge_close_events` (`inclusive=`, `measure="peak"`), `exclude_close_events` (`measure_from=`), `exclude_movement` (`rule="all" | "mean" | "median"`), `windows_around_times`.
 - State: `theta_delta_ratio`, `state_intervals`, `two_cluster_threshold`, `histogram_minimum_threshold`.
