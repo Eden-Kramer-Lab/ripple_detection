@@ -1505,26 +1505,41 @@ def _check_non_negative(**values: float) -> None:
             raise ValueError(msg)
 
 
-def _is_clear_of_close_events(events: FloatArray, close_event_threshold: float) -> BoolArray:
+CLOSE_EVENT_REFERENCES = ("end", "start")
+"""What :func:`exclude_close_events` measures a gap from, in the last kept event."""
+
+
+def _is_clear_of_close_events(
+    events: FloatArray, close_event_threshold: float, measure_from: str = "end"
+) -> BoolArray:
     """Which of the sorted ``(n_events, 2)`` events to keep: each is compared
     with the last *retained* event, so a cluster is reduced to its first
     event. Comparing with the immediately preceding candidate instead would
     let a dropped event go on excluding its successors, removing more than
-    the first-of-each-cluster rule."""
+    the first-of-each-cluster rule. The gap runs to each event's start from
+    the retained event's end, or from its start with ``measure_from='start'``."""
+    if measure_from not in CLOSE_EVENT_REFERENCES:
+        msg = (
+            f"measure_from must be one of {', '.join(map(repr, CLOSE_EVENT_REFERENCES))}; "
+            f"got {measure_from!r}."
+        )
+        raise ValueError(msg)
+    column = 1 if measure_from == "end" else 0
     keep = np.zeros(len(events), dtype=bool)
     if len(events):
         keep[0] = True
-        last_retained_end = events[0, 1]
+        reference = events[0, column]
         for event in range(1, len(events)):
-            if not _is_gap_below(events[event, 0] - last_retained_end, close_event_threshold):
+            if not _is_gap_below(events[event, 0] - reference, close_event_threshold):
                 keep[event] = True
-                last_retained_end = events[event, 1]
+                reference = events[event, column]
     return keep
 
 
 def exclude_close_events(
     candidate_event_times: ArrayLike | pd.DataFrame,
     close_event_threshold: float = 1.0,
+    measure_from: str = "end",
 ) -> FloatArray | pd.DataFrame:
     """Remove events that occur too close together in time.
 
@@ -1547,6 +1562,11 @@ def exclude_close_events(
         Minimum time between events. Events starting within this time after
         a previous event ends are excluded. Non-negative. Default is 1.0
         (seconds).
+    measure_from : {'end', 'start'}, optional
+        Where in the last retained event the gap starts: its end (default),
+        or its start, for rules such as "SWRs within 1 s after another SWR
+        were excluded" that time the interval from detection. Either way the
+        gap ends at the next event's start.
 
     Returns
     -------
@@ -1554,24 +1574,115 @@ def exclude_close_events(
         The retained events, in the input's type; shape ``(0, 2)`` when none
         remain.
 
+    Raises
+    ------
+    ValueError
+        If `close_event_threshold` is negative or `measure_from` is not one of
+        the two.
+
+    See Also
+    --------
+    require_isolation : drops every event of a close pair, not just the later.
+
     Notes
     -----
     This function assumes events are sorted by start time. If the input
     is not sorted, results may be incorrect.
 
+    Examples
+    --------
+    >>> events = np.array([(0.0, 0.1), (0.5, 0.6), (1.05, 1.1)])
+    >>> exclude_close_events(events, 1.0)
+    array([[0. , 0.1]])
+    >>> exclude_close_events(events, 1.0, measure_from="start")
+    array([[0.  , 0.1 ],
+           [1.05, 1.1 ]])
+
     """
     _check_non_negative(close_event_threshold=close_event_threshold)
     events = _event_bounds(candidate_event_times)
-    keep = _is_clear_of_close_events(events, close_event_threshold)
+    keep = _is_clear_of_close_events(events, close_event_threshold, measure_from)
     if isinstance(candidate_event_times, pd.DataFrame):
         return candidate_event_times.iloc[np.flatnonzero(keep)].copy()
     return events[keep]
+
+
+def require_isolation(
+    event_times: ArrayLike | pd.DataFrame,
+    minimum_separation: float,
+) -> FloatArray | pd.DataFrame:
+    """Keep the events with no other event within a separation on either side.
+
+    Rules such as "only SWRs separated from others by at least 500 ms" drop
+    every event of a close pair, where :func:`exclude_close_events` keeps the
+    first. An event is kept when the gap from the latest end among the events
+    before it, and the gap to the next event's start, are both at least
+    `minimum_separation`, within floating-point tolerance.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2), or pd.DataFrame
+        ``[start_time, end_time]`` per event, sorted by start time, or a
+        detector's DataFrame, which is returned filtered with every column
+        and its index.
+    minimum_separation : float
+        Least gap, in the units of the event times, to the nearest other
+        event on each side. Non-negative; 0 keeps every event that overlaps
+        no other.
+
+    Returns
+    -------
+    isolated_events : ndarray, shape (n_kept, 2), or pd.DataFrame
+        The isolated events, in the input's type and order.
+
+    Raises
+    ------
+    ValueError
+        If `minimum_separation` is negative or the events are not sorted by
+        start time.
+
+    Examples
+    --------
+    >>> events = np.array([(0.0, 0.1), (0.3, 0.4), (2.0, 2.1)])
+    >>> require_isolation(events, 0.5)
+    array([[2. , 2.1]])
+
+    """
+    _check_non_negative(minimum_separation=minimum_separation)
+    events = _event_bounds(event_times)
+    if np.any(np.diff(events[:, 0]) < 0):
+        msg = (
+            "event_times must be sorted by start time. Sort the events first: "
+            "event_times[np.argsort(event_times[:, 0])]."
+        )
+        raise ValueError(msg)
+    keep = np.ones(len(events), dtype=bool)
+    if len(events) > 1:
+        latest_end_before = np.maximum.accumulate(events[:-1, 1])
+        gap_before = events[1:, 0] - latest_end_before
+        too_close = np.asarray(_is_gap_below(gap_before, minimum_separation), dtype=bool)
+        if minimum_separation == 0:
+            too_close = gap_before < 0
+        # a close pair loses its second member through the gap before it and
+        # its first through the same gap, read as the gap after
+        keep[1:] &= ~too_close
+        keep[:-1] &= ~too_close
+    if isinstance(event_times, pd.DataFrame):
+        return event_times.iloc[np.flatnonzero(keep)].copy()
+    return events[keep]
+
+
+MERGE_MEASURES = ("gap", "peak")
+"""What :func:`merge_close_events` compares with its threshold."""
 
 
 def merge_close_events(
     event_times: ArrayLike | pd.DataFrame,
     close_event_threshold: float = 0.0,
     maximum_duration: float | None = None,
+    *,
+    inclusive: bool = False,
+    measure: str = "gap",
 ) -> FloatArray:
     """Join events separated by less than a gap into one longer event.
 
@@ -1596,12 +1707,25 @@ def merge_close_events(
         other columns of a merged event have no single value.
     close_event_threshold : float, optional
         Events separated by strictly less than this gap are merged. A gap equal
-        to the threshold does not merge, within floating-point tolerance.
-        Default is 0.0, which merges only events that touch or overlap.
+        to the threshold does not merge, within floating-point tolerance,
+        unless `inclusive`. Default is 0.0, which merges only events that touch
+        or overlap.
     maximum_duration : float, optional
         Ceiling on the merged span. A merge that would produce an event longer
         than this does not happen and both events are kept as they are.
         Default is None (no ceiling).
+    inclusive : bool, optional
+        Also merge events separated by exactly the threshold, for rules
+        written "merged if 40 ms or less apart". Default False.
+    measure : {'gap', 'peak'}, optional
+        What is compared with the threshold: the gap from one event's end to
+        the next one's start (default), or the time between their peaks,
+        read from the DataFrame's ``peak_time`` column, for rules such as
+        "events whose peaks were less than 70 ms apart were merged". A chain
+        is followed peak to peak: after a merge, the next event is measured
+        from the peak of the last event merged in. A peak lies inside its
+        event, so this merges no more than the gap would at the same
+        threshold.
 
     Returns
     -------
@@ -1612,17 +1736,33 @@ def merge_close_events(
     Raises
     ------
     ValueError
-        If `close_event_threshold` is negative, or the events are not sorted
-        by start time.
+        If `close_event_threshold` is negative, the events are not sorted
+        by start time, `measure` is not one of the two, or ``measure='peak'``
+        is asked of anything but a DataFrame with a ``peak_time`` column.
 
     Examples
     --------
     >>> events = np.array([(0.0, 0.1), (0.13, 0.2)])
     >>> merge_close_events(events, 0.05)
     array([[0. , 0.2]])
+    >>> merge_close_events(np.array([(0.0, 0.1), (0.14, 0.2)]), 0.04, inclusive=True)
+    array([[0. , 0.2]])
 
     """
     _check_non_negative(close_event_threshold=close_event_threshold)
+    if measure not in MERGE_MEASURES:
+        msg = (
+            f"measure must be one of {', '.join(map(repr, MERGE_MEASURES))}; got {measure!r}."
+        )
+        raise ValueError(msg)
+    if measure == "peak" and not (
+        isinstance(event_times, pd.DataFrame) and "peak_time" in event_times
+    ):
+        msg = (
+            "measure='peak' reads each event's peak from a peak_time column, so pass a "
+            "detector's DataFrame, which has one."
+        )
+        raise ValueError(msg)
     events = _event_bounds(event_times).copy()
     if events.size == 0:
         return np.empty((0, 2))
@@ -1632,11 +1772,22 @@ def merge_close_events(
             "event_times[np.argsort(event_times[:, 0])]."
         )
         raise ValueError(msg)
+    if measure == "peak":
+        assert isinstance(event_times, pd.DataFrame)
+        first_peak = event_times["peak_time"].to_numpy(dtype=float).copy()
+        last_peak = first_peak.copy()
 
     while len(events) > 1:
-        gap = events[1:, 0] - events[:-1, 1]
+        if measure == "peak":
+            gap = first_peak[1:] - last_peak[:-1]
+        else:
+            gap = events[1:, 0] - events[:-1, 1]
         if close_event_threshold > 0:
             to_merge = np.asarray(_is_gap_below(gap, close_event_threshold), dtype=bool)
+            if inclusive:
+                to_merge |= np.isclose(
+                    gap, close_event_threshold, rtol=_GAP_TOLERANCE, atol=0.0
+                )
         else:
             # events that touch merge, which _is_gap_below would exclude
             to_merge = gap <= 0
@@ -1653,6 +1804,10 @@ def merge_close_events(
         run_starts = np.flatnonzero(~padded[:-1] & padded[1:])
         events[run_starts, 1] = np.maximum(events[run_starts, 1], events[run_starts + 1, 1])
         events = np.delete(events, run_starts + 1, axis=0)
+        if measure == "peak":
+            last_peak[run_starts] = last_peak[run_starts + 1]
+            first_peak = np.delete(first_peak, run_starts + 1)
+            last_peak = np.delete(last_peak, run_starts + 1)
 
     return events
 

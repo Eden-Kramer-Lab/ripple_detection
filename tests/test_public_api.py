@@ -47,6 +47,7 @@ HELPERS = [
     "exclude_movement",
     "exclude_movement_by_majority",
     "merge_close_events",
+    "require_isolation",
     "require_overlap",
     "segment_boolean_series",
     "threshold_by_zscore",

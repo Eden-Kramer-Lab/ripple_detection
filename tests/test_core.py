@@ -28,6 +28,7 @@ from ripple_detection.core import (
     noise_threshold_diagnostics,
     normalize_signal,
     normalize_signal_manually,
+    require_isolation,
     require_overlap,
     ripple_bandpass_filter,
     sample_count_within,
@@ -1279,15 +1280,136 @@ class TestExcludeCloseEventsChaining:
         np.testing.assert_allclose(exclude_close_events(events, 1.0), [[0.0, 0.1], [1.2, 1.3]])
 
     def test_it_returns_the_events_alone(self):
-        """Its signature is 1.x's; the detectors track indices privately."""
+        """Its signature starts as 1.x's, and anything since is optional; the
+        detectors track indices privately."""
         import inspect
 
-        assert list(inspect.signature(exclude_close_events).parameters) == [
-            "candidate_event_times",
-            "close_event_threshold",
-        ]
+        parameters = inspect.signature(exclude_close_events).parameters
+        assert list(parameters)[:2] == ["candidate_event_times", "close_event_threshold"]
+        assert all(
+            parameter.default is not inspect.Parameter.empty
+            for parameter in list(parameters.values())[2:]
+        )
         events = np.array([[0.0, 0.1], [0.5, 0.6], [1.2, 1.3]])
         assert isinstance(exclude_close_events(events, 1.0), np.ndarray)
+
+
+class TestCloseEventVariants:
+    """Published rules for close events that the defaults do not follow."""
+
+    def test_measure_from_start_times_the_gap_from_detection(self):
+        events = np.array([(0.0, 0.1), (0.5, 0.6), (1.05, 1.1)])
+        np.testing.assert_allclose(exclude_close_events(events, 1.0), events[:1])
+        np.testing.assert_allclose(
+            exclude_close_events(events, 1.0, measure_from="start"), events[[0, 2]]
+        )
+
+    def test_measure_from_start_counts_from_the_last_kept_event(self):
+        """The 0.5 event is dropped, so 1.2 is measured from 0.0, not 0.5."""
+        events = np.array([(0.0, 0.1), (0.5, 0.6), (1.2, 1.3)])
+        np.testing.assert_allclose(
+            exclude_close_events(events, 1.0, measure_from="start"), events[[0, 2]]
+        )
+
+    def test_an_unknown_reference_raises(self):
+        with pytest.raises(ValueError, match="measure_from must be one of 'end', 'start'"):
+            exclude_close_events(np.array([(0.0, 0.1), (0.5, 0.6)]), 1.0, measure_from="peak")
+
+    def test_inclusive_merges_a_gap_equal_to_the_threshold(self):
+        events = np.array([(0.0, 0.1), (0.14, 0.2)])
+        assert len(merge_close_events(events, 0.04)) == 2
+        np.testing.assert_allclose(
+            merge_close_events(events, 0.04, inclusive=True), [[0.0, 0.2]]
+        )
+
+    def test_inclusive_leaves_a_longer_gap_alone(self):
+        events = np.array([(0.0, 0.1), (0.1401, 0.2)])
+        assert len(merge_close_events(events, 0.04, inclusive=True)) == 2
+
+    @staticmethod
+    def _frame(bounds, peaks):
+        bounds = np.asarray(bounds, dtype=float)
+        return pd.DataFrame(
+            {"start_time": bounds[:, 0], "end_time": bounds[:, 1], "peak_time": peaks}
+        )
+
+    def test_peak_measure_merges_by_peak_separation(self):
+        """A peak lies inside its event, so peaks are never closer than the
+        gap: measured by peak, the first pair (gap 50 ms, peaks 180 ms
+        apart) stays apart, while the second (peaks 40 ms apart) merges."""
+        frame = self._frame(
+            [(0.0, 0.1), (0.15, 0.25), (0.40, 0.5), (0.52, 0.6)], [0.02, 0.2, 0.49, 0.53]
+        )
+        np.testing.assert_allclose(
+            merge_close_events(frame, 0.07, measure="peak"),
+            [[0.0, 0.1], [0.15, 0.25], [0.40, 0.6]],
+        )
+        np.testing.assert_allclose(merge_close_events(frame, 0.07), [[0.0, 0.25], [0.40, 0.6]])
+
+    def test_peak_measure_follows_a_chain_peak_to_peak(self):
+        """Peaks 60 ms apart in turn chain into one event although the first
+        and last are 120 ms apart."""
+        frame = self._frame([(0.0, 0.05), (0.06, 0.1), (0.12, 0.16)], [0.02, 0.08, 0.14])
+        np.testing.assert_allclose(
+            merge_close_events(frame, 0.07, measure="peak"), [[0.0, 0.16]]
+        )
+
+    def test_peak_measure_respects_the_ceiling(self):
+        frame = self._frame([(0.0, 0.1), (0.12, 0.3)], [0.09, 0.13])
+        assert len(merge_close_events(frame, 0.07, measure="peak", maximum_duration=0.2)) == 2
+
+    def test_peak_measure_needs_a_peak_column(self):
+        with pytest.raises(ValueError, match="peak_time column"):
+            merge_close_events(np.array([(0.0, 0.1), (0.15, 0.2)]), 0.07, measure="peak")
+
+    def test_an_unknown_measure_raises(self):
+        with pytest.raises(ValueError, match="measure must be one of 'gap', 'peak'"):
+            merge_close_events(np.array([(0.0, 0.1)]), 0.07, measure="center")
+
+
+class TestRequireIsolation:
+    """Every event of a close pair goes, not just the later one."""
+
+    def test_both_members_of_a_close_pair_are_dropped(self):
+        events = np.array([(0.0, 0.1), (0.3, 0.4), (2.0, 2.1)])
+        np.testing.assert_allclose(require_isolation(events, 0.5), [[2.0, 2.1]])
+
+    def test_a_gap_equal_to_the_separation_is_isolated(self):
+        events = np.array([(0.0, 0.1), (0.6, 0.7)])
+        np.testing.assert_allclose(require_isolation(events, 0.5), events)
+
+    def test_a_long_earlier_event_counts_by_its_end(self):
+        """The first event ends after the second starts; the third is close to
+        the first's end, though far from the second's."""
+        events = np.array([(0.0, 1.0), (0.2, 0.3), (1.2, 1.3), (3.0, 3.1)])
+        np.testing.assert_allclose(require_isolation(events, 0.5), [[3.0, 3.1]])
+
+    def test_zero_separation_drops_only_overlaps(self):
+        events = np.array([(0.0, 0.2), (0.1, 0.3), (0.3, 0.4), (1.0, 1.1)])
+        np.testing.assert_allclose(require_isolation(events, 0.0), [[0.3, 0.4], [1.0, 1.1]])
+
+    def test_a_single_or_no_event(self):
+        np.testing.assert_allclose(
+            require_isolation(np.array([(0.0, 0.1)]), 1.0), [[0.0, 0.1]]
+        )
+        assert require_isolation(np.empty((0, 2)), 1.0).shape == (0, 2)
+
+    def test_a_frame_keeps_its_columns_and_index(self):
+        frame = pd.DataFrame(
+            {"start_time": [0.0, 0.3, 2.0], "end_time": [0.1, 0.4, 2.1], "tag": list("abc")},
+            index=pd.Index([1, 2, 3], name="event_number"),
+        )
+        result = require_isolation(frame, 0.5)
+        assert list(result.index) == [3]
+        assert list(result.tag) == ["c"]
+
+    def test_unsorted_events_raise(self):
+        with pytest.raises(ValueError, match="sorted by start time"):
+            require_isolation(np.array([(1.0, 1.1), (0.0, 0.1)]), 0.5)
+
+    def test_a_negative_separation_raises(self):
+        with pytest.raises(ValueError, match="minimum_separation must be non-negative"):
+            require_isolation(np.array([(0.0, 0.1)]), -1.0)
 
 
 class TestCoreInputConversion:

@@ -690,7 +690,11 @@ Notes:
 - Two conventions are the package's, not each source's: every duration limit is an inclusive
   round-half-up sample count (`sample_count_within`), and immobility is `speed <= speed_threshold`.
 - "Close events" above says what each detector does by default. `merge_close_events` applies
-  the other convention, joining nearby events into one, to any inventory afterwards.
+  the other convention, joining nearby events into one, to any inventory afterwards: by gap,
+  with `inclusive=True` for rules written "40 ms or less", or by peak separation with
+  `measure="peak"`. `exclude_close_events(..., measure_from="start")` times the gap from the
+  earlier event's start, as "within 1 s after another SWR" does, and `require_isolation` drops
+  every event of a close pair, for rules such as "separated from others by at least 500 ms".
   The gating rule itself (endpoints, majority, interval containment) stays as each source defines it.
 - The other defaults reproduce each source's published or lab settings where one exists; they are
   not harmonized across detectors, so the same recording yields different event counts under

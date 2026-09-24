@@ -52,6 +52,9 @@ here is relative to 1.7.1.
   builds, with `bound_threshold` (where events end), `normalization_method="none"`,
   `minimum_event_duration` (on the whole event), `speed_rule` (including
   `"restrict"`, detection on slow samples only) and `close_event_rule="merge"`.
+- Close-event variants: `inclusive` and `measure="peak"` on `merge_close_events`,
+  `measure_from="start"` on `exclude_close_events`, and `require_isolation`, which
+  drops every event of a close pair.
 - `rule` on `exclude_movement`: besides the endpoint rule, every sample (`'all'`),
   the mean (`'mean'`) or the median (`'median'`) speed at or below the threshold.
 - A detector registry for pipelines that store a detector by name:
