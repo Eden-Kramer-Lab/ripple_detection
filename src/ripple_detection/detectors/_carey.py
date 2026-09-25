@@ -262,7 +262,8 @@ def carey_spectral_ripple_score(
     step : int, optional
         Compute every ``step``-th sample and interpolate the rest with a
         shape-preserving cubic, as ``amSWR``'s ``stepSize`` does, within each
-        run of finite samples. Default 1, every sample.
+        run of finite samples; the last scored sample of a run is always
+        computed. Default 1, every sample.
 
     Returns
     -------
@@ -380,7 +381,7 @@ def carey_spectral_ripple_score(
         for chunk in range(0, computed.size, _SPECTRUM_CHUNK):
             part = computed[chunk : chunk + _SPECTRUM_CHUNK]
             values[chunk : chunk + _SPECTRUM_CHUNK] = spectrum.at(data, part) @ template
-        if step > 1 and computed.size > 1:
+        if step > 1 and run_stop - run_start > 1:
             if computed[-1] != run_stop - 1:
                 computed = np.append(computed, run_stop - 1)
                 values = np.append(

@@ -6005,6 +6005,22 @@ class TestCareySpectralScore:
             stepped[computed] / every[computed]
         )
 
+    def test_a_scored_run_shorter_than_the_step_reaches_its_last_sample(self):
+        """A run of 242 finite samples (two windows of 120, less one, plus
+        3) scores samples 5120-5122 only, fewer than a step of 5: its last
+        sample is computed, not a copy of its first, so it differs from the
+        step-1 score only by the two scores' rescaling to mean 1."""
+        from ripple_detection import carey_spectral_ripple_score
+
+        time, data, examples = self._lfp()
+        data[[5000, 5243]] = np.nan
+        data[5081:5161] += 3 * np.sin(2 * np.pi * 180 * np.arange(80) / self.FS)
+        every = carey_spectral_ripple_score(time, data, self.FS, examples)
+        stepped = carey_spectral_ripple_score(time, data, self.FS, examples, step=5)
+        assert (every[5120:5123] > 0).all()
+        assert (every[[5119, 5123]] == 0).all()
+        assert stepped[5122] / every[5122] == pytest.approx(stepped[5120] / every[5120])
+
     def test_missing_samples_are_nan_and_zero_nearby(self):
         from ripple_detection import carey_spectral_ripple_score
 
