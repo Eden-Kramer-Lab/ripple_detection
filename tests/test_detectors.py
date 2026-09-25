@@ -4886,6 +4886,36 @@ class TestDetectEventsFromTrace:
                 speed_rule="restrict",
             )  # fmt: skip
 
+    def test_restrict_drops_brief_slow_dips_silently(self):
+        """Speed dipping below the threshold for 3-5 samples while running is
+        movement, not missing data: the dips are too short for an event and
+        are left out without a warning (pytest turns one into an error)."""
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(2000)
+        trace = self._bumps(2000, [0.5, 1.5], [0.05, 0.05])
+        speed = np.full(2000, 10.0)
+        for start, length in [(100, 3), (250, 4), (900, 5), (1700, 3)]:
+            speed[start : start + length] = 1.0
+        speed[1300:1800] = 0.0
+        events = detect_events_from_trace(
+            time, trace, speed, self.FS,
+            threshold=10.0, bound_threshold=1.0, normalization_method="none",
+            minimum_duration=0.015, speed_rule="restrict",
+        )  # fmt: skip
+        assert events.peak_time.tolist() == pytest.approx([1.5])
+
+    def test_restrict_with_only_brief_slow_stretches_raises(self):
+        from ripple_detection import detect_events_from_trace
+
+        speed = np.full(1000, 20.0)
+        speed[500:505] = 0.0
+        with pytest.raises(ValueError, match="speed_rule='restrict'"):
+            detect_events_from_trace(
+                self._time(1000), np.zeros(1000), speed, self.FS,
+                minimum_duration=0.015, speed_rule="restrict",
+            )  # fmt: skip
+
     def test_the_all_rule_tests_every_sample(self):
         from ripple_detection import detect_events_from_trace
 

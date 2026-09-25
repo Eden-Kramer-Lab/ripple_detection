@@ -25,6 +25,7 @@ from ripple_detection.core import (
     sample_count_within,
 )
 from ripple_detection.detectors._blocks import (
+    _contiguous_valid_blocks,
     _normalization_mask_over_valid,
     _valid_blocks,
 )
@@ -166,6 +167,53 @@ def _block_edges(
     return np.column_stack([first == block_starts[which], last == block_stops[which]])
 
 
+def _restrict_to_slow(
+    is_valid: BoolArray,
+    time: FloatArray,
+    speed: FloatArray,
+    speed_threshold: float,
+    minimum_duration: float,
+) -> tuple[BoolArray, list[tuple[int, int]]]:
+    """Valid samples and blocks limited to the slow stretches long enough for
+    an event.
+
+    A slow stretch shorter than ``minimum_duration`` is movement with a brief
+    dip in speed, not missing data, so it is dropped without the warning a
+    short block of missing samples gets. NaN speed is not slow.
+
+    Raises
+    ------
+    ValueError
+        If no sample is slow, or no valid slow stretch is long enough.
+    """
+    is_slow = _is_immobile(speed, speed_threshold)
+    if not np.any(is_slow):
+        msg = (
+            f"speed_rule='restrict' detects only where speed is at or below "
+            f"speed_threshold ({speed_threshold}), and no sample is."
+        )
+        raise ValueError(msg)
+    is_valid = is_valid & is_slow
+    n_minimum = minimum_sample_count(time, minimum_duration)
+    blocks = [
+        (start, stop)
+        for start, stop in _contiguous_valid_blocks(is_valid, time)
+        if stop - start >= n_minimum
+    ]
+    if not blocks:
+        msg = (
+            f"speed_rule='restrict' detects only where speed is at or below "
+            f"speed_threshold ({speed_threshold}), and no such stretch of finite samples "
+            f"is as long as the {n_minimum} samples an event of minimum_duration "
+            f"({minimum_duration} s) needs."
+        )
+        raise ValueError(msg)
+    kept = np.zeros_like(is_valid)
+    for start, stop in blocks:
+        kept[start:stop] = True
+    return kept, blocks
+
+
 @explain_call_errors
 def detect_events_from_trace(
     time: ArrayLike,
@@ -211,7 +259,8 @@ def detect_events_from_trace(
         it, and no event spans it.
     speed : array_like, shape (n_time,)
         The animal's speed in **cm/s**. NaN is an unknown speed, which splits
-        nothing; ``speed_rule`` says how it is treated.
+        nothing; ``speed_rule`` says how it is treated (``'restrict'`` treats
+        it as not slow).
     sampling_frequency : float
         Sampling rate in Hz.
     threshold : float or array_like of shape (n_time,), optional
@@ -275,7 +324,9 @@ def detect_events_from_trace(
         treats every sample faster than ``speed_threshold``, or of unknown
         speed, as missing: the statistics come from slow samples only, and an
         event is cut where movement starts, which ``clipped_start`` and
-        ``clipped_end`` then flag.
+        ``clipped_end`` then flag. A slow stretch shorter than
+        ``minimum_duration`` is left out without a warning: it is a brief dip
+        in speed, not missing data.
     close_event_threshold : float, optional
         Gap in **seconds** below which two events count as close. Default
         0.0, none.
@@ -304,7 +355,10 @@ def detect_events_from_trace(
         exceeds ``threshold``, fallback levels are given without
         ``bound_search_window``, a choice is not one of
         those listed, a duration or gap is not a plausible number of
-        seconds, or ``normalization_mask`` is given with ``'none'``.
+        seconds, or ``normalization_mask`` is given with ``'none'``. With
+        ``speed_rule='restrict'``, also if no sample is at or below
+        ``speed_threshold``, or no slow stretch of finite samples is as long
+        as ``minimum_duration``.
 
     See Also
     --------
@@ -367,17 +421,11 @@ def detect_events_from_trace(
             f"got {threshold_values.shape}."
         )
         raise ValueError(msg)
-    if speed_rule == "restrict":
-        is_slow = _is_immobile(speed, speed_threshold)
-        if not np.any(is_slow):
-            msg = (
-                f"speed_rule='restrict' detects only where speed is at or below "
-                f"speed_threshold ({speed_threshold}), and no sample is."
-            )
-            raise ValueError(msg)
-        values = values.copy()
-        values[~is_slow] = np.nan
     is_valid, blocks = _valid_blocks(time, values, minimum_duration=minimum_duration)
+    if speed_rule == "restrict":
+        is_valid, blocks = _restrict_to_slow(
+            is_valid, time, speed, speed_threshold, minimum_duration
+        )
 
     detection_trace = np.full(len(time), np.nan)
     for start, stop in blocks:
