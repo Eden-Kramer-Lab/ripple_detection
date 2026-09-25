@@ -474,7 +474,8 @@ def test_template_inventory_uses_caller_ensemble_size():
     )
     events = lm.run_method("olafsdottir_2015", rec)
     np.testing.assert_allclose(lm.bounds(events), [[0.5, 0.52]])
-    assert not len(lm.run_method("olafsdottir_2015", rec, minimum_active_units=7))
+    with pytest.warns(UserWarning, match="fewer than 7 cells"):
+        assert not len(lm.run_method("olafsdottir_2015", rec, minimum_active_units=7))
 
 
 def test_native_bins_are_stable_with_unix_timestamps():
@@ -1374,3 +1375,41 @@ def test_measured_recordings_need_the_documented_behavior_intervals(measured, na
     lm.run_method(name, measured)  # runs with them
     with pytest.raises(ValueError, match="behavior_intervals"):
         lm.run_method(name, replace(measured, behavior_intervals=None))
+
+
+def test_krause_warns_when_it_skips_swrs():
+    time = np.arange(4000) / 1000
+    spikes = np.zeros((4000, 10))
+    spikes[np.arange(1030, 1140, 6)] = 1
+    spikes[2500] = np.nan  # missing spike data inside the second SWR
+    rec = lm.Recording.from_arrays(
+        time,
+        1000,
+        multiunit=spikes,
+        place_cells=np.arange(10),
+        external_ripples=[[1.0, 1.15], [2.45, 2.6], [3.0, 3.02]],
+    )
+    with pytest.warns(UserWarning, match=r"^2 of 3 SWR\(s\) skipped: 1 crossing"):
+        result = lm.krause_2022(rec)
+    assert len(result) == 1
+
+
+def test_olafsdottir_2015_warns_for_small_templates_and_rejects_empty_ones():
+    time = np.arange(2000) / 1000
+    spikes = np.zeros((2000, 12))
+    spikes[[500, 510, 520, 530, 540, 550, 560], np.arange(7)] = 1
+    rec = lm.Recording.from_arrays(
+        time,
+        1000,
+        multiunit=spikes,
+        templates=[np.arange(7), np.arange(7, 12)],
+        behavior_intervals=[[0, 2]],
+    )
+    with pytest.warns(UserWarning, match=r"^1 of 2 template\(s\) .* fewer than 7 cells"):
+        events = lm.olafsdottir_2015(rec, minimum_active_units=7)
+    np.testing.assert_allclose(lm.bounds(events), [[0.5, 0.56]])
+    empty = lm.Recording.from_arrays(
+        time, 1000, multiunit=spikes, templates=[np.arange(7), []], behavior_intervals=[[0, 2]]
+    )
+    with pytest.raises(ValueError, match="selects no cells"):
+        lm.olafsdottir_2015(empty)

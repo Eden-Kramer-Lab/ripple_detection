@@ -1532,12 +1532,15 @@ def krause_2022(rec: Recording) -> FloatArray:
     intervals = np.asarray([(rec.time[a], rec.time[b - 1]) for a, b in blocks])
     tolerance = _time_tolerance(rec.time)
     found = []
+    n_missing = n_short = 0
     for start, end in swrs:
         group = np.searchsorted(intervals[:, 0], start, side="right") - 1
         if group < 0 or end > intervals[group, 1]:
+            n_missing += 1
             continue
         n_bins = int(np.ceil((end - start - tolerance) / 0.003)) - 1
         if n_bins < 11:
+            n_short += 1
             continue
         samples = _event_slice(rec.time, start, start + n_bins * 0.003, tolerance)
         relative = rec.time[samples] - start
@@ -1555,6 +1558,12 @@ def krause_2022(rec: Recording) -> FloatArray:
         high = np.flatnonzero(rate > 2)
         if len(high) > 1 and high[-1] - high[0] >= 10:
             found.append((start + high[0] * 0.003, end - (n_bins - high[-1]) * 0.003))
+    if n_missing or n_short:
+        rd.core._warn_at_caller(
+            f"{n_missing + n_short} of {len(swrs)} SWR(s) skipped: {n_missing} crossing "
+            f"missing place-cell spikes or a timestamp gap, {n_short} with fewer than the "
+            "11 complete 3 ms bins the trimming rule needs."
+        )
     return np.asarray(found, float).reshape(-1, 2)
 
 
@@ -2419,9 +2428,14 @@ def olafsdottir_2015(rec: Recording, *, minimum_active_units: int = 0) -> FloatA
         msg = "Supply templates: one cell selection per directional template."
         raise ValueError(msg)
     _require_behavior_intervals(rec, "rest epochs")
+    if any(not template.any() for template in rec.templates):
+        msg = "A template selects no cells; supply each directional template's cells."
+        raise ValueError(msg)
     found = []
+    small = 0
     for template in rec.templates:
-        if template.sum() < max(1, minimum_active_units):
+        if template.sum() < minimum_active_units:
+            small += 1
             continue
         events = rd.detect_silence_bounded_events(
             rec.time,
@@ -2434,6 +2448,11 @@ def olafsdottir_2015(rec: Recording, *, minimum_active_units: int = 0) -> FloatA
             minimum_active_units=minimum_active_units,
         )
         found.append(bounds(events))
+    if small:
+        rd.core._warn_at_caller(
+            f"{small} of {len(rec.templates)} template(s) skipped: fewer than "
+            f"{minimum_active_units} cells, so no event could meet minimum_active_units."
+        )
     events = np.concatenate(found) if found else np.empty((0, 2))
     return np.asarray(events[np.argsort(events[:, 0], kind="stable")], float)
 
