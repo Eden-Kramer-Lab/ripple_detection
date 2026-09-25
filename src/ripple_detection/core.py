@@ -1806,12 +1806,12 @@ def merge_close_events(
         # alone would not decide for a threshold within its tolerance of zero
         to_merge = gap <= 0
         if close_event_threshold > 0:
-            to_merge |= np.asarray(
-                _is_gap_below(gap, close_event_threshold, scale), dtype=bool
-            )
             if inclusive:
-                to_merge |= np.isclose(
-                    gap, close_event_threshold, rtol=_GAP_TOLERANCE, atol=0.0
+                tolerance = _gap_tolerance(close_event_threshold, scale)
+                to_merge |= gap <= close_event_threshold + tolerance
+            else:
+                to_merge |= np.asarray(
+                    _is_gap_below(gap, close_event_threshold, scale), dtype=bool
                 )
         if maximum_duration is not None:
             merged_span = np.maximum(events[1:, 1], events[:-1, 1]) - events[:-1, 0]

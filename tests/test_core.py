@@ -2198,6 +2198,20 @@ class TestCloseEventBoundaryAgreement:
 
         assert len(merge_close_events(events, 1e-12)) == 1
 
+    @pytest.mark.parametrize("origin", [86_400.0, 1e6, 1.7e9])
+    def test_the_other_close_event_rules_do_not_depend_on_the_time_origin(self, origin):
+        """Inclusive merging, gaps measured from the start, and isolation
+        decide a gap equal to the threshold the same way far from zero."""
+        equal = origin + np.array([(0.0, 0.01), (0.015, 0.02), (0.05, 0.06), (0.065, 0.07)])
+        wider = origin + np.array([(0.0, 0.01), (0.016, 0.02)])  # a millisecond apart
+
+        assert len(merge_close_events(equal, 0.005, inclusive=True)) == 2
+        assert len(merge_close_events(wider, 0.005, inclusive=True)) == 2
+        # measured from the start, the gaps are 0.015 s
+        assert len(exclude_close_events(equal, 0.015, measure_from="start")) == 4
+        assert len(require_isolation(equal, 0.005)) == 4
+        assert len(require_isolation(equal, 0.006)) == 0
+
 
 class TestHelperBoundaries:
     """The comparisons at the edge of each new rule."""
