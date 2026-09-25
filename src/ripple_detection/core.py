@@ -392,7 +392,9 @@ def filter_ripple_band(
         If the sampling rate cannot represent the band, that is, the upper
         edge plus the transition band reaches the Nyquist frequency (from
         ``ripple_bandpass_filter``), or if no run of present rows is long
-        enough to filter.
+        enough to filter. Also if ``time`` does not have one entry per row,
+        holds a nonfinite or decreasing timestamp, or has a median step of
+        zero.
 
     Warns
     -----
@@ -947,7 +949,14 @@ def exclude_movement_by_majority(
 def _contiguous_valid_blocks(
     is_valid: BoolArray, time: ArrayLike | None
 ) -> list[tuple[int, int]]:
-    """Half-open valid row ranges, split at missing rows and timestamp gaps."""
+    """Half-open valid row ranges, split at missing rows and timestamp gaps.
+
+    A block ends at an invalid row or wherever the timestamp step exceeds 1.5
+    times the median step (a recording gap or the join between disjoint
+    intervals). The median step is measured from ``time`` rather than taken
+    from the nominal sampling rate, so an overstated rate cannot turn every
+    sample into its own block.
+    """
     n_time = len(is_valid)
     boundary = np.zeros(n_time + 1, dtype=bool)
     boundary[0] = boundary[-1] = True
@@ -998,10 +1007,31 @@ def get_envelope(
     envelope : ndarray
         Instantaneous amplitude (envelope) of the signal, same shape as input.
 
+    Raises
+    ------
+    ValueError
+        If no sample is finite in every channel (an empty input included);
+        the message names any channel with no finite sample at all. Also if
+        ``time`` does not have one entry per sample along ``axis``, holds a
+        nonfinite or decreasing timestamp, or has a median step of zero.
+
     """
     data = np.asarray(data, dtype=float)
     values = np.moveaxis(data, axis, 0)
     finite = np.all(np.isfinite(values), axis=tuple(range(1, values.ndim)))
+    if not np.any(finite):
+        no_finite = np.argwhere(~np.isfinite(values).any(axis=0))
+        channels = no_finite[:, 0].tolist() if values.ndim == 2 else no_finite.tolist()
+        cause = (
+            f"; channel(s) {channels} hold no finite sample. Drop them first"
+            if values.ndim > 1 and len(values) and len(channels)
+            else ""
+        )
+        msg = (
+            "No sample is finite in every channel, so there is nothing to take the "
+            f"envelope of{cause}."
+        )
+        raise ValueError(msg)
     envelope = np.full_like(values, np.nan)
     for start, stop in _contiguous_valid_blocks(finite, time):
         analytic = hilbert(values[start:stop], N=next_fast_len(stop - start), axis=0)

@@ -389,6 +389,22 @@ class TestGetEnvelope:
         with pytest.raises(ValueError, match="time"):
             filter_ripple_band(data, 1500, time=bad_time)
 
+    @pytest.mark.parametrize("axis", [0, 1])
+    def test_a_channel_with_no_finite_sample_raises_naming_it(self, axis):
+        data = np.random.default_rng(7).normal(size=(200, 3))
+        data[:, 1] = np.nan
+        with pytest.raises(ValueError, match=r"channel\(s\) \[1\] hold no finite sample"):
+            get_envelope(data if axis == 0 else data.T, axis=axis)
+
+    def test_no_row_finite_in_every_channel_raises(self):
+        data = np.random.default_rng(8).normal(size=(200, 2))
+        data[::2, 0] = np.nan
+        data[1::2, 1] = np.nan
+        with pytest.raises(ValueError, match="nothing to take the envelope of"):
+            get_envelope(data)
+        with pytest.raises(ValueError, match="nothing to take the envelope of"):
+            get_envelope(np.full(10, np.nan))
+
     def test_constant_amplitude_sine(self):
         """Test envelope of constant amplitude sine wave."""
         time = np.linspace(0, 1, 1500)
@@ -600,15 +616,9 @@ class TestCoreErrorHandling:
             filter_ripple_band(np.array([]), 1500)
 
     def test_get_envelope_empty_array(self):
-        """Test envelope extraction with empty array."""
-        # Empty array will raise ValueError in Hilbert transform
-        empty_array = np.array([])
-        try:
-            envelope = get_envelope(empty_array)
-            assert envelope.shape == empty_array.shape
-        except ValueError:
-            # Expected for empty input
-            pass
+        """An empty array has no finite sample to take the envelope of."""
+        with pytest.raises(ValueError, match="nothing to take the envelope of"):
+            get_envelope(np.array([]))
 
     def test_gaussian_smooth_single_sample(self):
         """Test smoothing with single sample."""
