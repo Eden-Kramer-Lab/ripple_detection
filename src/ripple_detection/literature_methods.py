@@ -2577,9 +2577,12 @@ def wikenheiser_2013(
     """150 ms ripple windows, >=3 cells and >=5 spikes, rest or run-LIA branch.
 
     Power is squared mean 140-220 Hz envelope (channel/measure interpretation).
-    The window anchor is unspecified: measured data must choose 'samples',
-    'peaks' or 'onsets'. Each anchor retains its own window, clipped to its
-    valid LFP block.
+    Anchors are where z-scored power reaches 1 SD (z >= 1; the paper says
+    "exceeded"). The window anchor is unspecified: measured data must choose
+    'samples', 'peaks' or 'onsets'. Each anchor gets a 150 ms window, and
+    overlapping (or touching) windows within a valid LFP block are joined, as
+    the paper's "Overlapping events were concatenated"; windows are clipped to
+    their block, so no event spans missing data.
     The paper does not define its baseline epoch. normalization='session'
     uses all valid LFP samples; 'baseline' explicitly selects supplied
     baseline_intervals. Unrelated baseline intervals do not affect the default.

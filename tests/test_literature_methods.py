@@ -1533,3 +1533,13 @@ def test_speed_limits_follow_each_papers_inequality(name, limit, strict):
 
     assert overlapping(0.999 * limit), name
     assert bool(overlapping(limit)) is not strict, name
+
+
+def test_wikenheiser_joins_overlapping_anchor_windows(measured, monkeypatch):
+    amplitude = np.ones(len(measured.time))
+    peaks = np.searchsorted(measured.time, [3.0, 3.1, 6.0])
+    amplitude[peaks] = 20
+    monkeypatch.setattr(measured, "mean_envelope", lambda *args, **kwargs: amplitude)
+    events = lm.wikenheiser_2013(measured, window_anchor="peaks")
+    # "Overlapping events were concatenated": 3.0 and 3.1 s share one window.
+    np.testing.assert_allclose(lm.bounds(events), [[2.925, 3.175], [5.925, 6.075]], atol=1e-9)
