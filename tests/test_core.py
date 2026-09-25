@@ -1635,6 +1635,31 @@ class TestExcludeOverlap:
         assert len(exclude_overlap(events, np.column_stack([spike_peaks, spike_peaks]))) == 2
         assert len(exclude_overlap(events, spike_peaks[:, np.newaxis] + [-0.1, 0.1])) == 0
 
+    @pytest.mark.parametrize(
+        ("event", "reference", "minimum_overlap"),
+        [
+            ((0.0, 0.04), (0.02, 0.06), 0.02),  # 0.04 - 0.02 rounds below 0.02
+            ((0.1, 0.3), (0.0, 0.3), 0.2),  # 0.3 - 0.1 rounds below 0.2
+        ],
+    )
+    def test_an_overlap_equal_to_the_minimum_reaches_it(
+        self, event, reference, minimum_overlap
+    ):
+        events, references = np.array([event]), np.array([reference])
+
+        assert len(require_overlap(events, references, minimum_overlap)) == 1
+        assert len(exclude_overlap(events, references, minimum_overlap)) == 0
+
+    def test_a_zero_length_event_overlaps_nothing(self):
+        """The summed lengths round to a tiny positive overlap for some points
+        inside a reference; a point has no duration either way."""
+        points = np.round(np.random.default_rng(0).uniform(0.2, 0.9, 1000), 4)
+        events = np.column_stack([points, points])
+        reference = np.array([(0.1, 0.95)])
+
+        assert len(require_overlap(events, reference)) == 0
+        assert len(exclude_overlap(events, reference)) == len(events)
+
 
 class TestCloseEventBoundaryAgreement:
     """The merge and drop conventions decide the same gap the same way."""

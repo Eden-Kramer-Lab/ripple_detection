@@ -1585,7 +1585,13 @@ def _overlaps(
 
     Bounds must be finite and in order: a NaN or reversed row would silently
     break the sorted arithmetic below for every event after it, which for a
-    veto means keeping what it should drop."""
+    veto means keeping what it should drop.
+
+    Whether the overlap is positive is decided by comparing bounds, not by
+    the summed lengths, whose rounding would give a zero-length event inside
+    a reference a positive overlap. An overlap equal to ``minimum_overlap``
+    counts as reaching it, within the relative tolerance of
+    :func:`_is_gap_below`, since 0.04 - 0.02 need not round to 0.02."""
     _check_non_negative(minimum_overlap=minimum_overlap)
     events = _event_bounds(event_times)
     reference = _event_bounds(reference_event_times)
@@ -1599,6 +1605,10 @@ def _overlaps(
             )
             raise ValueError(msg)
     if not (len(events) and len(reference)):
+        return events, np.zeros(len(events), dtype=bool)
+    # a zero-length reference has no duration to overlap
+    reference = reference[reference[:, 1] > reference[:, 0]]
+    if not len(reference):
         return events, np.zeros(len(events), dtype=bool)
     reference = reference[np.argsort(reference[:, 0], kind="stable")]
     reference = merge_close_events(reference)
@@ -1614,7 +1624,13 @@ def _overlaps(
     head = np.maximum(0.0, starts - ref_start[np.clip(first, 0, len(reference) - 1)])
     tail = np.maximum(0.0, ref_end[np.clip(last - 1, 0, len(reference) - 1)] - ends)
     overlap = np.where(meets, cumulative[last] - cumulative[first] - head - tail, 0.0)
-    return events, np.asarray((overlap > 0) & (overlap >= minimum_overlap))
+    # every reference in the run has positive length, so the overlap is
+    # positive exactly when the event does too
+    is_positive = meets & (starts < ends)
+    reaches = (overlap >= minimum_overlap) | np.isclose(
+        overlap, minimum_overlap, rtol=_GAP_TOLERANCE, atol=0.0
+    )
+    return events, np.asarray(is_positive & reaches)
 
 
 def require_overlap(
