@@ -28,7 +28,7 @@ from scipy.signal import fftconvolve, filtfilt, find_peaks, firwin
 
 import ripple_detection as rd
 from ripple_detection.core import BoolArray, FloatArray, IntArray, _matlab_smooth
-from ripple_detection.detectors._blocks import _valid_blocks
+from ripple_detection.detectors._blocks import _drop_short_blocks, _valid_blocks
 from ripple_detection.detectors._long import (
     _difference_of_gaussians_band,
     _firfilt,
@@ -761,10 +761,21 @@ def _zscore(values: FloatArray, mask: BoolArray | None = None, ddof: int = 0) ->
 
 
 def _transform(
-    time: FloatArray, values: FloatArray, operation: Callable[[FloatArray], FloatArray]
+    time: FloatArray,
+    values: FloatArray,
+    operation: Callable[[FloatArray], FloatArray],
+    minimum_length: int = 1,
+    reason: str = "",
 ) -> FloatArray:
-    """Apply an operation independently within each valid block on the given grid."""
-    _, blocks = _valid_blocks(time, values)
+    """Apply an operation independently within each valid block on the given grid.
+
+    Blocks shorter than ``minimum_length`` samples, which ``reason`` (the
+    transform) cannot process, are left missing with a warning; if none is
+    long enough, raise.
+    """
+    is_valid, blocks = _valid_blocks(time, values)
+    if minimum_length > 1:
+        blocks = _drop_short_blocks(blocks, is_valid, minimum_length, reason)
     result = np.full(values.shape, np.nan)
     for start, stop in blocks:
         result[start:stop] = operation(values[start:stop])
@@ -1191,11 +1202,16 @@ def _tirole(rec: Recording) -> FloatArray:
     kernel /= kernel.sum()
 
     def smooth_block(x: FloatArray) -> FloatArray:
-        if len(x) <= 120:
-            return np.full_like(x, np.nan)
         return np.asarray(filtfilt(kernel, [1.0], x, padlen=120), float)
 
-    trace.data = _zscore(_transform(trace.time, trace.data, smooth_block), ddof=1)
+    smoothed = _transform(
+        trace.time,
+        trace.data,
+        smooth_block,
+        minimum_length=121,  # filtfilt needs more samples than its padding
+        reason="Tirole's 41-point forward/backward kernel",
+    )
+    trace.data = _zscore(smoothed, ddof=1)
     events = _tirole_bounds(trace.time, trace.data)
     events = trace.merge(within_duration(events, 0.1), 0.05)
     keep = []
@@ -1573,11 +1589,15 @@ def denovellis_2021(rec: Recording) -> pd.DataFrame:
     kernel = remez(101, [0, 125, 150, 250, 275, 750], [0, 1, 0], fs=1500)
 
     def historical_filter(x: FloatArray) -> FloatArray:
-        if len(x) <= 303:
-            return np.full_like(x, np.nan)
         return np.asarray(filtfilt(kernel, [1.0], x, axis=0), float)
 
-    filtered = rec.transform(rec.session.lfps, historical_filter)
+    filtered = _transform(
+        rec.time,
+        rec.session.lfps,
+        historical_filter,
+        minimum_length=3 * len(kernel) + 1,  # more than filtfilt's default padding
+        reason="the historical 101-tap ripple filter",
+    )
     trace = np.sqrt(np.maximum(0, rec.smooth(np.sum(filtered**2, axis=1), 0.004)))
     return _ripple_trace_events(
         rec, trace, threshold=2.0, minimum_duration=0.015, speed_threshold=4.0
@@ -1789,7 +1809,8 @@ def kaefer_2020(rec: Recording) -> pd.DataFrame:
         raise ValueError(msg)
     centers = np.arange(width // 2, len(rec.time) - (width - width // 2) + 1, step)
     power = np.full(len(centers), np.nan)
-    _, blocks = _valid_blocks(rec.time, raw)
+    is_valid, blocks = _valid_blocks(rec.time, raw)
+    blocks = _drop_short_blocks(blocks, is_valid, width, "Kaefer's 240 ms FFT chunk")
     frequencies = np.fft.rfftfreq(width, 1 / rec.fs)
     band = (frequencies >= 150) & (frequencies <= 250)
     for j, center in enumerate(centers):
@@ -2765,6 +2786,7 @@ def _tirole_ripple_amplitude(rec: Recording) -> tuple[FloatArray, FloatArray]:
     _, blocks = _valid_blocks(rec.time, raw)
     times, amplitudes = [], []
     kernel = firwin(35, [125, 300], pass_zero=False, fs=1000, window="hamming")
+    short = []
     for start, stop in blocks:
         signal = np.asarray(
             resample_poly(raw[start:stop], ratio.numerator, ratio.denominator), float
@@ -2772,15 +2794,25 @@ def _tirole_ripple_amplitude(rec: Recording) -> tuple[FloatArray, FloatArray]:
         time = rec.time[start] + np.arange(len(signal)) / 1000
         keep = time <= rec.time[stop - 1]
         signal, time = signal[keep], time[keep]
-        if len(signal) <= 102:
+        if len(signal) <= 102:  # filtfilt needs more samples than its padding
+            short.append((start, stop))
             continue
         filtered = filtfilt(kernel, [1.0], signal, padlen=102)
         amplitude = _matlab_smooth(rd.get_envelope(filtered), 15)
         times.append(time)
         amplitudes.append(amplitude)
     if not times:
-        msg = "No LFP block is long enough for the Tirole filter."
+        msg = (
+            "No block of finite samples is as long as the 103 samples at 1000 Hz that "
+            "Tirole's ripple filter needs."
+        )
         raise ValueError(msg)
+    if short:
+        rd.core._warn_at_caller(
+            f"{len(short)} block(s) of finite samples shorter than the 103 samples at "
+            f"1000 Hz that Tirole's ripple filter needs are treated as missing (sample "
+            f"ranges {short[:5]}{', ...' if len(short) > 5 else ''})."
+        )
     return np.concatenate(times), np.concatenate(amplitudes)
 
 
@@ -2859,13 +2891,16 @@ def bush_2022_ripples(rec: Recording, *, fir_window: str = "hamming") -> FloatAr
     kernel = firwin(401, [150, 250], fs=rec.fs, pass_zero=False, window=fir_window)
 
     def filtered(x: FloatArray) -> FloatArray:
-        if len(x) <= 1200:
-            return np.full_like(x, np.nan)
         return np.asarray(filtfilt(kernel, [1.0], x, padlen=1200), float)
 
-    trace = rec.smooth(
-        rd.get_envelope(rec.transform(rec.session.raw_lfp, filtered), time=rec.time), 0.005
+    band = _transform(
+        rec.time,
+        rec.session.raw_lfp,
+        filtered,
+        minimum_length=1201,  # more than filtfilt's padding
+        reason="Bush's 400th-order FIR",
     )
+    trace = rec.smooth(rd.get_envelope(band, time=rec.time), 0.005)
     events = _ripple_trace_events(rec, trace, threshold=3.0)
     events = rec.merge(events, 0.04, trace, inclusive=True)
     events = within_duration(events, 0.04 + 1 / rec.fs)

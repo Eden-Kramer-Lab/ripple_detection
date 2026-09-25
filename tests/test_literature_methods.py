@@ -1287,3 +1287,40 @@ def test_native_bins_leave_out_a_sample_on_the_final_edge():
     )
     assert len(trace.time) == 100
     np.testing.assert_array_equal(trace.data, 0)
+
+
+SHORT_BLOCK_TRANSFORMS = [
+    (
+        "tirole_2022",
+        1500,
+        100,
+        ["Tirole's 41-point forward/backward kernel", "Tirole's ripple filter"],
+    ),
+    ("denovellis_2021", 1500, 300, ["the historical 101-tap ripple filter"]),
+    ("bush_2022_ripples", 4800, 1000, ["Bush's 400th-order FIR"]),
+    ("kaefer_2020", 1500, 300, ["Kaefer's 240 ms FFT chunk"]),
+]
+
+
+@pytest.mark.parametrize(("name", "fs", "spacing", "transforms"), SHORT_BLOCK_TRANSFORMS)
+def test_blocks_too_short_for_a_transform_are_dropped_with_a_warning(
+    name, fs, spacing, transforms
+):
+    inputs = _measured_inputs(fs)
+    # A block of about 30 ms between two artifacts.
+    rec = lm.Recording.from_arrays(**inputs, artifact_intervals=[[1.0, 1.1], [1.13, 1.2]])
+    with pytest.warns(UserWarning, match="treated as missing") as record:
+        lm.run_method(name, rec)
+    messages = [str(warning.message) for warning in record]
+    for transform in transforms:
+        assert any(transform in m and m.startswith("1 block") for m in messages), messages
+
+
+@pytest.mark.parametrize(("name", "fs", "spacing", "transforms"), SHORT_BLOCK_TRANSFORMS)
+def test_a_recording_of_blocks_too_short_for_a_transform_raises(name, fs, spacing, transforms):
+    inputs = _measured_inputs(fs)
+    for key in ("lfps", "multiunit"):
+        inputs[key] = inputs[key].astype(float)
+        inputs[key][::spacing] = np.nan
+    with pytest.raises(ValueError, match="No block of finite samples"):
+        lm.run_method(name, lm.Recording.from_arrays(**inputs))
