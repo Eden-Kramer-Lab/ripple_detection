@@ -153,9 +153,11 @@ _SPECTRUM_CHUNK = 65_536
 
 
 class _WindowedSpectrum:
-    """The van der Meer lab's ``windowedFFT``: the magnitude spectrum of a
-    ``window``-long stretch around a sample, tapered at each end over one
-    period of ``high_pass_cutoff`` and folded so the taper overlaps itself."""
+    """The van der Meer lab's ``windowedFFT``: the magnitude spectrum of the
+    stretch around a sample. Each stretch spans ``window`` plus one period of
+    ``high_pass_cutoff`` (``n_window + n_taper`` samples), is tapered at each
+    end over that period, and is folded so the two tapers overlap, leaving
+    ``window`` (``n_window`` samples) to transform."""
 
     def __init__(
         self, sampling_frequency: float, window: float, high_pass_cutoff: float, weight_by: str
@@ -248,7 +250,10 @@ def carey_spectral_ripple_score(
         Examples whose stretch, or whose noise stretch, is not all finite
         samples within one run are left out with a warning.
     window : float, optional
-        Length of each stretch in seconds. Default 0.06, the original's.
+        Length in seconds of each transformed stretch. The samples read span
+        ``window`` plus one period of ``high_pass_cutoff``, tapered at each
+        end over that period and folded back to ``window``. Default 0.06, the
+        original's.
     high_pass_cutoff : float, optional
         Frequencies below this, in Hz, are left out of the score, and the
         taper at each end of a stretch lasts one period of it. Default 100.
@@ -268,10 +273,13 @@ def carey_spectral_ripple_score(
     Returns
     -------
     score : ndarray, shape (n_time,)
-        Non-negative, mean 1 over the finite samples; NaN at missing samples,
-        and 0 within one window's length of missing data, a gap in time or
-        the recording edge, where the original is 0 too. With ``step=1`` it equals the
-        original's score to rounding.
+        Non-negative, mean 1 over the finite samples; NaN at missing samples.
+        Samples that cannot be scored are 0, as in the original: those within
+        one window's length of missing data, a gap in time or the recording
+        edge, and every sample of a run of finite samples too short to score.
+        These zeros count in the mean the score is rescaled by, so the more
+        of the recording is unscored, the higher the scored samples are
+        scaled. With ``step=1`` it equals the original's score to rounding.
 
     Raises
     ------
@@ -458,14 +466,17 @@ def Carey_candidate_detector(
       units; a slow baseline (the sum capped at ``baseline_cap`` units'
       worth, smoothed with a 125 ms SD Gaussian) and one unit's cap are
       subtracted; divided by the mean and floored at zero.
-    - **Joint score**: ``sqrt(ripple * multiunit)``, z-scored. The original
-      first rescales it to mean 0.5, a positive factor the z-score removes,
-      so that step is omitted. This combination is asymmetric. The multiunit score is
+    - **Joint score**: ``sqrt(ripple * multiunit)``, z-scored with the
+      default ``threshold_method='zscore'``. The original first rescales it
+      to mean 0.5, a positive factor the z-score removes, so that step is
+      omitted. This combination is asymmetric. The multiunit score is
       floored at zero, so a ripple without a population burst cannot be a
-      candidate. The ripple score is an envelope rescaled to mean 1 and is
-      never zero, so a burst without a ripple can be. The joint score is
-      therefore closer to "burst, weighted by ripple power" than to a
-      symmetric conjunction. A candidate is a run strictly above
+      candidate. The Hilbert ripple score, formed from ``filtered_lfps``, is
+      an envelope rescaled to mean 1 and is never zero, so a burst without a
+      ripple can be. The joint score is then closer to "burst, weighted by
+      ripple power" than to a symmetric conjunction. A supplied
+      ``ripple_score``, such as ``carey_spectral_ripple_score``'s, can be
+      zero, and then neither score alone makes a candidate. A candidate is a run strictly above
       ``low_threshold`` whose maximum is strictly above ``high_threshold``.
       Its sample count must meet ``minimum_duration`` under the package's
       duration rule.
@@ -720,18 +731,18 @@ def Carey_candidate_detector(
 
     joint = np.sqrt(ripple * multiunit_score)
     if threshold_method == "zscore":
-        zscored = normalize_signal(joint)
+        scaled = normalize_signal(joint)
     else:
         # precand: rescmean(score, 0.5)
-        zscored = joint * (0.5 / np.nanmean(joint))
+        scaled = joint * (0.5 / np.nanmean(joint))
 
     # two-threshold segmentation (TSDtoIV2) within each block: runs above the
     # edge, kept if the peak is above
     candidate_runs: list[tuple[int, int]] = []
     for start, stop in blocks:
-        block_z = zscored[start:stop]
-        for run_start, run_stop in _boolean_run_bounds(block_z > low_threshold):
-            if block_z[run_start:run_stop].max() > high_threshold:
+        block_score = scaled[start:stop]
+        for run_start, run_stop in _boolean_run_bounds(block_score > low_threshold):
+            if block_score[run_start:run_stop].max() > high_threshold:
                 candidate_runs.append((start + run_start, start + run_stop - 1))
     candidates = np.asarray(candidate_runs, dtype=int).reshape(-1, 2)
     n_samples = candidates[:, 1] - candidates[:, 0] + 1
@@ -774,7 +785,7 @@ def Carey_candidate_detector(
     event_times, keep = _exclude_long_events(event_times, time, maximum_duration)
     n_active = n_active[keep]
     events = _get_event_stats(
-        event_times, time, zscored, speed, minimum_duration=minimum_duration, blocks=blocks
+        event_times, time, scaled, speed, minimum_duration=minimum_duration, blocks=blocks
     )
     events["n_active_units"] = n_active
     return events
