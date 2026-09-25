@@ -666,9 +666,17 @@ def within_duration(
 ) -> FloatArray:
     """Events whose elapsed duration is from ``low`` to ``high`` seconds."""
     events = bounds(events)
+    return events[_within_duration_mask(events, low, high)]
+
+
+def _within_duration_mask(
+    events: pd.DataFrame | FloatArray, low: float = 0.0, high: float = np.inf
+) -> BoolArray:
+    """Which events last from ``low`` to ``high`` seconds, inclusive."""
+    events = bounds(events)
     duration = events[:, 1] - events[:, 0]
     tolerance = _time_tolerance(events)
-    return events[(duration >= low - tolerance) & (duration <= high + tolerance)]
+    return (duration >= low - tolerance) & (duration <= high + tolerance)
 
 
 def _time_tolerance(time: FloatArray) -> float:
@@ -1012,24 +1020,49 @@ def _ripple_trace_events(
 def _local_peaks(
     rec: Recording, trace: FloatArray, level: float, *, before: float = 0.0, after: float = 0.0
 ) -> pd.DataFrame:
+    """Every local peak above ``level``, each with its own window.
+
+    Windows reach ``before`` and ``after`` seconds from the peak, cut at the
+    edges of its valid block; ``clipped_start`` and ``clipped_end`` flag a cut.
+    """
     # Keep every local peak, even if two occupy the same above-mean excursion.
     rows = []
+    tolerance = _time_tolerance(rec.time)
     _, blocks = _valid_blocks(rec.time, trace)
     for start, stop in blocks:
         peaks, _ = find_peaks(trace[start:stop], height=np.nextafter(level, np.inf))
         for peak in peaks + start:
-            rows.append(  # noqa: PERF401 - explicit per-peak boundaries
+            first, last = rec.time[peak] - before, rec.time[peak] + after
+            rows.append(
                 (
-                    max(rec.time[start], rec.time[peak] - before),
-                    min(rec.time[stop - 1], rec.time[peak] + after),
+                    max(rec.time[start], first),
+                    min(rec.time[stop - 1], last),
                     rec.time[peak],
                     trace[peak],
+                    bool(first < rec.time[start] - tolerance),
+                    bool(last > rec.time[stop - 1] + tolerance),
                 )
             )
-    return pd.DataFrame(rows, columns=["start_time", "end_time", "peak_time", "peak_value"])
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "start_time",
+            "end_time",
+            "peak_time",
+            "peak_value",
+            "clipped_start",
+            "clipped_end",
+        ],
+    )
 
 
 def _mallory_candidates(time: FloatArray, z: FloatArray) -> pd.DataFrame:
+    """Peaks >=3 bounded by inclusive mean crossings, merged by retained peak.
+
+    A bound that reaches a valid block's edge before the trace falls to the
+    mean is flagged in ``clipped_start`` or ``clipped_end``.
+    """
+    # [start, end, peak_time, peak_value, clipped_start, clipped_end]
     rows: list[list[float]] = []
     tolerance = _time_tolerance(time)
     _, blocks = _valid_blocks(time, z)
@@ -1042,22 +1075,40 @@ def _mallory_candidates(time: FloatArray, z: FloatArray) -> pd.DataFrame:
                 start -= 1
             while end < block_stop - 1 and z[end] > 0:
                 end += 1
-            event = [float(time[start]), float(time[end]), float(time[peak]), float(z[peak])]
+            event = [
+                float(time[start]),
+                float(time[end]),
+                float(time[peak]),
+                float(z[peak]),
+                float(z[start] > 0),
+                float(z[end] > 0),
+            ]
             if block_events and event[0] == block_events[-1][0]:
                 previous = block_events.pop()
                 if previous[3] > event[3]:
-                    event[2:] = previous[2:]
+                    event[2:4] = previous[2:4]
             block_events.append(event)
         merged: list[list[float]] = []
         for event in block_events:
             if merged and event[2] - merged[-1][2] <= 0.07 + tolerance:
                 previous = merged.pop()
-                event[0] = previous[0]
+                event[0], event[4] = previous[0], previous[4]
                 if previous[3] > event[3]:
-                    event[2:] = previous[2:]
+                    event[2:4] = previous[2:4]
             merged.append(event)
         rows.extend(merged)
-    return pd.DataFrame(rows, columns=["start_time", "end_time", "peak_time", "peak_value"])
+    result = pd.DataFrame(
+        rows,
+        columns=[
+            "start_time",
+            "end_time",
+            "peak_time",
+            "peak_value",
+            "clipped_start",
+            "clipped_end",
+        ],
+    )
+    return result.astype({"clipped_start": bool, "clipped_end": bool})
 
 
 # --------------------------------------------------------------------------- recipes
@@ -1222,7 +1273,7 @@ def yang_2024(rec: Recording) -> pd.DataFrame | FloatArray:
     return _population_with_ripple_peak(rec, rec.sleep(4.0, 1.0))
 
 
-def _tirole(rec: Recording) -> FloatArray:
+def _tirole(rec: Recording) -> pd.DataFrame:
     """Released Tirole finite kernels and candidate order, with supplied cells.
 
     Native 1 ms counts, 41-point gausswin(alpha=2), forward/backward filtering,
@@ -1251,8 +1302,8 @@ def _tirole(rec: Recording) -> FloatArray:
         reason="Tirole's 41-point forward/backward kernel",
     )
     trace.data = _zscore(smoothed, ddof=1)
-    events = _tirole_bounds(trace.time, trace.data)
-    events = trace.merge(within_duration(events, 0.1), 0.05)
+    found = _tirole_bounds(trace.time, trace.data)
+    events = trace.merge(within_duration(found, 0.1), 0.05)
     keep = []
     for start, end in events:
         n_steps = int(np.floor((end - start + _time_tolerance(rec.time)) / 0.01))
@@ -1270,12 +1321,29 @@ def _tirole(rec: Recording) -> FloatArray:
     selected = np.asarray(
         [np.any(z[(ripple_time > a) & (ripple_time < b)] >= 3) for a, b in events], dtype=bool
     )
+    events = events[selected]
+    # A merged event starts at its first part's start and ends at its last's end.
     half_bin = 0.5 / trace.sampling_frequency
-    return np.asarray(events[selected] + np.array([-half_bin, half_bin]), dtype=float)
+    return pd.DataFrame(
+        {
+            "start_time": events[:, 0] - half_bin,
+            "end_time": events[:, 1] + half_bin,
+            "clipped_start": found.groupby("start_time")
+            .clipped_start.any()[events[:, 0]]
+            .to_numpy(dtype=bool)
+            .reshape(-1),
+            "clipped_end": found.groupby("end_time")
+            .clipped_end.any()[events[:, 1]]
+            .to_numpy(dtype=bool)
+            .reshape(-1),
+        }
+    )
 
 
 @recipe(3, "Huelin Gorriz 2023", "SWR+MUA")
-def huelin_gorriz_2023(rec: Recording, *, interpretation: str = "published_cap") -> FloatArray:
+def huelin_gorriz_2023(
+    rec: Recording, *, interpretation: str = "published_cap"
+) -> pd.DataFrame | FloatArray:
     """Published duration cap or explicitly selected related Tirole code.
 
     The original extractor is missing from the Huelin Gorriz release. Both
@@ -1287,7 +1355,9 @@ def huelin_gorriz_2023(rec: Recording, *, interpretation: str = "published_cap")
         msg = "interpretation must be 'published_cap' or 'related_code'."
         raise ValueError(msg)
     events = _tirole(rec)
-    return within_duration(events, high=0.75) if interpretation == "published_cap" else events
+    if interpretation == "related_code":
+        return events
+    return events[_within_duration_mask(events, high=0.75)]
 
 
 def _spiking_filter(rec: Recording, ripples: pd.DataFrame) -> pd.DataFrame:
@@ -2803,7 +2873,13 @@ NOT_REPRODUCED = {
 # --------------------------------------------------------------------------- run
 
 
-def _tirole_bounds(time: FloatArray, z: FloatArray) -> FloatArray:
+def _tirole_bounds(time: FloatArray, z: FloatArray) -> pd.DataFrame:
+    """Released Tirole bounds around 10 ms-separated threshold anchors.
+
+    A side without a crossing at any fallback level ends at the 300 ms search
+    limit or the valid block's edge, flagged in ``clipped_start`` or
+    ``clipped_end``. Identical bounds from different anchors appear once.
+    """
     found = []
     tolerance = _time_tolerance(time)
     _, blocks = _valid_blocks(time, z)
@@ -2819,6 +2895,7 @@ def _tirole_bounds(time: FloatArray, z: FloatArray) -> FloatArray:
                 int(np.searchsorted(time, time[anchor] + 0.3 + tolerance, side="right")) - 1,
             )
             onset, offset = left, right
+            clipped_start = clipped_end = True
             for level in (0.0, 0.25, 0.5):
                 eligible = (
                     z[left : anchor + 1] < level
@@ -2828,6 +2905,7 @@ def _tirole_bounds(time: FloatArray, z: FloatArray) -> FloatArray:
                 crossing = np.flatnonzero(eligible)
                 if len(crossing):
                     onset = left + int(crossing[-1])
+                    clipped_start = False
                     break
             for level in (0.0, 0.25, 0.5):
                 eligible = (
@@ -2838,9 +2916,19 @@ def _tirole_bounds(time: FloatArray, z: FloatArray) -> FloatArray:
                 crossing = np.flatnonzero(eligible)
                 if len(crossing):
                     offset = anchor + int(crossing[0])
+                    clipped_end = False
                     break
-            found.append((time[onset], time[offset]))
-    return np.unique(np.asarray(found, dtype=float).reshape(-1, 2), axis=0)
+            found.append((time[onset], time[offset], clipped_start, clipped_end))
+    result = pd.DataFrame(
+        found, columns=["start_time", "end_time", "clipped_start", "clipped_end"]
+    ).astype(
+        {"start_time": float, "end_time": float, "clipped_start": bool, "clipped_end": bool}
+    )
+    return (
+        result.groupby(["start_time", "end_time"], as_index=False)
+        .any()
+        .sort_values(["start_time", "end_time"], ignore_index=True)
+    )
 
 
 def _tirole_ripple_amplitude(rec: Recording) -> tuple[FloatArray, FloatArray]:

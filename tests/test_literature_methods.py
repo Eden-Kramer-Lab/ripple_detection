@@ -148,11 +148,11 @@ def test_tirole_boundaries_include_crossing_samples_and_fallbacks():
     z = np.full(1000, -1.0)
     z[400:601] = 0.1
     z[450:501] = 4
-    np.testing.assert_allclose(lm._tirole_bounds(time, z), [[0.399, 0.601]])
+    np.testing.assert_allclose(lm.bounds(lm._tirole_bounds(time, z)), [[0.399, 0.601]])
     z[:] = 0.2
     z[450:501] = 4
     # No z<0 crossing exists; each side independently uses z<=0.25.
-    np.testing.assert_allclose(lm._tirole_bounds(time, z), [[0.449, 0.501]])
+    np.testing.assert_allclose(lm.bounds(lm._tirole_bounds(time, z)), [[0.449, 0.501]])
 
 
 def test_tirole_uses_finite_forward_backward_kernel(measured, monkeypatch):
@@ -168,7 +168,13 @@ def test_tirole_uses_finite_forward_backward_kernel(measured, monkeypatch):
         return original_zscore(values, *args, **kwargs)
 
     monkeypatch.setattr(lm, "_zscore", capture)
-    monkeypatch.setattr(lm, "_tirole_bounds", lambda *args: np.empty((0, 2)))
+    monkeypatch.setattr(
+        lm,
+        "_tirole_bounds",
+        lambda *args: pd.DataFrame(
+            columns=["start_time", "end_time", "clipped_start", "clipped_end"]
+        ),
+    )
     lm.tirole_2022(measured)
     # Released process_clusters.m: gausswin(41, 2), normalized, filtfilt.
     # Fixed interior impulse response computed independently with SciPy's
@@ -637,7 +643,7 @@ def test_tirole_ten_ms_anchors_and_search_bounds_are_clock_invariant(origin):
     z = np.full(1200, -1.0)
     z[400:721] = 0.6
     z[[400, 410]] = 4
-    events = lm._tirole_bounds(time, z)
+    events = lm.bounds(lm._tirole_bounds(time, z))
     np.testing.assert_allclose(events - origin, [[0.399, 0.700], [0.399, 0.710]], atol=1e-6)
 
 
@@ -1413,3 +1419,61 @@ def test_olafsdottir_2015_warns_for_small_templates_and_rejects_empty_ones():
     )
     with pytest.raises(ValueError, match="selects no cells"):
         lm.olafsdottir_2015(empty)
+
+
+def test_mallory_flags_candidates_cut_by_a_block_edge():
+    time = np.arange(400) / 1000
+    z = np.full(400, -1.0)
+    z[:30] = 1.0
+    z[10] = 5.0
+    z[200] = 5.0
+    z[300:] = 1.0
+    z[350] = 5.0
+    result = lm._mallory_candidates(time, z)
+    np.testing.assert_array_equal(result.clipped_start, [True, False, False])
+    np.testing.assert_array_equal(result.clipped_end, [False, False, True])
+
+
+def test_tirole_flags_bounds_set_by_the_search_limit_or_a_block_edge():
+    time = np.arange(1000) / 1000
+    z = np.full(1000, -1.0)
+    z[100:900] = 1.0  # no bound level within 300 ms of the anchor at 0.5 s
+    z[500] = 4
+    z[:20] = 4  # an anchor at the recording's start
+    events = lm._tirole_bounds(time, z)
+    np.testing.assert_allclose(lm.bounds(events), [[0.0, 0.02], [0.2, 0.8]])
+    np.testing.assert_array_equal(events.clipped_start, [True, True])
+    np.testing.assert_array_equal(events.clipped_end, [False, True])
+
+
+def test_tirole_output_keeps_clipped_flags(measured, monkeypatch):
+    bounds_found = pd.DataFrame(
+        {
+            "start_time": [1.0, 5.0],
+            "end_time": [1.2, 5.3],
+            "clipped_start": [True, False],
+            "clipped_end": [False, True],
+        }
+    )
+    monkeypatch.setattr(lm, "_tirole_bounds", lambda *args: bounds_found.copy())
+    monkeypatch.setattr(lm.rd, "require_active_units", lambda events, *a, **k: events)
+    monkeypatch.setattr(
+        lm, "_tirole_ripple_amplitude", lambda rec: (rec.time, np.ones(len(rec.time)))
+    )
+    monkeypatch.setattr(lm, "_zscore", lambda values, *a, **k: np.full(len(values), 5.0))
+    events = lm.tirole_2022(measured)
+    np.testing.assert_allclose(lm.bounds(events), [[0.9995, 1.2005], [4.9995, 5.3005]])
+    np.testing.assert_array_equal(events.clipped_start, [True, False])
+    np.testing.assert_array_equal(events.clipped_end, [False, True])
+
+
+def test_local_peak_windows_flag_a_cut_at_a_block_edge(measured):
+    trace = np.zeros(len(measured.time))
+    trace[30] = 4  # 20 ms after the recording starts
+    trace[3000] = 4
+    events = lm._local_peaks(measured, trace, 3, before=0.05, after=0.05)
+    np.testing.assert_allclose(
+        lm.bounds(events)[0], [measured.time[0], measured.time[30] + 0.05]
+    )
+    np.testing.assert_array_equal(events.clipped_start, [True, False])
+    np.testing.assert_array_equal(events.clipped_end, [False, False])
