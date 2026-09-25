@@ -1799,7 +1799,9 @@ def merge_close_events(
     scale = float(np.abs(events).max())
     while len(events) > 1:
         if measure == "peak":
-            gap = first_peak[1:] - last_peak[:-1]
+            # events sorted by start need not have their peaks in order when
+            # they overlap, and peaks far apart in either order are not close
+            gap = np.abs(first_peak[1:] - last_peak[:-1])
         else:
             gap = events[1:, 0] - events[:-1, 1]
         # events that touch merge at every threshold, which _is_gap_below

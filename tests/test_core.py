@@ -1365,6 +1365,16 @@ class TestCloseEventVariants:
             merge_close_events(frame, 0.07, measure="peak"), [[0.0, 0.16]]
         )
 
+    def test_peak_measure_takes_the_distance_between_peaks_in_either_order(self):
+        """The second event starts inside the first but peaks before it: peaks
+        750 ms apart are not close, and 30 ms apart are, whichever comes first."""
+        far = self._frame([(0.0, 1.0), (0.1, 0.2)], [0.9, 0.15])
+        near = self._frame([(0.0, 1.0), (0.1, 0.2)], [0.18, 0.15])
+        np.testing.assert_allclose(
+            merge_close_events(far, 0.07, measure="peak"), [[0.0, 1.0], [0.1, 0.2]]
+        )
+        np.testing.assert_allclose(merge_close_events(near, 0.07, measure="peak"), [[0.0, 1.0]])
+
     def test_peak_measure_respects_the_ceiling(self):
         frame = self._frame([(0.0, 0.1), (0.12, 0.3)], [0.09, 0.13])
         assert len(merge_close_events(frame, 0.07, measure="peak", maximum_duration=0.2)) == 2
