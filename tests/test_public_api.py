@@ -96,6 +96,42 @@ def test_all_has_no_duplicates():
     assert len(ripple_detection.__all__) == len(set(ripple_detection.__all__))
 
 
+LITERATURE_HELPERS = [
+    "NOT_REPRODUCED",
+    "RECIPES",
+    "VARIANTS",
+    "Inventory",
+    "PopulationTrace",
+    "Recipe",
+    "RecordedSignals",
+    "Recording",
+    "Role",
+    "Stage",
+    "bounds",
+    "list_methods",
+    "population_trace",
+    "run_method",
+    "within_duration",
+    "within_intervals",
+]
+
+
+def test_literature_methods_all_is_the_helpers_and_every_registered_method():
+    """The 57 default and 29 additional inventories, each by its function
+    name, and the helpers; nothing else, nothing twice."""
+    from ripple_detection import literature_methods
+
+    methods = [
+        entry.run.__name__
+        for entry in (*literature_methods.RECIPES, *literature_methods.VARIANTS)
+    ]
+    assert (len(literature_methods.RECIPES), len(literature_methods.VARIANTS)) == (57, 29)
+    assert sorted(literature_methods.__all__) == sorted(LITERATURE_HELPERS + methods)
+    assert len(literature_methods.__all__) == len(set(literature_methods.__all__))
+    for name in literature_methods.__all__:
+        assert hasattr(literature_methods, name), name
+
+
 class TestCallsWrittenFor1x:
     """A call written for 1.x, by a person or a language model trained on it,
     fails with the 2.0 change behind it and the call to write instead."""
