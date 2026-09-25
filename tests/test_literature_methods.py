@@ -1492,3 +1492,44 @@ def test_gridchyn_warns_when_the_multiplier_reaches_zero():
         events = lm.gridchyn_2020(rec, update_interval=1, target_rate=20)
     assert events.threshold_multiplier.min() <= 0
     lm.gridchyn_2020(rec, update_interval=1, target_rate=0)  # rises: no warning
+
+
+@pytest.mark.parametrize(
+    ("name", "limit", "strict"),
+    [
+        ("davidson_2009", 5.0, True),
+        ("wu_2014", 5.0, True),
+        ("silva_2015", 5.0, True),
+        ("pfeiffer_2013", 5.0, True),
+        ("ambrose_2016", 5.0, True),
+        ("tang_2017", 4.0, True),
+        ("jadhav_2016", 4.0, True),
+        ("carr_2012", 4.0, True),
+        ("karlsson_2009", 2.0, True),
+        ("gillespie_2021", 4.0, True),
+        ("gillespie_2021_mua", 4.0, True),
+        ("shin_2019", 4.0, False),  # "immobility periods (<=4 cm/s)"
+    ],
+)
+def test_speed_limits_follow_each_papers_inequality(name, limit, strict):
+    inputs = _measured_inputs()
+    time = inputs["time"]
+    speed = np.zeros(len(time))
+    speed[time < 0.5] = 20.0  # running, for Davidson's within-30-s-of-RUN rule
+    inputs["speed"] = speed
+    found = lm.bounds(lm.run_method(name, lm.Recording.from_arrays(**inputs)))
+    assert len(found), name
+    near = np.zeros(len(time), dtype=bool)
+    for start, end in found:
+        near |= (time >= start - 0.3) & (time <= end + 0.3)
+
+    def overlapping(value):
+        inputs["speed"] = np.where(near, value, speed)
+        try:
+            events = lm.bounds(lm.run_method(name, lm.Recording.from_arrays(**inputs)))
+        except ValueError:  # speed_rule='restrict' with no slow sample left
+            return 0
+        return len(rd.require_overlap(events, found))
+
+    assert overlapping(0.999 * limit), name
+    assert bool(overlapping(limit)) is not strict, name

@@ -182,6 +182,10 @@ Other inventories are exercised with their required settings in the tests.
   must implement the chosen trial's criteria; the package does not rescore them.
   `sample_speed_veto=True` adds the previous, stricter veto on native-grid speed
   samples. That extra veto is optional and is not specified by the paper.
+- Speed limits keep each source's inequality: a stated "less than" (Karlsson,
+  Carr, Jadhav, Tang, Gillespie, Davidson, Wu 2014, Silva, Pfeiffer 2013,
+  Ambrose) is strict; Shin's "<=4 cm/s" and limits whose inequality is unstated
+  are inclusive, as each docstring says.
 - Farooq and Grosmark interpret the ambiguous 15 ms Gaussian width as SD.
   Gupta defaults to Jackson's log of mean Hilbert amplitude, an inheritance
   inference that can be disabled with `log_amplitude=False`.

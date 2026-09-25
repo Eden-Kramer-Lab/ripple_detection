@@ -1722,8 +1722,14 @@ def denovellis_2021(rec: Recording) -> pd.DataFrame:
 
 @recipe(14, "Gillespie 2021", "SWR")
 def gillespie_2021(rec: Recording) -> pd.DataFrame | FloatArray:
-    """Kay consensus trace, 2 SD for 15 ms, speed < 4."""
-    return rd.Kay_ripple_detector(rec.time, rec.filtered((150.0, 250.0)), rec.speed, rec.fs)
+    """Kay consensus trace, 2 SD for 15 ms, speed < 4 at both ends."""
+    return rd.Kay_ripple_detector(
+        rec.time,
+        rec.filtered((150.0, 250.0)),
+        rec.speed,
+        rec.fs,
+        speed_threshold=np.nextafter(4.0, -np.inf),
+    )
 
 
 def _michon(rec: Recording, *, order: str = "text") -> FloatArray:
@@ -2154,7 +2160,10 @@ def liu_2019(rec: Recording) -> pd.DataFrame | FloatArray:
 
 def _karlsson_rule(rec: Recording, speed_threshold: float) -> pd.DataFrame:
     """Karlsson & Frank 2009: each tetrode's 4 ms-smoothed envelope, 3 SD for
-    >= 15 ms on any tetrode, bounds at the mean, overlapping events combined."""
+    >= 15 ms on any tetrode, bounds at the mean, overlapping events combined.
+
+    Speed at both ends at or below ``speed_threshold``; a paper's strict
+    "less than" passes the next float below its limit."""
     return rd.Karlsson_ripple_detector(
         rec.time,
         rec.filtered((150.0, 250.0)),
@@ -2410,7 +2419,7 @@ def yamamoto_2017(rec: Recording) -> pd.DataFrame | FloatArray:
 @recipe(35, "Tang 2017", "SWR")
 def tang_2017(rec: Recording) -> pd.DataFrame | FloatArray:
     """The Karlsson rule at < 4 cm/s (smoothing and minimum inherited)."""
-    return _karlsson_rule(rec, 4.0)
+    return _karlsson_rule(rec, np.nextafter(4.0, -np.inf))
 
 
 @recipe(36, "Grosmark 2016", "SWR+MUA")
@@ -2449,7 +2458,7 @@ def ambrose_2016(rec: Recording) -> pd.DataFrame | FloatArray:
     return rd.detect_events_from_trace(
         rec.time, rec.mean_envelope((150.0, 250.0)), rec.speed, rec.fs,
         threshold=3.0, smoothing_sigma=0.0125, minimum_duration=0.0,
-        speed_rule="restrict", speed_threshold=5.0,
+        speed_rule="restrict", speed_threshold=np.nextafter(5.0, -np.inf),
     )  # fmt: skip
 
 
@@ -2459,7 +2468,9 @@ def jadhav_2016(rec: Recording, *, stage: str = "detection") -> pd.DataFrame | F
     one's start dropped; stage='decoding_candidates' adds >=4 active CA1 cells (all supplied units).
     The default returns the initial SWR inventory."""
     _check_stage(stage)
-    events = rd.exclude_close_events(_karlsson_rule(rec, 4.0), 1.0, measure_from="start")
+    events = rd.exclude_close_events(
+        _karlsson_rule(rec, np.nextafter(4.0, -np.inf)), 1.0, measure_from="start"
+    )
     if stage == "detection":
         return events
     return rd.require_active_units(events, rec.multiunit, rec.time, minimum_active_units=4)
@@ -2488,7 +2499,8 @@ def silva_2015(rec: Recording) -> pd.DataFrame | FloatArray:
     return _detect_population(
         rec, rec.pyramidal, 0.010,
         threshold=3.0, minimum_duration=0.0, minimum_event_duration=0.1,
-        maximum_duration=0.5, speed_rule="restrict", speed_threshold=5.0,
+        maximum_duration=0.5, speed_rule="restrict",
+        speed_threshold=np.nextafter(5.0, -np.inf),
     )  # fmt: skip
 
 
@@ -2549,7 +2561,7 @@ def wu_2014(rec: Recording) -> pd.DataFrame | FloatArray:
     reproduced."""
     return _detect_population(
         rec, rec.place_cells, 0.015, bin_width=0.01,
-        threshold=2.0, minimum_duration=0.0, speed_threshold=5.0,
+        threshold=2.0, minimum_duration=0.0, speed_threshold=np.nextafter(5.0, -np.inf),
     )  # fmt: skip
 
 
@@ -2643,7 +2655,8 @@ def pfeiffer_2013(rec: Recording) -> pd.DataFrame | FloatArray:
     spikes; then (order assumed) >= 10% of units and 50 ms-2 s."""
     events = _detect_population(
         rec, rec.pyramidal, 0.010,
-        threshold=3.0, minimum_duration=0.0, speed_rule="restrict", speed_threshold=5.0,
+        threshold=3.0, minimum_duration=0.0, speed_rule="restrict",
+        speed_threshold=np.nextafter(5.0, -np.inf),
     )  # fmt: skip
     events = rd.trim_events_to_spike_windows(
         events, rec.multiunit, rec.time, units=rec.pyramidal
@@ -2659,7 +2672,7 @@ def carr_2012(rec: Recording, *, stage: str = "detection") -> pd.DataFrame | Flo
     """The Karlsson rule on CA1 at < 4 cm/s; stage='decoding_candidates'
     adds >=5 active place cells; the default returns the initial SWR inventory."""
     _check_stage(stage)
-    events = _karlsson_rule(rec, 4.0)
+    events = _karlsson_rule(rec, np.nextafter(4.0, -np.inf))
     if stage == "detection":
         return events
     return rd.require_active_units(
@@ -2700,7 +2713,7 @@ def gupta_2010(rec: Recording, *, log_amplitude: bool = True) -> pd.DataFrame | 
 @recipe(49, "Karlsson 2009", "SWR")
 def karlsson_2009(rec: Recording) -> pd.DataFrame | FloatArray:
     """The Karlsson rule at < 2 cm/s (CA1 and CA3 tetrodes)."""
-    return _karlsson_rule(rec, 2.0)
+    return _karlsson_rule(rec, np.nextafter(2.0, -np.inf))
 
 
 @recipe(50, "Davidson 2009", "MUA")
@@ -2711,7 +2724,7 @@ def davidson_2009(rec: Recording) -> pd.DataFrame | FloatArray:
     events = _detect_population(
         rec, None, 0.015,
         threshold=3.0, normalization_mask=rec.speed < 5, minimum_duration=0.0,
-        speed_threshold=5.0,
+        speed_threshold=np.nextafter(5.0, -np.inf),
     )  # fmt: skip
     running = rd.state_intervals(rec.speed, rec.time, 15.0, comparison=">")
     return rd.require_overlap(events, running + np.array([-30.0, 30.0]))
@@ -3520,7 +3533,8 @@ def denovellis_2021_mua(rec: Recording) -> pd.DataFrame:
 
 @variant(14, "Gillespie 2021", "secondary MUA candidates")
 def gillespie_2021_mua(rec: Recording) -> pd.DataFrame:
-    """Published 1 ms MUA bins, 15 ms Gaussian, stopped (<4) baseline, 3 SD/mean.
+    """Published 1 ms MUA bins, 15 ms Gaussian, stopped (<4) baseline, 3 SD/mean,
+    speed <4 at both ends (which samples is not stated).
 
     The released helper's different 5 ms kernel is not silently substituted.
     """
@@ -3531,7 +3545,7 @@ def gillespie_2021_mua(rec: Recording) -> pd.DataFrame:
         threshold=3.0,
         normalization_mask=rec.speed < 4,
         minimum_duration=0.0,
-        speed_threshold=4.0,
+        speed_threshold=np.nextafter(4.0, -np.inf),
     )
 
 
