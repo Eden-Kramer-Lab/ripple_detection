@@ -696,10 +696,10 @@ parameters.loc[parameters["Spike sorting"] == "Clusterless", ["First Author", "Y
 | smoothing width (ripple) | 22 | 4-80 ms | 12.5 ms | 4 | Gaussian SD 4 ms; 10 ms on Carey |
 | smoothing width (multiunit) | 32 | 5-80 ms | 15 ms | 15 | Gaussian SD 15 ms |
 | `speed_threshold` | 35 | 1-10 cm/s | 5 cm/s | 5 | 4 cm/s |
-| `minimum_duration` | 40 | 15-100 ms | 50 ms | 100 | 15 ms, 20 ms on Yu/Zugaro/Carey |
+| `minimum_duration` | 40 | 15-100 ms | 50 ms | 50 | 15 ms, 20 ms on Yu/Zugaro/Carey |
 | `maximum_duration` | 24 | 300-2000 ms | 550 ms | 500 | none, except Zugaro 100 ms and Long 500 ms (sharp wave) |
 | event grouping interval | 15 | 20-100 ms | 50 ms | 50 | 0 (no exclusion); Zugaro merges within 30 ms, Long drops within 50 ms |
-| `minimum_active_units` | 28 | 3-10 units | 5 units | 5 | 0 on the burst detector, 5 on Carey |
+| `minimum_active_units` | 27 | 3-10 units | 5 units | 5 | 0 on the burst detector, 5 on Carey |
 | ripple channels sampled | 32 | 10 papers use one, 18 multiple, 4 a range | — | — | See each detector's channel aggregation rule |
 
 

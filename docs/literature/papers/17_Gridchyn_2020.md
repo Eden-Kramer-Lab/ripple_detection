@@ -58,7 +58,7 @@ https://github.com/igridchyn/lfp_online (listed in the Key Resources table p. e1
 
 ## Analysis and interpretation
 
-Real-time
+Real-time decoding classifies each HSE once, from the spikes of its 20 ms detection window; the 20 ms time bin is that window. The text states no step between windows, and `LFPBuffer::IsHighSynchrony()` counts spikes in a window that slides with each sample, so the time bin step is not reported.
 
 ## Uncertainties
 

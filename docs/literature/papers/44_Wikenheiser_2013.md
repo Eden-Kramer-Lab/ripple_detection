@@ -48,7 +48,7 @@ No code link.
 
 ## Analysis and interpretation
 
-Only time steps with at least 1 spike included
+Only time steps with at least 1 spike included. Spiking is decoded "in 10 ms time windows"; the overlap is not stated, so the 10 ms step assumes nonoverlapping windows.
 
 ## Reproduction limits
 

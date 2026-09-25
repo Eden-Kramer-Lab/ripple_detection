@@ -55,6 +55,10 @@ None linked in the paper.
 
 - Searched GitHub (code, repositories, and the lab's and authors' accounts), Zenodo, Figshare and CRCNS/DANDI: no original detector caller established in these searches. The eLife record lists no source-code files; the SpiersLab repositories are unrelated.
 
+## Analysis and interpretation
+
+The cell criterion for spiking events is 15% of a template's cells (4 cells for R1838). The at-least-7-cell rule applies only to the Bayesian verification, as do the 5 ms bins, 1000 cell-ID shuffles and 95th-percentile threshold in the decoding columns. The primary preplay test is a two-tailed rank-order (Spearman) correlation with each tail at 97.5%; 100 shuffles set its chance proportion (Results p. 1; Methods pp. 12-14).
+
 ## Reproduction limits
 
 The method-specific qualifications above apply. The executable recipe documents its assumptions about unstated parameters, state scoring and simulation stand-ins.

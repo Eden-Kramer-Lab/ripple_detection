@@ -46,6 +46,10 @@ None linked in the paper. Data: CRCNS hc-11.
   - it defaults to 80-250 Hz and 0.5 / 2.5 SD on a sharp-wave channel (lines 139-151).
   - Nothing connects this implementation to the original 2016 events; the independent LFP settings remain unresolved.
 
+## Analysis and interpretation
+
+The duration columns record the ripple-event rule, 50-500 ms. The at-least-100 ms criterion selects events for Bayesian replay analysis and is kept in the detection notes.
+
 ## Uncertainties
 
 The original independent LFP detector and its threshold, band, channel count and caller remain unresolved. CRCNS/DANDI metadata and all eight inspected NWB interval catalogs do not supply a documented original SWR pipeline. Later buzcoderough defaults cannot fill these fields.

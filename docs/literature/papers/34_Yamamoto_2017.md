@@ -58,11 +58,11 @@ No code link in the paper.
 
 ## Analysis and interpretation
 
-Methods (PDF p. 16) specify 10 ms replay bins and 2000 posterior-column shuffles, but no numerical replay p-value cutoff or bin step.
+Methods (PDF p. 16) specify 2000 posterior-column shuffles, but no replay decoding bin, numerical replay p-value cutoff or bin step. The replay score's temporal bin size Dt is left unnumbered; the stated 10 ms bins are the multiunit bins, and the only stated decoding bin is 200 ms for RUN (Figure S3).
 
 ## Uncertainties
 
-The numerical replay p-value cutoff and decoding step are not reported. The combination of ripple and MUA traces and the trace that determines candidate boundaries are under-specified.
+The replay decoding bin, numerical replay p-value cutoff and decoding step are not reported. The combination of ripple and MUA traces and the trace that determines candidate boundaries are under-specified.
 
 ## Package mapping
 

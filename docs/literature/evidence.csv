@@ -170,7 +170,7 @@ https://doi.org/10.1016/j.neuron.2023.04.015,% Decoded,not_reported,Methods; rep
 https://doi.org/10.1016/j.neuron.2023.04.015,Spike sorting,checked_paper,Methods; replay_run.py and session-processing callers,papers/04_Harvey_2023.md
 https://doi.org/10.1016/j.neuron.2023.04.015,Time bin step (ms),checked_paper,Methods; replay_run.py and session-processing callers,papers/04_Harvey_2023.md
 https://doi.org/10.1016/j.neuron.2023.04.015,Shuffle Method,checked_paper,Methods; replay_run.py and session-processing callers,papers/04_Harvey_2023.md
-https://doi.org/10.1016/j.neuron.2023.04.015,Shuffles (#),checked_paper,Methods; replay_run.py and session-processing callers,papers/04_Harvey_2023.md
+https://doi.org/10.1016/j.neuron.2023.04.015,Shuffles (#),checked_code,"STAR Methods replay detection states 1000 surrogates; replay_run.py @8461a94 run_all default traj_shuff=1500 (lines 425-427, used at line 633), called by main_loop without override (line 705)",papers/04_Harvey_2023.md
 https://doi.org/10.1016/j.neuron.2023.04.015,Sig. Thresh.,checked_paper,Methods; replay_run.py and session-processing callers,papers/04_Harvey_2023.md
 https://doi.org/10.1016/j.neuron.2023.04.015,% Decoded denom.,not_reported,Methods; replay_run.py and session-processing callers,papers/04_Harvey_2023.md
 https://doi.org/10.1016/j.neuron.2023.04.015,Reconst. Error bin (ms),not_reported,Methods; replay_run.py and session-processing callers,papers/04_Harvey_2023.md
@@ -623,7 +623,7 @@ https://doi.org/10.1016/j.neuron.2020.01.021,Decoding notes,reviewed_context,Met
 https://doi.org/10.1016/j.neuron.2020.01.021,Reconst. Error (cm),not_reported,Methods pp. 15-17,papers/17_Gridchyn_2020.md
 https://doi.org/10.1016/j.neuron.2020.01.021,% Decoded,not_reported,Methods pp. 15-17,papers/17_Gridchyn_2020.md
 https://doi.org/10.1016/j.neuron.2020.01.021,Spike sorting,checked_paper,Methods pp. 15-17,papers/17_Gridchyn_2020.md
-https://doi.org/10.1016/j.neuron.2020.01.021,Time bin step (ms),checked_paper,Methods pp. 15-17,papers/17_Gridchyn_2020.md
+https://doi.org/10.1016/j.neuron.2020.01.021,Time bin step (ms),not_reported,"Methods pp. 15-17: fixed 20 ms windows, no step stated; each HSE is decoded once from its detection window",papers/17_Gridchyn_2020.md
 https://doi.org/10.1016/j.neuron.2020.01.021,Shuffle Method,checked_paper,Methods pp. 15-17,papers/17_Gridchyn_2020.md
 https://doi.org/10.1016/j.neuron.2020.01.021,Shuffles (#),not_applicable,Methods pp. 15-17,papers/17_Gridchyn_2020.md
 https://doi.org/10.1016/j.neuron.2020.01.021,Sig. Thresh.,not_applicable,Methods pp. 15-17,papers/17_Gridchyn_2020.md
@@ -1210,7 +1210,7 @@ https://doi.org/10.1016/j.neuron.2017.09.017,Min. Duration (ms),not_applicable,M
 https://doi.org/10.1016/j.neuron.2017.09.017,Max Duration (ms),not_applicable,Methods pp. 15-16; Results p. 7,papers/34_Yamamoto_2017.md
 https://doi.org/10.1016/j.neuron.2017.09.017,Combine Events Thresh. (ms),checked_paper,Methods pp. 15-16; Results p. 7,papers/34_Yamamoto_2017.md
 https://doi.org/10.1016/j.neuron.2017.09.017,Decoding,checked_paper,Methods pp. 15-16; Results p. 7,papers/34_Yamamoto_2017.md
-https://doi.org/10.1016/j.neuron.2017.09.017,Time bin (ms),checked_paper,Methods pp. 15-16; Results p. 7,papers/34_Yamamoto_2017.md
+https://doi.org/10.1016/j.neuron.2017.09.017,Time bin (ms),not_reported,Methods pp. 15-16: Bayesian decoding and replay score leave the temporal bin size Dt unnumbered; the stated 10 ms bins are multiunit bins,papers/34_Yamamoto_2017.md
 https://doi.org/10.1016/j.neuron.2017.09.017,Position bin (cm),not_reported,Methods pp. 15-16; Results p. 7,papers/34_Yamamoto_2017.md
 https://doi.org/10.1016/j.neuron.2017.09.017,Place field smooth (cm),not_reported,Methods pp. 15-16; Results p. 7,papers/34_Yamamoto_2017.md
 https://doi.org/10.1016/j.neuron.2017.09.017,Trajectory,checked_paper,Methods pp. 15-16; Results p. 7,papers/34_Yamamoto_2017.md
@@ -1247,7 +1247,7 @@ https://doi.org/10.1523/JNEUROSCI.2291-17.2017,Combine Events Thresh. (ms),not_a
 https://doi.org/10.1523/JNEUROSCI.2291-17.2017,Decoding,checked_paper,Methods pp. 5-6; Results p. 11,papers/35_Tang_2017.md
 https://doi.org/10.1523/JNEUROSCI.2291-17.2017,Time bin (ms),checked_paper,Methods pp. 5-6; Results p. 11,papers/35_Tang_2017.md
 https://doi.org/10.1523/JNEUROSCI.2291-17.2017,Position bin (cm),checked_paper,Methods pp. 5-6; Results p. 11,papers/35_Tang_2017.md
-https://doi.org/10.1523/JNEUROSCI.2291-17.2017,Place field smooth (cm),checked_paper,Methods pp. 5-6; Results p. 11,papers/35_Tang_2017.md
+https://doi.org/10.1523/JNEUROSCI.2291-17.2017,Place field smooth (cm),checked_paper,"Methods, Spatial maps: 2D maps with 2 cm bins and Gaussian sigma 8 cm (W-track); Replay decoding follows Karlsson & Frank 2009 without stating template smoothing",papers/35_Tang_2017.md
 https://doi.org/10.1523/JNEUROSCI.2291-17.2017,Trajectory,checked_paper,Methods pp. 5-6; Results p. 11,papers/35_Tang_2017.md
 https://doi.org/10.1523/JNEUROSCI.2291-17.2017,Decoding notes,reviewed_context,"Tang 2017 Results, PDF p. 11: 167/397 awake, 147/455 post-task sleep, 116/451 pre-task sleep.",papers/35_Tang_2017.md
 https://doi.org/10.1523/JNEUROSCI.2291-17.2017,Reconst. Error (cm),not_reported,Methods pp. 5-6; Results p. 11,papers/35_Tang_2017.md
@@ -1276,7 +1276,7 @@ https://doi.org/10.1126/science.aad1935,Min. Cells (#),checked_paper,"Supplement
 https://doi.org/10.1126/science.aad1935,SWR electrodes (#),unresolved,"Supplement Methods, combined PDF pp. 9-11; Figure S3 (p. 20) No independently established value for this field; see the linked paper note’s uncertainties.",papers/36_Grosmark_2016.md
 https://doi.org/10.1126/science.aad1935,SWR Low Band (Hz),unresolved,"Supplement Methods, combined PDF pp. 9-11; Figure S3 (p. 20) No independently established value for this field; see the linked paper note’s uncertainties.",papers/36_Grosmark_2016.md
 https://doi.org/10.1126/science.aad1935,SWR High Band (Hz),unresolved,"Supplement Methods, combined PDF pp. 9-11; Figure S3 (p. 20) No independently established value for this field; see the linked paper note’s uncertainties.",papers/36_Grosmark_2016.md
-https://doi.org/10.1126/science.aad1935,Min. Duration (ms),checked_paper,"Supplement Methods, combined PDF pp. 9-11; Figure S3 (p. 20)",papers/36_Grosmark_2016.md
+https://doi.org/10.1126/science.aad1935,Min. Duration (ms),checked_paper,"Supplement Methods, combined PDF pp. 9-11: ripple events lasted 50-500 ms; the >=100 ms criterion applies only to Bayesian replay analysis",papers/36_Grosmark_2016.md
 https://doi.org/10.1126/science.aad1935,Max Duration (ms),checked_paper,"Supplement Methods, combined PDF pp. 9-11; Figure S3 (p. 20)",papers/36_Grosmark_2016.md
 https://doi.org/10.1126/science.aad1935,Combine Events Thresh. (ms),not_applicable,"Supplement Methods, combined PDF pp. 9-11; Figure S3 (p. 20)",papers/36_Grosmark_2016.md
 https://doi.org/10.1126/science.aad1935,Decoding,checked_paper,"Supplement Methods, combined PDF pp. 9-11; Figure S3 (p. 20)",papers/36_Grosmark_2016.md
@@ -1447,7 +1447,7 @@ https://doi.org/10.7554/eLife.06063,SWR Z-score Thresh. (STD),not_applicable,"Me
 https://doi.org/10.7554/eLife.06063,Animal Speed (cm/s),not_applicable,"Methods, Bayesian and rank-order analyses",papers/41_Olafsdottir_2015.md
 https://doi.org/10.7554/eLife.06063,MUA smooth (ms),not_applicable,"Methods, Bayesian and rank-order analyses",papers/41_Olafsdottir_2015.md
 https://doi.org/10.7554/eLife.06063,SWR smooth (ms),not_applicable,"Methods, Bayesian and rank-order analyses",papers/41_Olafsdottir_2015.md
-https://doi.org/10.7554/eLife.06063,Min. Cells (#),checked_paper,"Methods, Bayesian and rank-order analyses",papers/41_Olafsdottir_2015.md
+https://doi.org/10.7554/eLife.06063,Min. Cells (#),checked_paper,"Methods, Preplay analysis p. 12: at least 15% of a template's cells within 300 ms (4 cells for R1838); >=7 active cells applies only to Bayesian decoding (p. 14)",papers/41_Olafsdottir_2015.md
 https://doi.org/10.7554/eLife.06063,SWR electrodes (#),not_applicable,"Methods, Bayesian and rank-order analyses",papers/41_Olafsdottir_2015.md
 https://doi.org/10.7554/eLife.06063,SWR Low Band (Hz),not_applicable,"Methods, Bayesian and rank-order analyses",papers/41_Olafsdottir_2015.md
 https://doi.org/10.7554/eLife.06063,SWR High Band (Hz),not_applicable,"Methods, Bayesian and rank-order analyses",papers/41_Olafsdottir_2015.md
@@ -1459,7 +1459,7 @@ https://doi.org/10.7554/eLife.06063,Time bin (ms),checked_paper,"Methods, Bayesi
 https://doi.org/10.7554/eLife.06063,Position bin (cm),checked_paper,"Methods, Bayesian and rank-order analyses",papers/41_Olafsdottir_2015.md
 https://doi.org/10.7554/eLife.06063,Place field smooth (cm),checked_paper,"Methods, Bayesian and rank-order analyses",papers/41_Olafsdottir_2015.md
 https://doi.org/10.7554/eLife.06063,Trajectory,checked_paper,"Methods, Bayesian and rank-order analyses",papers/41_Olafsdottir_2015.md
-https://doi.org/10.7554/eLife.06063,Decoding notes,not_applicable,"Methods, Bayesian and rank-order analyses",papers/41_Olafsdottir_2015.md
+https://doi.org/10.7554/eLife.06063,Decoding notes,reviewed_context,"Results p. 1; Methods pp. 12-14, rank-order and Bayesian analyses",papers/41_Olafsdottir_2015.md
 https://doi.org/10.7554/eLife.06063,Reconst. Error (cm),checked_paper,"Methods, Bayesian and rank-order analyses",papers/41_Olafsdottir_2015.md
 https://doi.org/10.7554/eLife.06063,% Decoded,not_reported,"Methods, Bayesian and rank-order analyses",papers/41_Olafsdottir_2015.md
 https://doi.org/10.7554/eLife.06063,Spike sorting,checked_paper,"Methods, Bayesian and rank-order analyses",papers/41_Olafsdottir_2015.md
@@ -1568,7 +1568,7 @@ https://doi.org/10.1002/hipo.22049,Decoding notes,reviewed_context,"Wikenheiser 
 https://doi.org/10.1002/hipo.22049,Reconst. Error (cm),not_reported,Methods pp. 4-5,papers/44_Wikenheiser_2013.md
 https://doi.org/10.1002/hipo.22049,% Decoded,checked_paper,Methods pp. 4-5,papers/44_Wikenheiser_2013.md
 https://doi.org/10.1002/hipo.22049,Spike sorting,checked_paper,Methods pp. 4-5,papers/44_Wikenheiser_2013.md
-https://doi.org/10.1002/hipo.22049,Time bin step (ms),checked_paper,Methods pp. 4-5,papers/44_Wikenheiser_2013.md
+https://doi.org/10.1002/hipo.22049,Time bin step (ms),inferred,"Methods pp. 4-5: decoding in 10 ms time windows; overlap not stated, nonoverlapping assumed",papers/44_Wikenheiser_2013.md
 https://doi.org/10.1002/hipo.22049,Shuffle Method,checked_paper,Methods pp. 4-5,papers/44_Wikenheiser_2013.md
 https://doi.org/10.1002/hipo.22049,Shuffles (#),not_applicable,Methods pp. 4-5,papers/44_Wikenheiser_2013.md
 https://doi.org/10.1002/hipo.22049,Sig. Thresh.,checked_paper,Methods pp. 4-5,papers/44_Wikenheiser_2013.md
@@ -1706,7 +1706,7 @@ https://doi.org/10.1016/j.neuron.2010.01.034,Place field smooth (cm),not_reporte
 https://doi.org/10.1016/j.neuron.2010.01.034,Trajectory,not_applicable,"Supplementary Experimental Procedures, combined PDF pp. 21-23",papers/48_Gupta_2010.md
 https://doi.org/10.1016/j.neuron.2010.01.034,Decoding notes,reviewed_context,"Main Experimental Procedures, printed p. 703 (PDF p. 9): Bayesian control uses a 20 ms sliding window; step not stated. Supplementary Experimental Procedures, combined PDF pp. 21-23: primary sequence windows 40-600 ms, scanned in 10 ms steps.",papers/48_Gupta_2010.md
 https://doi.org/10.1016/j.neuron.2010.01.034,Reconst. Error (cm),not_reported,"Supplementary Experimental Procedures, combined PDF pp. 21-23",papers/48_Gupta_2010.md
-https://doi.org/10.1016/j.neuron.2010.01.034,% Decoded,checked_paper,"Supplementary Experimental Procedures, combined PDF pp. 21-23",papers/48_Gupta_2010.md
+https://doi.org/10.1016/j.neuron.2010.01.034,% Decoded,derived,"Supplementary Experimental Procedures, combined PDF pp. 21-23: 1719 of 17593 initial events significant; 1719/17593 = 9.77%",papers/48_Gupta_2010.md
 https://doi.org/10.1016/j.neuron.2010.01.034,Spike sorting,checked_paper,"Supplementary Experimental Procedures, combined PDF pp. 21-23",papers/48_Gupta_2010.md
 https://doi.org/10.1016/j.neuron.2010.01.034,Time bin step (ms),checked_paper,"Supplementary Experimental Procedures, combined PDF pp. 21-23",papers/48_Gupta_2010.md
 https://doi.org/10.1016/j.neuron.2010.01.034,Shuffle Method,checked_paper,"Supplementary Experimental Procedures, combined PDF pp. 21-23",papers/48_Gupta_2010.md
