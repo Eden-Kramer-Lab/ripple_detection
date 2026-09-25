@@ -5501,6 +5501,25 @@ class TestStateIntervals:
         values = np.ones(7)
         np.testing.assert_allclose(state_intervals(values, time, 2.0), [[0, 3], [10, 12]])
 
+    def test_merging_bridges_samples_out_of_the_state_but_not_missing_data(self):
+        """A sample out of the state is known state, which a merge may
+        bridge; a missing sample or a gap in time is unknown, which it may not."""
+        from ripple_detection import state_intervals
+
+        time = np.arange(5) / 10
+        out_of_state = np.array([1, 1, 3, 1, 1.0])
+        missing = np.array([1, 1, np.nan, 1, 1.0])
+        np.testing.assert_allclose(
+            state_intervals(out_of_state, time, 2.0, merge_gap=0.3), [[0.0, 0.4]]
+        )
+        np.testing.assert_allclose(
+            state_intervals(missing, time, 2.0, merge_gap=0.3), [[0.0, 0.1], [0.3, 0.4]]
+        )
+        gapped = np.array([0, 1, 2, 3, 10, 11, 12.0])
+        np.testing.assert_allclose(
+            state_intervals(np.ones(7), gapped, 2.0, merge_gap=10.0), [[0, 3], [10, 12]]
+        )
+
     def test_nothing_in_the_state(self):
         from ripple_detection import state_intervals
 

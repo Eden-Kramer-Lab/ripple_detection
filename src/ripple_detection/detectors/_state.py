@@ -203,8 +203,9 @@ def state_intervals(
         Intervals shorter than this, from first to last sample in seconds,
         are dropped, after merging. Default 0.0.
     merge_gap : float, optional
-        Intervals separated by less than this many seconds are joined first.
-        Default 0.0, no merging.
+        Intervals separated by less than this many seconds are joined first,
+        unless a missing sample or a gap in time lies between them. Default
+        0.0, no merging.
 
     Returns
     -------
@@ -258,7 +259,18 @@ def state_intervals(
         [(time[start], time[stop - 1]) for start, stop in runs], dtype=float
     )
     if merge_gap > 0:
-        intervals = merge_close_events(intervals, merge_gap)
+        # a missing sample or a gap in time is of unknown state, so merging
+        # stays within the blocks of finite samples the runs were split from
+        blocks = _contiguous_valid_blocks(np.isfinite(signal), time)
+        block_of_run = np.searchsorted(
+            [stop for _, stop in blocks], [start for start, _ in runs], side="right"
+        )
+        intervals = np.concatenate(
+            [
+                merge_close_events(intervals[block_of_run == block], merge_gap)
+                for block in np.unique(block_of_run)
+            ]
+        )
     lengths = intervals[:, 1] - intervals[:, 0]
     long_enough = (lengths >= minimum_duration) | np.isclose(lengths, minimum_duration)
     return intervals[long_enough]
