@@ -6,11 +6,13 @@ from numpy.typing import ArrayLike
 
 from ripple_detection.core import (
     _NO_TIME_SAMPLES,
+    BoolArray,
     FloatArray,
     IntArray,
     _event_bounds,
     _gap_tolerance,
     _samples_within,
+    _warn_at_caller,
     sample_count_within,
 )
 from ripple_detection.detectors._validation import _check_whole_number, _validate_multiunit
@@ -39,6 +41,19 @@ def _selected_units(units: ArrayLike | None, n_units: int) -> IntArray:
     return np.unique(selection)
 
 
+def _warn_if_events_hold_missing(
+    is_missing: BoolArray, first: IntArray, last: IntArray
+) -> None:
+    """Warn, once, with how many events ``[first, last)`` hold a missing sample."""
+    missing_before = np.concatenate([[0], np.cumsum(is_missing)])
+    n_affected = int(np.count_nonzero(missing_before[last] > missing_before[first]))
+    if n_affected:
+        _warn_at_caller(
+            f"{n_affected} of {len(first)} event(s) hold missing (NaN) multiunit samples, "
+            "which count no spike, so their counts may be low."
+        )
+
+
 def count_spikes_in_events(
     event_times: ArrayLike | pd.DataFrame,
     multiunit: ArrayLike,
@@ -59,7 +74,7 @@ def count_spikes_in_events(
         event holds the samples with ``start_time <= time <= end_time``.
     multiunit : array_like, shape (n_time, n_units)
         Spike counts or indicators per sample, non-negative whole numbers. A
-        NaN is a missing sample and counts no spike.
+        NaN is a missing sample and counts no spike, with a warning.
     time : array_like, shape (n_time,)
         Sample timestamps in seconds, increasing.
 
@@ -72,6 +87,12 @@ def count_spikes_in_events(
     ValueError
         If `multiunit` is not 2-D or holds values that are not spike counts,
         its length differs from `time`'s, or no sample falls within an event.
+
+    Warns
+    -----
+    UserWarning
+        If any event holds a missing (NaN) sample, with the number of such
+        events: their counts leave out whatever fired there.
 
     Examples
     --------
@@ -92,6 +113,7 @@ def count_spikes_in_events(
         raise ValueError(msg)
     events = _event_bounds(event_times)
     first, last = _samples_within(events, time, _NO_TIME_SAMPLES)
+    _warn_if_events_hold_missing(np.isnan(spikes).any(axis=1), first, last)
     counts = np.zeros((len(events), spikes.shape[1]), dtype=int)
     for event, (a, b) in enumerate(zip(first, last, strict=True)):
         counts[event] = np.nansum(spikes[a:b], axis=0).astype(int)
@@ -225,7 +247,8 @@ def trim_events_to_spike_windows(
     event_times : array_like, shape (n_events, 2), or pd.DataFrame
         ``[start_time, end_time]`` per event, or a detector's DataFrame.
     multiunit : array_like, shape (n_time, n_units)
-        Spike counts or indicators per sample. A NaN counts no spike.
+        Spike counts or indicators per sample. A NaN counts no spike, with a
+        warning when it lies in an event and in a selected unit.
     time : array_like, shape (n_time,)
         Sample timestamps in seconds, increasing.
     window : float, optional
@@ -252,6 +275,12 @@ def trim_events_to_spike_windows(
         whole number of at least 1, or the inputs fail
         :func:`count_spikes_in_events`'s checks.
 
+    Warns
+    -----
+    UserWarning
+        If any event holds a missing (NaN) sample of a selected unit, with
+        the number of such events.
+
     Examples
     --------
     >>> time = np.arange(100) / 100
@@ -273,10 +302,16 @@ def trim_events_to_spike_windows(
     count_spikes_in_events(np.empty((0, 2)), multiunit, time)  # validates the inputs
     spikes = np.asarray(multiunit, dtype=float)
     time = np.asarray(time, dtype=float)
-    pooled = np.nansum(spikes[:, _selected_units(units, spikes.shape[1])], axis=1)
+    selected = spikes[:, _selected_units(units, spikes.shape[1])]
+    pooled = np.nansum(selected, axis=1)
     cumulative = np.concatenate([[0.0], np.cumsum(pooled)])
 
     events = _event_bounds(event_times)
+    _warn_if_events_hold_missing(
+        np.isnan(selected).any(axis=1),
+        np.searchsorted(time, events[:, 0], side="left"),
+        np.searchsorted(time, events[:, 1], side="right"),
+    )
     # a bound reached by stepping rounds to within a few ulps of the largest
     # time, so it is compared with the samples, and the steps counted, within
     # the close-event rule's tolerance for timestamps of that magnitude

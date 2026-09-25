@@ -5246,13 +5246,24 @@ class TestActiveUnits:
         counts = count_spikes_in_events(np.array([(0.0, 0.3)]), multiunit, self.TIME)
         assert counts[0, 0] == 2
 
-    def test_a_missing_sample_counts_no_spike(self):
-        from ripple_detection import count_spikes_in_events
+    def test_a_missing_sample_counts_no_spike_and_warns(self):
+        from ripple_detection import count_spikes_in_events, require_active_units
 
         multiunit = self._spikes()
         multiunit[1, 1] = np.nan
-        counts = count_spikes_in_events(self.EVENTS, multiunit, self.TIME)
+        with pytest.warns(UserWarning, match=r"1 of 2 event\(s\) hold missing"):
+            counts = count_spikes_in_events(self.EVENTS, multiunit, self.TIME)
         assert counts[0, 1] == 0
+        with pytest.warns(UserWarning, match=r"1 of 2 event\(s\) hold missing"):
+            require_active_units(self.EVENTS, multiunit, self.TIME)
+
+    def test_a_missing_sample_outside_every_event_does_not_warn(self):
+        from ripple_detection import count_spikes_in_events
+
+        multiunit = self._spikes()
+        multiunit[4, 1] = np.nan
+        counts = count_spikes_in_events(self.EVENTS, multiunit, self.TIME)
+        np.testing.assert_array_equal(counts, [[3, 1, 1, 0], [0, 0, 0, 1]])
 
     def test_a_frame_is_read_by_its_bounds(self):
         from ripple_detection import count_spikes_in_events
@@ -6309,13 +6320,24 @@ class TestTrimEventsToSpikeWindows:
         assert every[0, 0] == pytest.approx(0.07)
         assert chosen[0, 0] == pytest.approx(0.28)
 
-    def test_a_missing_sample_counts_no_spike(self):
+    def test_a_missing_sample_counts_no_spike_and_warns(self):
+        from ripple_detection import trim_events_to_spike_windows
+
+        spikes = self._spikes([30, 32, 60, 61])
+        spikes[32, 1] = np.nan
+        with pytest.warns(UserWarning, match=r"1 of 1 event\(s\) hold missing"):
+            result = trim_events_to_spike_windows(
+                np.array([(0.0, 0.99)]), spikes, self.TIME, window=0.05, step=0.01
+            )
+        np.testing.assert_allclose(result, [[0.28, 0.64]])
+
+    def test_a_missing_sample_of_an_unselected_unit_does_not_warn(self):
         from ripple_detection import trim_events_to_spike_windows
 
         spikes = self._spikes([30, 32, 60, 61])
         spikes[32, 1] = np.nan
         result = trim_events_to_spike_windows(
-            np.array([(0.0, 0.99)]), spikes, self.TIME, window=0.05, step=0.01
+            np.array([(0.0, 0.99)]), spikes, self.TIME, window=0.05, step=0.01, units=[0]
         )
         np.testing.assert_allclose(result, [[0.28, 0.64]])
 
