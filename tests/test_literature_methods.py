@@ -1714,3 +1714,19 @@ def test_boxcar_rounds_half_up_to_an_odd_centered_window(fs, width, samples):
     assert len(support) == samples
     assert support[0] + support[-1] == 400  # centered on the impulse
     np.testing.assert_allclose(smoothed[support], 1 / samples)
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_interval_mask_matches_the_inclusive_loop(seed):
+    rng = np.random.default_rng(seed)
+    time = np.sort(rng.uniform(0, 10, 500))
+    # Unsorted, overlapping, empty-range and exact-timestamp endpoints included.
+    starts = np.r_[rng.uniform(-1, 11, 40), time[[10, 200]]]
+    intervals = np.c_[starts, starts + rng.uniform(0, 1, len(starts))]
+    intervals[-1, 1] = time[300]
+    intervals = np.r_[intervals, [[5.0, 4.0]]]
+    expected = np.zeros(len(time), dtype=bool)
+    for start, end in intervals:
+        expected |= (time >= start) & (time <= end)
+    np.testing.assert_array_equal(lm._intervals_to_mask(time, intervals), expected)
+    assert not lm._intervals_to_mask(time, np.empty((0, 2))).any()

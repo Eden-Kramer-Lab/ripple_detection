@@ -963,11 +963,19 @@ def _transform(
 
 
 def _intervals_to_mask(time: FloatArray, intervals: FloatArray) -> BoolArray:
-    """Select the union of inclusive intervals on the supplied time grid."""
-    mask = np.zeros(time.size, dtype=bool)
-    for start, end in np.asarray(intervals).reshape(-1, 2):
-        mask |= (time >= start) & (time <= end)
-    return mask
+    """Select the union of inclusive intervals on the increasing time grid.
+
+    Intervals may be in any order and overlap: each adds one over its samples
+    (start <= time <= end), and a sample is selected where the sum is positive.
+    """
+    pairs = np.asarray(intervals, dtype=float).reshape(-1, 2)
+    first = np.searchsorted(time, pairs[:, 0], side="left")
+    stop = np.searchsorted(time, pairs[:, 1], side="right")
+    nonempty = stop > first
+    coverage = np.zeros(time.size + 1, dtype=int)
+    np.add.at(coverage, first[nonempty], 1)
+    np.add.at(coverage, stop[nonempty], -1)
+    return np.asarray(np.cumsum(coverage[:-1]) > 0, dtype=bool)
 
 
 @dataclass(frozen=True)
@@ -2211,13 +2219,17 @@ def kaefer_2020(rec: Recording) -> pd.DataFrame:
     blocks = _drop_short_blocks(blocks, is_valid, width, "Kaefer's 240 ms FFT chunk")
     frequencies = np.fft.rfftfreq(width, 1 / rec.fs)
     band = (frequencies >= 150) & (frequencies <= 250)
-    for j, center in enumerate(centers):
-        start, stop = center - width // 2, center - width // 2 + width
-        if any(start >= a and stop <= b for a, b in blocks):
-            spectrum = np.fft.rfft(raw[start:stop], axis=0)
-            spectrum[~band] = 0
-            filtered = np.fft.irfft(spectrum, n=width, axis=0)
-            power[j] = np.sqrt(np.mean(filtered**2, axis=0)).mean()
+    # A chunk is used only when it lies inside one valid block.
+    block_starts, block_stops = np.asarray(blocks).reshape(-1, 2).T
+    starts = centers - width // 2
+    block = np.searchsorted(block_starts, starts, side="right") - 1
+    fits = (block >= 0) & (starts + width <= block_stops[np.maximum(block, 0)])
+    for j in np.flatnonzero(fits):
+        start = starts[j]
+        spectrum = np.fft.rfft(raw[start : start + width], axis=0)
+        spectrum[~band] = 0
+        filtered = np.fft.irfft(spectrum, n=width, axis=0)
+        power[j] = np.sqrt(np.mean(filtered**2, axis=0)).mean()
     time = rec.time[centers]
     baseline = _baseline(rec, required=True)[centers]
     return rd.detect_events_from_trace(
