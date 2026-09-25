@@ -1,5 +1,5 @@
 # Bhattarai 2020 — Distinct effects of reward and navigation history on hippocampal forward and reverse replays
-Source: main text the extracted text (Dropbox PDF; methods deferred to the SI). SI Appendix: pnas.1912533117.sapp.pdf from PMC6955321 (https://pmc.ncbi.nlm.nih.gov/articles/instance/6955321/bin/pnas.1912533117.sapp.pdf, fetched through a browser because of PMC's download challenge), converted to scratchpad/code/bh_si.txt. Title verified: yes (Bhattarai, Lee & Jung, PNAS 117:689–697), both files.
+Source: main text the extracted text (Dropbox PDF; methods deferred to the SI). SI Appendix: pnas.1912533117.sapp.pdf from PMC6955321 (https://pmc.ncbi.nlm.nih.gov/articles/instance/6955321/bin/pnas.1912533117.sapp.pdf, fetched through a browser because of PMC's download challenge), converted to text with pdftotext. Title verified: yes (Bhattarai, Lee & Jung, PNAS 117:689–697), both files.
 Trigger: SWR+MUA (silence-bounded place-cell bursts that must coincide with a detected SWR; the SWRs themselves require ≥ 5 place cells)
 
 ## Method as implemented
