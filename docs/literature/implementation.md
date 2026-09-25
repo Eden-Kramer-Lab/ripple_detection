@@ -62,7 +62,8 @@ objects. Functions with conditional measured-data requirements describe them in
 their docstrings; the signature-only option list cannot express those conditions.
 
 `Recording.from_arrays` copies inputs, validates selections, and masks artifact
-intervals. Missing speed remains unknown. Missing cell selections are empty;
+intervals. NaN speed remains unknown; omitted speed makes every method whose
+result depends on speed raise instead. Missing cell selections are empty;
 methods needing those cells raise. Measured data never acquire synthetic sleep
 labels or synthetic templates. Pass actual `templates` for Ólafsdóttir 2015,
 `example_ripples` for Carey, `external_ripples` for Yang/Grosmark's unresolved

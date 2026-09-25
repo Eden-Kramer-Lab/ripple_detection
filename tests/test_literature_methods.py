@@ -10,13 +10,15 @@ from scipy.signal import filtfilt, remez
 import ripple_detection as rd
 from ripple_detection import literature_methods as lm
 
+RIPPLE_TIMES = [3, 6, 9, 12, 15, 18]
 
-@pytest.fixture(scope="module")
-def measured():
-    time = np.arange(30_000) / 1500
+
+def _measured_inputs(fs=1500, origin=0.0):
+    """from_arrays inputs for 20 s of simulated signals, as measured data."""
+    time = np.arange(int(20 * fs)) / fs
     session = rd.simulate_session(
         time,
-        [3, 6, 9, 12, 15, 18],
+        RIPPLE_TIMES,
         n_channels=3,
         n_units=20,
         baseline_rate=1,
@@ -24,21 +26,27 @@ def measured():
         ripple_duration=(0.08, 0.16),
         rng=21,
     )
-    return lm.Recording.from_arrays(
-        time,
-        1500,
-        lfps=session.lfps,
-        multiunit=session.multiunit,
-        speed=np.zeros(len(time)),
-        sharp_wave_lfp=session.sharp_wave_lfp,
-        reference_lfp=np.zeros(len(time)),
-        place_cells=np.arange(15),
-        pyramidal=np.arange(20),
-        sleep_intervals=[[0, time[-1]]],
-        baseline_intervals=[[0, time[-1]]],
-        behavior_intervals=[[0, time[-1]]],
-        templates=[np.arange(10)],
-    )
+    time = time + origin
+    return {
+        "time": time,
+        "sampling_frequency": fs,
+        "lfps": session.lfps,
+        "multiunit": session.multiunit,
+        "speed": np.zeros(len(time)),
+        "sharp_wave_lfp": session.sharp_wave_lfp,
+        "reference_lfp": np.zeros(len(time)),
+        "place_cells": np.arange(15),
+        "pyramidal": np.arange(20),
+        "sleep_intervals": [[time[0], time[-1]]],
+        "baseline_intervals": [[time[0], time[-1]]],
+        "behavior_intervals": [[time[0], time[-1]]],
+        "templates": [np.arange(10)],
+    }
+
+
+@pytest.fixture(scope="module")
+def measured():
+    return lm.Recording.from_arrays(**_measured_inputs())
 
 
 def test_measured_recording_copies_inputs_and_masks_artifacts():
@@ -57,7 +65,8 @@ def test_measured_recording_copies_inputs_and_masks_artifacts():
     assert np.isnan(rec.session.lfps[20:31]).all()
     assert np.isnan(rec.multiunit[20:31]).all()
     np.testing.assert_array_equal(rec.place_cells, [True, False, True])
-    assert np.isnan(rec.speed).all()
+    with pytest.raises(ValueError, match="speed"):
+        rec.speed  # noqa: B018 - the accessor raises
     with pytest.raises(ValueError, match="cell selection"):
         rec.counts(rec.pyramidal)
     with pytest.raises(ValueError, match="sleep_intervals"):
@@ -236,6 +245,56 @@ VARIANT_OPTIONS = {
     "drieu_2018_ripples": {"signal_measure": "amplitude"},
     "diba_2007_ripples": {"rms_window": 0.01},
 }
+RECIPE_OPTIONS = {
+    "stella_2019": {"frequencies": [150, 200, 250], "cycles": 7},
+    "nadasdy_1999": {"rms_window": 0.004, "bound_threshold": 0},
+    "kudrimoti_1999": {"threshold_sd": 3},
+    "wikenheiser_2013": {"window_anchor": "peaks"},
+}
+METHOD_RATES = {"bush_2022_ripples": 4800, "olafsdottir_2017_ripples": 1200}
+ALL_METHODS = [entry.run.__name__ for entry in (*lm.RECIPES, *lm.VARIANTS)]
+
+
+def _method_inputs(name, origin=0.0):
+    """Every input a method needs on measured data, and its required options."""
+    inputs = _measured_inputs(METHOD_RATES.get(name, 1500), origin)
+    ripples = np.asarray(RIPPLE_TIMES, dtype=float) + origin
+    # The last ripple's noise stretch would run past the recording's end.
+    inputs["example_ripples"] = np.c_[ripples - 0.04, ripples + 0.04][:-1]
+    inputs["external_ripples"] = np.c_[ripples - 0.04, ripples + 0.04, ripples]
+    return inputs, {**VARIANT_OPTIONS, **RECIPE_OPTIONS}.get(name, {})
+
+
+@pytest.mark.parametrize("name", ALL_METHODS)
+def test_methods_without_speed_raise_or_do_not_use_it(name):
+    """Absent speed must not read as unknown speed at every sample, which
+    silently empties every speed-restricted inventory."""
+    inputs, options = _method_inputs(name)
+    n_time = len(inputs["time"])
+
+    def run(rec):
+        # Reported speed statistics describe the input, not the selection.
+        try:
+            events = lm.run_method(name, rec, **options)
+        except ValueError as error:
+            return str(error)
+        return events.drop(columns=[c for c in events if "speed" in c])
+
+    still, moving = (
+        run(lm.Recording.from_arrays(**{**inputs, "speed": speed}))
+        for speed in (np.zeros(n_time), np.full(n_time, 100.0))
+    )
+    assert isinstance(still, pd.DataFrame), still
+    del inputs["speed"]
+    without = run(lm.Recording.from_arrays(**inputs))
+    if isinstance(without, str):
+        assert "speed" in without, without
+        # Only a method whose result depends on speed may refuse to run without
+        # it; one finding nothing on this recording cannot show the dependence.
+        assert isinstance(moving, str) or not still.equals(moving) or still.empty, name
+        return
+    pd.testing.assert_frame_equal(without, still)
+    pd.testing.assert_frame_equal(without, moving)
 
 
 @pytest.mark.parametrize("entry", lm.VARIANTS, ids=lambda x: x.run.__name__)

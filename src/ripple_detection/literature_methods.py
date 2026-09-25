@@ -46,7 +46,26 @@ class RecordedSignals:
     raw_lfp: FloatArray
     sharp_wave_lfp: FloatArray
     multiunit: FloatArray
-    speed: FloatArray
+    speed: FloatArray | None
+
+
+_NO_SPEED = (
+    "This method uses the animal's speed, which was not supplied; pass speed "
+    "(cm/s) to Recording.from_arrays, with NaN where it is unknown."
+)
+
+
+def _known_speed(speed: FloatArray | None) -> FloatArray:
+    """Speed a method's result depends on; absent speed is an error, not NaN."""
+    if speed is None:
+        raise ValueError(_NO_SPEED)
+    return speed
+
+
+def _speed_or_unknown(rec: Recording) -> FloatArray:
+    """Speed for a call whose result ignores it (no speed rule): NaN if absent."""
+    speed = rec.session.speed
+    return np.full(len(rec.time), np.nan) if speed is None else speed
 
 
 @dataclass(eq=False)
@@ -106,6 +125,8 @@ class Recording:
             information finer than the supplied counts can be recovered.
         speed, sharp_wave_lfp, reference_lfp : array_like, optional
             Speed in cm/s, radiatum LFP and reference LFP, each shape (n_time,).
+            NaN speed is unknown speed. Without speed, a method whose result
+            depends on speed raises; the others run.
         place_cells, pyramidal : array_like, optional
             Boolean masks or integer column indices into multiunit.
         sleep_intervals, baseline_intervals, artifact_intervals : array_like, optional
@@ -219,7 +240,7 @@ class Recording:
             lfp_array[:, 0] if lfp_array.shape[1] else np.full(n, np.nan),
             sharp,
             spikes,
-            signal(speed),
+            None if speed is None else signal(speed),
         )
         return cls(
             session,
@@ -263,9 +284,15 @@ class Recording:
         Returns
         -------
         speed : ndarray, shape (n_time,)
-            Speed in cm/s; missing values remain unknown.
+            Speed in cm/s; NaN values remain unknown.
+
+        Raises
+        ------
+        ValueError
+            No speed was supplied. A method whose result depends on speed
+            refuses to run rather than treating every sample as unknown speed.
         """
-        return self.session.speed
+        return _known_speed(self.session.speed)
 
     @property
     def multiunit(self) -> FloatArray:
@@ -684,7 +711,7 @@ def zugaro_ripple_peaks(rec: Recording, band: tuple[float, float]) -> pd.DataFra
     their ripple detector (assumed: Huszar et al. 2022's 5 SD peak and 2 SD
     bounds, 20-200 ms; its noise-channel veto is not reproduced)."""
     return rd.Zugaro_ripple_detector(
-        rec.time, rec.filtered(band)[:, :1], rec.speed, rec.fs,
+        rec.time, rec.filtered(band)[:, :1], _speed_or_unknown(rec), rec.fs,
         low_threshold=2.0, high_threshold=5.0, maximum_duration=0.2,
         speed_threshold=np.inf,
     )  # fmt: skip
@@ -751,16 +778,18 @@ class PopulationTrace:
 
     Attributes
     ----------
-    time, data, speed : ndarray
-        Bin centers (seconds), counts/rate, and nearest observed speed (cm/s).
-        Bins intersecting missing input are NaN, including partial edge bins.
+    time, data : ndarray
+        Bin centers (seconds) and counts/rate. Bins intersecting missing
+        input are NaN, including partial edge bins.
+    speed : ndarray or None
+        Nearest observed speed (cm/s); None when the recording has no speed.
     sampling_frequency : float
         Reciprocal bin width in Hz.
     """
 
     time: FloatArray
     data: FloatArray
-    speed: FloatArray
+    speed: FloatArray | None
     sampling_frequency: float
 
     def smooth(self, sigma: float) -> FloatArray:
@@ -773,8 +802,12 @@ class PopulationTrace:
 
     def detect(self, **kwargs: Any) -> pd.DataFrame:
         """Threshold this trace using detect_events_from_trace options."""
+        default = inspect.signature(rd.detect_events_from_trace).parameters["speed_threshold"]
+        if self.speed is None and np.isfinite(kwargs.get("speed_threshold", default.default)):
+            raise ValueError(_NO_SPEED)
+        speed = np.full(len(self.time), np.nan) if self.speed is None else self.speed
         return rd.detect_events_from_trace(
-            self.time, self.data, self.speed, self.sampling_frequency, **kwargs
+            self.time, self.data, speed, self.sampling_frequency, **kwargs
         )
 
     def merge(
@@ -851,7 +884,11 @@ def population_trace(
     observed &= centers <= relative[-1] + tolerance
     values = np.where(observed, values / bin_width, np.nan)
     time = centers + rec.time[0]
-    speed = rec.speed[rd.core.nearest_sample_index(rec.time, time)]
+    speed = (
+        None
+        if rec.session.speed is None
+        else rec.session.speed[rd.core.nearest_sample_index(rec.time, time)]
+    )
     trace = PopulationTrace(time, values, speed, 1 / bin_width)
     if smoothing_sigma:
         trace.data = trace.smooth(smoothing_sigma)
@@ -886,7 +923,7 @@ def _ripple_trace_events(
     return rd.detect_events_from_trace(
         rec.time,
         trace,
-        rec.speed,
+        rec.speed if np.isfinite(kwargs["speed_threshold"]) else _speed_or_unknown(rec),
         rec.fs,
         threshold=threshold,
         bound_threshold=bound_threshold,
@@ -1227,7 +1264,7 @@ def harvey_2023_code(rec: Recording, *, stage: str = "detection") -> pd.DataFram
     with stage='decoding_candidates'; detection is the default.
     """
     ripples = rd.Long_sharp_wave_ripple_detector(
-        rec.time, rec.session.raw_lfp, rec.speed, rec.fs,
+        rec.time, rec.session.raw_lfp, _speed_or_unknown(rec), rec.fs,
         sharp_wave_lfp=rec.session.sharp_wave_lfp, speed_threshold=np.inf,
     )  # fmt: skip
     return _harvey_stage(rec, _spiking_filter(rec, ripples), stage)
@@ -1298,7 +1335,7 @@ def liu_2023(rec: Recording) -> pd.DataFrame | FloatArray:
     (10 ms Gaussian, assumed to be its SD; > 2 SD, bounds at the mean,
     100-500 ms) overlapping an SWR."""
     swrs = rd.Long_sharp_wave_ripple_detector(
-        rec.time, rec.session.raw_lfp, rec.speed, rec.fs,
+        rec.time, rec.session.raw_lfp, _speed_or_unknown(rec), rec.fs,
         sharp_wave_lfp=rec.session.sharp_wave_lfp, speed_threshold=np.inf,
     )  # fmt: skip
     bursts = _detect_population(
@@ -1354,7 +1391,7 @@ def berners_lee_2022(rec: Recording) -> pd.DataFrame:
         return np.convolve(x, kernel, mode="full")[50 : 50 + len(x)]
 
     trace.data = _transform(trace.time, trace.data, smooth)
-    stopped = np.abs(trace.speed) < 5
+    stopped = np.abs(_known_speed(trace.speed)) < 5
     trace.data = _zscore(trace.data, stopped, ddof=1)
     trace.data[~stopped] = np.nan
     return trace.detect(
@@ -1735,7 +1772,7 @@ def kaefer_2020(rec: Recording) -> pd.DataFrame:
     return rd.detect_events_from_trace(
         time,
         power,
-        rec.speed[centers],
+        _speed_or_unknown(rec)[centers],
         rec.fs / step,
         threshold=5.0,
         bound_threshold=1.5,
@@ -2171,7 +2208,7 @@ def yamamoto_2017(rec: Recording) -> pd.DataFrame | FloatArray:
     overlapping a period of 140-200 Hz power above 3 SD on one channel. The
     paper does not say how the two combine or which trace sets the bounds."""
     ripples = rd.detect_events_from_trace(
-        rec.time, rec.envelope((140.0, 200.0))[:, 0] ** 2, rec.speed, rec.fs,
+        rec.time, rec.envelope((140.0, 200.0))[:, 0] ** 2, _speed_or_unknown(rec), rec.fs,
         threshold=3.0, bound_threshold=3.0, minimum_duration=0.0, speed_threshold=np.inf,
     )  # fmt: skip
     bursts = _detect_population(
@@ -2454,7 +2491,7 @@ def gupta_2010(rec: Recording, *, log_amplitude: bool = True) -> pd.DataFrame | 
     amplitude = rec.mean_envelope((180.0, 220.0))
     trace = np.log(np.maximum(amplitude, np.finfo(float).tiny)) if log_amplitude else amplitude
     return rd.detect_events_from_trace(
-        rec.time, trace, rec.speed, rec.fs,
+        rec.time, trace, _speed_or_unknown(rec), rec.fs,
         threshold=2.0, minimum_duration=0.0, speed_threshold=np.inf,
     )  # fmt: skip
 
@@ -2748,7 +2785,7 @@ def harvey_2023_no_radiatum(rec: Recording, *, stage: str = "detection") -> Floa
     ripples = rd.Zugaro_ripple_detector(
         rec.time,
         rec.filtered((100.0, 250.0))[:, :1],
-        rec.speed,
+        _speed_or_unknown(rec),
         rec.fs,
         low_threshold=1.0,
         high_threshold=3.0,
@@ -3216,7 +3253,8 @@ def krause_2022_hse(rec: Recording, *, interpretation: str = "text") -> pd.DataF
             normalization_mask=mask,
         )
     trace.data = _zscore(trace.data)
-    trace.data[~np.isfinite(trace.speed) | (trace.speed > 5)] = np.nan
+    speed = _known_speed(trace.speed)
+    trace.data[~np.isfinite(speed) | (speed > 5)] = np.nan
     return trace.detect(
         threshold=3.0,
         normalization_method="none",
