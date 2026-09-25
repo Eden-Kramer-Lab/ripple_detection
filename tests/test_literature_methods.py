@@ -1692,3 +1692,25 @@ def test_public_method_docstrings_list_their_actual_parameters(entry):
 def test_private_helpers_are_not_public_names():
     for name in ["recipe", "variant", "only_in", "zugaro_ripple_peaks"]:
         assert not hasattr(lm, name), name
+
+
+@pytest.mark.parametrize(
+    ("fs", "width", "samples"),
+    [
+        (1500, 0.007, 11),
+        (1500, 0.02, 31),
+        (1500, 0.05, 75),
+        (1000, 0.01, 11),
+        (1000, 0.0001, 1),
+    ],
+)
+def test_boxcar_rounds_half_up_to_an_odd_centered_window(fs, width, samples):
+    time = np.arange(401) / fs
+    impulse = np.zeros(401)
+    impulse[200] = 1.0
+    rec = lm.Recording.from_arrays(time, fs, lfps=impulse)
+    smoothed = rec.boxcar(impulse, width)
+    support = np.flatnonzero(smoothed > 0)
+    assert len(support) == samples
+    assert support[0] + support[-1] == 400  # centered on the impulse
+    np.testing.assert_allclose(smoothed[support], 1 / samples)

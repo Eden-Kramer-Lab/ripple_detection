@@ -431,17 +431,19 @@ class Recording:
         values : ndarray
             Trace or channels with time on axis zero.
         width : float
-            Window width in seconds, rounded to at least one sample.
+            Window width in seconds. It becomes a sample count as durations
+            do (``minimum_sample_count``: half up from the median timestamp
+            step, at least one), then up to an odd count so the window is
+            centered: 7 ms at 1500 Hz is 11 samples.
 
         Returns
         -------
         smoothed : ndarray
             Blockwise uniform-filter output; reflected block boundaries.
         """
-        return self.transform(
-            values,
-            lambda block: uniform_filter1d(block, max(1, round(width * self.fs)), axis=0),
-        )
+        samples = rd.minimum_sample_count(self.time, width)
+        samples += 1 - samples % 2
+        return self.transform(values, lambda block: uniform_filter1d(block, samples, axis=0))
 
     def smooth(self, values: FloatArray, sigma: float) -> FloatArray:
         """Apply Gaussian smoothing within valid blocks.
