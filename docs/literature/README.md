@@ -112,7 +112,7 @@ assumptions distinct from reported parameters. Historical changes belong in Git.
 Run the literature and recipe checks after changes:
 
 ```sh
-pytest tests/test_literature.py tests/test_literature_recipes.py -q --no-cov
+pytest tests/test_literature.py tests/test_literature_methods.py tests/test_literature_recipes.py -q --no-cov
 ```
 
 The checks cover table loading, README statistics, evidence coverage and links,

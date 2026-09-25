@@ -5,36 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-
-- Packaged literature methods with measured-recording inputs, per-protocol
-  inventories, DOI/output metadata and explicit settings for unresolved choices.
-  Includes secondary ripple/HFE/MUA controls, native spike bins and source-specific
-  kernels, peak merging, adaptive triggers and spectral windows. See the
-  [implementation guide](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/docs/literature/implementation.md)
-  for scope and remaining historical verification. Muessig uses the supplied rest
-  intervals, which carry the paper's window-averaged state rule; the per-sample
-  speed veto the paper does not state is optional (`sample_speed_veto=True`).
-  The demonstration's results CSV records each method's configuration, role,
-  resolved options and supplied baseline, with separate rows for the Ólafsdóttir
-  2015 seven-cell and 2017 trajectory filters.
-- `window_end_rule="fixed"` for silence-triggered windows; the default remains
-  `"last_spike"`. The Diba method uses a fixed window.
-
-### Changed
-
-- `get_envelope` now marks a sample missing in every channel when any channel
-  contains NaN or infinity at that sample. Previously other channels remained
-  valid there. This follows the detectors' shared missing-sample policy.
-
-### Fixed
-
-- Filtering and Hilbert envelopes preserve valid data around missing samples and
-  optional timestamp gaps (`time=`). Literature post-processing preserves those
-  gaps when merging events.
-
 ## [2.0.0] - 2026-09-22
 
 Results and calls change: the same recording gives different events, so detect
@@ -89,14 +59,24 @@ here is relative to 1.7.1.
   `Carey_candidate_detector`, which together reproduce the rule behind the
   candidates released with Carey, Tanaka & van der Meer 2019.
 - `detect_silence_bounded_events`: events as spiking from chosen units set off by
-  silence, either the groups between silences or the window after each, with
-  bursts optionally collapsed to their first spike.
+  silence, either the groups between silences or the window after each (ending at
+  its last spike, or kept whole with `window_end_rule="fixed"`), with bursts
+  optionally collapsed to their first spike.
 - `theta_delta_ratio` and `state_intervals`, for detection restricted to a brain
   or behavioural state, and two data-driven thresholds: `two_cluster_threshold`
-  (one-dimensional k-means) and `histogram_minimum_threshold` (the first trough
-  after a distribution's peak).
-- `examples/literature_recipes.py`: each surveyed paper's event rule written with
-  the package and run on a simulated session.
+  (one-dimensional k-means, warning if it stops before converging) and
+  `histogram_minimum_threshold` (the first trough after a distribution's peak).
+- `ripple_detection.literature_methods`: each surveyed paper's candidate-event
+  rule, and its secondary ripple, HFE and MUA inventories, on measured data.
+  `Recording.from_arrays` takes the selected signals, cells and curated
+  intervals; `list_methods()` gives each method's DOI, role and required options;
+  `run_method(name, recording, **options)` returns events whose `attrs` record
+  the method and the options it used. Choices a paper leaves open are explicit
+  options, a method that needs an input it was not given (speed, a baseline,
+  sleep or behavioral intervals) raises rather than substituting one, and the
+  [implementation guide](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/docs/literature/implementation.md)
+  sets out what remains unverified. `examples/literature_recipes.py` runs the
+  default methods on a simulated session.
 - `trim_events_to_trace` and `trim_events_to_spike_windows`, which narrow events
   to where a trace stays high or to edge windows holding enough spikes.
 - `require_trace_peak` and `require_times_inside`, which confirm one signal's
@@ -104,7 +84,8 @@ here is relative to 1.7.1.
   and `windows_around_times`, fixed windows around peaks or crossings.
 - `require_active_units` (a count, a fraction, or a spike total of chosen units,
   such as place cells) and `count_spikes_in_events`, for participation criteria
-  on any event inventory.
+  on any event inventory. They, and `trim_events_to_spike_windows`, warn when an
+  event holds missing multiunit samples, which count as no spikes.
 - Close-event variants: `inclusive` and `measure="peak"` on `merge_close_events`,
   `measure_from="start"` on `exclude_close_events`, and `require_isolation`, which
   drops every event of a close pair.
@@ -132,10 +113,18 @@ here is relative to 1.7.1.
   uses for the same role names this one's, a duration given in milliseconds raises
   with the value to pass, every detector's docstring has a runnable example,
   and `llms.txt` maps the package.
+- `time=` on `filter_ripple_band` and `get_envelope`: split the transform at
+  gaps in the timestamps as well as at missing samples.
+- String options are `Literal` types, so a type checker catches a misspelled
+  choice.
 - `py.typed` and `CITATION.cff`.
 
 ### Changed
 
+- `get_envelope` and `filter_ripple_band` work within contiguous blocks of valid
+  samples: a NaN or infinity in any channel marks that sample missing in every
+  channel, and the data around it stay valid rather than one missing sample
+  making a channel's whole envelope NaN. A channel with no finite sample raises.
 - **Breaking.** The minimum duration counts samples, rounded half up, instead of
   comparing timestamps: about 20 % more events at 1500 Hz.
 - **Breaking.** One missing-sample policy: NaN or infinity in any signal, or a
