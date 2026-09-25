@@ -1650,6 +1650,29 @@ class TestExcludeOverlap:
         assert len(require_overlap(events, references, minimum_overlap)) == 1
         assert len(exclude_overlap(events, references, minimum_overlap)) == 0
 
+    @pytest.mark.parametrize("origin", [86_400.0, 1.7e9])  # a day; a Unix time
+    def test_the_minimum_does_not_depend_on_the_time_origin(self, origin):
+        """The rounding comes from the timestamps, which are large, not from
+        the overlap, which is small: a relative tolerance on the overlap
+        rejected a nominal 5 ms overlap a day into a recording."""
+        events = origin + np.array([(0.0, 0.01), (1.0, 1.1)])
+        # the second event meets three references, 0.05 s in all
+        references = origin + np.array(
+            [(0.005, 0.015), (0.98, 1.02), (1.05, 1.06), (1.08, 1.2)]
+        )
+
+        assert len(require_overlap(events, references, 0.005)) == 2
+        assert len(require_overlap(events[1:], references, 0.05)) == 1
+        assert len(exclude_overlap(events, references, 0.005)) == 0
+        # a millisecond short is still short
+        assert len(require_overlap(events[:1], references, 0.006)) == 0
+        assert len(require_overlap(events[1:], references, 0.051)) == 0
+
+    def test_an_overlap_written_from_a_day_offset_reaches_the_minimum(self):
+        kept = require_overlap([[86400, 86400.01]], [[86400.005, 86400.015]], 0.005)
+
+        assert len(kept) == 1
+
     def test_a_zero_length_event_overlaps_nothing(self):
         """The summed lengths round to a tiny positive overlap for some points
         inside a reference; a point has no duration either way."""

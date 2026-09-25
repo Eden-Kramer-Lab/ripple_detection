@@ -1590,8 +1590,10 @@ def _overlaps(
     Whether the overlap is positive is decided by comparing bounds, not by
     the summed lengths, whose rounding would give a zero-length event inside
     a reference a positive overlap. An overlap equal to ``minimum_overlap``
-    counts as reaching it, within the relative tolerance of
-    :func:`_is_gap_below`, since 0.04 - 0.02 need not round to 0.02."""
+    counts as reaching it, since 0.04 - 0.02 need not round to 0.02. The
+    tolerance scales with the timestamps, not the overlap: 86400.01 is stored
+    to within about 1e-11 s, so an overlap measured from a session-clock
+    origin rounds that far from its nominal value."""
     _check_non_negative(minimum_overlap=minimum_overlap)
     events = _event_bounds(event_times)
     reference = _event_bounds(reference_event_times)
@@ -1627,9 +1629,14 @@ def _overlaps(
     # every reference in the run has positive length, so the overlap is
     # positive exactly when the event does too
     is_positive = meets & (starts < ends)
-    reaches = (overlap >= minimum_overlap) | np.isclose(
-        overlap, minimum_overlap, rtol=_GAP_TOLERANCE, atol=0.0
-    )
+    # each bound is stored to within half a unit in the last place (ulp) of
+    # the largest magnitude, and each reference in the run adds two bounds, a
+    # length and a running-sum step, each at most an ulp or two; the event's
+    # own bounds, head, tail and the final subtractions add a few more
+    scale = max(np.abs(events).max(), np.abs(reference).max(), minimum_overlap)
+    n_in_run = np.maximum(last - first, 0)
+    tolerance = 8 * (n_in_run + 1) * np.spacing(scale)
+    reaches = overlap >= minimum_overlap - tolerance
     return events, np.asarray(is_positive & reaches)
 
 
