@@ -4,6 +4,7 @@ For measured inputs use ripple_detection.literature_methods.Recording.from_array
 Simulation overlap measures exercise the code, not agreement with historical events.
 """
 
+import json
 import warnings
 from dataclasses import replace
 from pathlib import Path
@@ -38,6 +39,11 @@ RIPPLE_TIMES = [
     86.0,
     88.0,
 ]
+
+ADDITIONAL_CONFIGURATIONS: dict[str, tuple[str, dict[str, int | str]]] = {
+    "olafsdottir_2015": ("bayesian_candidates", {"minimum_active_units": 7}),
+    "olafsdottir_2017": ("trajectory", {"analysis": "trajectory"}),
+}
 
 
 def make_recording(duration: float = 90.0, rng: int = 0) -> methods.Recording:
@@ -79,6 +85,11 @@ def make_recording(duration: float = 90.0, rng: int = 0) -> methods.Recording:
 
 
 def score(events: pd.DataFrame | np.ndarray, ripple_windows: np.ndarray) -> dict[str, float]:
+    """Check ripple overlap; false_positives counts events with no such overlap.
+
+    This smoke check uses any overlap, without one-to-one matching. A population
+    event without a simulated ripple is not necessarily a detection error.
+    """
     found = methods.bounds(events)
     n_ripples = len(ripple_windows)
     return {
@@ -91,6 +102,7 @@ def score(events: pd.DataFrame | np.ndarray, ripple_windows: np.ndarray) -> dict
 
 
 def run_all(rec: methods.Recording) -> pd.DataFrame:
+    """Run defaults and selected analysis variants, recording their input choices."""
     rows = []
     for entry in sorted(methods.RECIPES, key=lambda entry: entry.row):
         # Kaefer's baseline epoch is unspecified. This FFT demonstration uses
@@ -105,17 +117,36 @@ def run_all(rec: methods.Recording) -> pd.DataFrame:
                     [[rec.time[0], min(rec.time[0] + 2.0, rec.time[-1])]]
                 ),
             )
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            events = entry.run(method_rec)
-        rows.append(
-            {
-                "row": entry.row,
-                "paper": entry.paper,
-                "trigger": entry.trigger,
-                **score(events, rec.session.ripple_windows),
-            }
-        )
+        configurations: list[tuple[str, dict[str, int | str]]] = [("default", {})]
+        if entry.run.__name__ in ADDITIONAL_CONFIGURATIONS:
+            configurations.append(ADDITIONAL_CONFIGURATIONS[entry.run.__name__])
+        for configuration, options in configurations:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                events = entry.run(method_rec, **options)
+            rows.append(
+                {
+                    "row": entry.row,
+                    "paper": entry.paper,
+                    "method": events.attrs["method"],
+                    "configuration": configuration,
+                    "doi": events.attrs["doi"],
+                    "trigger": entry.trigger,
+                    "role": events.attrs["role"],
+                    "options": json.dumps(
+                        events.attrs["options"], sort_keys=True, allow_nan=False
+                    ),
+                    # This records a supplied input, not a claim every method
+                    # consumes it. Method-specific normalization still applies.
+                    "supplied_baseline_intervals": json.dumps(
+                        method_rec.baseline_intervals.tolist()
+                        if method_rec.baseline_intervals is not None
+                        else None,
+                        allow_nan=False,
+                    ),
+                    **score(events, rec.session.ripple_windows),
+                }
+            )
     return pd.DataFrame(rows)
 
 
@@ -125,7 +156,7 @@ def main() -> None:
     results.to_csv(OUTPUT, index=False)
     with pd.option_context("display.width", 120, "display.max_rows", 100):
         print(results.to_string(index=False))
-    print(f"\n{len(results)} recipes; not reproduced: {methods.NOT_REPRODUCED}")
+    print(f"\n{len(results)} configurations; not reproduced: {methods.NOT_REPRODUCED}")
 
 
 if __name__ == "__main__":

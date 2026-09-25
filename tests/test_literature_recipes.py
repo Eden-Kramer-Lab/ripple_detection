@@ -1,6 +1,7 @@
 """The packaged default inventories run through the simulation demonstration."""
 
 import importlib.util
+import json
 import sys
 import unicodedata
 import warnings
@@ -62,8 +63,57 @@ def test_each_recipe_names_its_paper_as_the_survey_does(recipes):
 
 
 def test_every_recipe_runs(recipes, results):
-    assert len(results) == len(recipes.RECIPES)
+    defaults = results.loc[results.configuration == "default"]
+    assert set(defaults.method) == {entry.run.__name__ for entry in recipes.RECIPES}
+    assert len(defaults) == len(recipes.RECIPES)
+    assert not results.duplicated(["method", "configuration"]).any()
+    assert set(
+        results.loc[
+            results.configuration != "default", ["method", "configuration"]
+        ].itertuples(index=False, name=None)
+    ) == {
+        ("olafsdottir_2015", "bayesian_candidates"),
+        ("olafsdottir_2017", "trajectory"),
+    }
     assert (results.n_events >= 0).all()
+
+
+@pytest.mark.parametrize(
+    ("name", "configuration", "options", "baseline"),
+    [
+        ("kaefer_2020", "default", {}, [[0, 2]]),
+        ("olafsdottir_2015", "default", {"minimum_active_units": 0}, [[0, 12]]),
+        ("olafsdottir_2015", "bayesian_candidates", {"minimum_active_units": 7}, [[0, 12]]),
+        ("olafsdottir_2017", "default", {"analysis": "arm"}, [[0, 12]]),
+        ("olafsdottir_2017", "trajectory", {"analysis": "trajectory"}, [[0, 12]]),
+    ],
+)
+def test_demo_rows_reproduce_from_recorded_options(
+    recipes, example, recording, results, name, configuration, options, baseline
+):
+    from dataclasses import replace
+
+    row = results.loc[
+        (results.method == name) & (results.configuration == configuration)
+    ].iloc[0]
+    assert json.loads(row.options) == options
+    assert json.loads(row.supplied_baseline_intervals) == baseline
+    configured = replace(recording, baseline_intervals=np.array(baseline))
+    events = recipes.run_method(row.method, configured, **json.loads(row.options))
+    for column, value in example.score(events, recording.session.ripple_windows).items():
+        assert row[column] == value
+    assert row.doi == events.attrs["doi"]
+    assert row.role == events.attrs["role"]
+    # Kaefer's configuration must not change the baseline for subsequent calls.
+    np.testing.assert_array_equal(recording.baseline_intervals, [[0, 12]])
+
+
+@pytest.mark.parametrize("name", ["olafsdottir_2015", "olafsdottir_2017"])
+def test_demo_retains_both_broad_and_filtered_inventories(results, name):
+    rows = results.loc[results.method == name]
+    broad = rows.loc[rows.configuration == "default"].iloc[0]
+    filtered = rows.loc[rows.configuration != "default"].iloc[0]
+    assert 0 < filtered.n_events < broad.n_events
 
 
 def test_every_recipe_returns_events_inside_the_recording(recipes, recording):

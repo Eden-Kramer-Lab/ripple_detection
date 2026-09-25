@@ -111,8 +111,20 @@ rest epoch, including its simulated events (clipped for shorter recordings).
 Kaefer alone uses the initial 0–2 s baseline to exercise its FFT detection path;
 its published baseline epoch is unspecified. These simulation choices are not
 historical settings or a controlled method comparison. Its state fallbacks are explicitly
-shortened for demonstration. It runs the default inventories; additional inventories
-are exercised with their required settings in the tests.
+shortened for demonstration. Its results CSV records `method`, `configuration`, DOI,
+role, resolved `options` and `supplied_baseline_intervals` beside each result. The
+last two fields are JSON; a supplied baseline does not imply that the method uses
+it instead of its own normalization epoch.
+
+The demo produces 59 configurations: the 57 default inventories and two additional
+Ólafsdóttir analysis settings. The 2015 `bayesian_candidates` row selects
+`minimum_active_units=7`; its default retains the broader per-template inventory.
+The 2017 `trajectory` row uses `analysis="trajectory"`; its default remains the
+arm-reactivation inventory. These rows apply candidate-selection rules only;
+decoding and replay significance are not implemented by selecting them.
+`false_positives` counts detected events with no overlap with a simulated ripple.
+For population-event inventories this alone does not establish a detection error.
+Other inventories are exercised with their required settings in the tests.
 
 ## Implemented distinctions
 
@@ -158,8 +170,13 @@ are exercised with their required settings in the tests.
   `stage="detection"` returns the initial inventory; `"decoding_candidates"`
   applies the documented analysis filters. Ólafsdóttir retains its explicit
   arm/trajectory and minimum-cell options.
-- Farooq and Grosmark interpret the ambiguous 15 ms Gaussian width as SD;
-  Muessig's all-sample speed requirement is an explicit implementation choice.
+- Muessig uses caller-supplied eligible rest intervals for whole-event containment.
+  The published state rule uses mean speed and theta/delta power in 1.6 s windows
+  stepped by 0.8 s: <2.5 cm/s for rest trials and <1 cm/s for RUN. Curated intervals
+  must implement the chosen trial's criteria; the package does not rescore them.
+  `sample_speed_veto=True` adds the previous, stricter veto on native-grid speed
+  samples. That extra veto is optional and is not specified by the paper.
+- Farooq and Grosmark interpret the ambiguous 15 ms Gaussian width as SD.
   Gupta defaults to Jackson's log of mean Hilbert amplitude, an inheritance
   inference that can be disabled with `log_amplitude=False`.
 - Pfeiffer 2013 secondary ripples restrict both detection and normalization to

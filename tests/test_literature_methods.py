@@ -933,7 +933,7 @@ def test_interpretation_options_change_observable_boundaries(measured, name, fir
     assert not np.array_equal(lm.bounds(a), lm.bounds(b)), name
 
 
-def test_muessig_run_and_rest_apply_different_speed_limits(monkeypatch):
+def test_muessig_optional_sample_veto_uses_trial_speed_limits(monkeypatch):
     time = np.arange(4000) / 1000
     spikes = np.zeros((4000, 10))
     spikes[1000:1200] = 1
@@ -950,11 +950,47 @@ def test_muessig_run_and_rest_apply_different_speed_limits(monkeypatch):
         "muessig_2019_ripples",
         lambda *args: np.array([[0, rec.time[-1]]]),
     )
-    rest = lm.muessig_2019(rec, trial="rest")
+    rest = lm.muessig_2019(rec, trial="rest", sample_speed_veto=True)
     assert len(rest) == 1
     assert rest.start_time.iloc[0] < 1.05
     assert rest.end_time.iloc[0] > 1.15
-    assert not len(lm.muessig_2019(rec, trial="run"))
+    assert not len(lm.muessig_2019(rec, trial="run", sample_speed_veto=True))
+
+
+@pytest.mark.parametrize("trial", ["rest", "run"])
+@pytest.mark.parametrize("brief_speed", [10.0, np.nan])
+def test_muessig_curated_state_accepts_brief_speed_excursions(monkeypatch, trial, brief_speed):
+    from dataclasses import replace
+
+    time = np.arange(8000) / 1000
+    spikes = np.zeros((len(time), 10))
+    spikes[1000:1200] = spikes[5000:5200] = 1
+    speed = np.full(len(time), 0.5)
+    speed[1070:1074] = brief_speed
+    # A brief excursion does not disqualify this 1.6 s state window.
+    assert np.nanmean(speed[:1600]) < 1
+    rec = lm.Recording.from_arrays(
+        time,
+        1000,
+        multiunit=spikes,
+        speed=speed,
+        pyramidal=np.arange(10),
+        sleep_intervals=[[0, 1.599]],
+    )
+    monkeypatch.setitem(
+        lm._IMPLEMENTATIONS,
+        "muessig_2019_ripples",
+        lambda *args: np.array([[0.9, 1.3], [4.9, 5.3]]),
+    )
+    events = lm.muessig_2019(rec, trial=trial)
+    assert len(events) == 1  # The otherwise identical second burst is outside rest.
+    assert events.start_time.iloc[0] < 1.07 < events.end_time.iloc[0]
+    assert not len(lm.muessig_2019(rec, trial=trial, sample_speed_veto=True))
+    # Entire events must fit the supplied state; crossing its end is excluded.
+    clipped_state = replace(rec, sleep_intervals=np.array([[0, 1.1]]))
+    assert not len(lm.muessig_2019(clipped_state, trial=trial))
+    with pytest.raises(ValueError, match="sleep_intervals"):
+        lm.muessig_2019(replace(rec, sleep_intervals=None), trial=trial)
 
 
 def test_wikenheiser_run_lia_requires_low_theta_delta(measured):

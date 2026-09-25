@@ -14,7 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Includes secondary ripple/HFE/MUA controls, native spike bins and source-specific
   kernels, peak merging, adaptive triggers and spectral windows. See the
   [implementation guide](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/docs/literature/implementation.md)
-  for scope and remaining historical verification.
+  for scope and remaining historical verification. Muessig uses the supplied rest
+  intervals, which carry the paper's window-averaged state rule; the per-sample
+  speed veto the paper does not state is optional (`sample_speed_veto=True`).
+  The demonstration's results CSV records each method's configuration, role,
+  resolved options and supplied baseline, with separate rows for the Ólafsdóttir
+  2015 seven-cell and 2017 trajectory filters.
 - `window_end_rule="fixed"` for silence-triggered windows; the default remains
   `"last_spike"`. The Diba method uses a fixed window.
 

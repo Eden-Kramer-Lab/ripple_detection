@@ -58,3 +58,14 @@ O’Neill’s cited field/state Methods were read, but do not specify the bandwi
 Packaged primary method: `muessig_2019` in [literature_methods.py](../../../src/ripple_detection/literature_methods.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
 
 Additional inventories in the same module: `muessig_2019_ripples`. See their docstrings for required settings and output stages.
+
+For measured inputs, `muessig_2019` uses supplied `sleep_intervals` as the eligible
+rest/non-locomotory epochs and retains events wholly inside them. These intervals
+must already satisfy the selected trial's published state criteria: mean speed
+over 1.6 s windows stepped by 0.8 s, below 2.5 cm/s for rest trials or 1 cm/s for
+RUN, together with the theta/delta criterion. A brief instantaneous speed excursion
+does not automatically invalidate an otherwise eligible state window.
+`sample_speed_veto=True` optionally adds the earlier package implementation's
+stricter rule on every native-grid speed sample within the event. This extra veto
+is not specified by the paper. Simulation without supplied intervals retains the
+documented approximate state proxy.

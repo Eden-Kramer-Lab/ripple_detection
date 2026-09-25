@@ -1,58 +1,60 @@
-row,paper,trigger,n_events,recall,false_positives
-0,Mallory 2025,MUA,16,1.0,0
-1,Widloski 2025,secondary ripple label,11,0.6875,0
-2,Yang 2024,SWR+MUA,7,0.4375,0
-3,Huelin Gorriz 2023,SWR+MUA,15,0.9375,0
-4,Harvey 2023 (code),SWR,11,0.6875,0
-4,Harvey 2023 (text),SWR (needs radiatum),16,1.0,0
-5,Liu 2023,SWR+MUA (needs radiatum),11,0.6875,0
-6,Tirole 2022,SWR+MUA,15,0.9375,0
-7,Bush 2022,MUA,17,1.0,1
-8,Berners-Lee 2022,MUA,14,0.875,0
-10,Krause 2022,SWR,16,1.0,0
-11,Mou 2022,MUA,16,1.0,0
-12,Berners-Lee 2021,SWR,16,1.0,0
-13,Denovellis 2021,SWR,16,1.0,0
-14,Gillespie 2021,SWR,16,1.0,0
-15,Michon 2021,SWR+MUA,11,0.6875,0
-16,Igata 2021 (candidates),SWR+MUA,16,1.0,0
-17,Gridchyn 2020,adaptive MUA triggers,37,0.9375,22
-18,Kaefer 2020,secondary SWR label,15,0.9375,0
-19,Bhattarai 2020,SWR+MUA,15,0.9375,0
-20,Stella 2019,SWR,16,1.0,0
-21,Xu 2019,MUA,16,1.0,0
-22,Farooq 2019 (Neuron),MUA,5,0.3125,0
-23,Farooq 2019 (Science),MUA,4,0.25,0
-24,Chenani 2019,MUA,15,0.9375,0
-25,Michon 2019,SWR+MUA,11,0.6875,0
-26,Liu 2019,MUA,94,1.0,78
-27,Shin 2019,SWR,16,1.0,0
-28,Carey 2019,SWR+MUA,21,1.0,2
-29,Muessig 2019,SWR+MUA,2,0.125,0
-30,Drieu 2018,MUA,18,1.0,2
-31,Maboudi 2018,MUA,16,1.0,0
-32,Olafsdottir 2017,MUA,24,1.0,8
-33,Wu 2017,MUA,16,1.0,0
-34,Yamamoto 2017 (one reading),SWR+MUA,9,0.5625,0
-35,Tang 2017,SWR,16,1.0,0
-36,Grosmark 2016,SWR+MUA,7,0.4375,0
-37,Ambrose 2016,SWR,16,1.0,0
-38,Jadhav 2016,SWR,16,1.0,0
-39,Olafsdottir 2016,MUA,16,0.9375,1
-40,Silva 2015,MUA,16,1.0,0
-41,Olafsdottir 2015,MUA,82,1.0,53
-42,Pfeiffer 2015,SWR,16,1.0,0
-43,Wu 2014,MUA,30,1.0,13
-44,Wikenheiser 2013,SWR,54,0.9375,38
-45,Pfeiffer 2013,MUA,16,1.0,0
-46,Carr 2012,SWR,16,1.0,0
-47,Bendor 2012,MUA,16,1.0,0
-48,Gupta 2010,SWR gate only,98,0.8125,84
-49,Karlsson 2009,SWR,16,1.0,0
-50,Davidson 2009,MUA,16,1.0,0
-51,Diba 2007,MUA,7,0.4375,0
-52,Ji 2007,MUA,16,1.0,0
-53,Foster 2006,MUA,9,0.5625,0
-54,Lee 2002,MUA,205,1.0,189
-55,Nadasdy 1999,SWR,16,1.0,0
-56,Kudrimoti 1999,SWR,12,0.75,0
+row,paper,method,configuration,doi,trigger,role,options,supplied_baseline_intervals,n_events,recall,false_positives
+0,Mallory 2025,mallory_2025,default,https://doi.org/10.1126/science.ads4760,MUA,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0
+1,Widloski 2025,widloski_2025,default,https://doi.org/10.1038/s41467-025-65181-5,secondary ripple label,secondary_label,{},"[[0.0, 12.0]]",11,0.6875,0
+2,Yang 2024,yang_2024,default,https://doi.org/10.1126/science.adk8261,SWR+MUA,candidate_detection,{},"[[0.0, 12.0]]",7,0.4375,0
+3,Huelin Gorriz 2023,huelin_gorriz_2023,default,https://doi.org/10.1038/s41467-023-43939-z,SWR+MUA,candidate_detection,"{""interpretation"": ""published_cap""}","[[0.0, 12.0]]",15,0.9375,0
+4,Harvey 2023 (code),harvey_2023_code,default,https://doi.org/10.1016/j.neuron.2023.04.015,SWR,candidate_detection,"{""stage"": ""detection""}","[[0.0, 12.0]]",11,0.6875,0
+4,Harvey 2023 (text),harvey_2023_text,default,https://doi.org/10.1016/j.neuron.2023.04.015,SWR (needs radiatum),candidate_detection,"{""sharp_wave_polarity"": -1.0, ""stage"": ""detection""}","[[0.0, 12.0]]",16,1.0,0
+5,Liu 2023,liu_2023,default,https://doi.org/10.1126/science.adi8237,SWR+MUA (needs radiatum),candidate_detection,{},"[[0.0, 12.0]]",11,0.6875,0
+6,Tirole 2022,tirole_2022,default,https://doi.org/10.7554/eLife.79031,SWR+MUA,candidate_detection,{},"[[0.0, 12.0]]",15,0.9375,0
+7,Bush 2022,bush_2022,default,https://doi.org/10.1016/j.cub.2021.10.033,MUA,candidate_detection,{},"[[0.0, 12.0]]",17,1.0,1
+8,Berners-Lee 2022,berners_lee_2022,default,https://doi.org/10.1016/j.neuron.2022.03.010,MUA,candidate_detection,{},"[[0.0, 12.0]]",14,0.875,0
+10,Krause 2022,krause_2022,default,https://doi.org/10.1016/j.neuron.2021.11.014,SWR,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0
+11,Mou 2022,mou_2022,default,https://doi.org/10.1016/j.neuron.2021.12.005,MUA,candidate_detection,"{""normalization"": ""minmax"", ""stage"": ""detection""}","[[0.0, 12.0]]",16,1.0,0
+12,Berners-Lee 2021,berners_lee_2021,default,https://doi.org/10.1523/JNEUROSCI.1158-20.2021,SWR,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0
+13,Denovellis 2021,denovellis_2021,default,https://doi.org/10.7554/eLife.64505,SWR,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0
+14,Gillespie 2021,gillespie_2021,default,https://doi.org/10.1016/j.neuron.2021.07.029,SWR,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0
+15,Michon 2021,michon_2021,default,https://doi.org/10.1016/j.cub.2021.07.058,SWR+MUA,candidate_detection,"{""order"": ""text""}","[[0.0, 12.0]]",11,0.6875,0
+16,Igata 2021 (candidates),igata_2021,default,https://doi.org/10.1073/pnas.2011266118,SWR+MUA,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0
+17,Gridchyn 2020,gridchyn_2020,default,https://doi.org/10.1016/j.neuron.2020.01.021,adaptive MUA triggers,candidate_detection,"{""gain"": 0.5, ""initial_multiplier"": 3.5, ""refractory"": 0.15, ""target_rate"": 1.0, ""update_interval"": 60.0}","[[0.0, 12.0]]",37,0.9375,22
+18,Kaefer 2020,kaefer_2020,default,https://doi.org/10.1016/j.neuron.2020.01.015,secondary SWR label,secondary_label,{},"[[0.0, 2.0]]",15,0.9375,0
+19,Bhattarai 2020,bhattarai_2020,default,https://doi.org/10.1073/pnas.1912533117,SWR+MUA,candidate_detection,"{""power_measure"": ""squared_signal"", ""window_end_rule"": ""last_spike""}","[[0.0, 12.0]]",15,0.9375,0
+20,Stella 2019,stella_2019,default,https://doi.org/10.1016/j.neuron.2019.01.052,SWR,candidate_detection,"{""cycles"": null, ""frequencies"": null}","[[0.0, 12.0]]",16,1.0,0
+21,Xu 2019,xu_2019,default,https://doi.org/10.1016/j.neuron.2018.11.015,MUA,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0
+22,Farooq 2019 (Neuron),farooq_2019_neuron,default,https://doi.org/10.1016/j.neuron.2019.05.040,MUA,candidate_detection,{},"[[0.0, 12.0]]",5,0.3125,0
+23,Farooq 2019 (Science),farooq_2019_science,default,https://doi.org/10.1126/science.aav0502,MUA,candidate_detection,{},"[[0.0, 12.0]]",4,0.25,0
+24,Chenani 2019,chenani_2019,default,https://doi.org/10.1038/s41467-019-09280-0,MUA,candidate_detection,{},"[[0.0, 12.0]]",15,0.9375,0
+25,Michon 2019,michon_2019,default,https://doi.org/10.1016/j.cub.2019.03.048,SWR+MUA,candidate_detection,"{""order"": ""text""}","[[0.0, 12.0]]",11,0.6875,0
+26,Liu 2019,liu_2019,default,https://doi.org/10.1002/hipo.23034,MUA,candidate_detection,{},"[[0.0, 12.0]]",94,1.0,78
+27,Shin 2019,shin_2019,default,https://doi.org/10.1016/j.neuron.2019.09.012,SWR,candidate_detection,"{""stage"": ""detection""}","[[0.0, 12.0]]",16,1.0,0
+28,Carey 2019,carey_2019,default,https://doi.org/10.1038/s41593-019-0464-6,SWR+MUA,candidate_detection,{},"[[0.0, 12.0]]",21,1.0,2
+29,Muessig 2019,muessig_2019,default,https://doi.org/10.1016/j.cub.2019.01.005,SWR+MUA,candidate_detection,"{""sample_speed_veto"": false, ""trial"": ""rest""}","[[0.0, 12.0]]",2,0.125,0
+30,Drieu 2018,drieu_2018,default,https://doi.org/10.1126/science.aat2952,MUA,candidate_detection,"{""stage"": ""detection""}","[[0.0, 12.0]]",18,1.0,2
+31,Maboudi 2018,maboudi_2018,default,https://doi.org/10.7554/eLife.34467,MUA,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0
+32,Olafsdottir 2017,olafsdottir_2017,default,https://doi.org/10.1016/j.neuron.2017.09.035,MUA,candidate_detection,"{""analysis"": ""arm""}","[[0.0, 12.0]]",24,1.0,8
+32,Olafsdottir 2017,olafsdottir_2017,trajectory,https://doi.org/10.1016/j.neuron.2017.09.035,MUA,candidate_detection,"{""analysis"": ""trajectory""}","[[0.0, 12.0]]",15,0.9375,0
+33,Wu 2017,wu_2017,default,https://doi.org/10.1038/nn.4507,MUA,candidate_detection,"{""stage"": ""detection""}","[[0.0, 12.0]]",16,1.0,0
+34,Yamamoto 2017 (one reading),yamamoto_2017,default,https://doi.org/10.1016/j.neuron.2017.09.017,SWR+MUA,candidate_detection,{},"[[0.0, 12.0]]",9,0.5625,0
+35,Tang 2017,tang_2017,default,https://doi.org/10.1523/JNEUROSCI.2291-17.2017,SWR,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0
+36,Grosmark 2016,grosmark_2016,default,https://doi.org/10.1126/science.aad1935,SWR+MUA,candidate_detection,"{""stage"": ""detection""}","[[0.0, 12.0]]",7,0.4375,0
+37,Ambrose 2016,ambrose_2016,default,https://doi.org/10.1016/j.neuron.2016.07.047,SWR,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0
+38,Jadhav 2016,jadhav_2016,default,https://doi.org/10.1016/j.neuron.2016.02.010,SWR,candidate_detection,"{""stage"": ""detection""}","[[0.0, 12.0]]",16,1.0,0
+39,Olafsdottir 2016,olafsdottir_2016,default,https://doi.org/10.1038/nn.4291,MUA,candidate_detection,{},"[[0.0, 12.0]]",16,0.9375,1
+40,Silva 2015,silva_2015,default,https://doi.org/10.1038/nn.4151,MUA,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0
+41,Olafsdottir 2015,olafsdottir_2015,default,https://doi.org/10.7554/eLife.06063,MUA,candidate_detection,"{""minimum_active_units"": 0}","[[0.0, 12.0]]",82,1.0,53
+41,Olafsdottir 2015,olafsdottir_2015,bayesian_candidates,https://doi.org/10.7554/eLife.06063,MUA,candidate_detection,"{""minimum_active_units"": 7}","[[0.0, 12.0]]",16,0.8125,1
+42,Pfeiffer 2015,pfeiffer_2015,default,https://doi.org/10.1126/science.aaa9633,SWR,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0
+43,Wu 2014,wu_2014,default,https://doi.org/10.1523/JNEUROSCI.3414-13.2014,MUA,candidate_detection,{},"[[0.0, 12.0]]",30,1.0,13
+44,Wikenheiser 2013,wikenheiser_2013,default,https://doi.org/10.1002/hipo.22049,SWR,candidate_detection,"{""branch"": ""rest"", ""normalization"": ""session"", ""theta_delta"": null, ""window_anchor"": null}","[[0.0, 12.0]]",54,0.9375,38
+45,Pfeiffer 2013,pfeiffer_2013,default,https://doi.org/10.1038/nature12112,MUA,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0
+46,Carr 2012,carr_2012,default,https://doi.org/10.1016/j.neuron.2012.06.014,SWR,candidate_detection,"{""stage"": ""detection""}","[[0.0, 12.0]]",16,1.0,0
+47,Bendor 2012,bendor_2012,default,https://doi.org/10.1038/nn.3203,MUA,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0
+48,Gupta 2010,gupta_2010,default,https://doi.org/10.1016/j.neuron.2010.01.034,SWR gate only,candidate_gate,"{""log_amplitude"": true}","[[0.0, 12.0]]",98,0.8125,84
+49,Karlsson 2009,karlsson_2009,default,https://doi.org/10.1038/nn.2344,SWR,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0
+50,Davidson 2009,davidson_2009,default,https://doi.org/10.1016/j.neuron.2009.07.027,MUA,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0
+51,Diba 2007,diba_2007,default,https://doi.org/10.1038/nn1961,MUA,candidate_detection,{},"[[0.0, 12.0]]",7,0.4375,0
+52,Ji 2007,ji_2007,default,https://doi.org/10.1038/nn1825,MUA,candidate_detection,"{""histogram_bins"": 100, ""histogram_smoothing"": 3, ""merge_gap"": 0.08, ""stage"": ""detection""}","[[0.0, 12.0]]",16,1.0,0
+53,Foster 2006,foster_2006,default,https://doi.org/10.1038/nature04587,MUA,candidate_detection,{},"[[0.0, 12.0]]",9,0.5625,0
+54,Lee 2002,lee_2002,default,https://doi.org/10.1016/S0896-6273(02)01096-6,MUA,candidate_detection,{},"[[0.0, 12.0]]",205,1.0,189
+55,Nadasdy 1999,nadasdy_1999,default,https://doi.org/10.1523/JNEUROSCI.19-21-09497.1999,SWR,candidate_detection,"{""bound_threshold"": null, ""rms_window"": null}","[[0.0, 12.0]]",16,1.0,0
+56,Kudrimoti 1999,kudrimoti_1999,default,https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,SWR,candidate_detection,"{""threshold_sd"": null}","[[0.0, 12.0]]",12,0.75,0

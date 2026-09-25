@@ -170,10 +170,9 @@ class Recording:
         sharp, reference = signal(sharp_wave_lfp), signal(reference_lfp)
         artifacts = _interval_array(artifact_intervals)
         if artifacts is not None:
-            for start, end in artifacts:
-                mask = (timestamps >= start) & (timestamps <= end)
-                for data in (lfp_array, spikes, sharp, reference):
-                    data[mask] = np.nan
+            mask = _intervals_to_mask(timestamps, artifacts)
+            for data in (lfp_array, spikes, sharp, reference):
+                data[mask] = np.nan
 
         def cells(selection: ArrayLike | None) -> BoolArray:
             mask = np.zeros(spikes.shape[1], dtype=bool)
@@ -329,11 +328,7 @@ class Recording:
         transformed : ndarray
             Result with the original shape and missing rows preserved.
         """
-        _, blocks = _valid_blocks(self.time, values)
-        result = np.full(values.shape, np.nan)
-        for start, stop in blocks:
-            result[start:stop] = operation(values[start:stop])
-        return result
+        return _transform(self.time, values, operation)
 
     def boxcar(self, values: FloatArray, width: float) -> FloatArray:
         """Smooth a trace with a centered uniform window.
@@ -524,10 +519,7 @@ class Recording:
         mask : ndarray of bool, shape (n_time,)
             True for timestamps lying in any supplied interval.
         """
-        mask = np.zeros(self.time.size, dtype=bool)
-        for start, end in np.asarray(intervals).reshape(-1, 2):
-            mask |= (self.time >= start) & (self.time <= end)
-        return mask
+        return _intervals_to_mask(self.time, intervals)
 
     def mask_to_intervals(self, mask: BoolArray) -> FloatArray:
         """Convert a sample selection to contiguous intervals.
@@ -737,11 +729,20 @@ def _zscore(values: FloatArray, mask: BoolArray | None = None, ddof: int = 0) ->
 def _transform(
     time: FloatArray, values: FloatArray, operation: Callable[[FloatArray], FloatArray]
 ) -> FloatArray:
+    """Apply an operation independently within each valid block on the given grid."""
     _, blocks = _valid_blocks(time, values)
     result = np.full(values.shape, np.nan)
     for start, stop in blocks:
         result[start:stop] = operation(values[start:stop])
     return result
+
+
+def _intervals_to_mask(time: FloatArray, intervals: FloatArray) -> BoolArray:
+    """Select the union of inclusive intervals on the supplied time grid."""
+    mask = np.zeros(time.size, dtype=bool)
+    for start, end in np.asarray(intervals).reshape(-1, 2):
+        mask |= (time >= start) & (time <= end)
+    return mask
 
 
 @dataclass
@@ -1988,15 +1989,23 @@ def carey_2019(rec: Recording) -> pd.DataFrame:
 
 
 @recipe(29, "Muessig 2019", "SWR+MUA")
-def muessig_2019(rec: Recording, *, trial: str = "rest") -> FloatArray:
+def muessig_2019(
+    rec: Recording, *, trial: str = "rest", sample_speed_veto: bool = False
+) -> FloatArray:
     """Native 1 ms pyramidal bursts overlapping separate RMS ripple windows.
 
     10 ms Gaussian, above 3 SD with 3 SD bounds, 100-750 ms. Pass one trial
-    per recording and supply curated rest intervals via sleep_intervals.
-    ``trial='run'`` uses the reported stricter <1 cm/s limit; ``rest`` uses
-    <2.5 cm/s. Requiring every sample to satisfy the speed limit is an
-    implementation choice; the paper does not state how speed is aggregated.
-    State spectral estimation is external for measured data.
+    per recording and supply curated eligible intervals via sleep_intervals.
+    The paper defines rest using mean speed and theta/delta power in 1.6 s
+    windows, stepped by 0.8 s. Mean speed is <2.5 cm/s for rest trials and
+    <1 cm/s for RUN. State estimation is external for measured data: supplied
+    intervals must already implement the selected trial's criteria.
+
+    By default, events must lie wholly in those intervals, without a second
+    speed test. sample_speed_veto=True adds the previous stricter requirement
+    that all native-grid speed samples be known and below the trial's limit. This
+    additional veto is not specified by the paper. Simulation without supplied
+    intervals retains the explicitly approximate speed/theta-delta state proxy.
     """
     if trial not in {"rest", "run"}:
         msg = "trial must be 'rest' or 'run'."
@@ -2012,7 +2021,7 @@ def muessig_2019(rec: Recording, *, trial: str = "rest") -> FloatArray:
         minimum_event_duration=0.1,
         maximum_duration=0.75,
         speed_rule="all",
-        speed_threshold=np.nextafter(limit, -np.inf),
+        speed_threshold=np.nextafter(limit, -np.inf) if sample_speed_veto else np.inf,
     )
     events = rd.require_overlap(bursts, _IMPLEMENTATIONS["muessig_2019_ripples"](rec))
     return within_intervals(events, rec.sleep(limit, 2.0, measure="power"))
@@ -2504,9 +2513,7 @@ def ji_2007(
     sleep = rec.sleep(4.0, 1.0)
     trace = population_trace(rec, bin_width=0.01, smoothing_sigma=0.03)
     trace.data *= 0.01
-    mask = np.zeros(len(trace.time), dtype=bool)
-    for start, end in sleep:
-        mask |= (trace.time >= start) & (trace.time <= end)
+    mask = _intervals_to_mask(trace.time, sleep)
     level = rd.histogram_minimum_threshold(
         trace.data[mask], bins=histogram_bins, smoothing_window=histogram_smoothing
     )
@@ -2712,9 +2719,7 @@ def _detect_population_in(
     rec: Recording, intervals: FloatArray, units: BoolArray | None, sigma: float, **kwargs: Any
 ) -> pd.DataFrame:
     trace = population_trace(rec, bin_width=0.001, units=units, smoothing_sigma=sigma)
-    mask = np.zeros(len(trace.time), dtype=bool)
-    for start, end in intervals:
-        mask |= (trace.time >= start) & (trace.time <= end)
+    mask = _intervals_to_mask(trace.time, intervals)
     trace.data[~mask] = np.nan
     return trace.detect(**kwargs)
 
@@ -3202,9 +3207,7 @@ def krause_2022_hse(rec: Recording, *, interpretation: str = "text") -> pd.DataF
     if interpretation == "text":
         mask = np.ones(len(trace.time), dtype=bool)
         if rec.baseline_intervals is not None:
-            mask[:] = False
-            for start, end in rec.baseline_intervals:
-                mask |= (trace.time >= start) & (trace.time <= end)
+            mask = _intervals_to_mask(trace.time, rec.baseline_intervals)
         return trace.detect(
             threshold=3.0,
             minimum_duration=0.0,
