@@ -1,5 +1,6 @@
 """Behavioral checks for packaged literature methods, beyond simulation coverage."""
 
+import inspect
 import warnings
 
 import numpy as np
@@ -1666,3 +1667,28 @@ def test_each_entry_records_its_inventory():
 def test_grosmark_rejects_an_unknown_stage(measured):
     with pytest.raises(ValueError, match="stage must be"):
         lm.grosmark_2016(measured, stage="replay")
+
+
+def test_within_intervals_rejects_unsorted_or_overlapping_intervals():
+    events = np.array([[1.0, 1.5], [3.2, 3.4]])
+    np.testing.assert_allclose(
+        lm.within_intervals(events, [[0.5, 2.0], [3.0, 3.3]]), events[:1]
+    )
+    for intervals in ([[3.0, 3.5], [0.5, 2.0]], [[0.5, 2.0], [1.0, 3.5]]):
+        with pytest.raises(ValueError, match="sorted, disjoint"):
+            lm.within_intervals(events, intervals)
+
+
+@pytest.mark.parametrize("entry", [*lm.RECIPES, *lm.VARIANTS], ids=lambda e: e.run.__name__)
+def test_public_method_docstrings_list_their_actual_parameters(entry):
+    doc = entry.run.__doc__
+    assert "**options" not in doc
+    parameters = [name for name in inspect.signature(entry.run).parameters if name != "rec"]
+    section = doc.split("Parameters\n    ----------\n")[1].split("Returns")[0]
+    listed = [line.split(" : ")[0].strip() for line in section.splitlines() if " : " in line]
+    assert listed == ["rec", *parameters]
+
+
+def test_private_helpers_are_not_public_names():
+    for name in ["recipe", "variant", "only_in", "zugaro_ripple_peaks"]:
+        assert not hasattr(lm, name), name

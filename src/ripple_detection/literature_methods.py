@@ -730,7 +730,22 @@ def bounds(events: pd.DataFrame | FloatArray) -> FloatArray:
 def within_duration(
     events: pd.DataFrame | FloatArray, low: float = 0.0, high: float = np.inf
 ) -> FloatArray:
-    """Events whose elapsed duration is from ``low`` to ``high`` seconds."""
+    """Keep events whose elapsed duration is from ``low`` to ``high`` seconds.
+
+    Parameters
+    ----------
+    events : pandas.DataFrame or ndarray
+        Table with start_time/end_time columns or an array of time pairs.
+    low, high : float, optional
+        Inclusive duration limits in seconds; defaults keep every duration.
+        Durations are compared with a tolerance scaled to the timestamps'
+        magnitude, so an event exactly at a limit is kept at any clock origin.
+
+    Returns
+    -------
+    bounds : ndarray, shape (n_kept, 2)
+        Start/end times of the kept events, in input order.
+    """
     events = bounds(events)
     return events[_within_duration_mask(events, low, high)]
 
@@ -781,24 +796,43 @@ def _event_slice(time: FloatArray, start: float, end: float, tolerance: float) -
     )
 
 
-def within_intervals(events: pd.DataFrame | FloatArray, intervals: FloatArray) -> FloatArray:
-    """Events lying entirely inside one of the intervals."""
-    events, intervals = bounds(events), np.asarray(intervals, dtype=float).reshape(-1, 2)
-    if len(intervals) == 0:
+def within_intervals(events: pd.DataFrame | FloatArray, intervals: ArrayLike) -> FloatArray:
+    """Keep events lying entirely inside one of the intervals.
+
+    Parameters
+    ----------
+    events : pandas.DataFrame or ndarray
+        Table with start_time/end_time columns or an array of time pairs.
+    intervals : array_like, shape (n_intervals, 2)
+        Sorted, disjoint, inclusive [start, end] intervals in seconds.
+
+    Returns
+    -------
+    bounds : ndarray, shape (n_kept, 2)
+        Start/end times of the events inside an interval, in input order.
+
+    Raises
+    ------
+    ValueError
+        The intervals are not finite, sorted and disjoint.
+    """
+    events = bounds(events)
+    allowed = _interval_array(np.asarray(intervals, dtype=float).reshape(-1, 2))
+    if allowed is None or len(allowed) == 0:
         return events[:0]
-    which = np.searchsorted(intervals[:, 0], events[:, 0], side="right") - 1
-    inside = (which >= 0) & (events[:, 1] <= intervals[np.clip(which, 0, None), 1])
+    which = np.searchsorted(allowed[:, 0], events[:, 0], side="right") - 1
+    inside = (which >= 0) & (events[:, 1] <= allowed[np.clip(which, 0, None), 1])
     return np.asarray(events[inside], dtype=float)
 
 
-def only_in(rec: Recording, values: FloatArray, intervals: FloatArray) -> FloatArray:
+def _only_in(rec: Recording, values: FloatArray, intervals: FloatArray) -> FloatArray:
     """``values`` (a trace or the spikes) missing outside the intervals, so
     detection runs inside them only."""
     mask = rec.intervals_to_mask(intervals)
     return np.where(mask if values.ndim == 1 else mask[:, None], values, np.nan)
 
 
-def zugaro_ripple_peaks(rec: Recording, band: tuple[float, float]) -> pd.DataFrame:
+def _zugaro_ripple_peaks(rec: Recording, band: tuple[float, float]) -> pd.DataFrame:
     """bz_FindRipples-like ripples on one pyramidal channel, for the
     Buzsaki-lineage papers that require a ripple peak but do not describe
     their ripple detector (assumed: Huszar et al. 2022's 5 SD peak and 2 SD
@@ -938,6 +972,9 @@ def _intervals_to_mask(time: FloatArray, intervals: FloatArray) -> BoolArray:
 class PopulationTrace:
     """Population counts or rate on a native nonoverlapping bin grid.
 
+    Build it with ``population_trace``; methods derive new traces with
+    ``dataclasses.replace`` rather than changing one.
+
     Attributes
     ----------
     time, data : ndarray
@@ -947,6 +984,11 @@ class PopulationTrace:
         Nearest observed speed (cm/s); None when the recording has no speed.
     sampling_frequency : float
         Reciprocal bin width in Hz.
+
+    Raises
+    ------
+    ValueError
+        ``data`` or ``speed`` does not have one value per bin.
     """
 
     time: FloatArray
@@ -961,7 +1003,18 @@ class PopulationTrace:
             raise ValueError(msg)
 
     def smooth(self, sigma: float) -> FloatArray:
-        """Return a Gaussian-smoothed trace without crossing missing bins."""
+        """Gaussian-smooth the trace without crossing missing bins.
+
+        Parameters
+        ----------
+        sigma : float
+            Gaussian standard deviation in seconds.
+
+        Returns
+        -------
+        smoothed : ndarray, shape (n_bins,)
+            Smoothed values within each valid block; missing bins stay NaN.
+        """
         return _transform(
             self.time,
             self.data,
@@ -969,11 +1022,29 @@ class PopulationTrace:
         )
 
     def detect(self, **kwargs: Any) -> pd.DataFrame:
-        """Threshold this trace using detect_events_from_trace options.
+        """Threshold this trace with ``detect_events_from_trace``.
 
-        Bounds are the outer edges of an event's first and last bins, so an
-        event of n bins lasts n bin widths, as the duration limits count it.
-        ``close_event_threshold`` is likewise the gap between edges.
+        Parameters
+        ----------
+        **kwargs
+            Keyword arguments of ``detect_events_from_trace``, such as
+            ``threshold``, ``bound_threshold`` and ``minimum_event_duration``.
+            Durations and ``close_event_threshold`` are in seconds between
+            bin edges.
+
+        Returns
+        -------
+        events : pandas.DataFrame
+            ``detect_events_from_trace`` output. Bounds are the outer edges of
+            an event's first and last bins, so an event of n bins lasts n bin
+            widths, as the duration limits count it; ``peak_time`` stays a bin
+            center.
+
+        Raises
+        ------
+        ValueError
+            A speed rule is requested but the recording has no speed, or
+            ``detect_events_from_trace`` rejects the options.
         """
         default = inspect.signature(rd.detect_events_from_trace).parameters["speed_threshold"]
         if self.speed is None and np.isfinite(kwargs.get("speed_threshold", default.default)):
@@ -994,7 +1065,22 @@ class PopulationTrace:
     def merge(
         self, events: pd.DataFrame | FloatArray, gap: float, *, inclusive: bool = False
     ) -> FloatArray:
-        """Merge inside valid native-grid blocks only.
+        """Merge close events inside valid native-grid blocks only.
+
+        Parameters
+        ----------
+        events : pandas.DataFrame or ndarray
+            Event bounds in seconds at bin edges, as ``detect`` reports them.
+        gap : float
+            Separation in seconds, from one event's end to the next's start,
+            below which events are merged.
+        inclusive : bool, optional
+            Also merge events exactly ``gap`` apart.
+
+        Returns
+        -------
+        bounds : ndarray, shape (n_events, 2)
+            Merged start/end times; nothing is merged across a missing bin.
 
         Raises
         ------
@@ -1298,23 +1384,8 @@ def _register(
         public_method.__signature__ = inspect.signature(function).replace(  # type: ignore[attr-defined]
             return_annotation=pd.DataFrame
         )
-        public_method.__doc__ = (
-            (function.__doc__ or "").rstrip()
-            + """
-
-    Parameters
-    ----------
-    rec : Recording
-        Selected signals, cells and curated intervals.
-    **options
-        Method-specific keyword arguments described above and in the signature.
-
-    Returns
-    -------
-    events : pandas.DataFrame
-        Candidate bounds and available diagnostics, with method metadata in
-        attrs. Supplied behavior_intervals retain wholly contained events.
-    """
+        public_method.__doc__ = (function.__doc__ or "").rstrip() + _parameter_section(
+            inspect.signature(function)
         )
         entry = Recipe(
             row,
@@ -1332,13 +1403,46 @@ def _register(
     return register
 
 
-def recipe(
+def _parameter_section(signature: inspect.Signature) -> str:
+    """The numpy-style Parameters and Returns of a registered method's wrapper."""
+    lines = [
+        "",
+        "",
+        "    Parameters",
+        "    ----------",
+        "    rec : Recording",
+        "        Selected signals, cells and curated intervals.",
+    ]
+    for name, parameter in signature.parameters.items():
+        if name == "rec":
+            continue
+        if parameter.default is inspect.Parameter.empty:
+            lines += [f"    {name} : {parameter.annotation}", "        Required; see above."]
+        else:
+            lines += [
+                f"    {name} : {parameter.annotation}, default {parameter.default!r}",
+                "        See above.",
+            ]
+    lines += [
+        "",
+        "    Returns",
+        "    -------",
+        "    events : pandas.DataFrame",
+        "        Candidate bounds and available diagnostics, with method metadata in",
+        "        attrs (see run_method). Supplied behavior_intervals retain wholly",
+        "        contained events.",
+        "    ",
+    ]
+    return "\n".join(lines)
+
+
+def _recipe(
     row: int, paper: str, trigger: str, *, role: Role = "candidate_detection"
 ) -> Callable[[Callable[P, pd.DataFrame | FloatArray]], Callable[P, pd.DataFrame]]:
     return _register(RECIPES, row, paper, trigger, role)
 
 
-@recipe(0, "Mallory 2025", "MUA")
+@_recipe(0, "Mallory 2025", "MUA")
 def mallory_2025(rec: Recording) -> pd.DataFrame:
     """Linear-track MUA candidates using the released peak-merging rule.
 
@@ -1353,7 +1457,7 @@ def mallory_2025(rec: Recording) -> pd.DataFrame:
     return _mallory_candidates(rec.time, _zscore(trace, ddof=1))
 
 
-@recipe(1, "Widloski 2025", "secondary ripple label", role="secondary_label")
+@_recipe(1, "Widloski 2025", "secondary ripple label", role="secondary_label")
 def widloski_2025(rec: Recording) -> pd.DataFrame | FloatArray:
     """Replays are defined by decoding (not reproduced). This is the ripple
     label: 100-220 Hz, one channel per tetrode, envelope smoothed with an
@@ -1393,7 +1497,7 @@ def _population_with_ripple_peak(rec: Recording, sleep: FloatArray) -> FloatArra
         if not rec.allows_simulation_proxies:
             msg = "Supply external_ripples; the historical LFP detector is unspecified."
             raise ValueError(msg)
-        peaks = zugaro_ripple_peaks(rec, (130.0, 200.0)).peak_time
+        peaks = _zugaro_ripple_peaks(rec, (130.0, 200.0)).peak_time
     else:
         peaks = (
             rec.external_ripples[:, 2]
@@ -1411,7 +1515,7 @@ def _population_with_ripple_peak(rec: Recording, sleep: FloatArray) -> FloatArra
     return within_intervals(events, eligible)
 
 
-@recipe(2, "Yang 2024", "SWR+MUA")
+@_recipe(2, "Yang 2024", "SWR+MUA")
 def yang_2024(rec: Recording) -> pd.DataFrame | FloatArray:
     """Population candidates with a coincident externally supplied ripple peak.
 
@@ -1490,7 +1594,7 @@ def _tirole(rec: Recording) -> pd.DataFrame:
     )
 
 
-@recipe(3, "Huelin Gorriz 2023", "SWR+MUA")
+@_recipe(3, "Huelin Gorriz 2023", "SWR+MUA")
 def huelin_gorriz_2023(
     rec: Recording, *, interpretation: str = "published_cap"
 ) -> pd.DataFrame | FloatArray:
@@ -1562,7 +1666,7 @@ def _harvey_stage(
     return np.asarray(candidates[np.asarray(keep, dtype=bool)], dtype=float)
 
 
-@recipe(4, "Harvey 2023 (code)", "SWR")
+@_recipe(4, "Harvey 2023 (code)", "SWR")
 def harvey_2023_code(
     rec: Recording, *, stage: Stage = "detection"
 ) -> pd.DataFrame | FloatArray:
@@ -1581,7 +1685,7 @@ def harvey_2023_code(
     return _harvey_stage(rec, _spiking_filter(rec, ripples), stage)
 
 
-@recipe(4, "Harvey 2023 (text)", "SWR (needs radiatum)")
+@_recipe(4, "Harvey 2023 (text)", "SWR (needs radiatum)")
 def harvey_2023_text(
     rec: Recording, *, sharp_wave_polarity: float = -1.0, stage: Stage = "detection"
 ) -> FloatArray:
@@ -1636,7 +1740,7 @@ def harvey_2023_text(
     return _harvey_stage(rec, rd.require_overlap(ripples, waves), stage)
 
 
-@recipe(5, "Liu 2023", "SWR+MUA (needs radiatum)")
+@_recipe(5, "Liu 2023", "SWR+MUA (needs radiatum)")
 def liu_2023(rec: Recording) -> pd.DataFrame | FloatArray:
     """DetectSWR at neurocode defaults on the pyramidal and radiatum channels
     (the text's 1 SD bounds and 15-400 ms limits are not applied; manual
@@ -1655,13 +1759,13 @@ def liu_2023(rec: Recording) -> pd.DataFrame | FloatArray:
     return rd.require_overlap(bursts, swrs)
 
 
-@recipe(6, "Tirole 2022", "SWR+MUA")
+@_recipe(6, "Tirole 2022", "SWR+MUA")
 def tirole_2022(rec: Recording) -> pd.DataFrame | FloatArray:
     """See _tirole."""
     return _tirole(rec)
 
 
-@recipe(7, "Bush 2022", "MUA")
+@_recipe(7, "Bush 2022", "MUA")
 def bush_2022(rec: Recording) -> pd.DataFrame | FloatArray:
     """Pyramidal cells, 5 ms Gaussian, peak z >= 3, bounds at z >= 0; merged
     when <= 40 ms apart, events <= 40 ms dropped, then >= 5 or 15% of
@@ -1681,7 +1785,7 @@ def bush_2022(rec: Recording) -> pd.DataFrame | FloatArray:
     return within_duration(merged, high=0.5)
 
 
-@recipe(8, "Berners-Lee 2022", "MUA")
+@_recipe(8, "Berners-Lee 2022", "MUA")
 def berners_lee_2022(rec: Recording) -> pd.DataFrame:
     """Released finite-kernel SDEs on the caller-selected spike population.
 
@@ -1731,7 +1835,7 @@ def _pfeiffer_2015_swrs(
     )  # fmt: skip
 
 
-@recipe(10, "Krause 2022", "SWR")
+@_recipe(10, "Krause 2022", "SWR")
 def krause_2022(rec: Recording) -> FloatArray:
     """Supplied or Pfeiffer-style SWRs trimmed using per-SWR 3 ms place-cell bins.
 
@@ -1790,7 +1894,7 @@ def krause_2022(rec: Recording) -> FloatArray:
     return np.asarray(found, float).reshape(-1, 2)
 
 
-@recipe(11, "Mou 2022", "MUA")
+@_recipe(11, "Mou 2022", "MUA")
 def mou_2022(
     rec: Recording, *, normalization: str = "minmax", stage: Stage = "detection"
 ) -> FloatArray:
@@ -1829,7 +1933,7 @@ def mou_2022(
     )
 
 
-@recipe(12, "Berners-Lee 2021", "SWR")
+@_recipe(12, "Berners-Lee 2021", "SWR")
 def berners_lee_2021(rec: Recording) -> pd.DataFrame | FloatArray:
     """Pfeiffer & Foster 2015's rule at 2 SD on three selected tetrodes.
 
@@ -1839,7 +1943,7 @@ def berners_lee_2021(rec: Recording) -> pd.DataFrame | FloatArray:
     return _pfeiffer_2015_swrs(rec, threshold=2.0, channels=3)
 
 
-@recipe(13, "Denovellis 2021", "SWR")
+@_recipe(13, "Denovellis 2021", "SWR")
 def denovellis_2021(rec: Recording) -> pd.DataFrame:
     """Historical Kay trace: square filtered LFP, sum, 4 ms Gaussian, then root.
 
@@ -1873,7 +1977,7 @@ def denovellis_2021(rec: Recording) -> pd.DataFrame:
     )
 
 
-@recipe(14, "Gillespie 2021", "SWR")
+@_recipe(14, "Gillespie 2021", "SWR")
 def gillespie_2021(rec: Recording) -> pd.DataFrame | FloatArray:
     """Kay consensus trace, 2 SD for 15 ms, speed < 4 at both ends."""
     return rd.Kay_ripple_detector(
@@ -1936,13 +2040,13 @@ def _michon(rec: Recording, *, order: str = "text") -> FloatArray:
     return rd.exclude_movement(rd.require_overlap(bursts, ripples), rec.speed, rec.time, 5.0)
 
 
-@recipe(15, "Michon 2021", "SWR+MUA")
+@_recipe(15, "Michon 2021", "SWR+MUA")
 def michon_2021(rec: Recording, *, order: str = "text") -> FloatArray:
     """5 ms MUA bins; 15 ms smoothing, 3 s detrending; text/code order selectable."""
     return _michon(rec, order=order)
 
 
-@recipe(16, "Igata 2021 (candidates)", "SWR+MUA")
+@_recipe(16, "Igata 2021 (candidates)", "SWR+MUA")
 def igata_2021(rec: Recording) -> pd.DataFrame | FloatArray:
     """The candidate stage only: the rate of all recorded neurons (15 ms
     Gaussian) z-scored over stopping (< 5 cm/s), > 2 SD, bounds at the mean,
@@ -1956,7 +2060,7 @@ def igata_2021(rec: Recording) -> pd.DataFrame | FloatArray:
     return rd.require_active_units(events, rec.multiunit, rec.time, minimum_active_units=5)
 
 
-@recipe(17, "Gridchyn 2020", "adaptive MUA triggers")
+@_recipe(17, "Gridchyn 2020", "adaptive MUA triggers")
 def gridchyn_2020(
     rec: Recording,
     *,
@@ -2081,7 +2185,7 @@ def gridchyn_2020(
     return result
 
 
-@recipe(18, "Kaefer 2020", "secondary SWR label", role="secondary_label")
+@_recipe(18, "Kaefer 2020", "secondary SWR label", role="secondary_label")
 def kaefer_2020(rec: Recording) -> pd.DataFrame:
     """Secondary SWR label: reference-subtracted 240 ms FFT chunks every 20 ms.
 
@@ -2127,7 +2231,7 @@ def kaefer_2020(rec: Recording) -> pd.DataFrame:
     )
 
 
-@recipe(19, "Bhattarai 2020", "SWR+MUA")
+@_recipe(19, "Bhattarai 2020", "SWR+MUA")
 def bhattarai_2020(
     rec: Recording,
     *,
@@ -2149,7 +2253,7 @@ def bhattarai_2020(
     return rd.require_overlap(replays, swrs)
 
 
-@recipe(20, "Stella 2019", "SWR")
+@_recipe(20, "Stella 2019", "SWR")
 def stella_2019(
     rec: Recording, *, frequencies: ArrayLike | None = None, cycles: float | None = None
 ) -> pd.DataFrame:
@@ -2207,7 +2311,7 @@ def stella_2019(
     )
 
 
-@recipe(21, "Xu 2019", "MUA")
+@_recipe(21, "Xu 2019", "MUA")
 def xu_2019(rec: Recording) -> pd.DataFrame | FloatArray:
     """Pyramidal cells, 15 ms Gaussian, peak > 3 SD, bounds at the mean,
     75-750 ms, >= 4 cells, >= 5 spikes, >= 10% of cells, onset at the first
@@ -2249,7 +2353,7 @@ def _farooq(rec: Recording, sleep: FloatArray, units: BoolArray) -> FloatArray:
     )
 
 
-@recipe(22, "Farooq 2019 (Neuron)", "MUA")
+@_recipe(22, "Farooq 2019 (Neuron)", "MUA")
 def farooq_2019_neuron(rec: Recording) -> pd.DataFrame | FloatArray:
     """Population frames in caller-supplied SWS, with 15 ms interpreted as Gaussian SD.
 
@@ -2261,7 +2365,7 @@ def farooq_2019_neuron(rec: Recording) -> pd.DataFrame | FloatArray:
     return _farooq(rec, rec.sleep(1.0, 2.0, stillness=5.0, smoothing_sigma=5.0), rec.pyramidal)
 
 
-@recipe(23, "Farooq 2019 (Science)", "MUA")
+@_recipe(23, "Farooq 2019 (Science)", "MUA")
 def farooq_2019_science(rec: Recording) -> pd.DataFrame | FloatArray:
     """The reported 15 ms Gaussian width is interpreted as SD (unresolved).
 
@@ -2277,7 +2381,7 @@ def farooq_2019_science(rec: Recording) -> pd.DataFrame | FloatArray:
     return _farooq(rec, sleep, rec.place_cells)
 
 
-@recipe(24, "Chenani 2019", "MUA")
+@_recipe(24, "Chenani 2019", "MUA")
 def chenani_2019(rec: Recording) -> pd.DataFrame | FloatArray:
     """Place-cell rate, 30 ms Gaussian, peak >= 3 SD, bounds >= 1 SD, >= 5
     active cells. Supply reward-zone behavior_intervals to run_method; zones
@@ -2293,20 +2397,20 @@ def chenani_2019(rec: Recording) -> pd.DataFrame | FloatArray:
     )
 
 
-@recipe(25, "Michon 2019", "SWR+MUA")
+@_recipe(25, "Michon 2019", "SWR+MUA")
 def michon_2019(rec: Recording, *, order: str = "text") -> FloatArray:
     """Same offline conjunction as Michon 2021; text/code preprocessing order selectable."""
     return _michon(rec, order=order)
 
 
-@recipe(26, "Liu 2019", "MUA")
+@_recipe(26, "Liu 2019", "MUA")
 def liu_2019(rec: Recording) -> pd.DataFrame | FloatArray:
     """Pyramidal spikes inside SWS (speed < 1 cm/s and theta/delta < 2, 5 s
     Gaussian), split at >= 100 ms of silence, >= 4 cells, 80 ms-1.2 s. The
     awake-rest frames are available separately in liu_2019_awake."""
     sleep = rec.sleep(1.0, 2.0, smoothing_sigma=5.0)
     return rd.detect_silence_bounded_events(
-        rec.time, only_in(rec, rec.multiunit, sleep), rec.fs,
+        rec.time, _only_in(rec, rec.multiunit, sleep), rec.fs,
         minimum_silence=0.1, units=rec.pyramidal, minimum_active_units=4,
         minimum_duration=0.08, maximum_duration=1.2,
     )  # fmt: skip
@@ -2327,7 +2431,7 @@ def _karlsson_rule(rec: Recording, speed_threshold: float) -> pd.DataFrame:
     )
 
 
-@recipe(27, "Shin 2019", "SWR")
+@_recipe(27, "Shin 2019", "SWR")
 def shin_2019(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | FloatArray:
     """The Karlsson rule at <= 4 cm/s; for the analyses, whole events >= 50 ms
     with >= 5 place cells are selected by stage='decoding_candidates'.
@@ -2342,7 +2446,7 @@ def shin_2019(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | F
     )
 
 
-@recipe(28, "Carey 2019", "SWR+MUA")
+@_recipe(28, "Carey 2019", "SWR+MUA")
 def carey_2019(rec: Recording) -> pd.DataFrame:
     """Published amSWR spectral score and joint MUA candidates.
 
@@ -2375,7 +2479,7 @@ def carey_2019(rec: Recording) -> pd.DataFrame:
     )
 
 
-@recipe(29, "Muessig 2019", "SWR+MUA")
+@_recipe(29, "Muessig 2019", "SWR+MUA")
 def muessig_2019(
     rec: Recording, *, trial: str = "rest", sample_speed_veto: bool = False
 ) -> FloatArray:
@@ -2414,7 +2518,7 @@ def muessig_2019(
     return within_intervals(events, rec.sleep(limit, 2.0, measure="power"))
 
 
-@recipe(30, "Drieu 2018", "MUA")
+@_recipe(30, "Drieu 2018", "MUA")
 def drieu_2018(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | FloatArray:
     """Place-cell bursts in supplied SWS: 10 ms Gaussian, 3 SD/mean, <=500 ms.
 
@@ -2459,12 +2563,12 @@ def _drieu_events(rec: Recording) -> pd.DataFrame | FloatArray:
         merge_gap=1.0, minimum_duration=2.0,
     )  # fmt: skip
     return rd.detect_events_from_trace(
-        rec.time, only_in(rec, rec.rate(rec.place_cells, 0.010), sleep), rec.speed, rec.fs,
+        rec.time, _only_in(rec, rec.rate(rec.place_cells, 0.010), sleep), rec.speed, rec.fs,
         threshold=3.0, minimum_duration=0.0, maximum_duration=0.5, speed_threshold=np.inf,
     )  # fmt: skip
 
 
-@recipe(31, "Maboudi 2018", "MUA")
+@_recipe(31, "Maboudi 2018", "MUA")
 def maboudi_2018(rec: Recording) -> FloatArray:
     """Linear-track PBEs: pooled 1 ms bins, finite 20 ms SD/60 ms half-width Gaussian.
 
@@ -2496,7 +2600,7 @@ def maboudi_2018(rec: Recording) -> FloatArray:
     )
 
 
-@recipe(32, "Olafsdottir 2017", "MUA")
+@_recipe(32, "Olafsdottir 2017", "MUA")
 def olafsdottir_2017(rec: Recording, *, analysis: str = "arm") -> pd.DataFrame | FloatArray:
     """Native place-cell MUA candidates, with separate arm/trajectory participation.
 
@@ -2531,7 +2635,7 @@ def olafsdottir_2017(rec: Recording, *, analysis: str = "arm") -> pd.DataFrame |
     )
 
 
-@recipe(33, "Wu 2017", "MUA")
+@_recipe(33, "Wu 2017", "MUA")
 def wu_2017(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | FloatArray:
     """Nonoverlapping 10 ms all-spike bins, no smoothing; 4 SD, mean bounds, 50-400 ms.
 
@@ -2557,7 +2661,7 @@ def wu_2017(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | Flo
     )
 
 
-@recipe(34, "Yamamoto 2017 (one reading)", "SWR+MUA")
+@_recipe(34, "Yamamoto 2017 (one reading)", "SWR+MUA")
 def yamamoto_2017(rec: Recording) -> pd.DataFrame | FloatArray:
     """One reading of an ambiguous rule: summed spikes in nonoverlapping 10 ms bins, peak > 3 SD, bounds at 1 SD, kept when
     overlapping a period of 140-200 Hz power above 3 SD on one channel. The
@@ -2573,13 +2677,13 @@ def yamamoto_2017(rec: Recording) -> pd.DataFrame | FloatArray:
     return rd.require_overlap(bursts, ripples)
 
 
-@recipe(35, "Tang 2017", "SWR")
+@_recipe(35, "Tang 2017", "SWR")
 def tang_2017(rec: Recording) -> pd.DataFrame | FloatArray:
     """The Karlsson rule at < 4 cm/s (smoothing and minimum inherited)."""
     return _karlsson_rule(rec, np.nextafter(4.0, -np.inf))
 
 
-@recipe(36, "Grosmark 2016", "SWR+MUA")
+@_recipe(36, "Grosmark 2016", "SWR+MUA")
 def grosmark_2016(rec: Recording, *, stage: Stage = "detection") -> FloatArray:
     """Population/ripple conjunction, with a separate decoding-candidate stage.
 
@@ -2603,7 +2707,7 @@ def grosmark_2016(rec: Recording, *, stage: Stage = "detection") -> FloatArray:
     )
 
 
-@recipe(37, "Ambrose 2016", "SWR")
+@_recipe(37, "Ambrose 2016", "SWR")
 def ambrose_2016(rec: Recording) -> pd.DataFrame | FloatArray:
     """Pfeiffer & Foster 2015's trace on 4 tetrodes, > 3 SD, detected only
     while stopped (< 5 cm/s, stated in the paper). Statistics also come from
@@ -2617,7 +2721,7 @@ def ambrose_2016(rec: Recording) -> pd.DataFrame | FloatArray:
     )  # fmt: skip
 
 
-@recipe(38, "Jadhav 2016", "SWR")
+@_recipe(38, "Jadhav 2016", "SWR")
 def jadhav_2016(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | FloatArray:
     """The Karlsson rule at < 4 cm/s; SWRs within 1 s after the previous
     one's start dropped; stage='decoding_candidates' adds >=4 active CA1 cells (all supplied units).
@@ -2631,7 +2735,7 @@ def jadhav_2016(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame |
     return rd.require_active_units(events, rec.multiunit, rec.time, minimum_active_units=4)
 
 
-@recipe(39, "Olafsdottir 2016", "MUA")
+@_recipe(39, "Olafsdottir 2016", "MUA")
 def olafsdottir_2016(rec: Recording) -> pd.DataFrame | FloatArray:
     """Place cells, 5 ms Gaussian, > 3 SD, bounds at the mean, >= 40 ms,
     >=15% of the place cells; no speed rule. Supply a rest recording;
@@ -2646,7 +2750,7 @@ def olafsdottir_2016(rec: Recording) -> pd.DataFrame | FloatArray:
     )
 
 
-@recipe(40, "Silva 2015", "MUA")
+@_recipe(40, "Silva 2015", "MUA")
 def silva_2015(rec: Recording) -> pd.DataFrame | FloatArray:
     """Sorted units without interneurons (pyramidal; the Results say all
     recorded units, the Fig. 1c legend place cells), 10 ms Gaussian, > 3 SD,
@@ -2659,7 +2763,7 @@ def silva_2015(rec: Recording) -> pd.DataFrame | FloatArray:
     )  # fmt: skip
 
 
-@recipe(41, "Olafsdottir 2015", "MUA")
+@_recipe(41, "Olafsdottir 2015", "MUA")
 def olafsdottir_2015(rec: Recording, *, minimum_active_units: int = 0) -> FloatArray:
     """Per-template silence-bounded candidates before optional decoding filters.
 
@@ -2702,13 +2806,13 @@ def olafsdottir_2015(rec: Recording, *, minimum_active_units: int = 0) -> FloatA
     return np.asarray(events[np.argsort(events[:, 0], kind="stable")], float)
 
 
-@recipe(42, "Pfeiffer 2015", "SWR")
+@_recipe(42, "Pfeiffer 2015", "SWR")
 def pfeiffer_2015(rec: Recording) -> pd.DataFrame | FloatArray:
     """See _pfeiffer_2015_swrs."""
     return _pfeiffer_2015_swrs(rec)
 
 
-@recipe(43, "Wu 2014", "MUA")
+@_recipe(43, "Wu 2014", "MUA")
 def wu_2014(rec: Recording) -> pd.DataFrame | FloatArray:
     """Place-cell density in nonoverlapping 10 ms bins, 15 ms Gaussian, > 2 SD
     over the session, bounds at the mean, speed < 5 at both ends (assumed; the
@@ -2720,7 +2824,7 @@ def wu_2014(rec: Recording) -> pd.DataFrame | FloatArray:
     )  # fmt: skip
 
 
-@recipe(44, "Wikenheiser 2013", "SWR")
+@_recipe(44, "Wikenheiser 2013", "SWR")
 def wikenheiser_2013(
     rec: Recording,
     *,
@@ -2805,7 +2909,7 @@ def wikenheiser_2013(
     return np.asarray(events[np.asarray(keep, dtype=bool)], float)
 
 
-@recipe(45, "Pfeiffer 2013", "MUA")
+@_recipe(45, "Pfeiffer 2013", "MUA")
 def pfeiffer_2013(rec: Recording) -> pd.DataFrame | FloatArray:
     """Clustered pyramidal units' histogram (interneurons excluded, inferred)
     only while < 5 cm/s, 10 ms Gaussian, > 3 SD, bounds at the mean; bounds
@@ -2825,7 +2929,7 @@ def pfeiffer_2013(rec: Recording) -> pd.DataFrame | FloatArray:
     return within_duration(events, 0.05, 2.0)
 
 
-@recipe(46, "Carr 2012", "SWR")
+@_recipe(46, "Carr 2012", "SWR")
 def carr_2012(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | FloatArray:
     """The Karlsson rule on CA1 at < 4 cm/s; stage='decoding_candidates'
     adds >=5 active place cells; the default returns the initial SWR inventory."""
@@ -2839,7 +2943,7 @@ def carr_2012(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | F
     )  # fmt: skip
 
 
-@recipe(47, "Bendor 2012", "MUA")
+@_recipe(47, "Bendor 2012", "MUA")
 def bendor_2012(rec: Recording) -> pd.DataFrame | FloatArray:
     """Davidson's multiunit signal (all spikes, 15 ms Gaussian), peak z >= 4,
     bounds z >= 2, merged < 50 ms, >= 50 ms; z over the whole session
@@ -2852,7 +2956,7 @@ def bendor_2012(rec: Recording) -> pd.DataFrame | FloatArray:
     )  # fmt: skip
 
 
-@recipe(48, "Gupta 2010", "SWR gate only", role="candidate_gate")
+@_recipe(48, "Gupta 2010", "SWR gate only", role="candidate_gate")
 def gupta_2010(rec: Recording, *, log_amplitude: bool = True) -> pd.DataFrame | FloatArray:
     """Events are windows grown by a spike-order score (not reproduced). This
     is the SWR gate: 180-220 Hz Hilbert amplitude averaged over tetrodes,
@@ -2868,13 +2972,13 @@ def gupta_2010(rec: Recording, *, log_amplitude: bool = True) -> pd.DataFrame | 
     )  # fmt: skip
 
 
-@recipe(49, "Karlsson 2009", "SWR")
+@_recipe(49, "Karlsson 2009", "SWR")
 def karlsson_2009(rec: Recording) -> pd.DataFrame | FloatArray:
     """The Karlsson rule at < 2 cm/s (CA1 and CA3 tetrodes)."""
     return _karlsson_rule(rec, np.nextafter(2.0, -np.inf))
 
 
-@recipe(50, "Davidson 2009", "MUA")
+@_recipe(50, "Davidson 2009", "MUA")
 def davidson_2009(rec: Recording) -> pd.DataFrame | FloatArray:
     """All spikes, 15 ms Gaussian, peak >= 3 SD over stopping (< 5 cm/s),
     bounds at the mean, speed < 5 at both ends; within 30 s of running (RUN:
@@ -2888,7 +2992,7 @@ def davidson_2009(rec: Recording) -> pd.DataFrame | FloatArray:
     return rd.require_overlap(events, running + np.array([-30.0, 30.0]))
 
 
-@recipe(51, "Diba 2007", "MUA")
+@_recipe(51, "Diba 2007", "MUA")
 def diba_2007(rec: Recording) -> pd.DataFrame | FloatArray:
     """>= 60 ms of silence (of the template's cells, assumed), then >= 5 and
     >= 30% of the template's cells (whichever is greater) in the next 300 ms,
@@ -2904,7 +3008,7 @@ def diba_2007(rec: Recording) -> pd.DataFrame | FloatArray:
     return rd.exclude_movement(events, rec.speed, rec.time, 10.0)
 
 
-@recipe(52, "Ji 2007", "MUA")
+@_recipe(52, "Ji 2007", "MUA")
 def ji_2007(
     rec: Recording,
     *,
@@ -2946,7 +3050,7 @@ def ji_2007(
     )
 
 
-@recipe(53, "Foster 2006", "MUA")
+@_recipe(53, "Foster 2006", "MUA")
 def foster_2006(rec: Recording) -> pd.DataFrame | FloatArray:
     """Probe cells' spikes during stopping (< 5 cm/s, assumed) pooled and split
     at gaps of more than 50 ms, >=1/3 of the cells, <=500 ms. Supply
@@ -2955,13 +3059,13 @@ def foster_2006(rec: Recording) -> pd.DataFrame | FloatArray:
     _require_behavior_intervals(rec, "facing-direction epochs")
     stopped = rec.mask_to_intervals(rec.speed < 5)
     return rd.detect_silence_bounded_events(
-        rec.time, only_in(rec, rec.multiunit, stopped), rec.fs,
+        rec.time, _only_in(rec, rec.multiunit, stopped), rec.fs,
         minimum_silence=0.05 + 1 / rec.fs, units=rec.place_cells,
         minimum_active_fraction=1 / 3, maximum_duration=0.5,
     )  # fmt: skip
 
 
-@recipe(54, "Lee 2002", "MUA")
+@_recipe(54, "Lee 2002", "MUA")
 def lee_2002(rec: Recording) -> pd.DataFrame | FloatArray:
     """Template cells' spikes in supplied SWS, with within-cell bursts collapsed.
 
@@ -2971,12 +3075,12 @@ def lee_2002(rec: Recording) -> pd.DataFrame | FloatArray:
     at gaps >100 ms. Only simulation uses speed <4 and theta/delta <1 as SWS."""
     sleep = rec.sleep(4.0, 1.0)
     return rd.detect_silence_bounded_events(
-        rec.time, only_in(rec, rec.multiunit, sleep), rec.fs,
+        rec.time, _only_in(rec, rec.multiunit, sleep), rec.fs,
         minimum_silence=0.1 + 1 / rec.fs, maximum_isi=0.05, units=rec.place_cells,
     )  # fmt: skip
 
 
-@recipe(55, "Nadasdy 1999", "SWR")
+@_recipe(55, "Nadasdy 1999", "SWR")
 def nadasdy_1999(
     rec: Recording, *, rms_window: float | None = None, bound_threshold: float | None = None
 ) -> FloatArray:
@@ -3002,7 +3106,7 @@ def nadasdy_1999(
     return within_intervals(events, rec.sleep(4.0, 1.0, theta=(5.0, 10.0), delta=(2.0, 4.0)))
 
 
-@recipe(56, "Kudrimoti 1999", "SWR")
+@_recipe(56, "Kudrimoti 1999", "SWR")
 def kudrimoti_1999(rec: Recording, *, threshold_sd: float | None = None) -> pd.DataFrame:
     """100-300 Hz amplitude above a caller-selected threshold for >=25 ms in SWS.
 
@@ -3015,7 +3119,7 @@ def kudrimoti_1999(rec: Recording, *, threshold_sd: float | None = None) -> pd.D
             raise ValueError(msg)
         threshold_sd = 3.0
     sleep = rec.sleep(4.0, 1.0)
-    amplitude = only_in(rec, rec.envelope((100.0, 300.0))[:, 0], sleep)
+    amplitude = _only_in(rec, rec.envelope((100.0, 300.0))[:, 0], sleep)
     return _ripple_trace_events(
         rec,
         amplitude,
@@ -3169,13 +3273,13 @@ def _detect_population_in(
 VARIANTS: list[Recipe] = []
 
 
-def variant(
+def _variant(
     row: int, paper: str, trigger: str, *, role: Role = "candidate_detection"
 ) -> Callable[[Callable[P, pd.DataFrame | FloatArray]], Callable[P, pd.DataFrame]]:
     return _register(VARIANTS, row, paper, trigger, role)
 
 
-@variant(4, "Harvey 2023 (no radiatum)", "SWR")
+@_variant(4, "Harvey 2023 (no radiatum)", "SWR")
 def harvey_2023_no_radiatum(rec: Recording, *, stage: Stage = "detection") -> FloatArray:
     """Released FindRipples branch for sessions without a radiatum channel.
 
@@ -3200,7 +3304,7 @@ def harvey_2023_no_radiatum(rec: Recording, *, stage: Stage = "detection") -> Fl
     return _harvey_stage(rec, _spiking_filter(rec, ripples), stage)
 
 
-@variant(0, "Mallory 2025", "secondary ripple candidates")
+@_variant(0, "Mallory 2025", "secondary ripple candidates")
 def mallory_2025_ripples(rec: Recording) -> pd.DataFrame:
     """Single-channel 150-250 Hz Hilbert amplitude, 12.5 ms smoothing.
 
@@ -3214,7 +3318,7 @@ def mallory_2025_ripples(rec: Recording) -> pd.DataFrame:
     return _mallory_candidates(rec.time, _zscore(amplitude, ddof=1))
 
 
-@variant(7, "Bush 2022", "secondary ripple candidates")
+@_variant(7, "Bush 2022", "secondary ripple candidates")
 def bush_2022_ripples(rec: Recording, *, fir_window: str = "hamming") -> FloatArray:
     """400th-order 150-250 Hz FIR, Hilbert amplitude, 5 ms Gaussian.
 
@@ -3256,7 +3360,7 @@ def bush_2022_ripples(rec: Recording, *, fir_window: str = "hamming") -> FloatAr
     )
 
 
-@variant(16, "Igata 2021", "secondary per-channel ripple candidates")
+@_variant(16, "Igata 2021", "secondary per-channel ripple candidates")
 def igata_2021_ripples(rec: Recording) -> pd.DataFrame:
     """150-250 Hz envelope, 4 ms Gaussian, stopped baseline, 3 SD/mean, 50-500 ms.
 
@@ -3324,7 +3428,7 @@ def _rms_ripples(
     )
 
 
-@variant(17, "Gridchyn 2020", "secondary ripple candidates")
+@_variant(17, "Gridchyn 2020", "secondary ripple candidates")
 def gridchyn_2020_ripples(
     rec: Recording, *, rms_window: float, bound_threshold: float
 ) -> pd.DataFrame:
@@ -3343,7 +3447,7 @@ def gridchyn_2020_ripples(
     )
 
 
-@variant(21, "Xu 2019", "secondary ripple candidates")
+@_variant(21, "Xu 2019", "secondary ripple candidates")
 def xu_2019_ripples(
     rec: Recording, *, rms_window: float, bound_threshold: float
 ) -> pd.DataFrame:
@@ -3362,7 +3466,7 @@ def xu_2019_ripples(
     )
 
 
-@variant(22, "Farooq 2019 (Neuron)", "secondary ripple candidates")
+@_variant(22, "Farooq 2019 (Neuron)", "secondary ripple candidates")
 def farooq_2019_neuron_ripples(
     rec: Recording, *, threshold: float, bound_threshold: float, smoothing_sigma: float
 ) -> pd.DataFrame:
@@ -3381,7 +3485,7 @@ def farooq_2019_neuron_ripples(
     )
 
 
-@variant(23, "Farooq 2019 (Science)", "secondary ripple candidates")
+@_variant(23, "Farooq 2019 (Science)", "secondary ripple candidates")
 def farooq_2019_science_ripples(
     rec: Recording, *, power_measure: str, bound_threshold: float
 ) -> pd.DataFrame:
@@ -3412,7 +3516,7 @@ def _power(rec: Recording, band: tuple[float, float], measure: str) -> FloatArra
     raise ValueError(msg)
 
 
-@variant(24, "Chenani 2019", "unclassified HFE candidates")
+@_variant(24, "Chenani 2019", "unclassified HFE candidates")
 def chenani_2019_hfe(rec: Recording, *, ar_coefficients: ArrayLike) -> pd.DataFrame:
     """AR(2)-whitened 100-250 Hz Hilbert amplitude, 12 ms Gaussian, 3/1 SD.
 
@@ -3449,7 +3553,7 @@ def chenani_2019_hfe(rec: Recording, *, ar_coefficients: ArrayLike) -> pd.DataFr
     return pd.concat(rows, ignore_index=True)
 
 
-@variant(26, "Liu 2019", "secondary ripple peaks and centered controls")
+@_variant(26, "Liu 2019", "secondary ripple peaks and centered controls")
 def liu_2019_ripples(
     rec: Recording, *, smoothing_sigma: float, window: float = 0.24
 ) -> pd.DataFrame:
@@ -3472,7 +3576,7 @@ def liu_2019_ripples(
     )
 
 
-@variant(30, "Drieu 2018", "secondary ripple candidates")
+@_variant(30, "Drieu 2018", "secondary ripple candidates")
 def drieu_2018_ripples(rec: Recording, *, signal_measure: str) -> pd.DataFrame:
     """Detrended 100-250 Hz minus 300-500 Hz signal, 3/1 SD, >20 and <110 ms.
 
@@ -3505,7 +3609,7 @@ def drieu_2018_ripples(rec: Recording, *, signal_measure: str) -> pd.DataFrame:
     )
 
 
-@variant(32, "Olafsdottir 2017", "secondary ripple candidates")
+@_variant(32, "Olafsdottir 2017", "secondary ripple candidates")
 def olafsdottir_2017_ripples(rec: Recording) -> FloatArray:
     """150-250 Hz squared Hilbert modulus, 2.5 SD/mean, 40-500 ms, then <40 ms merge.
 
@@ -3522,14 +3626,14 @@ def olafsdottir_2017_ripples(rec: Recording) -> FloatArray:
     return rec.merge(events, 0.04, power)
 
 
-@variant(43, "Wu 2014", "secondary ripple peaks")
+@_variant(43, "Wu 2014", "secondary ripple peaks")
 def wu_2014_ripples(rec: Recording) -> pd.DataFrame:
     """150-250 Hz mean envelope, 8 ms Gaussian, local peaks >2.5 stopped-baseline SD."""
     trace = rec.smooth(rec.mean_envelope((150.0, 250.0)), 0.008)
     return _local_peaks(rec, _zscore(trace, rec.speed < 5), 2.5)
 
 
-@variant(45, "Pfeiffer 2013", "secondary ripple candidates")
+@_variant(45, "Pfeiffer 2013", "secondary ripple candidates")
 def pfeiffer_2013_ripples(rec: Recording) -> pd.DataFrame:
     """150-250 Hz mean envelope, 12.5 ms Gaussian, 3 SD/mean over stopping.
 
@@ -3547,14 +3651,14 @@ def pfeiffer_2013_ripples(rec: Recording) -> pd.DataFrame:
     )
 
 
-@variant(50, "Davidson 2009", "secondary ripple peaks")
+@_variant(50, "Davidson 2009", "secondary ripple peaks")
 def davidson_2009_ripples(rec: Recording) -> pd.DataFrame:
     """150-250 Hz mean envelope, 12.5 ms Gaussian, local peaks >2.5 stopped-baseline SD."""
     trace = rec.smooth(rec.mean_envelope((150.0, 250.0)), 0.0125)
     return _local_peaks(rec, _zscore(trace, rec.speed < 5), 2.5)
 
 
-@variant(51, "Diba 2007", "secondary ripple candidates")
+@_variant(51, "Diba 2007", "secondary ripple candidates")
 def diba_2007_ripples(rec: Recording, *, rms_window: float) -> pd.DataFrame:
     """Single CA1 channel, 100-300 Hz RMS, 2 SD peak and 1.5 SD bounds.
 
@@ -3572,7 +3676,7 @@ def diba_2007_ripples(rec: Recording, *, rms_window: float) -> pd.DataFrame:
     )
 
 
-@variant(52, "Ji 2007", "secondary ripple candidates")
+@_variant(52, "Ji 2007", "secondary ripple candidates")
 def ji_2007_ripples(rec: Recording) -> FloatArray:
     """Rectified 80-250 Hz LFP, low 3*S/high 7*S where S is filtered-LFP SD.
 
@@ -3593,7 +3697,7 @@ def ji_2007_ripples(rec: Recording) -> FloatArray:
     return rd.require_trace_peak(merged, trace, rec.time, 7 * scale)
 
 
-@variant(54, "Lee 2002", "secondary ripple candidates")
+@_variant(54, "Lee 2002", "secondary ripple candidates")
 def lee_2002_ripples(rec: Recording) -> FloatArray:
     """Rectified 100-400 Hz, SWS mean+5 SD, crossings <=20 ms apart joined, >=20 ms.
 
@@ -3609,7 +3713,7 @@ def lee_2002_ripples(rec: Recording) -> FloatArray:
     return within_duration(rec.merge(events, 0.02, trace, inclusive=True), low=0.02)
 
 
-@variant(53, "Foster 2006", "secondary ripple candidates")
+@_variant(53, "Foster 2006", "secondary ripple candidates")
 def foster_2006_ripples(rec: Recording) -> pd.DataFrame:
     """Inherited Lee ripple rule; reported event time is the interval midpoint."""
     events = _IMPLEMENTATIONS["lee_2002_ripples"](rec)
@@ -3618,7 +3722,7 @@ def foster_2006_ripples(rec: Recording) -> pd.DataFrame:
     return result
 
 
-@variant(1, "Widloski 2025", "population burst labels", role="secondary_label")
+@_variant(1, "Widloski 2025", "population burst labels", role="secondary_label")
 def widloski_2025_bursts(rec: Recording) -> pd.DataFrame:
     """All good clusters in 1 ms bins, 80 ms Gaussian, stopped baseline, 3 SD/mean, >=50 ms."""
     return _detect_population(
@@ -3633,7 +3737,7 @@ def widloski_2025_bursts(rec: Recording) -> pd.DataFrame:
     )
 
 
-@variant(10, "Krause 2022", "secondary HSE candidates")
+@_variant(10, "Krause 2022", "secondary HSE candidates")
 def krause_2022_hse(rec: Recording, *, interpretation: str = "text") -> pd.DataFrame:
     """Pooled 1 ms spike bins, 3 SD/mean, explicitly distinct text/code branches.
 
@@ -3670,7 +3774,7 @@ def krause_2022_hse(rec: Recording, *, interpretation: str = "text") -> pd.DataF
     )
 
 
-@variant(13, "Denovellis 2021", "secondary MUA candidates")
+@_variant(13, "Denovellis 2021", "secondary MUA candidates")
 def denovellis_2021_mua(rec: Recording) -> pd.DataFrame:
     """Historical 2 ms MUA grid, 15 ms Gaussian, 2 SD for >=15 ms, speed <=4 cm/s.
 
@@ -3688,7 +3792,7 @@ def denovellis_2021_mua(rec: Recording) -> pd.DataFrame:
     )
 
 
-@variant(14, "Gillespie 2021", "secondary MUA candidates")
+@_variant(14, "Gillespie 2021", "secondary MUA candidates")
 def gillespie_2021_mua(rec: Recording) -> pd.DataFrame:
     """Published 1 ms MUA bins, 15 ms Gaussian, stopped (<4) baseline, 3 SD/mean,
     speed <4 at both ends (which samples is not stated).
@@ -3706,13 +3810,13 @@ def gillespie_2021_mua(rec: Recording) -> pd.DataFrame:
     )
 
 
-@variant(31, "Maboudi 2018", "open-field population candidates")
+@_variant(31, "Maboudi 2018", "open-field population candidates")
 def maboudi_2018_open_field(rec: Recording) -> FloatArray:
     """Open-field Pfeiffer 2013 criteria; separate from linear-track PBEs."""
     return _IMPLEMENTATIONS["pfeiffer_2013"](rec)
 
 
-@variant(29, "Muessig 2019", "secondary ripple windows")
+@_variant(29, "Muessig 2019", "secondary ripple windows")
 def muessig_2019_ripples(rec: Recording) -> pd.DataFrame:
     """7 ms RMS, 100-250 Hz, most-variable channel, >99th percentile, +/-50 ms.
 
@@ -3727,7 +3831,7 @@ def muessig_2019_ripples(rec: Recording) -> pd.DataFrame:
     return _local_peaks(rec, rms, level, before=0.05, after=0.05)
 
 
-@variant(19, "Bhattarai 2020", "separate ripple candidates")
+@_variant(19, "Bhattarai 2020", "separate ripple candidates")
 def bhattarai_2020_ripples(
     rec: Recording, *, power_measure: str = "squared_signal"
 ) -> FloatArray:
@@ -3757,7 +3861,7 @@ def bhattarai_2020_ripples(
     )
 
 
-@variant(23, "Farooq 2019 (Science)", "awake-rest population frames")
+@_variant(23, "Farooq 2019 (Science)", "awake-rest population frames")
 def farooq_2019_science_awake(rec: Recording) -> FloatArray:
     """Same frame criteria within supplied awake-rest epochs and speed <1 cm/s.
 
@@ -3771,7 +3875,7 @@ def farooq_2019_science_awake(rec: Recording) -> FloatArray:
     return _farooq(rec, rec.mask_to_intervals(mask), rec.place_cells)
 
 
-@variant(26, "Liu 2019", "awake-rest silence-bounded frames")
+@_variant(26, "Liu 2019", "awake-rest silence-bounded frames")
 def liu_2019_awake(rec: Recording) -> pd.DataFrame:
     """Silence-bounded frames at supplied track-end rest epochs, speed <2 cm/s."""
     if rec.behavior_intervals is None:
@@ -3790,7 +3894,7 @@ def liu_2019_awake(rec: Recording) -> pd.DataFrame:
     )
 
 
-@variant(26, "Liu 2019", "ripple-associated sleep frames")
+@_variant(26, "Liu 2019", "ripple-associated sleep frames")
 def liu_2019_ripple_frames(rec: Recording, *, smoothing_sigma: float) -> FloatArray:
     """Sleep frames containing a >3 SD ripple-power local peak."""
     peaks: pd.DataFrame = _IMPLEMENTATIONS["liu_2019_ripples"](
@@ -3805,8 +3909,14 @@ def list_methods() -> pd.DataFrame:
     Returns
     -------
     methods : pandas.DataFrame
-        Function name, survey DOI, paper, output role, demonstration grouping, required options and
-        interpretation. Names distinguish protocols and secondary inventories.
+        One row per method: ``name``, ``doi``, ``paper``, ``output``, ``role``,
+        ``inventory`` (demonstration grouping), ``required_options`` and
+        ``interpretation``. Names distinguish protocols and secondary
+        inventories. ``required_options`` lists only the keyword options the
+        signature requires; inputs a method needs from a measured Recording
+        (curated intervals, templates, reference or example ripples, speed)
+        and options it requires only for measured data are stated in its
+        docstring and raise when missing.
     """
     survey = rd.load_literature_parameters()
     rows = []
@@ -3848,11 +3958,16 @@ def run_method(name: str, recording: Recording, **options: Any) -> pd.DataFrame:
     -------
     events : pandas.DataFrame
         At least start_time, end_time and duration (elapsed seconds), retaining
-        any method-specific peak, channel or trigger columns. attrs records
-        method, DOI, output role, interpretation and resolved method options.
+        any method-specific peak, channel, trigger and clipping columns.
         behavior_intervals, if supplied, retain only wholly contained events.
         The dispatcher does not change normalization. Explicit awake-frame
         methods also use these intervals to select their detection trace.
+        ``attrs`` holds ``method`` (the name), ``doi``, ``output`` (the
+        trigger), ``role``, ``inventory``, ``interpretation`` (the docstring),
+        ``options`` (every keyword option, defaults resolved),
+        ``input_sampling_frequency`` (Hz) and ``behavior_intervals_applied``,
+        plus any the method adds (Gridchyn: ``threshold_updates`` and
+        ``expected_count``).
 
     Raises
     ------
