@@ -345,10 +345,14 @@ def carey_spectral_ripple_score(
         if stop - spectrum.n_window - 1 >= start + spectrum.n_window - 1:
             scored[start + spectrum.n_window - 1 : stop - spectrum.n_window] = True
 
-    examples = _event_bounds(ripple_times)
-    centers = nearest_sample_index(time, examples.mean(axis=1))
-    noise = nearest_sample_index(time, examples.mean(axis=1) + noise_offset)
-    in_range = (examples.mean(axis=1) + noise_offset) <= time[-1]
+    # each example's middle sample, the earlier of two as the original's min()
+    # takes it: found by index, since the middle of an even-length example lies
+    # between two samples and the timestamps' rounding would decide the side
+    bounds = nearest_sample_index(time, _event_bounds(ripple_times).ravel()).reshape(-1, 2)
+    centers = bounds.sum(axis=1) // 2
+    noise_times = time[centers] + noise_offset
+    noise = nearest_sample_index(time, noise_times)
+    in_range = noise_times <= time[-1]
     usable = in_range & fits[centers] & fits[noise]
     if not np.any(usable):
         msg = (

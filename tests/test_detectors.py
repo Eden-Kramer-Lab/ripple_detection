@@ -5959,6 +5959,22 @@ class TestCareySpectralScore:
             rtol=1e-12,
         )
 
+    @pytest.mark.parametrize("origin", [0.0, 86_400.0, 1.7e9])
+    def test_an_even_length_example_centers_on_the_earlier_middle_sample(self, origin):
+        """One sample longer, each example has two middle samples; the
+        earlier is the one it had before, as the original's min() takes it,
+        at any origin: the middle time lies between the two, where rounding
+        would pick the side."""
+        from ripple_detection import carey_spectral_ripple_score
+
+        time, data, examples = self._lfp()
+        longer = examples + [0.0, 1 / self.FS]
+        np.testing.assert_allclose(
+            carey_spectral_ripple_score(origin + time, data, self.FS, origin + longer),
+            carey_spectral_ripple_score(time, data, self.FS, examples),
+            rtol=1e-12,
+        )
+
     def test_a_gap_in_time_ends_a_run(self):
         """A 1 s jump after sample 11000 scores 0 within a window of it on
         both sides, as a missing sample does."""
