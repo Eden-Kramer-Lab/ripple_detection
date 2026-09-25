@@ -950,7 +950,7 @@ def simulate_speed(
     Speed is ``still_speed`` outside the bouts and rises and falls smoothly
     within each, as ``sin(pi * phase) ** 2``, to ``peak_speed`` at its middle,
     so each bout begins and ends slow, as a real one does: at the defaults
-    the first and last eighth of a bout are under 4 cm/s.
+    the first and last 12% of a bout are under 4 cm/s.
 
     Parameters
     ----------
@@ -1092,7 +1092,9 @@ class SimulatedSession:
     multiunit : ndarray, shape (n_time, n_units)
         Spike counts per sample.
     speed : ndarray, shape (n_time,)
-        Zeros: an immobile animal.
+        Speed in cm/s: 0 throughout (an immobile animal) unless
+        ``running_intervals`` was given, then ``simulate_speed``'s bouts,
+        rising to ``peak_speed``, and 0 between them.
     ripple_times, ripple_durations, ripple_frequencies : ndarray, shape (n_ripples,)
         Centre, duration (six standard deviations of the envelope) and
         frequency of each ripple, in the order the ripples were given.

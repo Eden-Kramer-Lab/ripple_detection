@@ -283,8 +283,9 @@ def detect_events_from_trace(
     bound_search_window : float, optional
         Seconds before and after each run's first sample at or above
         ``threshold`` within which its bounds are sought, as Tirole et al.
-        (2022) did: the start follows the last sample below the level before
-        that sample, the end is the first sample after it that is below it.
+        (2022) did: the start is the sample after the last one below the
+        level before that sample, the end the sample before the first one
+        below it after that sample.
         A side with no such sample at any level ends at the edge of the
         search, and is flagged in ``clipped_start`` or ``clipped_end``. Default
         None: events extend as far as the trace stays at or above the level.

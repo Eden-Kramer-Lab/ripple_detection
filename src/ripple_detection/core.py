@@ -832,17 +832,20 @@ def exclude_movement(
         Which speeds must be at or below `speed_threshold`, over the samples
         with ``start_time <= time <= end_time``:
 
-        - ``'endpoints'`` (default): the first and last sample's, the rule
-          every detector here applies. A NaN at either end fails.
+        - ``'endpoints'`` (default): the speeds at the samples nearest the
+          start and end times, the rule every detector here applies. A
+          detector's bounds are samples; for other bounds the nearest sample
+          can lie just outside the event. A NaN at either end fails.
         - ``'all'``: every sample's, as in "no speed above 3 cm/s during the
           event". A NaN anywhere fails.
-        - ``'mean'``: the mean of the known (not NaN) speeds.
-        - ``'median'``: the median of the known speeds, as in "median speed
+        - ``'mean'``: the mean of the finite speeds (NaN and infinity are
+          left out).
+        - ``'median'``: the median of the finite speeds, as in "median speed
           below 10 cm/s". :func:`exclude_movement_by_majority` with its
           default of one half is the same test but for how it breaks a tie
           on an even number of samples.
 
-        With ``'mean'`` or ``'median'`` an event with no known speed fails.
+        With ``'mean'`` or ``'median'`` an event with no finite speed fails.
 
     Returns
     -------
@@ -1797,10 +1800,11 @@ def merge_close_events(
     literature; the Frank lab ``extractevents`` routine merges.
 
     Merging is repeated until nothing more can be joined, so a chain of events
-    each close to the next becomes one event. Events that overlap or nest have
-    a gap at or below zero, so they merge whenever the threshold alone decides
-    it. With `maximum_duration` set, a merge that would exceed the ceiling does
-    not happen, and the result can still hold overlapping events.
+    each close to the next becomes one event. With the default
+    ``measure='gap'``, events that overlap or nest have a gap at or below
+    zero, so they merge whenever the threshold alone decides it. With
+    ``measure='peak'`` or `maximum_duration` set, they may not merge, and the
+    result can still hold overlapping events.
 
     Parameters
     ----------
@@ -1813,7 +1817,8 @@ def merge_close_events(
         Events separated by strictly less than this gap are merged. A gap equal
         to the threshold does not merge, within floating-point tolerance,
         unless `inclusive`. Default is 0.0, which merges only events that touch
-        or overlap.
+        or overlap (``measure='gap'``) or whose peaks coincide
+        (``measure='peak'``).
     maximum_duration : float, optional
         Ceiling on the merged span. A merge that would produce an event longer
         than this does not happen and both events are kept as they are.
@@ -1829,7 +1834,8 @@ def merge_close_events(
         is followed peak to peak: after a merge, the next event is measured
         from the peak of the last event merged in. A peak lies inside its
         event, so this merges no more than the gap would at the same
-        threshold.
+        threshold; overlapping events merge only when their peaks are within
+        the threshold, so the result can hold overlapping events.
 
     Returns
     -------

@@ -91,9 +91,9 @@ def theta_delta_ratio(
         Standard deviation in **seconds** of a Gaussian applied to each
         band's envelope before dividing, within each run of finite samples.
         Default 1.0; published smoothing runs from about 1 to 10 s. None for
-        no smoothing. Near a run's edge both envelopes are averaged over the
-        part of the kernel inside the run, which the ratio makes no
-        difference to.
+        no smoothing. Zero padding at a run's edges lowers both smoothed
+        envelopes near an edge by the same factor, the part of the kernel
+        that falls inside the run, which the ratio cancels.
     measure : {'amplitude', 'power'}, optional
         Divide the envelopes (default), or their squares, the ratio of band
         powers. The power ratio is the amplitude ratio squared, so a
