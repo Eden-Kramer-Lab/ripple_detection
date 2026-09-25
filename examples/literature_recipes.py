@@ -757,7 +757,7 @@ def carey_2019(rec):
     inside low-speed and low-theta intervals, >= 20 ms, >= 5 units."""
     kay = rd.Kay_ripple_detector(rec.time, rec.filtered((150.0, 250.0)), rec.speed, rec.fs)
     examples = kay.nlargest(5, "max_zscore")
-    score = rd.carey_spectral_ripple_score(rec.session.raw_lfp, rec.fs, examples)
+    score = rd.carey_spectral_ripple_score(rec.time, rec.session.raw_lfp, rec.fs, examples)
     return rd.Carey_candidate_detector(
         rec.time, None, rec.multiunit, rec.speed, rec.fs,
         ripple_score=score, threshold_method="mean", low_threshold=4.0, high_threshold=4.0,

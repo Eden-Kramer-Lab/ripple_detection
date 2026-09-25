@@ -5876,6 +5876,7 @@ class TestCareySpectralScore:
     FS = 2000
 
     def _lfp(self, seconds=6.0, ripples=(1.0, 2.0, 3.0), rng=0):
+        """Timestamps from 0, the LFP and the example ripples."""
         rng = np.random.default_rng(rng)
         n = round(seconds * self.FS)
         data = rng.normal(size=n)
@@ -5883,14 +5884,14 @@ class TestCareySpectralScore:
         for center in ripples:
             data[round(center * self.FS) - 40 : round(center * self.FS) + 40] += burst
         examples = np.array([(c - 0.02, c + 0.02) for c in ripples])
-        return data, examples
+        return np.arange(n) / self.FS, data, examples
 
     @pytest.mark.parametrize("weight_by", ["amplitude", "power"])
     def test_equals_the_original_line_by_line(self, weight_by):
         from ripple_detection import carey_spectral_ripple_score
 
-        data, examples = self._lfp()
-        score = carey_spectral_ripple_score(data, self.FS, examples, weight_by=weight_by)
+        time, data, examples = self._lfp()
+        score = carey_spectral_ripple_score(time, data, self.FS, examples, weight_by=weight_by)
         np.testing.assert_allclose(
             score,
             _am_swr_reference(data, self.FS, examples, weight_by),
@@ -5901,8 +5902,8 @@ class TestCareySpectralScore:
     def test_it_peaks_at_the_ripples(self):
         from ripple_detection import carey_spectral_ripple_score
 
-        data, examples = self._lfp()
-        score = carey_spectral_ripple_score(data, self.FS, examples)
+        time, data, examples = self._lfp()
+        score = carey_spectral_ripple_score(time, data, self.FS, examples)
         for center in (1.0, 2.0, 3.0):
             assert score[round(center * self.FS)] > 5 * np.median(score)
         assert np.nanmean(score) == pytest.approx(1.0)
@@ -5911,12 +5912,12 @@ class TestCareySpectralScore:
     def test_a_step_interpolates_close_to_every_sample(self):
         from ripple_detection import carey_spectral_ripple_score
 
-        data, examples = self._lfp()
-        every = carey_spectral_ripple_score(data, self.FS, examples)
-        stepped = carey_spectral_ripple_score(data, self.FS, examples, step=11)
+        time, data, examples = self._lfp()
+        every = carey_spectral_ripple_score(time, data, self.FS, examples)
+        stepped = carey_spectral_ripple_score(time, data, self.FS, examples, step=11)
         assert np.corrcoef(every, stepped)[0, 1] > 0.99
         # a step of 7 divides the run's 11760 intervals, so it ends on a computed sample
-        dividing = carey_spectral_ripple_score(data, self.FS, examples, step=7)
+        dividing = carey_spectral_ripple_score(time, data, self.FS, examples, step=7)
         assert np.corrcoef(every, dividing)[0, 1] > 0.99
         # sample 4002 (119 + 11 * 353, at a ripple) and the run's last scored
         # sample are computed, not interpolated, so they differ only by the two
@@ -5929,9 +5930,9 @@ class TestCareySpectralScore:
     def test_missing_samples_are_nan_and_zero_nearby(self):
         from ripple_detection import carey_spectral_ripple_score
 
-        data, examples = self._lfp()
+        time, data, examples = self._lfp()
         data[5000] = np.nan
-        score = carey_spectral_ripple_score(data, self.FS, examples)
+        score = carey_spectral_ripple_score(time, data, self.FS, examples)
         assert np.isnan(score[5000])
         assert (score[4900:5000] == 0).all()
         assert (score[5001:5100] == 0).all()
@@ -5939,26 +5940,60 @@ class TestCareySpectralScore:
     def test_a_run_too_short_for_a_window_scores_zero(self):
         from ripple_detection import carey_spectral_ripple_score
 
-        data, examples = self._lfp()
+        time, data, examples = self._lfp()
         data[[5000, 5050]] = np.nan  # a run of 49 samples, under one window's 120
-        score = carey_spectral_ripple_score(data, self.FS, examples)
+        score = carey_spectral_ripple_score(time, data, self.FS, examples)
         assert (score[5001:5050] == 0).all()
+
+    @pytest.mark.parametrize("origin", [60.0, 86_400.0, 1.7e9])
+    def test_examples_are_read_on_the_recordings_clock(self, origin):
+        """Examples from a recording that starts at `origin` pick the same
+        stretches as at 0; on a clock from 0, a 60 s origin put every example
+        past the end, and a 1 s one picked noise."""
+        from ripple_detection import carey_spectral_ripple_score
+
+        time, data, examples = self._lfp()
+        np.testing.assert_allclose(
+            carey_spectral_ripple_score(origin + time, data, self.FS, origin + examples),
+            carey_spectral_ripple_score(time, data, self.FS, examples),
+            rtol=1e-12,
+        )
+
+    def test_a_gap_in_time_ends_a_run(self):
+        """A 1 s jump after sample 11000 scores 0 within a window of it on
+        both sides, as a missing sample does."""
+        from ripple_detection import carey_spectral_ripple_score
+
+        time, data, examples = self._lfp()
+        joined = carey_spectral_ripple_score(time, data, self.FS, examples)
+        time[11000:] += 1.0
+        split = carey_spectral_ripple_score(time, data, self.FS, examples)
+        assert (joined[10900:11100] > 0).any()
+        assert (split[10900:11100] == 0).all()
+        assert not np.isnan(split).any()
+
+    def test_time_must_match_the_lfp(self):
+        from ripple_detection import carey_spectral_ripple_score
+
+        time, data, examples = self._lfp()
+        with pytest.raises(ValueError, match="they must match"):
+            carey_spectral_ripple_score(time[:-1], data, self.FS, examples)
 
     def test_an_example_without_a_full_stretch_is_left_out_with_a_warning(self):
         from ripple_detection import carey_spectral_ripple_score
 
-        data, examples = self._lfp()
+        time, data, examples = self._lfp()
         data[round(1.0 * self.FS)] = np.nan  # the first example's stretch, no one's noise
         with pytest.warns(UserWarning, match="1 of 3 example"):
-            score = carey_spectral_ripple_score(data, self.FS, examples)
+            score = carey_spectral_ripple_score(time, data, self.FS, examples)
         assert np.nanmax(score) > 5
 
     def test_no_usable_example_raises(self):
         from ripple_detection import carey_spectral_ripple_score
 
-        data, _ = self._lfp()
+        time, data, _ = self._lfp()
         with pytest.raises(ValueError, match="No example ripple can build the template"):
-            carey_spectral_ripple_score(data, self.FS, np.array([(5.5, 5.6)]))
+            carey_spectral_ripple_score(time, data, self.FS, np.array([(5.5, 5.6)]))
 
     @pytest.mark.parametrize(
         ("kwargs", "message"),
@@ -5973,29 +6008,29 @@ class TestCareySpectralScore:
     def test_invalid_arguments_raise(self, kwargs, message):
         from ripple_detection import carey_spectral_ripple_score
 
-        data, examples = self._lfp()
+        time, data, examples = self._lfp()
         with pytest.raises(ValueError, match=message):
-            carey_spectral_ripple_score(data, self.FS, examples, **kwargs)
+            carey_spectral_ripple_score(time, data, self.FS, examples, **kwargs)
 
     def test_bad_shapes_raise(self):
         from ripple_detection import carey_spectral_ripple_score
 
-        data, examples = self._lfp()
+        time, data, examples = self._lfp()
         with pytest.raises(ValueError, match="one channel"):
-            carey_spectral_ripple_score(np.column_stack([data, data]), self.FS, examples)
+            carey_spectral_ripple_score(time, np.column_stack([data, data]), self.FS, examples)
         np.testing.assert_allclose(
-            carey_spectral_ripple_score(data[:, None], self.FS, examples),
-            carey_spectral_ripple_score(data, self.FS, examples),
+            carey_spectral_ripple_score(time, data[:, None], self.FS, examples),
+            carey_spectral_ripple_score(time, data, self.FS, examples),
         )
 
     def test_a_template_that_matches_nothing_raises(self):
         """A pure 10 Hz signal has no power above the 100 Hz cutoff."""
         from ripple_detection import carey_spectral_ripple_score
 
-        t = np.arange(12000) / self.FS
-        data = np.sin(2 * np.pi * 10 * t)
+        time = np.arange(12000) / self.FS
+        data = np.sin(2 * np.pi * 10 * time)
         with pytest.raises(ValueError, match="zero everywhere"):
-            carey_spectral_ripple_score(data, self.FS, np.array([(1.0, 1.04)]))
+            carey_spectral_ripple_score(time, data, self.FS, np.array([(1.0, 1.04)]))
 
 
 class TestCareyPublishedConfiguration:

@@ -45,6 +45,7 @@ from ripple_detection.detectors._validation import (
     _validate_detector_inputs,
     _validate_duration_limits,
     _validate_multiunit,
+    _validate_time_units,
 )
 
 
@@ -203,6 +204,7 @@ def _smooth_spectrum(spectrum: FloatArray) -> FloatArray:
 
 @explain_call_errors
 def carey_spectral_ripple_score(
+    time: ArrayLike,
     lfp: ArrayLike,
     sampling_frequency: float,
     ripple_times: ArrayLike | pd.DataFrame,
@@ -231,16 +233,20 @@ def carey_spectral_ripple_score(
 
     Parameters
     ----------
+    time : array_like, shape (n_time,)
+        Sample timestamps in seconds, increasing. A step larger than 1.5
+        times the median step is a gap, which ends a run of samples as a
+        missing sample does.
     lfp : array_like, shape (n_time,) or (n_time, 1)
         Raw LFP from one pyramidal-layer channel. NaN marks a missing sample.
     sampling_frequency : float
         Sampling rate in Hz; the original ran at 2000.
     ripple_times : array_like, shape (n_ripples, 2), or pd.DataFrame
-        Example ripples, ``[start_time, end_time]`` in samples' time, for the
-        template: the paper's were picked by hand for each session. Detected
-        ripples, such as a strict detector's largest, can stand in. Examples
-        whose stretch, or whose noise stretch, is not all finite samples are
-        left out with a warning.
+        Example ripples, ``[start_time, end_time]`` on the clock of `time`,
+        for the template: the paper's were picked by hand for each session.
+        Detected ripples, such as a strict detector's largest, can stand in.
+        Examples whose stretch, or whose noise stretch, is not all finite
+        samples within one run are left out with a warning.
     window : float, optional
         Length of each stretch in seconds. Default 0.06, the original's.
     high_pass_cutoff : float, optional
@@ -262,14 +268,15 @@ def carey_spectral_ripple_score(
     -------
     score : ndarray, shape (n_time,)
         Non-negative, mean 1 over the finite samples; NaN at missing samples,
-        and 0 within one window's length of missing data or the recording
-        edge, where the original is 0 too. With ``step=1`` it equals the
+        and 0 within one window's length of missing data, a gap in time or
+        the recording edge, where the original is 0 too. With ``step=1`` it equals the
         original's score to rounding.
 
     Raises
     ------
     ValueError
-        If the LFP is not one channel, a parameter is out of range, the
+        If the LFP is not one channel, `time` does not match it or fails
+        the detectors' checks on timestamps, a parameter is out of range, the
         window is no longer than one period of ``high_pass_cutoff``, or no
         example ripple can be used.
 
@@ -289,7 +296,7 @@ def carey_spectral_ripple_score(
     >>> ripples = [3.0, 6.0, 9.0, 12.0, 15.0]
     >>> session = simulate_session(time, ripples, n_channels=1, rng=0)
     >>> examples = np.array([(t - 0.02, t + 0.02) for t in ripples[:3]])
-    >>> score = carey_spectral_ripple_score(session.lfps[:, 0], 2000, examples)
+    >>> score = carey_spectral_ripple_score(time, session.lfps[:, 0], 2000, examples)
     >>> bool(score[round(12.0 * 2000)] > 4 * np.nanmedian(score))
     True
 
@@ -316,15 +323,20 @@ def carey_spectral_ripple_score(
     if data.ndim != 1:
         msg = f"lfp must be one channel, shape (n_time,); got shape {data.shape}."
         raise ValueError(msg)
-    spectrum = _WindowedSpectrum(sampling_frequency, window, high_pass_cutoff, weight_by)
     n_time = data.size
-    time = np.arange(n_time) / sampling_frequency
+    time = np.asarray(time, dtype=float)
+    if time.shape != (n_time,):
+        msg = f"time has shape {time.shape} and lfp {n_time} samples; they must match."
+        raise ValueError(msg)
+    _validate_time_units(time, sampling_frequency)
+    spectrum = _WindowedSpectrum(sampling_frequency, window, high_pass_cutoff, weight_by)
 
     # an example's stretch must lie in finite samples; the score is computed,
     # as amSWR computes it, from one window's length after the start of each
-    # run of finite samples to one window's length before its end
+    # run of finite samples to one window's length before its end, a run
+    # ending also at a gap in time
     finite = np.isfinite(data)
-    runs = _boolean_run_bounds(finite)
+    runs = _contiguous_valid_blocks(finite, time)
     fits = np.zeros(n_time, dtype=bool)
     scored = np.zeros(n_time, dtype=bool)
     for start, stop in runs:

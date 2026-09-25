@@ -486,7 +486,7 @@ rounding) and `threshold_method="mean"` that scaling:
 from ripple_detection import Carey_candidate_detector, carey_spectral_ripple_score
 
 # example_ripples: (n, 2) start and end times; the paper picked them by hand
-score = carey_spectral_ripple_score(raw_lfp, sampling_frequency, example_ripples)
+score = carey_spectral_ripple_score(time, raw_lfp, sampling_frequency, example_ripples)
 events = Carey_candidate_detector(
     time, None, multiunit, speed, sampling_frequency,
     ripple_score=score, threshold_method="mean", low_threshold=4.0, high_threshold=4.0,
