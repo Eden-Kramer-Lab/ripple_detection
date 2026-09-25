@@ -246,7 +246,7 @@ The linked note contains the source evidence and qualifications for each paper.
 | [Widloski 2025](papers/01_Widloski_2025.md) | `widloski_2025`, `widloski_2025_bursts` |
 | [Yang 2024](papers/02_Yang_2024.md) | `yang_2024` |
 | [Huelin Gorriz 2023](papers/03_HuelinGorriz_2023.md) | `huelin_gorriz_2023` |
-| [Harvey 2023](papers/04_Harvey_2023.md) | `harvey_2023_code`, `harvey_2023_text` |
+| [Harvey 2023](papers/04_Harvey_2023.md) | `harvey_2023_code`, `harvey_2023_text`, `harvey_2023_no_radiatum` |
 | [Liu 2023](papers/05_Liu_2023.md) | `liu_2023` |
 | [Tirole 2022](papers/06_Tirole_2022.md) | `tirole_2022` |
 | [Bush 2022](papers/07_Bush_2022.md) | `bush_2022`, `bush_2022_ripples` |

@@ -196,3 +196,12 @@ def test_kaefer_fft_label_detects_demonstration_ripples(results):
     result = results.loc[results.row == 18].iloc[0]
     assert result.n_events > 0
     assert result.recall > 0
+
+
+def test_the_implementation_guide_lists_every_method(recipes):
+    import re
+
+    guide = Path(__file__).resolve().parents[1] / "docs" / "literature" / "implementation.md"
+    table = guide.read_text().split("## Per-paper entry points")[1]
+    listed = set(re.findall(r"`([a-z0-9_]+)`", table))
+    assert listed == set(recipes.list_methods().name)
