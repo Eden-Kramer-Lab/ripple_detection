@@ -28,13 +28,15 @@ from scipy.ndimage import median_filter, uniform_filter1d
 from scipy.signal import fftconvolve, filtfilt, find_peaks, firwin
 
 import ripple_detection as rd
-from ripple_detection.core import BoolArray, FloatArray, IntArray, _matlab_smooth
+from ripple_detection.core import BoolArray, FloatArray, IntArray, MergeMeasure, _matlab_smooth
 from ripple_detection.detectors._blocks import _drop_short_blocks, _valid_blocks
 from ripple_detection.detectors._long import (
     _difference_of_gaussians_band,
     _firfilt,
     _gaussian_lowpass_fir,
 )
+from ripple_detection.detectors._silence import WindowEndRule
+from ripple_detection.detectors._state import RatioMeasure
 
 
 @dataclass
@@ -469,7 +471,7 @@ class Recording:
         trace: FloatArray,
         *,
         inclusive: bool = False,
-        measure: str = "gap",
+        measure: MergeMeasure = "gap",
     ) -> FloatArray:
         """Merge events only within the same valid detection block.
 
@@ -589,7 +591,7 @@ class Recording:
         theta: tuple[float, float] = (6.0, 12.0),
         delta: tuple[float, float] = (1.0, 4.0),
         smoothing_sigma: float = 1.0,
-        measure: str = "amplitude",
+        measure: RatioMeasure = "amplitude",
     ) -> FloatArray:
         """Compute a theta/delta ratio from the raw LFP.
 
@@ -651,7 +653,7 @@ class Recording:
         theta: tuple[float, float] = (6.0, 12.0),
         delta: tuple[float, float] = (1.0, 4.0),
         smoothing_sigma: float = 1.0,
-        measure: str = "amplitude",
+        measure: RatioMeasure = "amplitude",
     ) -> FloatArray:
         """Return curated sleep intervals or an explicit simulation proxy.
 
@@ -2250,7 +2252,7 @@ def bhattarai_2020(
     rec: Recording,
     *,
     power_measure: str = "squared_signal",
-    window_end_rule: str = "last_spike",
+    window_end_rule: WindowEndRule = "last_spike",
 ) -> FloatArray:
     """Post-silence population candidates coinciding with a Bhattarai SWR.
 
