@@ -5,10 +5,12 @@ import pandas as pd
 from numpy.typing import ArrayLike
 
 from ripple_detection.core import (
+    _NO_TIME_SAMPLES,
     FloatArray,
     IntArray,
     _event_bounds,
     _gap_tolerance,
+    _samples_within,
     sample_count_within,
 )
 from ripple_detection.detectors._validation import _check_whole_number, _validate_multiunit
@@ -89,12 +91,7 @@ def count_spikes_in_events(
         msg = f"multiunit has {len(spikes)} samples and time {len(time)}; they must match."
         raise ValueError(msg)
     events = _event_bounds(event_times)
-    first = np.searchsorted(time, events[:, 0], side="left")
-    last = np.searchsorted(time, events[:, 1], side="right")
-    if np.any(last == first):
-        start_time, end_time = events[np.flatnonzero(last == first)[0]]
-        msg = f"No sample of time falls within event [{start_time}, {end_time}]."
-        raise ValueError(msg)
+    first, last = _samples_within(events, time, _NO_TIME_SAMPLES)
     counts = np.zeros((len(events), spikes.shape[1]), dtype=int)
     for event, (a, b) in enumerate(zip(first, last, strict=True)):
         counts[event] = np.nansum(spikes[a:b], axis=0).astype(int)

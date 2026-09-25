@@ -739,9 +739,19 @@ SPEED_RULES = ("endpoints", "all", "mean", "median")
 """The ways :func:`exclude_movement` can test an event's speed."""
 
 
-def _samples_within(events: FloatArray, time: ArrayLike) -> tuple[IntArray, IntArray]:
+_NO_SPEED_SAMPLES = (
+    "No speed samples fall within event [{start}, {end}]; "
+    "speed and time do not cover the candidate event."
+)
+_NO_TIME_SAMPLES = "No sample of time falls within event [{start}, {end}]."
+
+
+def _samples_within(
+    events: FloatArray, time: ArrayLike, message: str = _NO_SPEED_SAMPLES
+) -> tuple[IntArray, IntArray]:
     """Half-open sample ranges ``[first, last)`` of the samples with
-    ``start_time <= time <= end_time``, found by bisection.
+    ``start_time <= time <= end_time``, found by bisection. ``message`` is
+    the error for an empty event, formatted with its ``start`` and ``end``.
 
     Raises
     ------
@@ -754,11 +764,7 @@ def _samples_within(events: FloatArray, time: ArrayLike) -> tuple[IntArray, IntA
     last = np.searchsorted(time, events[:, 1], side="right")
     if np.any(last == first):
         start_time, end_time = events[np.flatnonzero(last == first)[0]]
-        msg = (
-            f"No speed samples fall within event [{start_time}, {end_time}]; "
-            "speed and time do not cover the candidate event."
-        )
-        raise ValueError(msg)
+        raise ValueError(message.format(start=start_time, end=end_time))
     return first, last
 
 
@@ -2156,12 +2162,7 @@ def require_trace_peak(
         msg = f"threshold must be finite, got {threshold}."
         raise ValueError(msg)
     events = _event_bounds(event_times)
-    first = np.searchsorted(time, events[:, 0], side="left")
-    last = np.searchsorted(time, events[:, 1], side="right")
-    if np.any(last == first):
-        start_time, end_time = events[np.flatnonzero(last == first)[0]]
-        msg = f"No sample of time falls within event [{start_time}, {end_time}]."
-        raise ValueError(msg)
+    first, last = _samples_within(events, time, _NO_TIME_SAMPLES)
     keep = np.zeros(len(events), dtype=bool)
     for event, (a, b) in enumerate(zip(first, last, strict=True)):
         inside = values[a:b]
@@ -2246,12 +2247,7 @@ def trim_events_to_trace(
     _check_choice("sides", sides, TRIM_SIDES)
     _check_non_negative(minimum_duration=minimum_duration)
     events = _event_bounds(event_times)
-    first = np.searchsorted(time, events[:, 0], side="left")
-    last = np.searchsorted(time, events[:, 1], side="right")
-    if np.any(last == first):
-        start_time, end_time = events[np.flatnonzero(last == first)[0]]
-        msg = f"No sample of time falls within event [{start_time}, {end_time}]."
-        raise ValueError(msg)
+    first, last = _samples_within(events, time, _NO_TIME_SAMPLES)
     trimmed = []
     for (start_time, end_time), a, b in zip(events, first, last, strict=True):
         with np.errstate(invalid="ignore"):
