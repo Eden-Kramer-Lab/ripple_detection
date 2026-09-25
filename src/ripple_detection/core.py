@@ -1384,7 +1384,7 @@ _GAP_TOLERANCE = 1e-9
 
 
 def _is_gap_below(
-    gap: FloatArray | float, close_event_threshold: float
+    gap: FloatArray | float, close_event_threshold: float, scale: float
 ) -> BoolArray | np.bool_:
     """Whether an inter-event gap is shorter than the threshold.
 
@@ -1392,9 +1392,14 @@ def _is_gap_below(
     :func:`merge_close_events` share: a gap equal to the threshold is treated
     as equal rather than as shorter, which binary floating point would
     otherwise decide for it, since 0.15 - 0.1 is 4.999...e-2, just under 0.05.
-    The tolerance is relative only, with no absolute term, so the rule stays
-    monotonic in the threshold: a default ``atol`` would make a threshold near
-    zero merge less than a threshold of zero.
+
+    The rounding in a gap comes from the event bounds, not from the gap: each
+    bound is stored to within half a unit in the last place (ulp) of its
+    magnitude, so 86400.015 - 86400.01 is about 5e-12 from 0.005. The
+    tolerance is therefore a few ulps of `scale`, or the relative
+    ``_GAP_TOLERANCE`` of the threshold if that is larger, and at most the
+    threshold itself, so a threshold of zero still means strictly negative
+    and the rule stays monotonic in the threshold.
 
     Parameters
     ----------
@@ -1402,15 +1407,19 @@ def _is_gap_below(
         Time from one event's end to the next event's start.
     close_event_threshold : float
         Separation below which events count as close.
+    scale : float
+        Largest magnitude among the event bounds the gaps were measured from.
 
     Returns
     -------
     is_below : ndarray of bool, shape (n_gaps,), or bool
 
     """
-    return (gap < close_event_threshold) & ~np.isclose(
-        gap, close_event_threshold, rtol=_GAP_TOLERANCE, atol=0.0
+    tolerance = min(
+        max(_GAP_TOLERANCE * close_event_threshold, 4 * float(np.spacing(scale))),
+        close_event_threshold,
     )
+    return np.less(gap, close_event_threshold - tolerance)
 
 
 def _check_non_negative(**values: float) -> None:
@@ -1433,8 +1442,10 @@ def _is_clear_of_close_events(events: FloatArray, close_event_threshold: float) 
     if len(events):
         keep[0] = True
         last_retained_end = events[0, 1]
+        scale = float(np.abs(events).max())
         for event in range(1, len(events)):
-            if not _is_gap_below(events[event, 0] - last_retained_end, close_event_threshold):
+            gap = events[event, 0] - last_retained_end
+            if not _is_gap_below(gap, close_event_threshold, scale):
                 keep[event] = True
                 last_retained_end = events[event, 1]
     return keep
@@ -1551,13 +1562,17 @@ def merge_close_events(
         )
         raise ValueError(msg)
 
+    # merging reuses the input bounds, so their largest magnitude holds throughout
+    scale = float(np.abs(events).max())
     while len(events) > 1:
         gap = events[1:, 0] - events[:-1, 1]
+        # events that touch merge at every threshold, which _is_gap_below
+        # alone would not decide for a threshold within its tolerance of zero
+        to_merge = gap <= 0
         if close_event_threshold > 0:
-            to_merge = np.asarray(_is_gap_below(gap, close_event_threshold), dtype=bool)
-        else:
-            # events that touch merge, which _is_gap_below would exclude
-            to_merge = gap <= 0
+            to_merge |= np.asarray(
+                _is_gap_below(gap, close_event_threshold, scale), dtype=bool
+            )
         if maximum_duration is not None:
             merged_span = np.maximum(events[1:, 1], events[:-1, 1]) - events[:-1, 0]
             to_merge &= (merged_span <= maximum_duration) | np.isclose(

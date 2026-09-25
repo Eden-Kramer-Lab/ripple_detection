@@ -1711,6 +1711,27 @@ class TestCloseEventBoundaryAgreement:
         assert counts == sorted(counts, reverse=True)
         assert counts[0] == 1  # touching events merge at every threshold
 
+    @pytest.mark.parametrize("origin", [86_400.0, 1e6, 1.7e9])  # a day; 11 days; a Unix time
+    def test_the_boundary_does_not_depend_on_the_time_origin(self, origin):
+        """The rounding comes from the timestamps, which are large, not from
+        the gap, which is small: a relative tolerance on the gap merged events
+        exactly 5 ms apart 11 days into a recording."""
+        equal = origin + np.array([(0.0, 0.01), (0.015, 0.02), (0.05, 0.06), (0.065, 0.07)])
+        short = origin + np.array([(0.0, 0.01), (0.014, 0.02)])  # a millisecond closer
+
+        assert len(merge_close_events(equal, 0.005)) == 4
+        assert len(exclude_close_events(equal, 0.005)) == 4
+        assert len(merge_close_events(short, 0.005)) == 1
+        assert len(exclude_close_events(short, 0.005)) == 1
+
+    def test_touching_events_merge_at_a_threshold_within_the_tolerance(self):
+        """A day in, the tolerance (a few ulps of 86400, about 6e-11 s) exceeds
+        a 1e-12 s threshold; touching events must still merge, as they do at a
+        threshold of zero."""
+        events = 86_400.0 + np.array([(0.0, 0.1), (0.1, 0.2)])
+
+        assert len(merge_close_events(events, 1e-12)) == 1
+
 
 class TestHelperBoundaries:
     """The comparisons at the edge of each new rule."""
