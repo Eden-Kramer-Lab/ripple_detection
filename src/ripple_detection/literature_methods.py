@@ -38,7 +38,34 @@ from ripple_detection.detectors._long import (
 
 @dataclass
 class RecordedSignals:
-    """Real recording arrays; no simulated ground truth is required."""
+    """Measured recording arrays on one time grid; no simulated ground truth.
+
+    Build it with ``Recording.from_arrays``, which validates and copies the
+    inputs; constructing it directly checks only that the arrays share the grid.
+
+    Attributes
+    ----------
+    time : ndarray, shape (n_time,)
+        Timestamps in seconds.
+    sampling_frequency : float
+        Nominal sampling rate in Hz.
+    lfps : ndarray, shape (n_time, n_channels)
+        Selected raw LFP channels; no columns when none were supplied.
+    raw_lfp : ndarray, shape (n_time,)
+        A copy of the first selected channel for single-channel rules; NaN when
+        no channel was supplied.
+    sharp_wave_lfp : ndarray, shape (n_time,)
+        Stratum radiatum LFP; NaN when not supplied.
+    multiunit : ndarray, shape (n_time, n_units)
+        Spike counts of each unit on the grid.
+    speed : ndarray, shape (n_time,), or None
+        Speed in cm/s, NaN where unknown; None when not supplied.
+
+    Raises
+    ------
+    ValueError
+        An array does not have one row per timestamp.
+    """
 
     time: FloatArray
     sampling_frequency: float
@@ -47,6 +74,22 @@ class RecordedSignals:
     sharp_wave_lfp: FloatArray
     multiunit: FloatArray
     speed: FloatArray | None
+
+    def __post_init__(self) -> None:
+        n_time = len(self.time)
+        for name, values, ndim in [
+            ("lfps", self.lfps, 2),
+            ("raw_lfp", self.raw_lfp, 1),
+            ("sharp_wave_lfp", self.sharp_wave_lfp, 1),
+            ("multiunit", self.multiunit, 2),
+            ("speed", self.speed, 1),
+        ]:
+            if values is not None and (values.ndim != ndim or values.shape[0] != n_time):
+                msg = (
+                    f"{name} must have one row per timestamp ({n_time}) and {ndim} "
+                    f"dimension(s); got shape {values.shape}."
+                )
+                raise ValueError(msg)
 
 
 _NO_SPEED = (
@@ -90,6 +133,20 @@ class Recording:
     example_ripples: FloatArray | None = None
     external_ripples: FloatArray | None = None
 
+    def __post_init__(self) -> None:
+        n_time, n_units = len(self.time), self.multiunit.shape[1]
+        self.place_cells = _cell_mask(self.place_cells, n_units)
+        self.pyramidal = _cell_mask(self.pyramidal, n_units)
+        self.templates = tuple(_cell_mask(template, n_units) for template in self.templates)
+        self.sleep_intervals = _interval_array(self.sleep_intervals)
+        self.baseline_intervals = _interval_array(self.baseline_intervals)
+        self.behavior_intervals = _interval_array(self.behavior_intervals)
+        self.example_ripples = _interval_array(self.example_ripples)
+        self.external_ripples = _external_ripple_array(self.external_ripples)
+        if self.reference_lfp is not None and np.shape(self.reference_lfp) != (n_time,):
+            msg = f"reference_lfp must have one value per timestamp ({n_time})."
+            raise ValueError(msg)
+
     @classmethod
     def from_arrays(
         cls,
@@ -128,7 +185,8 @@ class Recording:
             NaN speed is unknown speed. Without speed, a method whose result
             depends on speed raises; the others run.
         place_cells, pyramidal : array_like, optional
-            Boolean masks or integer column indices into multiunit.
+            Boolean masks, or distinct integer column indices into multiunit;
+            a 0/1 integer array is read as indices and so rejects repeats.
         sleep_intervals, baseline_intervals, artifact_intervals : array_like, optional
             Sorted, disjoint inclusive [start, end] intervals in seconds.
             Artifacts mark all signal arrays missing. Baselines are consumed
@@ -215,29 +273,23 @@ class Recording:
             ):
                 msg = "Cell indices must be integers identifying existing units."
                 raise ValueError(msg)
+            if len(np.unique(indices)) != len(indices):
+                msg = (
+                    "Cell indices repeat a unit. Integers are read as unit indices; "
+                    "pass a boolean mask (dtype=bool) to select units by position."
+                )
+                raise ValueError(msg)
             mask[indices.astype(int)] = True
             return mask
 
         external = (
             None if external_ripples is None else np.asarray(external_ripples, float).copy()
         )
-        if external is not None:
-            if external.ndim != 2 or external.shape[1] not in (2, 3):
-                msg = "external_ripples needs start/end and optional peak columns."
-                raise ValueError(msg)
-            _interval_array(external[:, :2])
-            if external.shape[1] == 3 and (
-                not np.isfinite(external).all()
-                or np.any(external[:, 2] < external[:, 0])
-                or np.any(external[:, 2] > external[:, 1])
-            ):
-                msg = "External ripple peaks must lie inside their intervals."
-                raise ValueError(msg)
         session = RecordedSignals(
             timestamps,
             sampling_frequency,
             lfp_array,
-            lfp_array[:, 0] if lfp_array.shape[1] else np.full(n, np.nan),
+            lfp_array[:, 0].copy() if lfp_array.shape[1] else np.full(n, np.nan),
             sharp,
             spikes,
             None if speed is None else signal(speed),
@@ -254,6 +306,19 @@ class Recording:
             _interval_array(example_ripples),
             external,
         )
+
+    @property
+    def allows_simulation_proxies(self) -> bool:
+        """Whether simulation-only fallbacks may stand in for missing inputs.
+
+        Returns
+        -------
+        allowed : bool
+            True only for a ``SimulatedSession``. A measured recording must
+            supply curated states, templates, example ripples and unreported
+            settings itself.
+        """
+        return isinstance(self.session, rd.SimulatedSession)
 
     @property
     def time(self) -> FloatArray:
@@ -612,7 +677,7 @@ class Recording:
         """
         if self.sleep_intervals is not None:
             return self.sleep_intervals
-        if not isinstance(self.session, rd.SimulatedSession):
+        if not self.allows_simulation_proxies:
             msg = "Supply sleep_intervals for a method requiring sleep/state scoring."
             raise ValueError(msg)
         still = rd.state_intervals(
@@ -744,6 +809,37 @@ def zugaro_ripple_peaks(rec: Recording, band: tuple[float, float]) -> pd.DataFra
     )  # fmt: skip
 
 
+def _cell_mask(mask: ArrayLike, n_units: int) -> BoolArray:
+    """A boolean selection with one entry per unit, as Recording holds them."""
+    selection = np.asarray(mask)
+    if selection.dtype != bool or selection.shape != (n_units,):
+        msg = (
+            f"Cell masks must be boolean arrays with one entry per unit ({n_units}); "
+            "Recording.from_arrays also accepts unit indices."
+        )
+        raise ValueError(msg)
+    return selection
+
+
+def _external_ripple_array(value: ArrayLike | None) -> FloatArray | None:
+    """Validated start/end(/peak) rows of an external ripple inventory."""
+    if value is None:
+        return None
+    external = np.asarray(value, dtype=float).copy()
+    if external.ndim != 2 or external.shape[1] not in (2, 3):
+        msg = "external_ripples needs start/end and optional peak columns."
+        raise ValueError(msg)
+    _interval_array(external[:, :2])
+    if external.shape[1] == 3 and (
+        not np.isfinite(external).all()
+        or np.any(external[:, 2] < external[:, 0])
+        or np.any(external[:, 2] > external[:, 1])
+    ):
+        msg = "External ripple peaks must lie inside their intervals."
+        raise ValueError(msg)
+    return external
+
+
 def _interval_array(value: ArrayLike | None) -> FloatArray | None:
     if value is None:
         return None
@@ -764,7 +860,7 @@ def _interval_array(value: ArrayLike | None) -> FloatArray | None:
 
 def _require_behavior_intervals(rec: Recording, what: str) -> None:
     """Measured data must say which epochs are eligible; only simulation may not."""
-    if rec.behavior_intervals is None and not isinstance(rec.session, rd.SimulatedSession):
+    if rec.behavior_intervals is None and not rec.allows_simulation_proxies:
         msg = f"Supply behavior_intervals for the eligible {what}."
         raise ValueError(msg)
 
@@ -1240,7 +1336,7 @@ def _population_with_ripple_peak(rec: Recording, sleep: FloatArray) -> FloatArra
         events, rec.multiunit, rec.time, minimum_active_units=5, units=rec.pyramidal
     )
     if rec.external_ripples is None:
-        if not isinstance(rec.session, rd.SimulatedSession):
+        if not rec.allows_simulation_proxies:
             msg = "Supply external_ripples; the historical LFP detector is unspecified."
             raise ValueError(msg)
         peaks = zugaro_ripple_peaks(rec, (130.0, 200.0)).peak_time
@@ -1253,7 +1349,7 @@ def _population_with_ripple_peak(rec: Recording, sleep: FloatArray) -> FloatArra
     events = rd.require_times_inside(events, peaks)
     if rec.behavior_intervals is not None:
         eligible = rec.behavior_intervals
-    elif not isinstance(rec.session, rd.SimulatedSession):
+    elif not rec.allows_simulation_proxies:
         msg = "Supply eligible quiet-waking/NREM behavior_intervals separately from the NREM baseline."
         raise ValueError(msg)
     else:
@@ -1446,7 +1542,7 @@ def harvey_2023_text(
     if sharp_wave_polarity not in (-1.0, 1.0):
         msg = "sharp_wave_polarity must be -1 or 1."
         raise ValueError(msg)
-    baseline = _baseline(rec, required=not isinstance(rec.session, rd.SimulatedSession))
+    baseline = _baseline(rec, required=not rec.allows_simulation_proxies)
     band = rec.transform(
         rec.session.raw_lfp, lambda x: _difference_of_gaussians_band(x, (80.0, 250.0), rec.fs)
     )
@@ -2008,7 +2104,7 @@ def stella_2019(
     SD (rounded up to whole samples) and unit L1 normalization.
     """
     if frequencies is None or cycles is None:
-        if not isinstance(rec.session, rd.SimulatedSession):
+        if not rec.allows_simulation_proxies:
             msg = "Supply unreported wavelet frequencies and cycles explicitly."
             raise ValueError(msg)
         frequencies, cycles = np.linspace(150, 250, 6), 7.0
@@ -2024,7 +2120,7 @@ def stella_2019(
     ):
         msg = "Wavelet frequencies must be between zero and Nyquist; cycles must be positive."
         raise ValueError(msg)
-    if rec.sleep_intervals is not None or not isinstance(rec.session, rd.SimulatedSession):
+    if rec.sleep_intervals is not None or not rec.allows_simulation_proxies:
         allowed = rec.intervals_to_mask(rec.sleep(4.0, 1.0))
     else:
         allowed = rec.ratio(measure="power") <= 2.0
@@ -2114,7 +2210,7 @@ def farooq_2019_science(rec: Recording) -> pd.DataFrame | FloatArray:
     SWS: speed < 2 cm/s and theta/delta (4-10 / 1-3 Hz, 10 s Gaussian) below
     its mean; >= 5 place-responsive cells. Measured recordings require curated
     sleep intervals. Awake frames are available in farooq_2019_science_awake."""
-    if rec.sleep_intervals is not None or not isinstance(rec.session, rd.SimulatedSession):
+    if rec.sleep_intervals is not None or not rec.allows_simulation_proxies:
         return _farooq(rec, rec.sleep(2.0, 1.0), rec.place_cells)
     ratio = rec.ratio((4.0, 10.0), (1.0, 3.0), smoothing_sigma=10.0)
     still = rd.state_intervals(rec.speed, rec.time, 2.0)
@@ -2199,7 +2295,7 @@ def carey_2019(rec: Recording) -> pd.DataFrame:
     """
     examples: pd.DataFrame | FloatArray
     if rec.example_ripples is None:
-        if not isinstance(rec.session, rd.SimulatedSession):
+        if not rec.allows_simulation_proxies:
             msg = "Supply example_ripples for Carey's spectral template."
             raise ValueError(msg)
         kay = rd.Kay_ripple_detector(rec.time, rec.filtered((150.0, 250.0)), rec.speed, rec.fs)
@@ -2287,7 +2383,7 @@ def _drieu_events(rec: Recording) -> pd.DataFrame | FloatArray:
     theta/delta power ratio (6-10 / 1-4 Hz; Hilbert power for the paper's
     spectrogram, clustered over the whole session rather than sleep sessions),
     epochs longer than 2 s (scaled from 120 s) with gaps < 1 s bridged."""
-    if rec.sleep_intervals is not None or not isinstance(rec.session, rd.SimulatedSession):
+    if rec.sleep_intervals is not None or not rec.allows_simulation_proxies:
         sleep = rec.sleep(2.0, 1.0)
         return _detect_population_in(
             rec,
@@ -2595,7 +2691,7 @@ def wikenheiser_2013(
         msg = "branch must be 'rest' or 'run_lia'."
         raise ValueError(msg)
     if window_anchor is None:
-        if not isinstance(rec.session, rd.SimulatedSession):
+        if not rec.allows_simulation_proxies:
             msg = "Supply the unreported window_anchor explicitly."
             raise ValueError(msg)
         window_anchor = "samples"
@@ -2624,7 +2720,7 @@ def wikenheiser_2013(
         events, rec.multiunit, rec.time, minimum_active_units=3, minimum_spikes=5
     )
     if branch == "rest":
-        if rec.sleep_intervals is not None or not isinstance(rec.session, rd.SimulatedSession):
+        if rec.sleep_intervals is not None or not rec.allows_simulation_proxies:
             return within_intervals(events, rec.sleep(2.0, 0.0))
         ratio = _zscore(rec.ratio((6.0, 10.0), (2.0, 4.0), measure="power"))
         still = rd.state_intervals(rec.speed, rec.time, 2.0, minimum_duration=2.0)
@@ -2832,7 +2928,7 @@ def nadasdy_1999(
     explicitly uses 4 ms RMS and mean bounds; these are not source values.
     """
     if rms_window is None or bound_threshold is None:
-        if not isinstance(rec.session, rd.SimulatedSession):
+        if not rec.allows_simulation_proxies:
             msg = "Supply unreported rms_window and bound_threshold explicitly."
             raise ValueError(msg)
         rms_window, bound_threshold = 0.004, 0.0
@@ -2855,7 +2951,7 @@ def kudrimoti_1999(rec: Recording, *, threshold_sd: float | None = None) -> pd.D
     the simulation uses a 3 SD assumption. Supplied sleep defines the baseline.
     """
     if threshold_sd is None:
-        if not isinstance(rec.session, rd.SimulatedSession):
+        if not rec.allows_simulation_proxies:
             msg = "Supply the unreported threshold_sd explicitly."
             raise ValueError(msg)
         threshold_sd = 3.0

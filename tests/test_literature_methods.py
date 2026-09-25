@@ -1543,3 +1543,87 @@ def test_wikenheiser_joins_overlapping_anchor_windows(measured, monkeypatch):
     events = lm.wikenheiser_2013(measured, window_anchor="peaks")
     # "Overlapping events were concatenated": 3.0 and 3.1 s share one window.
     np.testing.assert_allclose(lm.bounds(events), [[2.925, 3.175], [5.925, 6.075]], atol=1e-9)
+
+
+def _signals(n_time=100, n_units=3):
+    time = np.arange(n_time) / 1000
+    return lm.RecordedSignals(
+        time,
+        1000.0,
+        np.zeros((n_time, 1)),
+        np.zeros(n_time),
+        np.zeros(n_time),
+        np.zeros((n_time, n_units)),
+        np.zeros(n_time),
+    )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"place_cells": np.zeros(3)}, "Cell masks"),
+        ({"pyramidal": np.ones(2, dtype=bool)}, "Cell masks"),
+        ({"templates": (np.ones(4, dtype=bool),)}, "Cell masks"),
+        ({"sleep_intervals": np.array([[0.05, 0.01]])}, "Intervals"),
+        ({"baseline_intervals": np.array([0.0, 0.01])}, "Intervals"),
+        ({"behavior_intervals": np.array([[0.0, np.nan]])}, "Intervals"),
+        ({"example_ripples": np.array([[0.02, 0.03], [0.025, 0.04]])}, "Intervals"),
+        ({"external_ripples": np.array([[0.01, 0.02, 0.05]])}, "peaks"),
+        ({"reference_lfp": np.zeros(5)}, "reference_lfp"),
+    ],
+)
+def test_recording_constructor_validates_like_from_arrays(overrides, message):
+    options = {"place_cells": np.zeros(3, dtype=bool), "pyramidal": np.zeros(3, dtype=bool)}
+    options.update(overrides)
+    with pytest.raises(ValueError, match=message):
+        lm.Recording(_signals(), **options)
+
+
+def test_recorded_signals_must_share_one_time_grid():
+    signals = _signals()
+    with pytest.raises(ValueError, match="one row per timestamp"):
+        lm.RecordedSignals(
+            signals.time,
+            1000.0,
+            signals.lfps,
+            signals.raw_lfp[:50],
+            signals.sharp_wave_lfp,
+            signals.multiunit,
+            signals.speed,
+        )
+
+
+def test_from_arrays_reads_integers_as_indices_and_rejects_repeats():
+    options = {"time": np.arange(100) / 1000, "sampling_frequency": 1000}
+    spikes = np.zeros((100, 3))
+    # A 0/1 integer mask repeats indices; it is not silently read as [0, 1].
+    with pytest.raises(ValueError, match="boolean mask"):
+        lm.Recording.from_arrays(**options, multiunit=spikes, place_cells=[1, 0, 1])
+    rec = lm.Recording.from_arrays(**options, multiunit=spikes, place_cells=[2, 0])
+    np.testing.assert_array_equal(rec.place_cells, [True, False, True])
+
+
+def test_from_arrays_raw_lfp_is_its_own_copy():
+    rec = lm.Recording.from_arrays(
+        np.arange(100) / 1000, 1000, lfps=np.ones((100, 2)), multiunit=np.zeros((100, 1))
+    )
+    assert not np.shares_memory(rec.session.raw_lfp, rec.session.lfps)
+
+
+def test_only_simulated_sessions_allow_simulation_proxies(measured):
+    from dataclasses import replace
+
+    assert not measured.allows_simulation_proxies
+    session = rd.simulate_session(np.arange(1500) / 1500, [0.5], n_units=3)
+    simulated = replace(
+        measured,
+        session=session,
+        place_cells=np.ones(3, dtype=bool),
+        pyramidal=np.ones(3, dtype=bool),
+        templates=(),
+        sleep_intervals=None,
+        baseline_intervals=None,
+        behavior_intervals=None,
+        reference_lfp=None,
+    )
+    assert simulated.allows_simulation_proxies
