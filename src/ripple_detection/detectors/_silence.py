@@ -9,6 +9,7 @@ from ripple_detection.core import (
     BoolArray,
     FloatArray,
     IntArray,
+    _gap_tolerance,
     sample_count_within,
 )
 from ripple_detection.detectors._blocks import _valid_blocks
@@ -21,11 +22,6 @@ from ripple_detection.detectors._validation import (
     _validate_multiunit,
     _validate_time_units,
 )
-
-_TOLERANCE = 1e-9
-"""Relative tolerance for comparing a silence with its minimum: a silence
-equal to the minimum counts, which binary floating point would otherwise
-decide for it."""
 
 COLUMNS = (
     "start_time",
@@ -40,11 +36,18 @@ COLUMNS = (
 """The columns :func:`detect_silence_bounded_events` returns, in order."""
 
 
-def _at_least(values: FloatArray, minimum: float) -> BoolArray:
-    return np.asarray(
-        (values >= minimum) | np.isclose(values, minimum, rtol=_TOLERANCE, atol=0.0),
-        dtype=bool,
-    )
+def _time_scale(time: FloatArray) -> float:
+    """Largest magnitude among the sorted times, which sets how far a
+    difference of them can round."""
+    return float(max(abs(time[0]), abs(time[-1])))
+
+
+def _at_least(values: FloatArray, minimum: float, scale: float) -> BoolArray:
+    """Whether each time difference reaches ``minimum``: one equal to it
+    counts, which binary floating point would otherwise decide for it, within
+    the tolerance the close-event rule uses for timestamps of magnitude
+    ``scale``."""
+    return np.asarray(values >= minimum - _gap_tolerance(minimum, scale), dtype=bool)
 
 
 def _burst_onsets(spikes: FloatArray, time: FloatArray, maximum_isi: float | None) -> IntArray:
@@ -54,11 +57,12 @@ def _burst_onsets(spikes: FloatArray, time: FloatArray, maximum_isi: float | Non
     if maximum_isi is None:
         return np.flatnonzero(spikes.sum(axis=1) > 0)
     onsets = []
+    scale = _time_scale(time)
     for unit in range(spikes.shape[1]):
         fired = np.flatnonzero(spikes[:, unit] > 0)
         if fired.size:
             gaps = np.diff(time[fired])
-            is_first = np.concatenate([[True], _at_least(gaps, maximum_isi)])
+            is_first = np.concatenate([[True], _at_least(gaps, maximum_isi, scale)])
             onsets.append(fired[is_first])
     if not onsets:
         return np.empty(0, dtype=int)
@@ -76,13 +80,14 @@ def _gap_events(
     if spike_samples.size == 0:
         return np.empty((0, 2), dtype=int), np.empty((0, 2), dtype=bool)
     spike_times = time[spike_samples]
-    breaks = np.flatnonzero(_at_least(np.diff(spike_times), minimum_silence))
+    scale = _time_scale(time)
+    breaks = np.flatnonzero(_at_least(np.diff(spike_times), minimum_silence, scale))
     firsts = spike_samples[np.concatenate([[0], breaks + 1])]
     lasts = spike_samples[np.concatenate([breaks, [spike_samples.size - 1]])]
     clipped = np.column_stack(
         [
-            ~_at_least(time[firsts] - time[0], minimum_silence),
-            ~_at_least(time[-1] - time[lasts], minimum_silence),
+            ~_at_least(time[firsts] - time[0], minimum_silence, scale),
+            ~_at_least(time[-1] - time[lasts], minimum_silence, scale),
         ]
     )
     return np.column_stack([firsts, lasts]), clipped
@@ -99,7 +104,10 @@ def _window_events(
     is clipped."""
     spike_times = time[spike_samples]
     silences = np.diff(np.concatenate([[time[0]], spike_times]))
-    ends_silence = _at_least(silences, minimum_silence)
+    scale = _time_scale(time)
+    ends_silence = _at_least(silences, minimum_silence, scale)
+    # a spike exactly a window after the onset is in it, a sample later is not
+    tolerance = _gap_tolerance(window, scale)
     bounds, clipped = [], []
     index = 0
     while index < spike_samples.size:
@@ -107,7 +115,6 @@ def _window_events(
             index += 1
             continue
         window_end = spike_times[index] + window
-        tolerance = _TOLERANCE * max(1.0, abs(window_end))
         last = int(np.searchsorted(spike_times, window_end + tolerance, side="right")) - 1
         bounds.append((spike_samples[index], spike_samples[last]))
         clipped.append((False, bool(window_end > time[-1] + tolerance)))

@@ -5638,6 +5638,27 @@ class TestSilenceBoundedEvents:
         )
         assert events.start_time.tolist() == pytest.approx([1.0, 1.35])
 
+    @pytest.mark.parametrize("origin", [86_400.0, 1e6, 1.7e9])  # a day; 11 days; a Unix time
+    def test_the_boundaries_do_not_depend_on_the_time_origin(self, origin):
+        """The rounding in a silence comes from the timestamps, not from the
+        silence: a tolerance relative to the minimum split nothing far from
+        zero, and one relative to the time let a window 1.7 s too long."""
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(3000, 3, [(1000, 0), (1100, 1)])
+        time = origin + time
+        split = detect_silence_bounded_events(time, multiunit, self.FS, minimum_silence=0.1)
+        joined = detect_silence_bounded_events(time, multiunit, self.FS, minimum_silence=0.101)
+        assert (len(split), len(joined)) == (2, 1)
+
+        # a spike at the window's end is in it; one a sample later is not
+        _, multiunit = self._spikes(3000, 3, [(1000, 0), (1300, 1), (1301, 2)])
+        events = detect_silence_bounded_events(
+            time, multiunit, self.FS, minimum_silence=0.06, window=0.3
+        )
+        assert events.n_spikes.tolist() == [2]
+        assert events.end_time.tolist() == [time[1300]]
+
     def test_no_onset_and_no_spike_give_no_event(self):
         from ripple_detection import detect_silence_bounded_events
 
