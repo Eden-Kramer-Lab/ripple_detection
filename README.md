@@ -671,7 +671,7 @@ ripples = Kay_ripple_detector(
 
 Where the package's defaults sit relative to the literature. Compiled from 57
 replay and reactivation papers (1999-2025), using Methods, supplements and the
-papers' released code. See the [literature guide](docs/literature/README.md)
+papers' released code. See the [literature guide](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/docs/literature/README.md)
 for field evidence, code/text differences and unresolved sources. Counts include
 secondary/control analyses and provisional entries, with one entry per paper;
 they are not counts of equivalent primary detectors. Only bare numbers enter
