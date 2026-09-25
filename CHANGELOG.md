@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `window_end_rule="fixed"` for silence-triggered windows; the default remains
+  `"last_spike"`. The Diba method uses a fixed window.
+
 ### Changed
 
 - `get_envelope` now marks a sample missing in every channel when any channel

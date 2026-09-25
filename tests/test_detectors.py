@@ -5648,6 +5648,52 @@ class TestSilenceBoundedEvents:
         assert events.end_time.tolist() == pytest.approx([1.29, 2.05])
         assert events.n_active_units.tolist() == [3, 2]
 
+    @pytest.mark.parametrize("origin", [0.0, 1.7e9])
+    def test_fixed_windows_retain_the_full_window_and_count_only_spikes_inside(self, origin):
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(2000, 3, [(500, 0), (580, 1), (801, 2)])
+        events = detect_silence_bounded_events(
+            time + origin,
+            multiunit,
+            self.FS,
+            minimum_silence=0.06,
+            window=0.3,
+            window_end_rule="fixed",
+            minimum_active_units=2,
+            minimum_duration=0.2,
+        )
+        np.testing.assert_allclose(events.start_time - origin, [0.5], atol=1e-6)
+        np.testing.assert_allclose(events.end_time - origin, [0.8], atol=1e-6)
+        assert events.n_spikes.tolist() == [2]
+        assert events.n_active_units.tolist() == [2]
+        assert events.n_samples.tolist() == [301]
+        assert not events.clipped_end.any()
+
+    @pytest.mark.parametrize("gap", ["nan", "timestamp", "recording_end"])
+    def test_fixed_windows_stop_at_data_boundaries(self, gap):
+        from ripple_detection import detect_silence_bounded_events
+
+        time, multiunit = self._spikes(1000, 2, [(500, 0), (580, 1)])
+        if gap == "nan":
+            multiunit[650] = np.nan
+        elif gap == "timestamp":
+            time[650:] += 1
+        else:
+            time, multiunit = time[:650], multiunit[:650]
+        events = detect_silence_bounded_events(
+            time,
+            multiunit,
+            self.FS,
+            minimum_silence=0.06,
+            window=0.3,
+            window_end_rule="fixed",
+            minimum_active_units=2,
+        )
+        assert events.end_time.tolist() == pytest.approx([0.649])
+        assert events.clipped_end.tolist() == [True]
+        assert events.n_spikes.tolist() == [2]
+
     def test_a_silence_equal_to_the_minimum_starts_a_window(self):
         from ripple_detection import detect_silence_bounded_events
 
@@ -5785,6 +5831,8 @@ class TestSilenceBoundedEvents:
     @pytest.mark.parametrize(
         ("kwargs", "message"),
         [
+            ({"minimum_silence": 0.1, "window_end_rule": "unknown"}, "window_end_rule"),
+            ({"minimum_silence": 0.1, "window_end_rule": "fixed"}, "requires window"),
             ({"minimum_silence": 0.0}, "minimum_silence must be positive"),
             ({"minimum_silence": 0.1, "window": -1.0}, "window must be positive"),
             ({"minimum_silence": 0.1, "maximum_isi": 0.0}, "maximum_isi must be positive"),

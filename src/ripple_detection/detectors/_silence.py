@@ -9,6 +9,7 @@ from ripple_detection.core import (
     BoolArray,
     FloatArray,
     IntArray,
+    _check_choice,
     _gap_tolerance,
     sample_count_within,
 )
@@ -94,10 +95,15 @@ def _gap_events(
 
 
 def _window_events(
-    spike_samples: IntArray, time: FloatArray, minimum_silence: float, window: float
+    spike_samples: IntArray,
+    time: FloatArray,
+    minimum_silence: float,
+    window: float,
+    window_end_rule: str,
 ) -> tuple[IntArray, BoolArray]:
     """The window after each silence of at least ``minimum_silence``: from
-    the spike that ends the silence to the last spike within ``window`` of it.
+    the spike that ends the silence to either the last spike or the fixed
+    window endpoint, according to ``window_end_rule``.
     The first spike's silence is measured back to the block's start, so a
     spike too close to missing data or the recording edge is no onset: its
     silence was not observed in full. A window running past the block's end
@@ -116,7 +122,10 @@ def _window_events(
             continue
         window_end = spike_times[index] + window
         last = int(np.searchsorted(spike_times, window_end + tolerance, side="right")) - 1
-        bounds.append((spike_samples[index], spike_samples[last]))
+        last_sample = int(spike_samples[last])
+        if window_end_rule == "fixed":
+            last_sample = int(np.searchsorted(time, window_end + tolerance, side="right")) - 1
+        bounds.append((spike_samples[index], last_sample))
         clipped.append((False, bool(window_end > time[-1] + tolerance)))
         index = last + 1
     if not bounds:
@@ -132,6 +141,7 @@ def detect_silence_bounded_events(
     *,
     minimum_silence: float,
     window: float | None = None,
+    window_end_rule: str = "last_spike",
     maximum_isi: float | None = None,
     units: ArrayLike | None = None,
     minimum_active_units: int = 1,
@@ -150,8 +160,9 @@ def detect_silence_bounded_events(
       is an event, from its first spike to its last (Foster & Wilson 2006:
       split at gaps over 50 ms; Liu et al. 2019: 100 ms of silence).
     - **Windows** (``window`` in seconds): an event starts at a spike that
-      ends a silence of at least ``minimum_silence`` and runs to the last
-      spike within ``window`` of it (Diba & Buzsáki 2007: 60 ms of silence,
+      ends a silence of at least ``minimum_silence``. By default its end is
+      the last spike within ``window``. Set ``window_end_rule='fixed'`` to
+      retain the entire window (Diba & Buzsáki 2007: 60 ms of silence,
       then at least 5 cells in the next 300 ms).
 
     ``maximum_isi`` first collapses each unit's bursts to their first spike,
@@ -175,6 +186,11 @@ def detect_silence_bounded_events(
     window : float, optional
         Length in seconds of the window after each silence. Default None,
         groups.
+    window_end_rule : {'last_spike', 'fixed'}, optional
+        With ``window``, end at the last spike (default) or at the last sample
+        at or before onset + window. Fixed windows stop at missing data or
+        the recording edge and are flagged as clipped. Duration and spike
+        counts refer to the returned bounds. ``'fixed'`` requires ``window``.
     maximum_isi : float, optional
         Seconds: a spike following the same unit's previous spike by less
         than this is dropped before segmenting, so each burst is its first
@@ -188,14 +204,14 @@ def detect_silence_bounded_events(
         Least fraction, 0 to 1, of the selected units firing in an event.
         Default None.
     minimum_duration, maximum_duration : float, optional
-        Duration limits in seconds, first to last spike, as inclusive sample
+        Duration limits in seconds over the returned bounds, as inclusive sample
         counts (``sample_count_within``). Defaults 0.0 and None.
 
     Returns
     -------
     events : pd.DataFrame
         One row per event, indexed by ``event_number`` from 1: ``start_time``
-        and ``end_time`` (first and last spike), ``duration``, ``n_samples``,
+        and ``end_time`` (last spike or fixed-window end), ``duration``, ``n_samples``,
         ``n_spikes`` (every spike of the selected units inside the event,
         bursts included), ``n_active_units``, and ``clipped_start`` and
         ``clipped_end``, set when the silence before or after a group, or a
@@ -230,6 +246,10 @@ def detect_silence_bounded_events(
     _check_positive(sampling_frequency=sampling_frequency)
     _check_positive(minimum_silence=minimum_silence)
     _check_gap(minimum_silence=minimum_silence)
+    _check_choice("window_end_rule", window_end_rule, ("last_spike", "fixed"))
+    if window is None and window_end_rule == "fixed":
+        msg = "window_end_rule='fixed' requires window."
+        raise ValueError(msg)
     if window is not None:
         _check_positive(window=window)
         _check_gap(window=window)
@@ -267,7 +287,9 @@ def detect_silence_bounded_events(
         if window is None:
             bounds, clipped = _gap_events(onsets, block_time, minimum_silence)
         else:
-            bounds, clipped = _window_events(onsets, block_time, minimum_silence, window)
+            bounds, clipped = _window_events(
+                onsets, block_time, minimum_silence, window, window_end_rule
+            )
         for (first, last), (clip_start, clip_end) in zip(bounds, clipped, strict=True):
             inside = block_spikes[first : last + 1]
             rows.append(
