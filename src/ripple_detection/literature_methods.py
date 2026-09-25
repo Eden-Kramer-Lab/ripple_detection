@@ -751,6 +751,26 @@ def _baseline(rec: Recording, *, required: bool = False) -> BoolArray:
     return np.ones(len(rec.time), dtype=bool)
 
 
+def _baseline_samples(values: FloatArray, baseline: BoolArray) -> FloatArray:
+    """Rows of ``values`` inside the baseline that are finite in every channel.
+
+    Raises when there are none or when their spread is zero or not finite in
+    every channel, since a statistic taken from them would be meaningless.
+    """
+    selected = values[baseline]
+    finite = selected[
+        np.isfinite(selected).all(axis=1) if selected.ndim == 2 else np.isfinite(selected)
+    ]
+    spread = np.std(finite, axis=0) if len(finite) else np.array(np.nan)
+    if not len(finite) or not np.all(np.isfinite(spread)) or np.all(spread == 0):
+        msg = (
+            "The baseline (baseline_intervals, or the whole recording without them) "
+            "needs finite samples with a nonzero spread."
+        )
+        raise ValueError(msg)
+    return finite
+
+
 def _zscore(values: FloatArray, mask: BoolArray | None = None, ddof: int = 0) -> FloatArray:
     baseline = values if mask is None else values[mask]
     finite = baseline[np.isfinite(baseline)]
@@ -1341,16 +1361,14 @@ def harvey_2023_text(
     band = rec.transform(
         rec.session.raw_lfp, lambda x: _difference_of_gaussians_band(x, (80.0, 250.0), rec.fs)
     )
-    scale = float(np.nanstd(band[baseline]))
+    scale = float(np.std(_baseline_samples(band, baseline)))
     kernel = _gaussian_lowpass_fir(55.0, rec.fs)
     clipped = rec.transform(
         np.abs(np.clip(band, -4 * scale, 4 * scale)), lambda x: _firfilt(x, kernel)
     )
     power = rec.transform(np.abs(band), lambda x: _firfilt(x, kernel))
-    mean, sd = float(np.nanmean(clipped[baseline])), float(np.nanstd(clipped[baseline]))
-    if not np.isfinite(sd) or sd <= 0:
-        msg = "Clipped power needs a finite nonconstant baseline."
-        raise ValueError(msg)
+    clipped_baseline = _baseline_samples(clipped, baseline)
+    mean, sd = float(np.mean(clipped_baseline)), float(np.std(clipped_baseline))
     ripples = _ripple_trace_events(
         rec,
         (power - mean) / sd,
@@ -3380,9 +3398,10 @@ def muessig_2019_ripples(rec: Recording) -> pd.DataFrame:
     for channel selection and percentile estimation. Local peaks stay separate.
     """
     rms = np.sqrt(np.maximum(0, rec.boxcar(rec.filtered((100.0, 250.0)) ** 2, 0.007)))
-    baseline = _baseline(rec)
-    rms = rms[:, int(np.argmax(np.nanstd(rms[baseline], axis=0)))]
-    level = float(np.nanpercentile(rms[baseline], 99))
+    baseline = _baseline_samples(rms, _baseline(rec))
+    channel = int(np.argmax(np.std(baseline, axis=0)))
+    rms = rms[:, channel]
+    level = float(np.percentile(baseline[:, channel], 99))
     return _local_peaks(rec, rms, level, before=0.05, after=0.05)
 
 

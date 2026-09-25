@@ -1324,3 +1324,17 @@ def test_a_recording_of_blocks_too_short_for_a_transform_raises(name, fs, spacin
         inputs[key][::spacing] = np.nan
     with pytest.raises(ValueError, match="No block of finite samples"):
         lm.run_method(name, lm.Recording.from_arrays(**inputs))
+
+
+@pytest.mark.parametrize("name", ["muessig_2019_ripples", "harvey_2023_text"])
+@pytest.mark.parametrize("problem", ["no finite sample", "zero scale"])
+def test_caller_selected_baselines_must_have_a_finite_positive_scale(name, problem):
+    inputs = _measured_inputs()
+    if problem == "no finite sample":
+        inputs["artifact_intervals"] = [[0.0, 2.0]]
+        inputs["baseline_intervals"] = [[0.5, 1.5]]
+    else:
+        inputs["lfps"] = np.zeros_like(inputs["lfps"])
+        inputs["sharp_wave_lfp"] = np.zeros_like(inputs["sharp_wave_lfp"])
+    with pytest.raises(ValueError, match="baseline_intervals"):
+        lm.run_method(name, lm.Recording.from_arrays(**inputs))
