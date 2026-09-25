@@ -1338,3 +1338,24 @@ def test_caller_selected_baselines_must_have_a_finite_positive_scale(name, probl
         inputs["sharp_wave_lfp"] = np.zeros_like(inputs["sharp_wave_lfp"])
     with pytest.raises(ValueError, match="baseline_intervals"):
         lm.run_method(name, lm.Recording.from_arrays(**inputs))
+
+
+def test_a_fixed_channel_count_is_not_filled_from_fewer_channels(monkeypatch):
+    inputs = _measured_inputs()
+    inputs["lfps"] = inputs["lfps"][:, :2]
+    rec = lm.Recording.from_arrays(**inputs)
+    with pytest.raises(ValueError, match="3 selected LFP channels"):
+        rec.mean_envelope((150.0, 250.0), channels=3)
+    with pytest.raises(ValueError, match="3 selected LFP channels"):
+        lm.berners_lee_2021(rec)
+    # Michon averages the 1-3 selected tetrodes, so two are enough.
+    requested = []
+    original = lm.Recording.mean_envelope
+
+    def record(self, band, channels=None):
+        requested.append(channels)
+        return original(self, band, channels)
+
+    monkeypatch.setattr(lm.Recording, "mean_envelope", record)
+    lm.michon_2021(rec)
+    assert requested == [2]

@@ -459,7 +459,19 @@ class Recording:
         -------
         amplitude : ndarray, shape (n_time,)
             Mean amplitude on the shared grid.
+
+        Raises
+        ------
+        ValueError
+            Fewer than ``channels`` LFP channels were selected.
         """
+        available = self.session.lfps.shape[1]
+        if channels is not None and available < channels:
+            msg = (
+                f"This method averages {channels} selected LFP channels, but "
+                f"{available} were supplied."
+            )
+            raise ValueError(msg)
         envelope = self.envelope(band)
         return envelope[:, :channels].mean(axis=1) if channels else envelope.mean(axis=1)
 
@@ -1629,7 +1641,11 @@ def gillespie_2021(rec: Recording) -> pd.DataFrame | FloatArray:
 
 
 def _michon(rec: Recording, *, order: str = "text") -> FloatArray:
-    """5 ms population bins; smoothing/detrending order is explicitly selectable."""
+    """5 ms population bins; smoothing/detrending order is explicitly selectable.
+
+    The ripple envelope averages the first three selected channels, or all of
+    them when fewer are selected (the papers used one to three tetrodes).
+    """
     if order not in {"text", "code"}:
         msg = "order must be 'text' or 'code'."
         raise ValueError(msg)
@@ -1655,7 +1671,11 @@ def _michon(rec: Recording, *, order: str = "text") -> FloatArray:
     }
     ripples = rd.detect_events_from_trace(
         rec.time,
-        detrended(rec.time, rec.mean_envelope((140.0, 225.0), channels=3), rec.fs),
+        detrended(
+            rec.time,
+            rec.mean_envelope((140.0, 225.0), channels=min(3, rec.session.lfps.shape[1])),
+            rec.fs,
+        ),
         rec.speed,
         rec.fs,
         threshold=8.0,
