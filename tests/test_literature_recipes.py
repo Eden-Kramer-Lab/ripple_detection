@@ -4,7 +4,6 @@ import importlib.util
 import json
 import sys
 import unicodedata
-import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -118,9 +117,7 @@ def test_demo_retains_both_broad_and_filtered_inventories(results, name):
 
 def test_every_recipe_returns_events_inside_the_recording(recipes, recording):
     for entry in recipes.RECIPES:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            events = recipes.bounds(entry.run(recording))
+        events = recipes.bounds(entry.run(recording))
         assert events.shape[1] == 2, entry.paper
         assert np.all(events[:, 0] <= events[:, 1]), entry.paper
         assert np.all(events >= recording.time[0]), entry.paper

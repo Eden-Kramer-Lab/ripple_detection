@@ -5,7 +5,6 @@ Simulation overlap measures exercise the code, not agreement with historical eve
 """
 
 import json
-import warnings
 from dataclasses import replace
 from pathlib import Path
 
@@ -121,9 +120,7 @@ def run_all(rec: methods.Recording) -> pd.DataFrame:
         if entry.run.__name__ in ADDITIONAL_CONFIGURATIONS:
             configurations.append(ADDITIONAL_CONFIGURATIONS[entry.run.__name__])
         for configuration, options in configurations:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", UserWarning)
-                events = entry.run(method_rec, **options)
+            events = entry.run(method_rec, **options)
             rows.append(
                 {
                     "row": entry.row,

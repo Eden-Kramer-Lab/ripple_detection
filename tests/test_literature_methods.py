@@ -1,7 +1,6 @@
 """Behavioral checks for packaged literature methods, beyond simulation coverage."""
 
 import inspect
-import warnings
 
 import numpy as np
 import pandas as pd
@@ -321,11 +320,9 @@ def test_every_added_inventory_runs_with_explicit_inputs(measured, entry):
             speed=np.zeros(len(time)),
             pyramidal=np.arange(20),
         )
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        events = lm.run_method(
-            entry.run.__name__, rec, **VARIANT_OPTIONS.get(entry.run.__name__, {})
-        )
+    events = lm.run_method(
+        entry.run.__name__, rec, **VARIANT_OPTIONS.get(entry.run.__name__, {})
+    )
     assert isinstance(events, pd.DataFrame)
     assert events.attrs["method"] == entry.run.__name__
     assert events.attrs["doi"].startswith("https://doi.org/")
@@ -418,10 +415,8 @@ def test_secondary_ripples_do_not_bridge_artifact_intervals(measured, name):
     }
     clean = lm.Recording.from_arrays(**inputs)
     rec = lm.Recording.from_arrays(**inputs, artifact_intervals=[[8.99, 9.01]])
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        before = lm.run_method(name, clean, **VARIANT_OPTIONS.get(name, {}))
-        events = lm.run_method(name, rec, **VARIANT_OPTIONS.get(name, {}))
+    before = lm.run_method(name, clean, **VARIANT_OPTIONS.get(name, {}))
+    events = lm.run_method(name, rec, **VARIANT_OPTIONS.get(name, {}))
     assert ((before.start_time < 9.01) & (before.end_time > 8.99)).any()
     assert not ((events.start_time < 9.01) & (events.end_time > 8.99)).any()
 
@@ -565,9 +560,7 @@ def test_named_interpretations_accept_measured_inputs(measured, name, options):
     options = options.copy()
     if options.get("branch") == "run_lia":
         options["theta_delta"] = -np.ones_like(measured.time)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        events = lm.run_method(name, measured, **options)
+    events = lm.run_method(name, measured, **options)
     for key, value in options.items():
         np.testing.assert_equal(events.attrs["options"][key], value)
     assert (events.start_time <= events.end_time).all()
@@ -995,10 +988,8 @@ def test_mou_scaling_options_change_bounds_when_background_is_nonzero(monkeypatc
     ],
 )
 def test_interpretation_options_change_observable_boundaries(measured, name, first, second):
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        a = lm.run_method(name, measured, **first)
-        b = lm.run_method(name, measured, **second)
+    a = lm.run_method(name, measured, **first)
+    b = lm.run_method(name, measured, **second)
     assert len(a), name
     # Compare bounds rather than attrs, which necessarily contain different options.
     assert not np.array_equal(lm.bounds(a), lm.bounds(b)), name
