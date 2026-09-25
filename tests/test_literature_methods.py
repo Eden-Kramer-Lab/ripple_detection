@@ -1723,3 +1723,20 @@ def test_interval_mask_matches_the_inclusive_loop(seed):
         expected |= (time >= start) & (time <= end)
     np.testing.assert_array_equal(lm._intervals_to_mask(time, intervals), expected)
     assert not lm._intervals_to_mask(time, np.empty((0, 2))).any()
+
+
+UNIX_ORIGIN = 1_700_000_000.0
+
+
+@pytest.mark.parametrize("entry", lm.RECIPES, ids=lambda x: x.run.__name__)
+def test_every_recipe_gives_the_same_bounds_at_a_unix_clock_origin(entry):
+    name = entry.run.__name__
+    found = []
+    for origin in (0.0, UNIX_ORIGIN):
+        inputs, options = _method_inputs(name, origin)
+        rec = lm.Recording.from_arrays(**inputs)
+        found.append(lm.bounds(lm.run_method(name, rec, **options)) - origin)
+    # Timestamps near 1.7e9 s carry about 2.4e-7 s of rounding each.
+    tolerance = 16 * np.spacing(UNIX_ORIGIN + 20.0)
+    assert found[0].shape == found[1].shape, name
+    np.testing.assert_allclose(found[1], found[0], rtol=0, atol=tolerance, err_msg=name)
