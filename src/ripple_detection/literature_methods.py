@@ -2709,7 +2709,9 @@ def grosmark_2016(rec: Recording, *, stage: Stage = "detection") -> FloatArray:
 
 @_recipe(37, "Ambrose 2016", "SWR")
 def ambrose_2016(rec: Recording) -> pd.DataFrame | FloatArray:
-    """Pfeiffer & Foster 2015's trace on 4 tetrodes, > 3 SD, detected only
+    """Pfeiffer & Foster 2015's trace, the mean envelope over every selected
+    channel (the paper used one channel from each of four to seven tetrodes;
+    select them before calling), > 3 SD, detected only
     while stopped (< 5 cm/s, stated in the paper). Statistics also come from
     stopping periods (the lab's convention, inferred); no duration limits are
     reported in the main Methods or supplement. The proximity to the well is
@@ -3269,7 +3271,9 @@ def _detect_population_in(
 
 
 # Additional inventories use a separate registry from the demonstration's
-# default inventories. No variant inherits a different paper's unknowns.
+# default inventories. A variant that reuses another paper's rule says so in
+# its docstring and inherits that rule's unknowns (maboudi_2018_open_field is
+# pfeiffer_2013; foster_2006_ripples is lee_2002_ripples).
 VARIANTS: list[Recipe] = []
 
 
