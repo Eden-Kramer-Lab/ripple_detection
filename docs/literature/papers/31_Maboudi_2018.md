@@ -19,7 +19,19 @@ Materials and methods, "Population burst events" (p. 16), linear-track data (Dib
 Linear track: nothing deferred (fully specified). Open field: Pfeiffer & Foster 2013 (manifest 45_Pfeiffer_2013; the paper restates its criteria; note Pfeiffer's text there says the stopped-period histogram uses speed <5 cm/s and a 10 ms SD kernel).
 
 ## Code
-https://github.com/kemerelab/UncoveringTemporalStructureHippocampus (archived at elifesciences-publications); nelpy https://github.com/nelpy. Not opened (text is unambiguous for the tier).
+https://github.com/kemerelab/UncoveringTemporalStructureHippocampus (archived at elifesciences-publications); nelpy https://github.com/nelpy. The released events were checked below; the detector code is absent.
+
+### Code search, September 2026
+
+- **Own repository, no detection code.** [kemerelab/UncoveringTemporalStructureHippocampus @f86b7dc](https://github.com/kemerelab/UncoveringTemporalStructureHippocampus/tree/f86b7dc) (2019-02-07) ships one session's detected events (`data/fig1.nel`, session 16-40-19).
+  - Its 457 candidates all peak at >= 3 SD of the stored trace (lowest 3.003); the shortest is 80 ms.
+  - All 277 final PBEs have a mean speed of at most 4.44 cm/s.
+  - Rerunning the detection on the stored trace (above the mean, peak >= 3 SD, 80-750 ms) reproduces 452 of the 457.
+  - The open-field analysis (`Figure6.ipynb`) uses Pfeiffer's event times (`BradRippleStartEndTimes`) rather than detecting its own.
+- **Possibilities, inferred from the released data, not proposed:**
+  - Smoothing of 10 ms, not the paper's 20 ms. The spectrum of the stored trace falls off between 20 and 60 Hz as a 10 ms SD Gaussian does, not as a 20 ms kernel cut at 60 ms. 10 ms is nelpy's `get_mua` default (`sigma = 0.01 # 10 ms standard deviation`, [nelpy/nelpy @1255f57](https://github.com/nelpy/nelpy/tree/1255f57) utils.py line 260, May 2018). One session only.
+  - A maximum near 750 ms (nelpy's default; the longest event is 0.696 s), not stated in the paper.
+  - 3 of the 277 final PBEs are 60 ms (3 bins), under the stated minimum of 4 bins.
 
 ## Survey CSV discrepancies
 - MUA Z-score Thresh. = #N/A; paper: 3 SD ("peak SDF of at least three standard deviations above the mean").

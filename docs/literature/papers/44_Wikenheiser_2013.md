@@ -25,6 +25,10 @@ Later analysis restrictions (not detection): decoding in 10 ms windows, "only ti
 ## Code
 No code link.
 
+### Code search, September 2026
+
+- Searched GitHub (code, repositories, and the lab's and authors' accounts), Zenodo, Figshare and CRCNS/DANDI: no released code, same-lab code or event files. The Redish lab's public code is MClust; `awikenheiser` and `kkeus/Wikenheiser-Lab-Group` hold Open Ephys and tsd tools, with no ripple windowing.
+
 ## Survey CSV discrepancies
 No value contradicts the paper (1 SD, 2 cm/s, 3 cells, 140–220 Hz, 150 ms window, theta/delta ratio). Notes:
 - Detection Notes "150 ms window centered on crossing": the paper says "centered on times when ripple power exceeded a threshold", which does not say crossing; also add "overlapping windows concatenated" and "≥ 5 spikes total".

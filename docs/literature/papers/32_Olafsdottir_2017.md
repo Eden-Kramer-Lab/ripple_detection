@@ -37,6 +37,11 @@ Control analyses only (not detection). STAR Methods, "Control analyses" and "Loc
 ## Code
 None linked.
 
+### Code search, September 2026
+
+- **Later.** The [Barry-lab Shipley repository @d75b85b](https://github.com/Barry-lab/Publication_Shipley-et-al.-Disrupted-hippocampal-replay-in-an-Alzheimer-s-mouse-model/tree/d75b85b), `runReplayAnalysisNew.m` lines 181-185, builds the MUA from place cells only and passes it to `detectMUA`; the cell criterion is applied at decoding. This is 2025 code descended from Bush's detector, so the evidence is weak.
+- [Barry-lab/PythonSpkAnalysis @d51c15a](https://github.com/Barry-lab/PythonSpkAnalysis/tree/d51c15a) ports the lab's old `detect_ripples` (5 SD peak, 0.5 SD bounds, 50 ms boxcar), which does not match this paper's control rule (> 2.5 SD, 40-500 ms).
+
 ## Survey CSV discrepancies
 Row 32.
 - SWR Z-score Thresh.: CSV "2.5". This is the threshold of a separate ripple detector used only in a control (keeping trajectory events that overlap a ripple). It is not part of candidate detection.

@@ -33,8 +33,8 @@ Later analysis restrictions (not detection):
 Tirole et al. 2022 (ref 27), which is in the manifest (06_Tirole_2022); followed one hop through its code. Every tier-deciding detail comes from that code; see 06_Tirole_2022.md.
 
 ## Code
-- Zenodo 10.5281/zenodo.10085294 (dbendor/Nat_Com_Huelin_Gorriz_et_al v1.0.1, GitHub https://github.com/dbendor/Nat_Com_Huelin_Gorriz_et_al/tree/v1.0.1). Downloaded; commit b0676a5 inside the zip.
-- It contains no replay-detection function. Detection is https://github.com/bendor-lab/Elife_Tirole_Huelin_Gorriz_2022 `Pipeline/Extract replay and Bayesian Decoding/extract_replay_events.m` (commit 44ecf42).
+- **Own release.** [Zenodo 10.5281/zenodo.10085294](https://doi.org/10.5281/zenodo.10085294) ([dbendor/Nat_Com_Huelin_Gorriz_et_al @b0676a5](https://github.com/dbendor/Nat_Com_Huelin_Gorriz_et_al/tree/b0676a5), v1.0.1). It calls the detection pipeline but does not contain its implementation.
+- **Lab code called by the own release.** [bendor-lab/Elife_Tirole_Huelin_Gorriz_2022 @44ecf42](https://github.com/bendor-lab/Elife_Tirole_Huelin_Gorriz_2022/tree/44ecf42), `Pipeline/Extract replay and Bayesian Decoding/extract_replay_events.m`. Its values and divergences are evidence about the method, but this earlier release does not set proposals under the survey's code rule.
 
 ## Survey CSV discrepancies
 Row 3.

@@ -28,10 +28,17 @@ Paper: "All code used for analysis of this data is publicly available at https:/
 - Speed rule, verified (`dfa_makeFFripdecodes.m` line 98, with `timefilter = {'ag_get2dstate', '($immobility == 1)','immobility_velocity',4,'immobility_buffer',0}` in `dfs_makeFFripdecodes.m`): `valrips = ~isExcluded(starttime, excludeperiods) & ~isExcluded(endtime, excludeperiods) & ...` → an SWR is kept if its START and END times are in immobility (velocity threshold 4), i.e. the package's endpoint rule, applied when building the decoded-SWR set. Events outside the decoded posterior time range are also dropped. (`ag_get2dstate` itself is not in the archive, so "< 4" vs "<= 4" is unverified.)
 - MUA: `utilities/getMUAtrace.m` bins pooled CA1 spikes in 2 ms bins and smooths with `gaussian(smoothingwidth/timebin, 100)` where `smoothingwidth = .005` and the comment says "15ms kernel width" — i.e. 5 ms SD, not the "1 ms bins ... 15 ms SD" of the paper. But this function is not called anywhere in the archive, and the MUA events (`muaripples` / `muadecodesv3`) were produced upstream, so which smoothing produced the published MUA events is unknown.
 
+### Code search, September 2026
+
+- **Lab, named by the paper's archive.** [bitbucket.org/franklab/trodes2ff_shared @e90fd3d](https://bitbucket.org/franklab/trodes2ff_shared/commits/e90fd3d). `extractMUAevents.m` (Anna Gillespie, 2019-20) saves `muaripples`, the input of the commented-out MUA line in the archive's `dfs_makeFFripdecodes.m` (line 17).
+  - 1 ms bins (line 38), a Gaussian of 15 ms SD (lines 44-45), mean and SD over immobile bins with `immobility_velocity` 4 (lines 124-131).
+  - `Trodes_dayprocess.m` passes `muanstd = 3` and `ripmindur = 0.015` (lines 76-77, 324).
+- **Rules in the code, not in the paper:** at least 15 ms above threshold; events less than 15 ms apart merged (`min_separation = 0.015`, line 42); an event kept only if its start and end both fall in immobility (line 149).
+
 ## Survey CSV discrepancies
 - SWR smooth (ms): CSV "4"; not stated in Gillespie ("smoothed"), inherited from Kay 2016 (4 ms). Correct by inheritance.
 - Min. Duration (ms): CSV "15" is correct for SWRs; the MUA minimum duration is not stated (the column cannot hold both).
-- MUA smooth (ms): CSV "15" matches the text; the archive's (uncalled) `getMUAtrace.m` uses 5 ms SD — unresolved.
+- MUA smooth (ms): CSV "15" matches the text and the same-lab `extractMUAevents.m`; the archive's uncalled `getMUAtrace.m` uses 5 ms SD. Which upstream output supplied the published events remains unverified.
 Otherwise no discrepancies (SWR 2 SD, MUA 3 SD, 4 cm/s, >1 electrodes, 150–250 Hz, no min cells, no max, no combine).
 
 ## Package mapping

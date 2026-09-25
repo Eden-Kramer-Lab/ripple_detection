@@ -27,6 +27,10 @@ Sleep/rest-state definitions from O'Neill et al. 2008 (ref 22), not accessible (
 ## Code
 None linked in the text.
 
+### Code search, September 2026
+
+- Searched GitHub (code, repositories, and the lab's and authors' accounts), Zenodo, Figshare and CRCNS/DANDI: no released code, same-lab code or event files. The WillsCacucciLab repositories and `LaurenzMuessig`'s hold no ripple, MUA or rest-state code.
+
 ## Survey CSV discrepancies
 Row 29.
 1. **SWR Z-score Thresh. 4:** the paper's threshold is the **99th percentile** of RMS power over the trial; "approximately equal to 4 standard deviations" is the authors' gloss. The CSV value is a paraphrase, not the rule.

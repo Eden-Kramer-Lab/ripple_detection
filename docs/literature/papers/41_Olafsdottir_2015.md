@@ -31,6 +31,10 @@ The paper cites Foster & Wilson 2006 and Diba & Buzsáki 2007 for the event defi
 ## Code
 None linked in the paper.
 
+### Code search, September 2026
+
+- Searched GitHub (code, repositories, and the lab's and authors' accounts), Zenodo, Figshare and CRCNS/DANDI: no released code, same-lab code or event files. The eLife record lists no source-code files; the SpiersLab repositories are unrelated.
+
 ## Survey CSV discrepancies
 Row 41.
 - Animal Speed (cm/s): CSV "10". The rest-period events have no speed criterion. 10 cm/s applies only to the GOAL-CUE analysis ("velocity was below 10 cm/s and the animal was located within 20 cm ... of the barrier").

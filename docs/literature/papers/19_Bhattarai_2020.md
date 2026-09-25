@@ -27,6 +27,10 @@ Later analysis restrictions (not detection): replay significance (1000 circular 
 ## Code
 No code link. Data: "The raw data is deposited in Figshare with identifier doi.org/10.6084/m9.figshare.10032866.v2" (main text).
 
+### Code search, September 2026
+
+- **Own data.** [Figshare 10.6084/m9.figshare.10032866.v2](https://doi.org/10.6084/m9.figshare.10032866.v2), DataSet.zip: behaviour, events (trial timing only, per MetaData.docx), one tetrode's LFP, spikes and video tracking. No SWR or replay events and no code. No GitHub presence found for the Jung lab or the first author.
+
 ## Survey CSV discrepancies
 - Animal Speed (cm/s): CSV 4; the paper states no speed criterion for SWR or replay detection. The 4 cm/s is the immobility exclusion for tuning curves ("excluding periods of immobility (speed < 4 cm/s)").
 - Detection "SWR": the replay trigger is a silence-bounded place-cell burst (≥ 5 block place cells within 300 ms after > 60 ms silence) that must coincide with an SWR; "SWR, MUA" would be closer.

@@ -21,6 +21,14 @@ Supplementary Materials, "Ripple Event Detection" (p. 4):
 ## Code
 None linked in the paper. Data: CRCNS hc-11.
 
+### Code search, September 2026
+
+- The data hold no event files: CRCNS hc-11 (the description, v0.8 p. 4, lists spikes, position and epochs) and DANDI 000044 v0.250624.0426 (two NWB files read: epochs, states, LFP and units only).
+- **Possibility, from lab code of the time, not the paper's.** [buzsakilab/buzcoderough @f3486d9](https://github.com/buzsakilab/buzcoderough/tree/f3486d9), `LFP/EventDetection/detect_swr/detect_swr.m` (J. Long, 2015):
+  - its example session is a Grosmark rat's (`buddy140_060813_reo`, line 54);
+  - it defaults to 80-250 Hz and 0.5 / 2.5 SD on a sharp-wave channel (lines 139-151).
+  - If it made the 2016 ripples, the CSV's 150-250 Hz, 3 SD, 15 ms and one electrode would all be wrong; nothing shows that it did.
+
 ## Survey CSV discrepancies
 - SWR Z-score Thresh. = 3: not stated for the LFP ripple; 3 SD is the MUA trigger.
 - SWR smooth (ms) = 15: not stated; 15 ms is the MUA Gaussian.

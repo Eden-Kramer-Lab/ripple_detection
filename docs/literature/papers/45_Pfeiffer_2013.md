@@ -26,6 +26,10 @@ Nothing for the event rule, which is fully specified. Decoding is "as previously
 ## Code
 No code or data link in the paper.
 
+### Code search, September 2026
+
+- **Later.** The Pfeiffer lab's population-event finder ([Brad-Pfeiffer/MouseDevelopmentalAnalysisCode @950fc28](https://github.com/Brad-Pfeiffer/MouseDevelopmentalAnalysisCode/tree/950fc28), `KJ_FIND_POPULATION_EVENTS.m`) has no participation criterion, so it says nothing about the 10%.
+
 ## Survey CSV discrepancies
 - Min. Cells (#): CSV "#N/A". The paper says "Candidate events in which fewer than 10% of the clustered units participated ... were excluded". The value should be "10% of clustered units", a fraction rather than a count.
 - All other detection fields match (3 SD, 5 cm/s, 10 ms, 50 ms and 2000 ms; SWR fields N/A because the SWR detection is analysis-only).

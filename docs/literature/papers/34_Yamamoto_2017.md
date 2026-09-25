@@ -33,6 +33,10 @@ Following Davidson does not resolve the ambiguities, because Yamamoto departs fr
 ## Code
 No code link in the paper.
 
+### Code search, September 2026
+
+- Searched GitHub (code, repositories, and the lab's and authors' accounts), Zenodo, Figshare and CRCNS/DANDI: no released code, same-lab code or event files found. No relevant Tonegawa-lab or first-author repositories, or code for the ripple doublet/triplet rule, were found in those searches.
+
 ## Survey CSV discrepancies
 Row 34:
 - SWR Low Band 100: the detection band is 140–200 Hz ("ripple band power (140-200 Hz)"; the Supp. Fig. S1A legend says "Ripple band (140-200 Hz)"). 100–200 Hz is the band integrated from the PSD for ripple power in the state analysis ("The power of delta, theta and ripple were obtained by integrating the PSD estimates for 1-4Hz, 6-12 and 100-200Hz").

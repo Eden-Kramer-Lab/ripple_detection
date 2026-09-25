@@ -25,7 +25,11 @@ ANALYSIS restrictions (not detection):
 - The package's own `Karlsson_ripple_detector` cites this paper as its source (src/ripple_detection/detectors/_lfp.py, docstring references).
 
 ## Code
-No code link in the paper (analysis in custom Matlab). Not opened.
+No code link in the paper (analysis in custom Matlab). A later Frank-lab code snapshot was checked below.
+
+### Code search, September 2026
+
+- **Lab convention.** [droumis/FFPhy @fce2048](https://github.com/droumis/FFPhy/tree/fce2048), `Functions/getripples.m` lines 29 and 116: with no cell filter it uses every tetrode with cells (CA1 and CA3) and counts an event on any one. It cannot be dated to 2009, and no code by Karlsson was found. CRCNS hc-6 lists no ripple files.
 
 ## Survey CSV discrepancies
 - SWR electrodes (#): CSV "1"; paper uses one channel from EACH CA3 and CA1 tetrode, event on "at least one tetrode" (30-tetrode drive) → should be ">1" (the CSV may mean "one channel per tetrode", but other rows use ">1" for the same design).

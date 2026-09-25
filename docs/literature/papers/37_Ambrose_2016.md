@@ -22,6 +22,19 @@ Nothing is deferred for SWR detection; the paragraph stands alone. Pfeiffer & Fo
 ## Code
 None linked.
 
+### Code search, September 2026
+
+- **Later, a co-author's.** [Brad-E-Pfeiffer/DeepSuperficialSWRs @9f6ab57](https://github.com/Brad-E-Pfeiffer/DeepSuperficialSWRs/tree/9f6ab57) (2023).
+  - It re-analyses linear-track sessions of rats Janni, Harpy and Ettin recorded in 2009-10 under "Reward/BigReward/Reward" and "Reward/NoReward/Reward" (`DEEP_VS_SUPERFICIAL_RIPPLE_PARTICIPATION_ANALYSIS.m` lines 17-26), Ambrose's reward-change design.
+  - It sets `Ripple_Minimum_Duration=0.05` and `Ripple_Maximum_Duration=0.5` (lines 85-86), applied in `DSRP_FIND_RIPPLE_EVENTS.m` (line 289).
+  - One electrode per tetrode carries LFP (line 93).
+  - That these are the paper's recordings is inferred; the code does not say so.
+- **Possibility, not proposed:** a 50-500 ms limit was applied, which would make the durations `Not reported` rather than `#N/A`.
+- **Other code from the lineage disagrees:**
+  - [Brad-Pfeiffer/MouseDevelopmentalAnalysisCode @950fc28](https://github.com/Brad-Pfeiffer/MouseDevelopmentalAnalysisCode/tree/950fc28) (`KJ_BEHAVIOR_FIND_RIPPLE_EVENTS.m` line 332) also uses 50-500 ms.
+  - [Brad-E-Pfeiffer/ThetaForwardReverseCode @bc714a2](https://github.com/Brad-E-Pfeiffer/ThetaForwardReverseCode/tree/bc714a2) (`IRFS_FIND_RIPPLE_EVENTS.m` line 206, Wang, Foster & Pfeiffer 2020) uses 50 ms to 1 s.
+  - The Foster lab's [caitlinmallory/TimeCourseOrganizationOfHippocampalReplay @128513a](https://github.com/caitlinmallory/TimeCourseOrganizationOfHippocampalReplay/tree/128513a) (`find_candidate_events_2.m` lines 13-14) uses no limits.
+
 ## Survey CSV discrepancies
 - SWR electrodes: CSV ">1". Paper: "One channel was selected from each of four to seven tetrodes", so 4–7.
 - Min. Duration: CSV 50 ms. Paper: not stated in the main text or the author manuscript.

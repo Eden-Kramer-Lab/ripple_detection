@@ -23,6 +23,10 @@ Csicsvari et al. 1999a ("Oscillatory coupling ...", J Neurosci 19:274–287), Me
 ## Code
 None linked.
 
+### Code search, September 2026
+
+- Searched GitHub (code, repositories, and the lab's and authors' accounts), Zenodo, Figshare and CRCNS/DANDI: no released code, same-lab code or event files.
+
 ## Survey CSV discrepancies
 No discrepancies in the filled fields (Detection SWR, 7 SD, 150–250 Hz). "SWR electrodes" is #N/A; per the cited Csicsvari 1999a the power is summed over all pyramidal-layer electrodes (count per session not stated). Detection Notes could say "RMS power summed over electrodes, 7 SD; sleep only".
 
