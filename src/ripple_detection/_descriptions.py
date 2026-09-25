@@ -192,7 +192,7 @@ PARAMETERS = {
         "s",
         (
             "Half-width of the window for the local statistics; a candidate this close to "
-            "a block edge is not evaluated."
+            "a block edge is not evaluated. At least half of window_size."
         ),
     ),
     "sharp_wave_thresholds": (

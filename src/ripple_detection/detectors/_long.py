@@ -199,7 +199,8 @@ def Long_sharp_wave_ripple_detector(
     local_window : float, optional
         Half-width in seconds of the window for local statistics. Candidates
         closer than this to either end of their block are not evaluated, and
-        the detector raises if that leaves none. Default is 5.0.
+        the detector raises if that leaves none. At least half of
+        ``window_size``. Default is 5.0.
     sharp_wave_thresholds, ripple_thresholds : tuple of (float, float), optional
         ``(boundary, peak)`` in local standard deviations. Defaults (0.5, 2.5).
     minimum_separation : float, optional
@@ -353,6 +354,15 @@ def Long_sharp_wave_ripple_detector(
         raise ValueError(msg)
     half_window = window // 2
     bound = int(local_window * sampling_frequency)
+    if bound < half_window:
+        # the ripple peak is sought within +/- half a window of the candidate,
+        # inside the local window
+        msg = (
+            f"local_window ({local_window} s) must be at least half of window_size "
+            f"({window_size} s): the ripple peak is sought within half a window of "
+            "each candidate, inside its local window. Both are in seconds."
+        )
+        raise ValueError(msg)
     feature_index_list: list[int] = []
     sharp_wave_list: list[float] = []
     ripple_list: list[float] = []

@@ -1635,6 +1635,54 @@ class TestExcludeOverlap:
         assert len(exclude_overlap(events, np.column_stack([spike_peaks, spike_peaks]))) == 2
         assert len(exclude_overlap(events, spike_peaks[:, np.newaxis] + [-0.1, 0.1])) == 0
 
+    @pytest.mark.parametrize(
+        ("event", "reference", "minimum_overlap"),
+        [
+            ((0.0, 0.04), (0.02, 0.06), 0.02),  # 0.04 - 0.02 rounds below 0.02
+            ((0.1, 0.3), (0.0, 0.3), 0.2),  # 0.3 - 0.1 rounds below 0.2
+        ],
+    )
+    def test_an_overlap_equal_to_the_minimum_reaches_it(
+        self, event, reference, minimum_overlap
+    ):
+        events, references = np.array([event]), np.array([reference])
+
+        assert len(require_overlap(events, references, minimum_overlap)) == 1
+        assert len(exclude_overlap(events, references, minimum_overlap)) == 0
+
+    @pytest.mark.parametrize("origin", [86_400.0, 1.7e9])  # a day; a Unix time
+    def test_the_minimum_does_not_depend_on_the_time_origin(self, origin):
+        """The rounding comes from the timestamps, which are large, not from
+        the overlap, which is small: a relative tolerance on the overlap
+        rejected a nominal 5 ms overlap a day into a recording."""
+        events = origin + np.array([(0.0, 0.01), (1.0, 1.1)])
+        # the second event meets three references, 0.05 s in all
+        references = origin + np.array(
+            [(0.005, 0.015), (0.98, 1.02), (1.05, 1.06), (1.08, 1.2)]
+        )
+
+        assert len(require_overlap(events, references, 0.005)) == 2
+        assert len(require_overlap(events[1:], references, 0.05)) == 1
+        assert len(exclude_overlap(events, references, 0.005)) == 0
+        # a millisecond short is still short
+        assert len(require_overlap(events[:1], references, 0.006)) == 0
+        assert len(require_overlap(events[1:], references, 0.051)) == 0
+
+    def test_an_overlap_written_from_a_day_offset_reaches_the_minimum(self):
+        kept = require_overlap([[86400, 86400.01]], [[86400.005, 86400.015]], 0.005)
+
+        assert len(kept) == 1
+
+    def test_a_zero_length_event_overlaps_nothing(self):
+        """The summed lengths round to a tiny positive overlap for some points
+        inside a reference; a point has no duration either way."""
+        points = np.round(np.random.default_rng(0).uniform(0.2, 0.9, 1000), 4)
+        events = np.column_stack([points, points])
+        reference = np.array([(0.1, 0.95)])
+
+        assert len(require_overlap(events, reference)) == 0
+        assert len(exclude_overlap(events, reference)) == len(events)
+
 
 class TestCloseEventBoundaryAgreement:
     """The merge and drop conventions decide the same gap the same way."""
@@ -1662,6 +1710,27 @@ class TestCloseEventBoundaryAgreement:
 
         assert counts == sorted(counts, reverse=True)
         assert counts[0] == 1  # touching events merge at every threshold
+
+    @pytest.mark.parametrize("origin", [86_400.0, 1e6, 1.7e9])  # a day; 11 days; a Unix time
+    def test_the_boundary_does_not_depend_on_the_time_origin(self, origin):
+        """The rounding comes from the timestamps, which are large, not from
+        the gap, which is small: a relative tolerance on the gap merged events
+        exactly 5 ms apart 11 days into a recording."""
+        equal = origin + np.array([(0.0, 0.01), (0.015, 0.02), (0.05, 0.06), (0.065, 0.07)])
+        short = origin + np.array([(0.0, 0.01), (0.014, 0.02)])  # a millisecond closer
+
+        assert len(merge_close_events(equal, 0.005)) == 4
+        assert len(exclude_close_events(equal, 0.005)) == 4
+        assert len(merge_close_events(short, 0.005)) == 1
+        assert len(exclude_close_events(short, 0.005)) == 1
+
+    def test_touching_events_merge_at_a_threshold_within_the_tolerance(self):
+        """A day in, the tolerance (a few ulps of 86400, about 6e-11 s) exceeds
+        a 1e-12 s threshold; touching events must still merge, as they do at a
+        threshold of zero."""
+        events = 86_400.0 + np.array([(0.0, 0.1), (0.1, 0.2)])
+
+        assert len(merge_close_events(events, 1e-12)) == 1
 
 
 class TestHelperBoundaries:
