@@ -14,11 +14,12 @@ synthetic tests do not establish parity with historical event inventories.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import inspect
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, ParamSpec
+from typing import Any, Literal, ParamSpec
 
 import numpy as np
 import pandas as pd
@@ -933,7 +934,7 @@ def _intervals_to_mask(time: FloatArray, intervals: FloatArray) -> BoolArray:
     return mask
 
 
-@dataclass
+@dataclass(frozen=True)
 class PopulationTrace:
     """Population counts or rate on a native nonoverlapping bin grid.
 
@@ -952,6 +953,12 @@ class PopulationTrace:
     data: FloatArray
     speed: FloatArray | None
     sampling_frequency: float
+
+    def __post_init__(self) -> None:
+        n_bins = len(self.time)
+        if len(self.data) != n_bins or (self.speed is not None and len(self.speed) != n_bins):
+            msg = f"PopulationTrace needs one value per bin ({n_bins}) in data and speed."
+            raise ValueError(msg)
 
     def smooth(self, sigma: float) -> FloatArray:
         """Return a Gaussian-smoothed trace without crossing missing bins."""
@@ -1073,7 +1080,7 @@ def population_trace(
     )
     trace = PopulationTrace(time, values, speed, 1 / bin_width)
     if smoothing_sigma:
-        trace.data = trace.smooth(smoothing_sigma)
+        trace = dataclasses.replace(trace, data=trace.smooth(smoothing_sigma))
     return trace
 
 
@@ -1210,14 +1217,47 @@ def _mallory_candidates(time: FloatArray, z: FloatArray) -> pd.DataFrame:
 # --------------------------------------------------------------------------- recipes
 
 
-@dataclass
+Role = Literal["candidate_detection", "secondary_label", "candidate_gate"]
+"""A method's output: candidate events, a secondary label, or a candidate gate."""
+
+Stage = Literal["detection", "decoding_candidates"]
+"""The initial inventory, or the candidates a paper's decoding analysis kept."""
+
+Inventory = Literal["default", "additional"]
+"""Whether the demonstration runs a method by default or it is an addition."""
+
+
+@dataclass(frozen=True)
 class Recipe:
+    """One registered literature method.
+
+    Attributes
+    ----------
+    row : int
+        The paper's row in ``load_literature_parameters()``.
+    paper : str
+        Paper label, naming the variant when a paper has several.
+    trigger : str
+        What the output is, such as "MUA", "SWR+MUA" or "secondary ripple peaks".
+    run : callable
+        The public method, ``run(rec, **options)``; it dispatches through
+        ``run_method`` and returns a DataFrame.
+    note : str
+        The implementation's docstring: its interpretation and assumptions.
+    role : {"candidate_detection", "secondary_label", "candidate_gate"}
+        The output's scientific use.
+    inventory : {"default", "additional"}
+        "default" for the demonstration's inventories (``RECIPES``),
+        "additional" for the others (``VARIANTS``).
+    """
+
     row: int
     paper: str
     trigger: str
-    run: Callable[..., pd.DataFrame | FloatArray]
+    run: Callable[..., pd.DataFrame]
     note: str
-    role: str = "candidate_detection"
+    role: Role = "candidate_detection"
+    inventory: Inventory = "default"
 
 
 RECIPES: list[Recipe] = []
@@ -1229,15 +1269,21 @@ P = ParamSpec("P")
 # Raw functions compose intermediate inventories. Public calls all pass through
 # run_method once, after the composition is complete.
 _IMPLEMENTATIONS: dict[str, Callable[..., pd.DataFrame | FloatArray]] = {}
+_ENTRIES: dict[str, Recipe] = {}
 
 
 def _register(
-    registry: list[Recipe], row: int, paper: str, trigger: str, role: str
+    registry: list[Recipe], row: int, paper: str, trigger: str, role: Role
 ) -> Callable[[Callable[P, pd.DataFrame | FloatArray]], Callable[P, pd.DataFrame]]:
+    inventory: Inventory = "default" if registry is RECIPES else "additional"
+
     def register(
         function: Callable[P, pd.DataFrame | FloatArray],
     ) -> Callable[P, pd.DataFrame]:
         name = function.__name__
+        if name in _IMPLEMENTATIONS:
+            msg = f"A literature method named {name!r} is already registered."
+            raise ValueError(msg)
         _IMPLEMENTATIONS[name] = function
 
         @functools.wraps(function)
@@ -1270,16 +1316,24 @@ def _register(
         attrs. Supplied behavior_intervals retain wholly contained events.
     """
         )
-        registry.append(
-            Recipe(row, paper, trigger, public_method, (function.__doc__ or "").strip(), role)
+        entry = Recipe(
+            row,
+            paper,
+            trigger,
+            public_method,
+            (function.__doc__ or "").strip(),
+            role,
+            inventory,
         )
+        registry.append(entry)
+        _ENTRIES[name] = entry
         return public_method
 
     return register
 
 
 def recipe(
-    row: int, paper: str, trigger: str, *, role: str = "candidate_detection"
+    row: int, paper: str, trigger: str, *, role: Role = "candidate_detection"
 ) -> Callable[[Callable[P, pd.DataFrame | FloatArray]], Callable[P, pd.DataFrame]]:
     return _register(RECIPES, row, paper, trigger, role)
 
@@ -1397,7 +1451,7 @@ def _tirole(rec: Recording) -> pd.DataFrame:
         minimum_length=121,  # filtfilt needs more samples than its padding
         reason="Tirole's 41-point forward/backward kernel",
     )
-    trace.data = _zscore(smoothed, ddof=1)
+    trace = dataclasses.replace(trace, data=_zscore(smoothed, ddof=1))
     found = _tirole_bounds(trace.time, trace.data)
     events = trace.merge(within_duration(found, 0.1), 0.05)
     keep = []
@@ -1473,7 +1527,9 @@ def _check_stage(stage: str) -> None:
         raise ValueError(msg)
 
 
-def _harvey_stage(rec: Recording, events: pd.DataFrame | FloatArray, stage: str) -> FloatArray:
+def _harvey_stage(
+    rec: Recording, events: pd.DataFrame | FloatArray, stage: Stage
+) -> FloatArray:
     """Replay selection on complete 20 ms bins, before scoring and shuffling."""
     _check_stage(stage)
     if stage == "detection":
@@ -1507,7 +1563,9 @@ def _harvey_stage(rec: Recording, events: pd.DataFrame | FloatArray, stage: str)
 
 
 @recipe(4, "Harvey 2023 (code)", "SWR")
-def harvey_2023_code(rec: Recording, *, stage: str = "detection") -> pd.DataFrame | FloatArray:
+def harvey_2023_code(
+    rec: Recording, *, stage: Stage = "detection"
+) -> pd.DataFrame | FloatArray:
     """Released DetectSWR path on pyramidal and radiatum LFP, then spiking veto.
 
     Uses neurocode defaults: 2-50 Hz sharp waves, 80-250 Hz ripples,
@@ -1525,7 +1583,7 @@ def harvey_2023_code(rec: Recording, *, stage: str = "detection") -> pd.DataFram
 
 @recipe(4, "Harvey 2023 (text)", "SWR (needs radiatum)")
 def harvey_2023_text(
-    rec: Recording, *, sharp_wave_polarity: float = -1.0, stage: str = "detection"
+    rec: Recording, *, sharp_wave_polarity: float = -1.0, stage: Stage = "detection"
 ) -> FloatArray:
     """Published difference-of-Gaussians path, distinct from the code variant.
 
@@ -1641,11 +1699,10 @@ def berners_lee_2022(rec: Recording) -> pd.DataFrame:
         # MATLAB conv2(...,'same') crops at floor(kernel_length/2).
         return np.convolve(x, kernel, mode="full")[50 : 50 + len(x)]
 
-    trace.data = _transform(trace.time, trace.data, smooth)
     stopped = np.abs(_known_speed(trace.speed)) < 5
-    trace.data = _zscore(trace.data, stopped, ddof=1)
-    trace.data[~stopped] = np.nan
-    return trace.detect(
+    data = _zscore(_transform(trace.time, trace.data, smooth), stopped, ddof=1)
+    data[~stopped] = np.nan
+    return dataclasses.replace(trace, data=data).detect(
         threshold=3.0,
         bound_threshold=np.nextafter(0.0, np.inf),
         normalization_method="none",
@@ -1735,7 +1792,7 @@ def krause_2022(rec: Recording) -> FloatArray:
 
 @recipe(11, "Mou 2022", "MUA")
 def mou_2022(
-    rec: Recording, *, normalization: str = "minmax", stage: str = "detection"
+    rec: Recording, *, normalization: str = "minmax", stage: Stage = "detection"
 ) -> FloatArray:
     """10 ms all-spike bins, 20 ms Gaussian; explicit minmax or maximum scaling.
 
@@ -1755,7 +1812,7 @@ def mou_2022(
     if not np.isfinite(span) or span == 0:
         msg = "Min-max normalization needs a nonconstant population trace."
         raise ValueError(msg)
-    trace.data = (trace.data - offset) / span
+    trace = dataclasses.replace(trace, data=(trace.data - offset) / span)
     events = trace.detect(
         threshold=0.35,
         bound_threshold=0.15,
@@ -1871,8 +1928,9 @@ def _michon(rec: Recording, *, order: str = "text") -> FloatArray:
         **common,
     )
     population = population_trace(rec, bin_width=0.005)
-    population.data = detrended(
-        population.time, population.data, population.sampling_frequency
+    population = dataclasses.replace(
+        population,
+        data=detrended(population.time, population.data, population.sampling_frequency),
     )
     bursts = population.detect(threshold=4.0, minimum_event_duration=0.08, **common)
     return rd.exclude_movement(rd.require_overlap(bursts, ripples), rec.speed, rec.time, 5.0)
@@ -2270,7 +2328,7 @@ def _karlsson_rule(rec: Recording, speed_threshold: float) -> pd.DataFrame:
 
 
 @recipe(27, "Shin 2019", "SWR")
-def shin_2019(rec: Recording, *, stage: str = "detection") -> pd.DataFrame | FloatArray:
+def shin_2019(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | FloatArray:
     """The Karlsson rule at <= 4 cm/s; for the analyses, whole events >= 50 ms
     with >= 5 place cells are selected by stage='decoding_candidates'.
     The default returns the initial SWR inventory."""
@@ -2357,7 +2415,7 @@ def muessig_2019(
 
 
 @recipe(30, "Drieu 2018", "MUA")
-def drieu_2018(rec: Recording, *, stage: str = "detection") -> pd.DataFrame | FloatArray:
+def drieu_2018(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | FloatArray:
     """Place-cell bursts in supplied SWS: 10 ms Gaussian, 3 SD/mean, <=500 ms.
 
     Detection returns all bursts. stage='decoding_candidates' adds >=3 active
@@ -2418,10 +2476,13 @@ def maboudi_2018(rec: Recording) -> FloatArray:
     trace = population_trace(rec, bin_width=0.001)
     kernel = np.exp(-0.5 * (np.arange(-60, 61) / 20) ** 2)
     kernel /= kernel.sum()
-    trace.data = _transform(
-        trace.time,
-        trace.data,
-        lambda x: np.asarray(fftconvolve(x, kernel, mode="same"), float),
+    trace = dataclasses.replace(
+        trace,
+        data=_transform(
+            trace.time,
+            trace.data,
+            lambda x: np.asarray(fftconvolve(x, kernel, mode="same"), float),
+        ),
     )
     events = trace.detect(
         threshold=3.0,
@@ -2471,7 +2532,7 @@ def olafsdottir_2017(rec: Recording, *, analysis: str = "arm") -> pd.DataFrame |
 
 
 @recipe(33, "Wu 2017", "MUA")
-def wu_2017(rec: Recording, *, stage: str = "detection") -> pd.DataFrame | FloatArray:
+def wu_2017(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | FloatArray:
     """Nonoverlapping 10 ms all-spike bins, no smoothing; 4 SD, mean bounds, 50-400 ms.
 
     stage='decoding_candidates' adds >=4 active template cells; supply one
@@ -2519,7 +2580,7 @@ def tang_2017(rec: Recording) -> pd.DataFrame | FloatArray:
 
 
 @recipe(36, "Grosmark 2016", "SWR+MUA")
-def grosmark_2016(rec: Recording, *, stage: str = "detection") -> FloatArray:
+def grosmark_2016(rec: Recording, *, stage: Stage = "detection") -> FloatArray:
     """Population/ripple conjunction, with a separate decoding-candidate stage.
 
     The reported 15 ms Gaussian width is interpreted as its SD (unresolved).
@@ -2528,9 +2589,7 @@ def grosmark_2016(rec: Recording, *, stage: str = "detection") -> FloatArray:
     of supplied place cells. Measured data require NREM for normalization,
     eligible quiet-waking/NREM behavior_intervals, and external ripple peaks.
     """
-    if stage not in {"detection", "decoding_candidates"}:
-        msg = "stage must be 'detection' or 'decoding_candidates'."
-        raise ValueError(msg)
+    _check_stage(stage)
     events = _population_with_ripple_peak(rec, rec.sleep(4.0, 1.0))
     if stage == "detection":
         return events
@@ -2559,7 +2618,7 @@ def ambrose_2016(rec: Recording) -> pd.DataFrame | FloatArray:
 
 
 @recipe(38, "Jadhav 2016", "SWR")
-def jadhav_2016(rec: Recording, *, stage: str = "detection") -> pd.DataFrame | FloatArray:
+def jadhav_2016(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | FloatArray:
     """The Karlsson rule at < 4 cm/s; SWRs within 1 s after the previous
     one's start dropped; stage='decoding_candidates' adds >=4 active CA1 cells (all supplied units).
     The default returns the initial SWR inventory."""
@@ -2767,7 +2826,7 @@ def pfeiffer_2013(rec: Recording) -> pd.DataFrame | FloatArray:
 
 
 @recipe(46, "Carr 2012", "SWR")
-def carr_2012(rec: Recording, *, stage: str = "detection") -> pd.DataFrame | FloatArray:
+def carr_2012(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | FloatArray:
     """The Karlsson rule on CA1 at < 4 cm/s; stage='decoding_candidates'
     adds >=5 active place cells; the default returns the initial SWR inventory."""
     _check_stage(stage)
@@ -2849,7 +2908,7 @@ def diba_2007(rec: Recording) -> pd.DataFrame | FloatArray:
 def ji_2007(
     rec: Recording,
     *,
-    stage: str = "detection",
+    stage: Stage = "detection",
     histogram_bins: int = 100,
     histogram_smoothing: int = 3,
     merge_gap: float = 0.08,
@@ -2864,13 +2923,13 @@ def ji_2007(
     _check_stage(stage)
     sleep = rec.sleep(4.0, 1.0)
     trace = population_trace(rec, bin_width=0.01, smoothing_sigma=0.03)
-    trace.data *= 0.01
+    counts = trace.data * 0.01
     mask = _intervals_to_mask(trace.time, sleep)
     level = rd.histogram_minimum_threshold(
-        trace.data[mask], bins=histogram_bins, smoothing_window=histogram_smoothing
+        counts[mask], bins=histogram_bins, smoothing_window=histogram_smoothing
     )
-    trace.data[~mask] = np.nan
-    events = trace.detect(
+    counts[~mask] = np.nan
+    events = dataclasses.replace(trace, data=counts).detect(
         threshold=level,
         bound_threshold=level,
         normalization_method="none",
@@ -2967,7 +3026,7 @@ def kudrimoti_1999(rec: Recording, *, threshold_sd: float | None = None) -> pd.D
     )
 
 
-NOT_REPRODUCED = {
+NOT_REPRODUCED: dict[int, tuple[str, str]] = {
     1: (
         "Widloski 2025",
         "Decoded replay definition is not implemented; the available method returns secondary ripple labels.",
@@ -3102,8 +3161,7 @@ def _detect_population_in(
 ) -> pd.DataFrame:
     trace = population_trace(rec, bin_width=0.001, units=units, smoothing_sigma=sigma)
     mask = _intervals_to_mask(trace.time, intervals)
-    trace.data[~mask] = np.nan
-    return trace.detect(**kwargs)
+    return dataclasses.replace(trace, data=np.where(mask, trace.data, np.nan)).detect(**kwargs)
 
 
 # Additional inventories use a separate registry from the demonstration's
@@ -3112,13 +3170,13 @@ VARIANTS: list[Recipe] = []
 
 
 def variant(
-    row: int, paper: str, trigger: str, *, role: str = "candidate_detection"
+    row: int, paper: str, trigger: str, *, role: Role = "candidate_detection"
 ) -> Callable[[Callable[P, pd.DataFrame | FloatArray]], Callable[P, pd.DataFrame]]:
     return _register(VARIANTS, row, paper, trigger, role)
 
 
 @variant(4, "Harvey 2023 (no radiatum)", "SWR")
-def harvey_2023_no_radiatum(rec: Recording, *, stage: str = "detection") -> FloatArray:
+def harvey_2023_no_radiatum(rec: Recording, *, stage: Stage = "detection") -> FloatArray:
     """Released FindRipples branch for sessions without a radiatum channel.
 
     One selected high-ripple-power channel, 100-250 Hz, thresholds 1/3 SD,
@@ -3600,10 +3658,10 @@ def krause_2022_hse(rec: Recording, *, interpretation: str = "text") -> pd.DataF
             speed_threshold=5.0,
             normalization_mask=mask,
         )
-    trace.data = _zscore(trace.data)
     speed = _known_speed(trace.speed)
-    trace.data[~np.isfinite(speed) | (speed > 5)] = np.nan
-    return trace.detect(
+    data = _zscore(trace.data)
+    data[~np.isfinite(speed) | (speed > 5)] = np.nan
+    return dataclasses.replace(trace, data=data).detect(
         threshold=3.0,
         normalization_method="none",
         minimum_duration=0.0,
@@ -3761,7 +3819,7 @@ def list_methods() -> pd.DataFrame:
                 "paper": entry.paper,
                 "output": entry.trigger,
                 "role": entry.role,
-                "inventory": "default" if entry in RECIPES else "additional",
+                "inventory": entry.inventory,
                 "required_options": tuple(
                     name
                     for name, parameter in parameters.items()
@@ -3805,11 +3863,10 @@ def run_method(name: str, recording: Recording, **options: Any) -> pd.DataFrame:
     ValueError
         Missing or invalid recording inputs for the selected method.
     """
-    entries = {entry.run.__name__: entry for entry in (*RECIPES, *VARIANTS)}
-    if name not in entries:
+    if name not in _ENTRIES:
         msg = f"Unknown literature method {name!r}; inspect list_methods()."
         raise KeyError(msg)
-    entry = entries[name]
+    entry = _ENTRIES[name]
     call = inspect.signature(entry.run).bind(recording, **options)
     call.apply_defaults()
     raw = _IMPLEMENTATIONS[name](*call.args, **call.kwargs)
@@ -3833,7 +3890,7 @@ def run_method(name: str, recording: Recording, **options: Any) -> pd.DataFrame:
             "doi": rd.load_literature_parameters().loc[entry.row, "DOI"],
             "output": entry.trigger,
             "role": entry.role,
-            "inventory": "default" if entry in RECIPES else "additional",
+            "inventory": entry.inventory,
             "interpretation": entry.note,
             "options": {key: value for key, value in call.arguments.items() if key != "rec"},
             "input_sampling_frequency": recording.fs,

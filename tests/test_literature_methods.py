@@ -1627,3 +1627,42 @@ def test_only_simulated_sessions_allow_simulation_proxies(measured):
         reference_lfp=None,
     )
     assert simulated.allows_simulation_proxies
+
+
+def test_registry_entries_and_native_traces_are_immutable():
+    from dataclasses import FrozenInstanceError
+
+    with pytest.raises(FrozenInstanceError):
+        lm.RECIPES[0].row = 3
+    trace = lm.PopulationTrace(np.arange(3) / 100, np.zeros(3), None, 100.0)
+    with pytest.raises(FrozenInstanceError):
+        trace.data = np.ones(3)
+
+
+def test_population_trace_arrays_share_the_bin_grid():
+    with pytest.raises(ValueError, match="one value per bin"):
+        lm.PopulationTrace(np.arange(3) / 100, np.zeros(2), None, 100.0)
+    with pytest.raises(ValueError, match="one value per bin"):
+        lm.PopulationTrace(np.arange(3) / 100, np.zeros(3), np.zeros(4), 100.0)
+
+
+def test_registry_rejects_a_duplicate_name_without_changing_the_inventory():
+    before = (len(lm.RECIPES), len(lm.VARIANTS), dict(lm._IMPLEMENTATIONS))
+    with pytest.raises(ValueError, match="already registered"):
+        lm._register(lm.VARIANTS, 0, "Mallory 2025", "MUA", "candidate_detection")(
+            lm._IMPLEMENTATIONS["mallory_2025"]
+        )
+    assert (len(lm.RECIPES), len(lm.VARIANTS), dict(lm._IMPLEMENTATIONS)) == before
+
+
+def test_each_entry_records_its_inventory():
+    assert {entry.inventory for entry in lm.RECIPES} == {"default"}
+    assert {entry.inventory for entry in lm.VARIANTS} == {"additional"}
+    catalog = lm.list_methods().set_index("name")
+    for entry in (*lm.RECIPES, *lm.VARIANTS):
+        assert catalog.loc[entry.run.__name__, "inventory"] == entry.inventory
+
+
+def test_grosmark_rejects_an_unknown_stage(measured):
+    with pytest.raises(ValueError, match="stage must be"):
+        lm.grosmark_2016(measured, stage="replay")
