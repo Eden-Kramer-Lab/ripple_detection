@@ -6094,6 +6094,20 @@ class TestTrimEventsToSpikeWindows:
         )
         np.testing.assert_allclose(result, [[0.28, 0.64]])
 
+    @pytest.mark.parametrize("origin", [0.0, 86_400.0, 1e6, 1e9, 1.7e9])
+    def test_the_edges_do_not_depend_on_the_time_origin(self, origin):
+        """Spikes at 0.32 and 0.60 lie on the open edge of the windows one
+        step outside the answer; a tolerance relative to the time (1.7 s at
+        a Unix time) found no window at all."""
+        from ripple_detection import trim_events_to_spike_windows
+
+        time = origin + self.TIME
+        spikes = self._spikes([30, 32, 60, 61])
+        result = trim_events_to_spike_windows(
+            np.array([(time[0], time[99])]), spikes, time, window=0.05, step=0.01
+        )
+        np.testing.assert_array_equal(result, [[time[28], time[64]]])
+
     def test_edges_that_already_hold_enough_do_not_move(self):
         from ripple_detection import trim_events_to_spike_windows
 

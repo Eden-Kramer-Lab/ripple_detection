@@ -4,7 +4,13 @@ import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
 
-from ripple_detection.core import FloatArray, IntArray, _event_bounds, sample_count_within
+from ripple_detection.core import (
+    FloatArray,
+    IntArray,
+    _event_bounds,
+    _gap_tolerance,
+    sample_count_within,
+)
 from ripple_detection.detectors._validation import _check_whole_number, _validate_multiunit
 
 
@@ -273,22 +279,26 @@ def trim_events_to_spike_windows(
     pooled = np.nansum(spikes[:, _selected_units(units, spikes.shape[1])], axis=1)
     cumulative = np.concatenate([[0.0], np.cumsum(pooled)])
 
+    events = _event_bounds(event_times)
+    # a bound reached by stepping rounds to within a few ulps of the largest
+    # time, so it is compared with the samples, and the steps counted, within
+    # the close-event rule's tolerance for timestamps of that magnitude
+    scale = float(max(np.abs(time).max(initial=0.0), np.abs(events).max(initial=0.0)))
+    tolerance = _gap_tolerance(step, scale)
+
     def spikes_between(low: float, high: float, closed_on: str) -> float:
-        """Spikes in [low, high) or (low, high], by the cumulative count; the
-        edges are compared with a tolerance so a bound reached by stepping
-        is not moved across a sample by rounding."""
-        low_tol, high_tol = 1e-9 * max(1.0, abs(low)), 1e-9 * max(1.0, abs(high))
+        """Spikes in [low, high) or (low, high], by the cumulative count."""
         if closed_on == "left":
-            a = np.searchsorted(time, low - low_tol, "left")
-            b = np.searchsorted(time, high - high_tol, "left")
+            a = np.searchsorted(time, low - tolerance, "left")
+            b = np.searchsorted(time, high - tolerance, "left")
         else:
-            a = np.searchsorted(time, low + low_tol, "right")
-            b = np.searchsorted(time, high + high_tol, "right")
+            a = np.searchsorted(time, low + tolerance, "right")
+            b = np.searchsorted(time, high + tolerance, "right")
         return float(cumulative[b] - cumulative[a])
 
     trimmed = []
-    for start_time, end_time in _event_bounds(event_times):
-        n_steps = int(np.floor((end_time - start_time - window) / step + 1e-9))
+    for start_time, end_time in events:
+        n_steps = int(np.floor((end_time - start_time - window + tolerance) / step))
         if n_steps < 0:
             continue
         # count steps from each bound rather than accumulating them, so the
@@ -302,10 +312,10 @@ def trim_events_to_spike_windows(
         end = next(
             (e for e in ends if spikes_between(e - window, e, "right") >= minimum_spikes), None
         )
-        if start is None or end is None or end - window < start - 1e-9:
+        if start is None or end is None or end - window < start - tolerance:
             continue
-        first = int(np.searchsorted(time, start - 1e-9 * max(1.0, abs(start)), "left"))
-        last = int(np.searchsorted(time, end + 1e-9 * max(1.0, abs(end)), "right")) - 1
+        first = int(np.searchsorted(time, start - tolerance, "left"))
+        last = int(np.searchsorted(time, end + tolerance, "right")) - 1
         if not sample_count_within(last - first + 1, time, minimum_duration):
             continue
         trimmed.append((time[first], time[last]))
