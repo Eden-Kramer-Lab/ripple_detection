@@ -1467,7 +1467,7 @@ _GAP_TOLERANCE = 1e-9
 
 
 def _is_gap_below(
-    gap: FloatArray | float, close_event_threshold: float
+    gap: FloatArray | float, close_event_threshold: float, scale: float
 ) -> BoolArray | np.bool_:
     """Whether an inter-event gap is shorter than the threshold.
 
@@ -1475,9 +1475,14 @@ def _is_gap_below(
     :func:`merge_close_events` share: a gap equal to the threshold is treated
     as equal rather than as shorter, which binary floating point would
     otherwise decide for it, since 0.15 - 0.1 is 4.999...e-2, just under 0.05.
-    The tolerance is relative only, with no absolute term, so the rule stays
-    monotonic in the threshold: a default ``atol`` would make a threshold near
-    zero merge less than a threshold of zero.
+
+    The rounding in a gap comes from the event bounds, not from the gap: each
+    bound is stored to within half a unit in the last place (ulp) of its
+    magnitude, so 86400.015 - 86400.01 is about 5e-12 from 0.005. The
+    tolerance is therefore a few ulps of `scale`, or the relative
+    ``_GAP_TOLERANCE`` of the threshold if that is larger, and at most the
+    threshold itself, so a threshold of zero still means strictly negative
+    and the rule stays monotonic in the threshold.
 
     Parameters
     ----------
@@ -1485,14 +1490,23 @@ def _is_gap_below(
         Time from one event's end to the next event's start.
     close_event_threshold : float
         Separation below which events count as close.
+    scale : float
+        Largest magnitude among the event bounds the gaps were measured from.
 
     Returns
     -------
     is_below : ndarray of bool, shape (n_gaps,), or bool
 
     """
-    return (gap < close_event_threshold) & ~np.isclose(
-        gap, close_event_threshold, rtol=_GAP_TOLERANCE, atol=0.0
+    return np.less(gap, close_event_threshold - _gap_tolerance(close_event_threshold, scale))
+
+
+def _gap_tolerance(close_event_threshold: float, scale: float) -> float:
+    """How far a gap may round from the threshold and still count as equal to
+    it, as :func:`_is_gap_below` sets it out."""
+    return min(
+        max(_GAP_TOLERANCE * close_event_threshold, 4 * float(np.spacing(scale))),
+        close_event_threshold,
     )
 
 
@@ -1532,8 +1546,10 @@ def _is_clear_of_close_events(
     if len(events):
         keep[0] = True
         reference = events[0, column]
+        scale = float(np.abs(events).max())
         for event in range(1, len(events)):
-            if not _is_gap_below(events[event, 0] - reference, close_event_threshold):
+            gap = events[event, 0] - reference
+            if not _is_gap_below(gap, close_event_threshold, scale):
                 keep[event] = True
                 reference = events[event, column]
     return keep
@@ -1664,7 +1680,10 @@ def require_isolation(
         latest_end_before = np.maximum.accumulate(events[:-1, 1])
         gap_before = events[1:, 0] - latest_end_before
         # at a separation of 0 this is gap_before < 0: only overlaps are close
-        too_close = np.asarray(_is_gap_below(gap_before, minimum_separation), dtype=bool)
+        scale = float(np.abs(events).max())
+        too_close = np.asarray(
+            _is_gap_below(gap_before, minimum_separation, scale), dtype=bool
+        )
         # a close pair loses its second member through the gap before it and
         # its first through the same gap, read as the gap after
         keep[1:] &= ~too_close
@@ -1775,20 +1794,25 @@ def merge_close_events(
         first_peak = event_times["peak_time"].to_numpy(dtype=float).copy()
         last_peak = first_peak.copy()
 
+    # merging reuses the input bounds, so their largest magnitude holds
+    # throughout; a peak lies inside its event, so it is no larger
+    scale = float(np.abs(events).max())
     while len(events) > 1:
         if measure == "peak":
             gap = first_peak[1:] - last_peak[:-1]
         else:
             gap = events[1:, 0] - events[:-1, 1]
+        # events that touch merge at every threshold, which _is_gap_below
+        # alone would not decide for a threshold within its tolerance of zero
+        to_merge = gap <= 0
         if close_event_threshold > 0:
-            to_merge = np.asarray(_is_gap_below(gap, close_event_threshold), dtype=bool)
+            to_merge |= np.asarray(
+                _is_gap_below(gap, close_event_threshold, scale), dtype=bool
+            )
             if inclusive:
                 to_merge |= np.isclose(
                     gap, close_event_threshold, rtol=_GAP_TOLERANCE, atol=0.0
                 )
-        else:
-            # events that touch merge, which _is_gap_below would exclude
-            to_merge = gap <= 0
         if maximum_duration is not None:
             merged_span = np.maximum(events[1:, 1], events[:-1, 1]) - events[:-1, 0]
             to_merge &= (merged_span <= maximum_duration) | np.isclose(
@@ -1820,7 +1844,15 @@ def _overlaps(
 
     Bounds must be finite and in order: a NaN or reversed row would silently
     break the sorted arithmetic below for every event after it, which for a
-    veto means keeping what it should drop."""
+    veto means keeping what it should drop.
+
+    Whether the overlap is positive is decided by comparing bounds, not by
+    the summed lengths, whose rounding would give a zero-length event inside
+    a reference a positive overlap. An overlap equal to ``minimum_overlap``
+    counts as reaching it, since 0.04 - 0.02 need not round to 0.02. The
+    tolerance scales with the timestamps, not the overlap: 86400.01 is stored
+    to within about 1e-11 s, so an overlap measured from a session-clock
+    origin rounds that far from its nominal value."""
     _check_non_negative(minimum_overlap=minimum_overlap)
     events = _event_bounds(event_times)
     reference = _event_bounds(reference_event_times)
@@ -1834,6 +1866,10 @@ def _overlaps(
             )
             raise ValueError(msg)
     if not (len(events) and len(reference)):
+        return events, np.zeros(len(events), dtype=bool)
+    # a zero-length reference has no duration to overlap
+    reference = reference[reference[:, 1] > reference[:, 0]]
+    if not len(reference):
         return events, np.zeros(len(events), dtype=bool)
     reference = reference[np.argsort(reference[:, 0], kind="stable")]
     reference = merge_close_events(reference)
@@ -1849,7 +1885,18 @@ def _overlaps(
     head = np.maximum(0.0, starts - ref_start[np.clip(first, 0, len(reference) - 1)])
     tail = np.maximum(0.0, ref_end[np.clip(last - 1, 0, len(reference) - 1)] - ends)
     overlap = np.where(meets, cumulative[last] - cumulative[first] - head - tail, 0.0)
-    return events, np.asarray((overlap > 0) & (overlap >= minimum_overlap))
+    # every reference in the run has positive length, so the overlap is
+    # positive exactly when the event does too
+    is_positive = meets & (starts < ends)
+    # each bound is stored to within half a unit in the last place (ulp) of
+    # the largest magnitude, and each reference in the run adds two bounds, a
+    # length and a running-sum step, each at most an ulp or two; the event's
+    # own bounds, head, tail and the final subtractions add a few more
+    scale = max(np.abs(events).max(), np.abs(reference).max(), minimum_overlap)
+    n_in_run = np.maximum(last - first, 0)
+    tolerance = 8 * (n_in_run + 1) * np.spacing(scale)
+    reaches = overlap >= minimum_overlap - tolerance
+    return events, np.asarray(is_positive & reaches)
 
 
 def require_overlap(

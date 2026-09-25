@@ -1984,6 +1984,23 @@ class TestLongSharpWaveRippleDetector:
                 local_window=20.0,
             )
 
+    def test_a_local_window_narrower_than_half_a_candidate_window_raises(
+        self, time, stationary
+    ):
+        """The ripple-peak search used to index before the local window and
+        report negative ripple durations."""
+        lfp = _synthetic_two_channel_lfp(self.N_TIME, self.FS, self.EVENTS)
+        with pytest.raises(ValueError, match=r"local_window.*half of window_size"):
+            Long_sharp_wave_ripple_detector(
+                time,
+                lfp[:, 0],
+                stationary,
+                self.FS,
+                sharp_wave_lfp=lfp[:, 1],
+                window_size=0.5,
+                local_window=0.1,
+            )
+
     def test_a_random_state_instance_is_refused(self, time, stationary):
         """As the simulators refuse one: default_rng would accept it and draw a
         different stream than the seed it was made from."""
