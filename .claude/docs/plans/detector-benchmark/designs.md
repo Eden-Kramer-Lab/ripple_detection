@@ -422,139 +422,39 @@ condensed `1 - jaccard` matrix with `method="average"`; no new dependency.
 
 ## Recipe executor
 
-Module `examples/benchmark/recipe_configs.py`. It holds the [config types](shared-contracts.md#recipe-config),
-the registries, `Recording`, `run_pipeline`, and `RECIPES`.
-
-**`Recording`** moves here from `examples/literature_recipes.py:59-150`. Its `functools.cache`
-methods (`filtered`, `envelope`, `ratio`) become per-instance caches: a class-level cache keeps
-every `Recording` alive, which the recipe script could ignore (one recording per run) but a runner
-worker cannot (one 600 s session's multiunit alone is 900 000 × 60 × 8 B = 432 MB). Results are
-unchanged. Additions:
+`examples/benchmark/recipe_configs.py` is a thin adapter to the installed API:
 
 ```python
-    running_intervals: np.ndarray = field(default_factory=lambda: np.empty((0, 2)))
-    _cache: dict[tuple[str, object], object] = field(default_factory=dict, init=False, repr=False)
+from ripple_detection.literature_methods import Recording, bounds, list_methods, run_method
 
-    def _cached(self, key: tuple[str, object], compute: Callable[[], T]) -> T:
-        if key not in self._cache:
-            self._cache[key] = compute()
-        return self._cache[key]
-
-    @classmethod
-    def from_session(cls, session: rd.SimulatedSession) -> Recording:
-        """Unit groups from ``session.unit_types``: place cells, and pyramidal = place + pyramidal."""
-        types = session.unit_types
-        return cls(session, place_cells=types == "place",
-                   pyramidal=np.isin(types, ("place", "pyramidal")),
-                   running_intervals=session.running_intervals)
-
-    def units(self, group: str) -> np.ndarray | None:   # "all" -> None
-        return {"all": None, "pyramidal": self.pyramidal, "place": self.place_cells}[group]
-
-    def trace(self, signal: tuple[Step, ...]) -> np.ndarray:
-        def compute():
-            values = SIGNALS[signal[0].kind](self, **signal[0].kwargs())
-            for transform in signal[1:]:
-                values = SIGNALS[transform.kind](self, values, **transform.kwargs())
-            return values
-        return self._cached(("trace", signal), compute)
-
-    def intervals(self, state: Step) -> np.ndarray:
-        return self._cached(("intervals", state), lambda: STATES[state.kind](self, **state.kwargs()))
-
-    def partner(self, pipeline: Pipeline):   # partner pipelines run once per recording
-        return self._cached(("partner", pipeline), lambda: run_pipeline(pipeline, self))
+def run_recipe(config: RecipeConfig, rec: Recording) -> pd.DataFrame:
+    return run_method(config.method, rec, **dict(config.options))
 ```
 
-`filtered(band)`, `envelope(band)` and `ratio(...)` use `_cached` with keys `("filtered", band)`
-and so on.
+Use the [configuration contract](shared-contracts.md#recipe-config). Build recordings
+from observed arrays and declared selections via `Recording.from_arrays`. Unit types,
+state/baseline intervals, reference channels and templates are explicit input policies;
+record which labels the simulator supplies. Required external ripple inventories come
+from a named detector and recorded settings, never event truth. Unknown settings need
+an explicit benchmark assumption or exclusion. Avoid using the simulation-only
+fallback paths intended for demonstration.
 
-`make_recording` stays in `literature_recipes.py` and passes
-`running_intervals=np.asarray(running)` so Gridchyn's baseline (`time < first bout start`,
-today `RUNNING_INTERVALS[0][0]`, `literature_recipes.py:567`) reads `rec.running_intervals[0, 0]`.
-
-**Executor:**
-
-```python
-def run_pipeline(pipeline: Pipeline, rec: Recording) -> pd.DataFrame | np.ndarray:
-    events = CORES[type(pipeline.core)](pipeline.core, rec)
-    for post in pipeline.post:
-        events = POST_STEPS[post.kind](rec, events, **post.kwargs())
-    return events
-```
-
-Post steps that take a partner call `rec.partner(pipeline)`. Before any registry function is
-called, every `PlusSamples(seconds, samples)` value in a `Params` is resolved to
-`seconds + samples / rec.fs`: the recipes' sampling-rate-dependent values (`0.04 + 1 / rec.fs` in
-Bush's duration floor, `0.06 + 1 / rec.fs` in Bhattarai's, Foster's and Lee's
-`minimum_silence`) are written `PlusSamples(0.04, 1)`. `PlusSamples` is a frozen dataclass, so
-`Params` stay hashable.
-
-`CORES`:
-
-- `ThresholdCore`: build the trace, NaN outside `restrict_to`, resolve `threshold` (number or
-  `LEVELS` rule) and `bound_threshold` (`"threshold"` means the resolved threshold), the
-  normalization mask from `normalization_period`, then call `rd.detect_events_from_trace` with the
-  remaining fields as keywords.
-- `DetectorCore`: inputs wired from `rd.DETECTORS[name]`: `RIPPLE_BAND_LFP` →
-  `rec.filtered(band)[:, :channels]`, `RAW_LFP` → `session.raw_lfp`, `MULTIUNIT` → `multiunit`;
-  Long's required keyword input `sharp_wave_lfp` → `session.sharp_wave_lfp`; optional keyword
-  inputs (Carey's `theta_lfp`) are not passed, since no `DetectorCore` recipe uses Carey (Carey
-  2019 is a `CustomCore`); called as
-  `detector(rec.time, *inputs, rec.speed, rec.fs, **keyword_inputs, **params)`.
-- `SilenceCore`: `rd.detect_silence_bounded_events(rec.time, spikes, rec.fs, units=rec.units(units), **params)`
-  with spikes NaN outside `restrict_to` (today's `only_in`).
-- `CustomCore`: `CUSTOM[function](rec, **params)`.
-
-Registries (kind → today's code it replaces):
-
-| Registry | Kinds (what each computes) |
-| --- | --- |
-| `SIGNALS` sources | `rate(units, sigma)`; `counts(units)`; `per_cell_rate(units)` (counts × fs / n units, Krause); `mean_envelope(band, channels)`; `envelope(band, channel)`; `filtered(band, channels)` (2-D); `raw(channel)` (`"pyramidal"` raw_lfp or `"radiatum"` sharp_wave_lfp); `wavelet_power(frequencies, cycles)` (Stella, per channel RMS) |
-| `SIGNALS` transforms | `gaussian(sigma)`; `boxcar(window)` (`uniform_filter1d`, size `round(window * fs)`, axis 0); `square`; `sqrt`; `channel_mean`; `channel_max`; `most_variable_channel`; `detrend_median(window)` (Michon, `size = round(window * fs) \| 1`); `minmax` (Mou); `ratio_to_baseline` (Gridchyn: over the mean before the first bout); `per_bin(bin)` (× fs × bin, Ji); `zscore` (`rd.normalize_signal`, per column); `exclude(state)` (NaN inside the state, Stella); `butter_bandpass(low, high, order)`, `butter_lowpass(cutoff, order)`, `absolute`, `negate` (Harvey text) |
-| `STATES` | `sleep(**Recording.sleep kwargs)`; `awake(of)`; `speed_below(threshold)`; `speed_above(threshold, margin)` (Davidson's running ± 30 s); `ratio_above(threshold, measure)` (Stella's REM); `ratio_below_mean(speed_below, theta, delta, smoothing_sigma)` (Farooq Science); `kmeans_sleep(theta, delta, merge_gap, minimum_duration)` (Drieu) |
-| `PERIODS` | `speed_below(threshold)`; `state(of)` |
-| `LEVELS` | `percentile(q)` (Muessig); `histogram_minimum(within, bins, smoothing_window)` (Ji); `mean_plus_sd(within, n_sd)` (Kudrimoti) |
-| `POST_STEPS` | `merge(gap, inclusive, measure)` (with today's empty guard); `duration(low, high)`; `active_units(units, minimum_active_units, minimum_active_fraction, minimum_spikes)`; `movement(threshold, rule)`; `close_events(gap, measure_from)`; `require_overlap(partner)` (partner a `Pipeline` or a `STATES` step); `exclude_overlap(state)`; `within(state)`; `trace_peak(signal, threshold)`; `times_inside(partner)`; `trim_to_trace(signal, level, sides, minimum_duration)`; `trim_to_spike_windows(units)`; `spiking_filter(units)` (Harvey code); `windows_around_peaks(half_width)` (Muessig's partner) |
-| `CUSTOM` | `carey_2019`; `wikenheiser_2013`; `olafsdottir_2015` |
-
-Notes: each config's `note` is today's docstring, with any sentence "See _helper." (or "See
-_helper;") replaced by that helper's docstring verbatim, since the helpers are deleted. A test
-checks no note contains "See _".
-
-The executor adds kinds only as recipes need them; a kind used by one recipe is fine. The rule for
-choosing a core: **a recipe is a `ThresholdCore` when it can be written as one without changing
-its events; otherwise the core it can be written with; `CustomCore` last.** Phase 3's in-process
-comparison against today's functions decides "without changing its events".
+The installed package owns filtering, normalization, native bins, event construction,
+postprocessing, roles and stage semantics. The benchmark neither copies its `Recording`
+class nor caches mutable recordings behind public methods. Any future cache belongs to
+an explicitly bounded immutable analysis context and requires lifetime/invalidation tests.
 
 ## Recipe classification
 
-Expected cores for today's 57 recipes (rows as in `examples/literature_recipes.py`). The executor
-may move a recipe to a less specific core when exactness demands it; it records the move in the
-recipe's config comment.
+Use exact public method names from `list_methods()`. Classify by implemented output
+and role, not survey row or demonstration grouping. Every method is configured or
+listed in `EXCLUSIONS` with a reason. Configure supported stages/protocols separately.
 
-| Core | Rows |
-| --- | --- |
-| `ThresholdCore` (spikes) | 0 Mallory, 2 Yang, 3/6 Huelin Gorriz/Tirole, 5 Liu 2023, 7 Bush, 8 Berners-Lee 2022, 11 Mou, 15/25 Michon, 16 Igata, 17 Gridchyn, 21 Xu, 22/23 Farooq, 24 Chenani, 29 Muessig, 30 Drieu, 31 Maboudi, 32 Olafsdottir 2017, 33 Wu 2017, 34 Yamamoto, 36 Grosmark, 39 Olafsdottir 2016, 40 Silva, 43 Wu 2014, 45 Pfeiffer 2013, 47 Bendor, 50 Davidson, 52 Ji |
-| `ThresholdCore` (LFP) | 1 Widloski 2025, 4 Harvey (text), 10 Krause, 12 Berners-Lee 2021, 18 Kaefer, 20 Stella, 37 Ambrose, 42 Pfeiffer 2015, 48 Gupta, 56 Kudrimoti |
-| `DetectorCore` | 4 Harvey (code, Zugaro + `spiking_filter`), 13 Denovellis, 14 Gillespie, 27 Shin, 35 Tang, 38 Jadhav, 46 Carr, 49 Karlsson 2009 (Karlsson), 55 Nadasdy (Roumis) |
-| `SilenceCore` | 19 Bhattarai, 26 Liu 2019, 51 Diba, 53 Foster, 54 Lee |
-| `CustomCore` | 28 Carey, 41 Olafsdottir 2015, 44 Wikenheiser |
-
-Partners (the `partner` of `require_overlap` and `times_inside`) are pipelines of any core:
-
-| Recipe | Partner |
-| --- | --- |
-| Yang 2024, Grosmark 2016 | `DetectorCore` Zugaro on one channel, 130-200 Hz (today's `zugaro_ripple_peaks`, `literature_recipes.py:211-220`), via `times_inside` |
-| Liu 2023 | `DetectorCore` Long |
-| Michon 2019/2021 | `ThresholdCore` on the detrended 140-225 Hz mean envelope of 3 channels |
-| Yamamoto 2017 | `ThresholdCore` on channel 0's squared 140-200 Hz envelope |
-| Harvey 2023 (text) | `ThresholdCore` on the negated 5-40 Hz radiatum signal (sharp waves) |
-| Bhattarai 2020 | `ThresholdCore` on 100-250 Hz boxcar power (SWRs, with duration, merge and cell-count post steps) |
-| Muessig 2019 | `ThresholdCore` on the most variable channel's 7 ms RMS, then `windows_around_peaks(0.05)` |
-
-Tirole's ripple test (`trace_peak`) and Krause's trim (`trim_to_trace`) take a signal, not a
-pipeline. Davidson's and Nadasdy's `require_overlap` take a `STATES` step.
+Published-method results always come from `run_recipe`. Experimental component
+representations are phase 6's responsibility. Custom peak merging, adaptive feedback,
+FFT windows and finite/native-grid kernels are not assumed equivalent to generic
+thresholding. A method without a verified experimental representation remains a fixed
+comparison point; no detector body is replaced to make attribution possible.
 
 ## Conditions grid
 
@@ -620,12 +520,12 @@ Per session, in a worker (`ProcessPoolExecutor`, default `os.cpu_count() - 1` wo
 
 1. `simulate_condition(condition, replicate)`: seed from `session_seed(replicate)`, then the draw
    order in [Conditions grid](#conditions-grid).
-2. `rec = Recording.from_session(session)`; filter once per band through its cache. The
-   `Recording` is discarded after the session.
+2. Build package recordings via `make_recording(session, config)` using declared input
+   policies. Save resolved options and input provenance; release recordings after use.
 3. Each detector at defaults and along its [sweep](shared-contracts.md#threshold-sweeps); each
-   recipe via `run_pipeline`. Every call inside `warnings.catch_warnings()` with
+   recipe via `run_recipe(config, recording)`. Every call inside `warnings.catch_warnings()` with
    `simplefilter("ignore")` and `try/except Exception` (broader than `simulation_study.py:108-118`'s
-   `ValueError`: a recipe can raise others, e.g. Gridchyn's baseline on a session without a bout),
+   `ValueError`: a recipe can raise others, e.g. a required baseline containing no valid spikes),
    recording `f"{type(error).__name__}: {error}"`.
 4. Per method × setting × expression in (`ripple`, `sharp_wave`, `burst`, `network`):
    `match_events(truth_windows(events, 0.1, expression), detected)`, boundary errors at 0.25 and
@@ -710,9 +610,15 @@ Mixed models are not used (overview Open Question 1).
 
 ## Attribution
 
-Module `examples/benchmark/attribution.py`. Only `ThresholdCore` recipes take part; the
-`DetectorCore`, `SilenceCore` and `CustomCore` recipes are fixed points (reported alongside, not
-decomposed).
+Module `examples/benchmark/attribution.py`. This phase defines experimental `Step`,
+`ThresholdCore` and `Pipeline` dataclasses and `run_pipeline`, using public package
+primitives. `Step` names a transform/state/postprocessing operation and hashable
+parameters; `ThresholdCore` specifies its signal, normalization and threshold/bound
+rules; `Pipeline` combines a core and ordered postprocessing steps. Implement only
+operations needed by the factor templates below. Do not copy paper-specific bodies.
+A named-method call remains `run_recipe(config, rec)`; experimental results have
+separate identifiers. Methods with no verified template are fixed points, reported
+alongside attribution results. The installed API remains the source of their events.
 
 **Families.** `spikes` (signal source `rate`, `counts`, `per_cell_rate`) and `lfp` (every other
 source), each analyzed separately; the factor spaces differ.
@@ -742,24 +648,26 @@ source), each analyzed separately; the factor spaces differ.
 | `merge_gap` | both | continuous |
 | `speed` | both | categorical (rule and threshold together) |
 | `minimum_active_units` | spikes | integer |
-| `state` | both | categorical (a `STATES` step and how it is applied) |
+| `state` | both | categorical (an explicit state selection and how it is applied) |
 | `coincidence` | both | categorical (a whole post step with its partner) |
 
-Rule for ranges and levels: **continuous range = [min, max] over the family's `ThresholdCore`
-recipes that set the factor (0 included when one omits it); categorical levels = the distinct
-values those recipes use, plus "none" when one omits the step.** Values are read from each
-recipe's config wherever they appear (core field or post step), whether or not the whole recipe
-fits a template: `template_of(config)` extracts every factor it can and marks the recipe *in the
-space* only when `compile(template_of(config))` returns the same events as the config on each of
-the `K` reference sessions (exact bounds equality). Event equality, not structural equality, so a
-recipe whose steps commute with the compile order still counts. A family's in-space recipes are
-counted and the count pinned by test; if a family has fewer than 8, stop and report to the
-maintainer before running Sobol or Shapley on it (the space would be too far from the literature
-to say much about it). `factor_space(RECIPES, family)` derives the ranges and levels, and a test
-pins its output, so a recipe change that moves a range is visible in review.
+Rule for ranges and levels: **continuous range = [min, max] over verified method
+templates in the family; categorical levels = their distinct values**, including 0
+or "none" only when a represented method omits that step. An explicit mapping from
+`config_id` to a template records the source of each factor and benchmark assumption;
+do not infer decomposition from the function name or the survey CSV alone.
+
+A template represents a method only after reviewing operation order, normalization,
+native grids and boundary rules, and comparing its events exactly with
+`run_recipe(config, rec)` on positive controls, relevant edge cases and all `K`
+reference sessions. Matching empty outputs alone is insufficient. Store exclusions
+and their reasons; fixed-point results come from public calls. Pin the eligible set
+and factor-space ranges. Fewer than eight eligible methods in a family triggers the
+existing stop/report rule before Sobol or Shapley. Factor-space membership cannot be
+expanded by changing a public method to fit the template.
 
 **Reference configuration** per family: each factor at the median (continuous, integer; for
-integers rounded down) or mode (categorical, ties to the first level in recipe row order) over the
+integers rounded down) or mode (categorical, ties to the first level in configuration order) over the
 family's in-space recipes.
 
 **Outputs `Y`** per configuration, each averaged over the `K = 5` reference-condition sessions

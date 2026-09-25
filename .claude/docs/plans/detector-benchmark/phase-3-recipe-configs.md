@@ -1,123 +1,108 @@
-# Phase 3 — Recipes as declarative configs, reproducing today's events exactly
+# Phase 3 — Configure benchmarks to call the installed paper methods
 
 [← back to PLAN.md](PLAN.md) · [overview](overview.md) · [designs](designs.md#recipe-executor)
 
-Rewrite the 57 literature recipes from functions into data: `RecipeConfig`s run by one executor
-over a registry of components, in `examples/benchmark/recipe_configs.py`. The runner (phase 4)
-needs recipes it can call uniformly, and attribution (phase 6) needs recipes it can take apart
-and recombine. **Every recipe must return exactly the events it returns today.**
+The installed `ripple_detection.literature_methods` module owns published-method
+implementations and supports users' measured recordings. This phase adds benchmark
+configurations that call that API. It does not move, copy or replace detector bodies.
+The runner needs uniform method calls; component attribution remains phase 6.
 
-**Inputs to read first:**
+**Prerequisite:** integrate the `literature-methods` implementation from commit
+`885ac4f` (or a descendant) before starting. It adds `Recording`, `list_methods`,
+`run_method` and named methods in `src/`; these changes are not yet integrated on
+the comparison branch. Use the integrated catalog, not old line numbers or a
+frozen count of 57 functions, as the inventory.
 
-- [examples/literature_recipes.py](../../../../examples/literature_recipes.py) — all of it: `Recording` (59-150), `make_recording` (153-178), helpers (181-220), `Recipe`/`recipe` (226-243), the 57 recipe functions (247-1168), `NOT_REPRODUCED` (1171), `score`/`run_all`/`main` (1185-1223).
-- [tests/test_literature_recipes.py](../../../../tests/test_literature_recipes.py) — how the script is imported (`importlib`, `sys.modules`) and what is asserted.
-- Phase 2's `score` in `examples/literature_recipes.py` (this phase runs after phase 2; both edit the file).
-- [tests/test_snapshots.py](../../../../tests/test_snapshots.py) and `tests/snapshots/` — pytest-snapshot usage (`snapshot.assert_match`, `--snapshot-update`).
-- `docs/literature/README.md` "Recipes" section — describes the script; updated here.
+## Inputs and contracts
 
-**Contracts referenced:**
-
-- [Recipe config](shared-contracts.md#recipe-config) — defined here; hashability and determinism must not be weakened (phase 6 caches by value).
-- [Primary expression](shared-contracts.md#primary-expression) — every config carries one; the rule is tested here.
-
-**Designs referenced:** [recipe executor](designs.md#recipe-executor), [recipe classification](designs.md#recipe-classification).
+- `src/ripple_detection/literature_methods.py`: the public recording constructor,
+  method catalog, named calls and dispatcher. Read method docstrings for conditional
+  data requirements; `required_options` lists signature requirements only.
+- `docs/literature/implementation.md` and the paper notes: output roles, stages,
+  source choices and limits. CSV values are not executable configurations.
+- `examples/literature_recipes.py`: demonstration input assembly and calls into the
+  package. It remains runnable without importing benchmark code.
+- `tests/test_literature_methods.py`, `tests/test_literature_recipes.py`: existing
+  behavior tests and positive controls. Keep these tests and public entry points.
+- [Recipe config](shared-contracts.md#recipe-config),
+  [primary expression](shared-contracts.md#primary-expression), and
+  [benchmark outputs](shared-contracts.md#benchmark-outputs).
 
 ## Tasks
 
-Three commits, in this order, so exactness is checked where it can be (in-process, both
-implementations present) and guarded afterwards by a snapshot that survives CI's other platforms
-and dependency floors:
+1. Add `examples/benchmark/recipe_configs.py` with the small `RecipeConfig` contract,
+   `RECIPES`, `EXCLUSIONS`, `make_recording(session, config)` and
+   `run_recipe(config, recording)`. Import `Recording`, `bounds`, `list_methods`
+   and `run_method` from the installed package. `run_recipe` forwards the configured
+   method and options to `run_method` and preserves its DataFrame and attrs.
+2. Configure each chosen method by its stable function name and explicit options.
+   Resolve defaults from its public signature at execution and save the resolved
+   values. Use `stage="detection"` where supported. Keep protocol variants distinct;
+   do not count decoding-candidate gates or secondary labels as equivalent outputs.
+   Derive DOI, paper, role and interpretation from the package catalog/results.
+   `primary_expression` is an explicit benchmark decision reviewed per method.
+3. Build package `Recording` objects from simulated observations, with explicit
+   selections for channels, pyramidal/place cells, reference signals, normalization
+   and behavioral intervals, templates and any external inventory. The benchmark
+   input policy and assumptions are serialized. Prefer `Recording.from_arrays`
+   so benchmark calls exercise the measured-data path. Do not infer missing method
+   settings from truth windows or silently use simulation-only fallbacks. Unit-type
+   and state labels supplied by the simulator must be identified as known labels;
+   an external ripple inventory must come from a named detector/configuration,
+   never the simulator's event truth. Exclude unsupported methods with reasons.
+4. Add an inventory coverage check: every name in the integrated `list_methods()`
+   catalog has a runnable configuration or an explicit exclusion explaining the
+   missing input or unresolved setting. A partial implementation's role stays
+   visible. Missing requirements are exclusions/failures, never zero detections.
+5. Record configurations and resolved result metadata in `methods.csv` as specified
+   by the output contract. Separate literature-specified values from benchmark
+   assumptions. Fixed thresholds and baseline choices are not tuned to results.
+6. Document running a named configuration, supplying inputs, stages, roles and
+   exclusions in `examples/benchmark/README.md`. Link to the package implementation
+   guide for method definitions; do not duplicate parameter tables or docstrings.
+   Update `tests/CLAUDE.md` for adapter tests. Preserve the standalone demo; phase 2
+   owns its evaluation-function change. No package API change is required here.
 
-- **Commit 1: rounded snapshot from today's functions.** Add
-  `tests/test_literature_recipes.py::test_recipe_events_match_snapshot`: on the module's 45 s
-  recording, for every recipe, the event count and the bounds rounded to 6 decimals (the rounding
-  `tests/test_snapshots.py:127-129` uses), as JSON keyed by `f"{row:02d}:{paper}"`, compared with
-  `snapshot.assert_match`. Generate with `--snapshot-update`, check it has 57 keys and events where
-  the results CSV shows them, and commit the test and snapshot alone.
-- **Commit 2: configs beside the functions.** Create `examples/benchmark/recipe_configs.py` per
-  [designs.md#recipe-executor](designs.md#recipe-executor): the config types, `step()`,
-  `PlusSamples`, `bounds`; `Recording` copied from `literature_recipes.py:59-150` with per-instance
-  caches and the additions in the design; the registries and `CORES`; `run_pipeline`; `RECIPES`,
-  one `RecipeConfig` per recipe in row order, `primary_expression` by the contract's rule, `note`
-  per the design's notes rule. Follow the classification table; move a recipe to a less specific
-  core only when exactness requires it, with a one-line comment saying why. Shared sub-rules become
-  `Pipeline` or signal constants (`PFEIFFER_2015_SWRS`, `TIROLE`, `MICHON`, `FAROOQ`,
-  `POPULATION_WITH_RIPPLE_PEAK`, `KARLSSON_RULE`, `ZUGARO_RIPPLE_PEAKS`), not functions. Add
-  `test_configs_reproduce_the_functions`: for every recipe, `bounds(run_pipeline(config.pipeline,
-  rec))` equals `bounds(function(rec))` **exactly** (`np.array_equal`) on the module's 45 s
-  recording. Also run the same comparison once by hand on `make_recording(90.0)` and record the
-  result in the PR (the suite has no slow-test marker, and 90 s would slow every run). Iterate
-  until both pass.
-- **Commit 3: remove the functions.** Rewrite `examples/literature_recipes.py` on top of the
-  configs: keep the module docstring (updated to say where the configs live),
-  `SAMPLING_FREQUENCY`, `RUNNING_INTERVALS`, `RIPPLE_TIMES`, `OUTPUT`, `make_recording` (now
-  passing `running_intervals`), `NOT_REPRODUCED`, `score` (phase 2's), `run_all`, `main`; import
-  `Recording`, `RECIPES`, `run_pipeline`, `bounds` from `recipe_configs` after
-  `sys.path.insert(0, str(Path(__file__).with_name("benchmark")))`, so `recipes.bounds` still
-  resolves. **Delete** the 57 recipe functions, `Recipe`, `recipe`, and the helpers
-  (`within_duration`, `within_intervals`, `only_in`, `zugaro_ripple_peaks`, `_spiking_filter`,
-  `_michon`, `_pfeiffer_2015_swrs`, `_tirole`, `_farooq`, `_population_with_ripple_peak`,
-  `_karlsson_rule`), and `test_configs_reproduce_the_functions` with them. `run_all` calls
-  `run_pipeline(entry.pipeline, rec)`. In `tests/test_literature_recipes.py`, the loader fixture
-  also puts `examples/benchmark` on `sys.path` (module-scoped, removed afterwards) and
-  `test_every_recipe_returns_events_inside_the_recording` (`:60-68`) calls
-  `run_pipeline(entry.pipeline, recording)` instead of `entry.run(recording)`. The snapshot passes
-  **without** `--snapshot-update`; `uv run python examples/literature_recipes.py` leaves
-  `examples/literature_recipes_results.csv` unchanged (`git diff --exit-code`).
-- Create `examples/benchmark/README.md` with a first section, "Recipe configs": what a config is,
-  the four cores, `PlusSamples`, how to add a recipe, the exactness rule. Phases 4-6 extend this
-  file.
-- Lint and format `examples/benchmark/` with `uv run ruff check` / `uv run ruff format` by hand
-  (the pre-commit hooks cover only `src/` and `tests/`); type hints throughout, though mypy does
-  not run on examples.
-- **Docs:** `docs/literature/README.md` "Recipes" section: configs live in
-  `examples/benchmark/recipe_configs.py`, run by `examples/literature_recipes.py`. CLAUDE.md:
-  mention `examples/benchmark/recipe_configs.py` beside the recipes command under Development
-  Commands → Testing. `tests/CLAUDE.md` item 11: the snapshot and the configs. No CHANGELOG entry
-  (examples only, no user-facing API).
+## Validation
 
-## Deliberately not in this phase
+- Compare each configured call with the direct public method on the same recording
+  and options, using exact DataFrame equality and metadata equality. Include all
+  runnable configurations; nonempty controlled fixtures cover important branches.
+- Exercise baseline/state restrictions, missing data, timestamps with large origins,
+  stage selection and methods requiring explicit options. Reuse package fixtures
+  where practical; compare through public APIs, not private implementation registries.
+- Check options, method names, unique configuration IDs, catalog coverage and serialized
+  metadata. Confirm an unknown method, missing option and missing required input
+  produce explicit errors rather than empty successful results.
+- Check the simulated-input adapter's unit masks, reference/interval assignments and
+  lack of synthetic stand-ins when inputs are absent. Externally supplied detector
+  outputs retain their own provenance. Discarded recordings must be collectable.
+- The standalone demo still imports only package APIs and runs; adapter creation alone
+  must not change its results. Behavior corrections belong on `literature-methods`
+  with source evidence and regression tests, not in benchmark-specific overrides.
+- Run relevant tests and CI, including dependency floors. Lint/format benchmark
+  examples explicitly. A stored snapshot can guard integration drift but cannot
+  replace direct comparison or establish agreement with authors' original outputs.
 
-- Changing any recipe's behavior, parameters or notes (beyond inlining helper docstrings) — even
-  known deviations. A recipe fix is a separate commit after this phase, with its own snapshot
-  update and a stated reason.
-- The CSV corrections to the literature survey — on hold by the maintainer; untouched.
-- Attribution templates and factor spaces — phase 6. No "canonical form" fields on the configs.
-- Running recipes on network sessions — phase 4. `Recording.from_session` gets a unit test on a
-  hand-built `SimulatedSession`, nothing more.
-- Moving configs into `src/` (overview decision 10).
+## Attribution boundary
 
-## Validation slice
+Phase 6 can define experimental component templates using public package primitives.
+A template represents a named method only after checking its operation order,
+normalization and native grids against the package and demonstrating event equality
+on positive controls, edge cases and reference sessions. Methods that cannot be
+represented stay fixed comparison points with a reason. Experimental templates
+never become alternate implementations used by the main benchmark or the demo.
 
-| Test | Asserts |
-| --- | --- |
-| `test_recipe_events_match_snapshot` | Committed from today's functions (commit 1); passes unchanged after commits 2 and 3. |
-| `test_configs_reproduce_the_functions` (commit 2 only) | Exact bounds equality, config against function, for every recipe on the 45 s recording (the 90 s check is manual, in the PR). |
-| `test_every_surveyed_paper_has_a_recipe_or_a_reason`, `test_each_recipe_names_its_paper_as_the_survey_does`, `test_every_recipe_runs` and the rest of today's file | Pass unchanged in meaning. |
-| `test_primary_expression_follows_trigger` | Each config's `primary_expression` equals the contract's rule applied to its `trigger`. |
-| `test_notes_are_self_contained` | No `note` contains "See _". |
-| `test_configs_are_hashable_and_kinds_exist` | `hash(config)` works for every recipe; every `Step.kind` found anywhere in a config is a key of the registry for its slot. |
-| `test_partner_pipelines_run_once` | Running Yang 2024 and Grosmark 2016 on one `Recording` runs the shared Zugaro partner once (count via a wrapped registry entry). |
-| `test_caches_are_per_recording` | Two `Recording`s do not share cached traces, and a discarded one is garbage-collected (`weakref`). |
-| `test_plus_samples_resolves` | `PlusSamples(0.04, 1)` resolves to `0.04 + 1 / fs` for the recording's rate. |
-| `test_recording_from_session_groups` | A `SimulatedSession` with `unit_types` `["place", "pyramidal", "interneuron"]` gives `place_cells == [T, F, F]`, `pyramidal == [T, T, F]`; `running_intervals` passed through. |
-| `test_classification_is_recorded` | The count of each core type equals the classification table in the design, or the test's expected counts were updated in the same commit as a documented move. |
-| CI | Green, including the dependency-floors job. If the floors job disagrees with the rounded snapshot and the difference is floating point (an event moving by one sample, a bound in the sixth decimal), snapshot event counts plus bounds rounded to 3 decimals instead, and say so in the PR; any other difference is a bug. |
-| manual | `examples/literature_recipes_results.csv` unchanged after rerunning the script (90 s). |
+## Out of scope
 
-## Fixtures
-
-The existing module-scoped 45 s recording in `tests/test_literature_recipes.py`; the new snapshot
-file under `tests/snapshots/`. Nothing else.
+- Moving public methods or `Recording` into `examples/`, deleting the named functions,
+  or importing benchmark code from the installed package or standalone demo.
+- Reimplementing all paper methods as a second declarative execution engine.
+- Persistent recording caches without an explicit invalidation/lifetime design.
+- Altering literature values, detector behavior, or adding replay decoding/scoring.
 
 ## Review
 
-Before opening the PR for this phase, dispatch `code-reviewer` (or equivalent independent reviewer) against the diff. Confirm:
-- Every task in this phase is implemented as specified.
-- The "Deliberately not in this phase" list is honored — no scope creep into adjacent phases.
-- Validation slice tests pass; slow / integration tests are marked.
-- Tests aren't trivial — they exercise the asserted behavior, not tautologies (no `assert True`; no assertions that only verify the mock the test just configured). Shared setup is in fixtures, not copy-pasted across tests. (`testing-anti-patterns` covers the failure modes in detail.)
-- Docstrings, test names, and module names don't reference this plan or its milestones.
-- Old code paths flagged for removal in this phase are actually removed (no orphans left behind): no recipe function or helper remains in `literature_recipes.py`.
-- User-facing documentation listed as tasks is updated, not deferred.
-- The three commits are in order, the snapshot file is byte-identical across them, and the exact in-process comparison passed before the functions were deleted.
+Before opening this phase's PR, request independent review of input policies,
+public-call parity, catalog coverage, provenance and documentation. Verify that
+there are no copied detector bodies or benchmark imports in the installed package.

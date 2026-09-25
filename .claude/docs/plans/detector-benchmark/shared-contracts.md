@@ -13,7 +13,7 @@ phases link by anchor. "Do not weaken" marks an invariant a later phase relies o
 - [Event inventory input](#event-inventory-input) (phases 2, 3, 4)
 - [Matching and pair metrics](#matching-and-pair-metrics) — `match_events`, `EventMatching` (phases 2, 4, 5, 6)
 - [Detector comparison table](#detector-comparison-table) — `compare_detectors` (phases 2, 5)
-- [Recipe config](#recipe-config) — `RecipeConfig`, `Pipeline`, cores, `Step` (phases 3, 4, 6)
+- [Recipe config](#recipe-config) — `RecipeConfig`, public dispatch and input policies (phases 3, 4, 6)
 - [Primary expression](#primary-expression) (phases 3, 4, 5, 6)
 - [Threshold sweeps](#threshold-sweeps) (phases 4, 5)
 - [Conditions](#conditions) (phases 4, 5, 6)
@@ -229,90 +229,42 @@ none.
 
 ## Recipe config
 
-In `examples/benchmark/recipe_configs.py` (not the public API; overview decision 10).
+In `examples/benchmark/recipe_configs.py`. This is a benchmark call specification;
+the implementation and scientific metadata belong to `ripple_detection.literature_methods`.
 
 ```python
-Params = tuple[tuple[str, Any], ...]   # hashable keyword arguments, order preserved
-
-@dataclass(frozen=True)
-class Step:
-    kind: str                # a key of the registry for the slot it fills
-    params: Params = ()
-    def kwargs(self) -> dict[str, Any]: return dict(self.params)
-
-def step(kind: str, **params: Any) -> Step:  # the only constructor recipes use
-    return Step(kind, tuple(params.items()))
-
-@dataclass(frozen=True)
-class ThresholdCore:            # detect_events_from_trace on a built trace
-    signal: tuple[Step, ...]    # SIGNALS: first builds a trace, later ones transform it
-    restrict_to: Step | None = None          # STATES: trace set to NaN outside these intervals
-    normalization_method: str = "zscore"     # passed through
-    normalization_period: Step | None = None # PERIODS: the normalization_mask
-    threshold: float | Step = 2.0            # a number, or LEVELS rule computed on the trace
-    bound_threshold: float | tuple[float, ...] | Literal["threshold"] = 0.0
-    bound_search_window: float | None = None
-    smoothing_sigma: float | None = None
-    minimum_duration: float = 0.0
-    minimum_event_duration: float | None = None
-    maximum_duration: float | None = None
-    speed_rule: str = "endpoints"
-    speed_threshold: float = math.inf
-    close_event_threshold: float = 0.0
-    close_event_rule: str = "drop"
-
-@dataclass(frozen=True)
-class DetectorCore:             # a package detector by registry name
-    name: str
-    band: tuple[float, float] = (150.0, 250.0)
-    channels: int | None = None # first n filtered channels; None for all
-    params: Params = ()
-
-@dataclass(frozen=True)
-class SilenceCore:              # detect_silence_bounded_events
-    units: str                  # "all", "pyramidal" or "place"
-    restrict_to: Step | None = None
-    params: Params = ()
-
-@dataclass(frozen=True)
-class CustomCore:               # a rule that fits none of the above
-    function: str               # key of CUSTOM
-    params: Params = ()
-
-Core = ThresholdCore | DetectorCore | SilenceCore | CustomCore
-
-@dataclass(frozen=True)
-class Pipeline:
-    core: Core
-    post: tuple[Step, ...] = () # POST_STEPS, applied in order
+Params = tuple[tuple[str, Any], ...]  # serializable, hashable scalar/tuple settings
 
 @dataclass(frozen=True)
 class RecipeConfig:
-    row: int                    # survey row, 0-based
-    paper: str                  # as today's Recipe.paper, e.g. "Harvey 2023 (code)"
-    trigger: str                # as today's Recipe.trigger
-    primary_expression: str     # see "Primary expression"
-    pipeline: Pipeline
-    note: str                   # today's docstring, verbatim
+    config_id: str                # unique, stable benchmark configuration identifier
+    method: str                   # exact name from list_methods()
+    primary_expression: str       # ripple, sharp_wave, burst or network
+    options: Params = ()          # method options, including stage when supported
+    input_policy: str = ""        # named, documented simulation-to-Recording policy
+    assumptions: tuple[str, ...] = ()  # benchmark choices absent from the source
 ```
 
-Invariants (do not weaken):
-
-- Every value in a `Params` is hashable: numbers (including `math.inf`), strings, tuples, `None`,
-  `Step`, `Pipeline`, `PlusSamples`. The executor caches traces and partner pipelines by value,
-  per `Recording`.
-- `PlusSamples(seconds: float, samples: int)` (frozen dataclass) stands for `seconds + samples / fs`,
-  resolved by the executor; it is how a recipe writes a sampling-rate-dependent value.
-- `bounds(events) -> FloatArray` (`(n, 2)` from a DataFrame or an array) is public in the module;
-  the recipe tests use it.
-- `run_pipeline(pipeline, rec)` is deterministic given the `Recording`.
-- The step-kind registries are `SIGNALS`, `STATES`, `PERIODS`, `LEVELS`, `POST_STEPS`, `CUSTOM`:
-  dicts from kind to function. Their kinds and meanings are listed in
-  [designs.md#recipe-executor](designs.md#recipe-executor).
-- `RECIPES: tuple[RecipeConfig, ...]` covers every survey row except `NOT_REPRODUCED` (today
-  row 9), in row order, with Harvey 2023's two variants both at row 4.
-- Only `ThresholdCore` recipes are *decomposable* (phase 6's factor space); the other cores are
-  fixed points.
+- `RECIPES: tuple[RecipeConfig, ...]` configures supported methods; `EXCLUSIONS`
+  maps every remaining catalog name to a reason. Derive coverage from the integrated
+  catalog, not paper-row counts: a paper can supply several inventories or only a label.
+- `make_recording(session, config) -> Recording` uses the installed constructor and
+  explicit input policies. Do not copy `Recording` or silently use simulation fallbacks.
+- `run_recipe(config, recording) -> pd.DataFrame` calls `run_method` with the configured
+  name/options and preserves all diagnostics and attrs. The package owns defaults;
+  persist the resolved options, not just overrides.
+- `bounds` is imported from the package. Event comparison accepts the public output
+  contract; no conversion discards metadata before it is saved.
+- DOI, paper, output role and interpretation come from the package. Demonstration
+  grouping (default/additional) is distinct from role. Use detection stage by default;
+  any other stage is a separate named configuration and must not be pooled with it.
+- Input policies serialize supplied intervals, selections and external detector
+  configurations, or stable references to per-session values stored with the run.
+  External ripple inventories cannot be substituted with simulator truth.
+- Phase 6 owns experimental `Step`, `ThresholdCore`, `Pipeline` and template types,
+  plus their executor built from public package primitives. These are experimental
+  compositions, not method configurations or the source of named-method results.
+  Their definitions and equivalence rule are in [attribution](designs.md#attribution).
 
 ## Primary expression
 
@@ -324,14 +276,13 @@ expressions and `"network"`.
 | `Kay_ripple_detector`, `Karlsson_ripple_detector`, `Roumis_ripple_detector`, `Shvartsman_ripple_detector`, `Yu_ripple_detector`, `Zugaro_ripple_detector`, `Long_sharp_wave_ripple_detector` | `ripple` |
 | `Carey_candidate_detector` | `network` |
 | `multiunit_HSE_detector` | `burst` |
-| Recipe with trigger starting `SWR+MUA` | `network` |
-| Recipe with trigger starting `SWR` (including "SWR (needs radiatum)") | `ripple` |
-| Recipe with trigger starting `MUA` | `burst` |
-| Recipe with trigger `decoding (ripple label)`, `decoding (SWR label)`, `sequence (SWR gate)` | `ripple` |
+| Paper-method configuration | Explicit per-method assignment in `RecipeConfig`, reviewed against its implemented output. |
 
-The detector half lives in `examples/benchmark/run.py` as `DETECTOR_EXPRESSION`; the recipe half
-is each config's `primary_expression`, and a test checks it against this rule applied to
-`trigger`.
+The detector mapping lives in `examples/benchmark/run.py` as `DETECTOR_EXPRESSION`.
+Method configurations carry their primary expression explicitly: do not infer it from
+free-text trigger prefixes or whether a function is a demonstration default. Preserve
+roles such as secondary labels and candidate gates in reports, even when both are
+scored against ripple truth. Tests cover representative ripple, burst and joint methods.
 
 ## Threshold sweeps
 
@@ -390,6 +341,7 @@ and 6. Every table is CSV; `.csv.gz` for the large ones.
 | File | One row per | Columns |
 | --- | --- | --- |
 | `manifest.json` | run | `run_name`, `git_commit`, `package_version`, `numpy_version`, `scipy_version`, `command`, `started`, `finished`, `n_workers` |
+| `methods.csv` | session × method × setting | `session_id`, `method`, `setting`, `doi`, `role`, `inventory`, `stage`, `primary_expression`, `resolved_options` (JSON), `input_policy` (JSON or references), `assumptions` (JSON), `interpretation` |
 | `conditions.csv` | condition | `condition_id`, `factor`, `level`, `params` (JSON of the full parameter set after overrides) |
 | `sessions.csv.gz` | session | `session_id` (`f"{condition_id}/{replicate}"`), `condition_id`, `replicate`, `seed`, `duration_s`, `rest_s`, `event_time_s` (union of network windows at 0.1), `n_events_<type>` per `EVENT_TYPES`, `n_non_events_<type>` per `NON_EVENT_TYPES`, `simulate_s`, `detect_s` |
 | `truth.csv.gz` | truth component | `session_id`, `table` (`"event"`/`"non_event"`), `id`, `type`, `expression`, `component`, then the remaining columns of the event or non-event table (NaN where not applicable) |
@@ -398,10 +350,11 @@ and 6. Every table is CSV; `.csv.gz` for the large ones.
 | `metrics.csv.gz` | session × method × setting × expression | `session_id`, `method`, `setting`, `expression`, `n_reference`, `n_detected`, `n_matched`, `recall`, `precision`, `f1`, `false_positives_per_minute`, `median_iou`, `median_coverage`, `median_temporal_precision`, `median_onset_error_<f>`, `median_offset_error_<f>` for `f` in 10, 25, 50, `n_split`, `n_merged` |
 | `failures.csv` | failed call | `session_id`, `method`, `setting`, `error` (`f"{type(error).__name__}: {error}"`, first 200 characters) |
 
-- `method` is a registry name for a detector or `f"recipe:{row:02d}:{slug}"` for a recipe; `slug`
-  is the config's paper lower-cased, each run of non-alphanumeric characters replaced by one `_`,
-  leading and trailing `_` stripped (`"Harvey 2023 (code)"` → `recipe:04:harvey_2023_code`).
-- `setting` is `"default"`, the swept value formatted with `repr(float(v))`, or `"published"`.
+- `method` is a registry name for a detector or `recipe:<config_id>` for a method
+  configuration. `config_id` includes the stable package method name and any protocol
+  or stage discriminator; it does not depend on mutable survey row numbers.
+- `setting` is `"default"`, the swept value formatted with `repr(float(v))`, or `"literature"`. The latter labels a configured interpretation; `assumptions`
+  discloses settings not established by the paper.
 - `false_positives_per_minute` = unmatched detected events / (minutes of the session outside every
   network window at fraction 0.1).
 - `n_active_units` counts units with a spike in the event (`count_spikes_in_events`), for the

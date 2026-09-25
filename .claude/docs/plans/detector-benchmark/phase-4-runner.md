@@ -11,7 +11,7 @@ the smoke test, the extrapolation, and the full run.
 
 - Phase 1a/1b: `draw_network_events`, `draw_non_events`, `simulate_network_session`, `truth_windows`.
 - Phase 2: `ripple_detection.evaluate` (`match_events`, `EventMatching.boundary_errors`).
-- Phase 3: `examples/benchmark/recipe_configs.py` (`Recording.from_session`, `RECIPES`, `run_pipeline`).
+- Phase 3: `examples/benchmark/recipe_configs.py` (`make_recording`, `RECIPES`, `EXCLUSIONS`, `run_recipe`).
 - [src/ripple_detection/registry.py:408-424](../../../../src/ripple_detection/registry.py) — `DETECTORS`; detectors are resolved by name.
 - [examples/simulation_study.py:108-141](../../../../examples/simulation_study.py) — `call` and `detector_calls`: the error-recording call and the per-detector input wiring to mirror.
 - [src/ripple_detection/detectors/_units.py:34](../../../../src/ripple_detection/detectors/_units.py) — `count_spikes_in_events`, for `n_active_units`.
@@ -33,14 +33,18 @@ the smoke test, the extrapolation, and the full run.
   [designs.md#conditions-grid](designs.md#conditions-grid) define them (values, labels, the
   factor-to-keyword table, the schedule, the seeding and the draw order live there).
   `simulate_condition` applies a condition's dotted-key overrides to a deep copy of `REFERENCE`.
-- `examples/benchmark/run.py`: `THRESHOLD_SWEEPS`, `DETECTOR_EXPRESSION`, `method_calls(rec)`
-  (detector defaults, sweep points and recipes as `(method, setting, callable)`; Long's
-  `peak_thresholds` alias expanded here), `run_session(condition, replicate, methods=None)`
-  returning the session's `truth`, `units`, `events`, `metrics`, `failures` frames and timings, and
+- `examples/benchmark/run.py`: `THRESHOLD_SWEEPS`, `DETECTOR_EXPRESSION`, `method_calls(session)`
+  (detector defaults, sweep points and recipes as `(method, setting, callable)`;
+  build each method recording from its input policy, and expand Long's
+  `peak_thresholds` alias here), `run_session(condition, replicate, methods=None)`
+  returning the session's `truth`, `units`, `methods`, `events`, `metrics`, `failures` frames and timings, and
   the CLI in [designs.md#runner](designs.md#runner) with `ProcessPoolExecutor`, per-condition writes,
   `--resume`, `--smoke`, and `manifest.json`. Every method call is guarded by `except Exception`
   (the design's runner step 3), so no recipe or detector can abort a run. Metrics per the output schema, using
   `truth_windows(events, 0.1, expression)` for matching and `boundary_errors` at 0.25 and 0.5.
+- Persist `methods.csv` with the resolved public-call metadata and input policy for
+  each session/configuration. Reports separate output roles and stages; failed or
+  excluded methods never count as successful zero-event calls.
 - `.gitignore`: add `examples/benchmark/output/`.
 - **Smoke test.** Check capacity first (`sysctl -n hw.ncpu` on macOS or `nproc`; `df -h .`; no other
   heavy job running). Run `uv run python examples/benchmark/run.py --run-name smoke --smoke`.
@@ -86,12 +90,12 @@ the smoke test, the extrapolation, and the full run.
 | `test_running_schedule` | Sorted, non-overlapping bouts inside the session, rest first and last, bout and rest lengths in range. |
 | `test_run_session_schema` | A 60 s reference session (long enough for one bout: see the schedule) with two detectors, one sweep point and two recipes including Gridchyn 2020: every frame has exactly the contract's columns; `metrics` has one row per method × setting × expression. |
 | `test_metrics_agree_with_match_events` | For one method, the metrics row equals `match_events` called directly on the written events and `truth_windows`. |
-| `test_failures_are_recorded_not_raised` | Stub methods raising `ValueError` and `IndexError` each yield a `failures` row (`"IndexError: ..."`) and no events or metrics rows; the others still run. On a 30 s session (no bout), Gridchyn 2020's baseline fails and is recorded, not raised. |
+| `test_failures_are_recorded_not_raised` | Stub methods raising `ValueError` and `IndexError` each yield a `failures` row (`"IndexError: ..."`) and no events or metrics rows; the others still run. A Gridchyn configuration with a missing or invalid pre-rest baseline fails explicitly; absence of a running bout alone does not imply a missing baseline. |
 | `test_resume_skips_finished_conditions` | With `--resume`, a condition whose files exist is not re-simulated (monkeypatched `run_session` call count). |
 | manual | Smoke-test numbers and extrapolation recorded; spot-check PNGs inspected. |
 
 The tests load `examples/benchmark` modules through a module-scoped fixture that prepends the
-directory to `sys.path` and removes it afterwards (as phase 3's recipe tests do). Keep the suite in
+directory to `sys.path` and removes it afterwards (as phase 3's adapter tests do). Keep the suite in
 seconds: 30-60 s sessions, method subsets via `run_session(..., methods=...)`. No test imports
 `spot_check.py` or matplotlib (the dependency-floors job has no matplotlib).
 

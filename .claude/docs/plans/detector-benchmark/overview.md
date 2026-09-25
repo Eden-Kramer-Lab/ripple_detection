@@ -36,8 +36,10 @@ Each was asked and answered; do not reopen them without asking.
    `src/ripple_detection/`: the network-event simulator and the evaluation module. The recipe
    configurations, runner, analyses and figures live in `examples/benchmark/`. Large outputs are
    git-ignored; small summary tables are committed.
-10. **Recipe configs live in `examples/benchmark/`**, not the public API; promote to a public module
-    later only if users ask to run a published rule by name.
+10. **Published methods live in the installed package.** The maintainer clarified on
+    2026-09-25 that running published paper methods is a primary package use. Benchmark
+    call configurations live in `examples/benchmark/` and dispatch to the installed API.
+    This supersedes the earlier decision to keep executable recipes in examples.
 11. **Primary use of the package stays user detection.** Benchmark-only code must not enter the
     public API. (Maintainer's words: "The primary use of this package is for users to be able to do
     ripple detection on their data.")
@@ -48,41 +50,24 @@ parallelism, paired bootstrap and permutation tests in place of mixed models).
 
 ## Current codebase integration points
 
-Branch `detector-benchmark` starts from `literature-methods` at commit 6d866b8. Line numbers are
-from that commit.
+Integrate the completed `literature-methods` changes before implementing phase 3.
+Earlier integration line numbers and example-owned detector functions are obsolete.
 
-- `src/ripple_detection/simulate.py:1150` — `simulate_session`: **untouched**; its output must stay
-  identical (tests `tests/test_simulate.py::TestSessionStates::test_the_defaults_are_unchanged` and
-  the snapshot tests guard it).
-- `src/ripple_detection/simulate.py:1075-1147` — `SimulatedSession` (frozen dataclass, fields at
-  1108-1118, `__post_init__` 1120-1129, `ripple_windows` property 1131-1147): gains the fields in
-  [SimulatedSession additions](shared-contracts.md#simulatedsession-additions), each with a
-  default, so existing constructors keep working (phase 1a).
-- `src/ripple_detection/simulate.py:407` `_ripple_waveform`, `:509` `_gaussian_window`, `:523`
-  `_add_ripple_bursts` — symmetric Gaussian envelope, constant frequency; the new simulator adds its
-  own asymmetric, chirped renderer rather than changing these (phase 1a).
-- `src/ripple_detection/simulate.py:563` `_correlated_noise`, `:587` `_add_common_mode_artifacts`,
-  `:739` `_add_sharp_wave_pair`, `:844` `simulate_multiunit` (rate modulation at 910-917), `:939`
-  `simulate_speed`, `:996` `simulate_theta_delta` — reused by the new simulator.
-- `src/ripple_detection/core.py:663` `_event_bounds` — every evaluation function reads event tables
-  through it. `:1813` `_overlaps`, `:1855` `require_overlap`, `:1681` `merge_close_events` —
-  untouched.
-- `src/ripple_detection/registry.py:408` `DETECTORS`, `:427` `get_detector` — the runner resolves
-  detectors by name; untouched.
-- `src/ripple_detection/__init__.py:72-85` — simulate exports; new public names are added here and
-  to `__all__`; `tests/test_public_api.py` pins `__all__`.
-- `examples/simulation_study.py:79-105` — `score`: any-overlap matching with median boundary errors.
-  **Removed in phase 2**, replaced by `ripple_detection.evaluate` (and likewise the recipes'
-  `score`, `examples/literature_recipes.py:1185-1194`). The study itself, its `THRESHOLD_SWEEPS`
-  (`:41`) and its notebook stay as the fast study CI runs and the README cites; phase 4 names the
-  trigger for retiring them.
-- `examples/literature_recipes.py` — recipes as functions (`Recording` at :60, `make_recording`
-  :153, `Recipe`/`recipe` :227-243, `NOT_REPRODUCED` :1171, `score` :1185, `run_all` :1197). Phase 3
-  rewrites it on top of declarative configs and removes the function bodies; its public behaviour
-  (the results table) must not change.
-- `tests/test_literature_recipes.py` — runs every recipe; kept and pointed at the configs in phase 3.
-- `.gitignore` — gains `examples/benchmark/output/` (phase 4).
-- `CLAUDE.md` "Core Module Structure" lists five modules; phase 2 adds `evaluate.py` as the sixth.
+- `simulate_session` defaults and signals remain unchanged. Phase 1 extends simulation
+  additively with the fields in [shared contracts](shared-contracts.md#simulatedsession-additions).
+- The nine detectors and `registry.py` retain their public contracts.
+- `src/ripple_detection/literature_methods.py` owns `Recording`, the method catalog,
+  public named methods, `run_method`, output roles and stage selection. Phase 3 wraps
+  these calls with benchmark input policies; it neither copies nor deletes them.
+- `examples/literature_recipes.py` stays a standalone package-usage example. Phase 2
+  replaces its overlap scorer with `ripple_detection.evaluate`; phase 3 preserves
+  its package calls and input assembly.
+- Package method tests continue to check source-derived behavior. Adapter tests
+  check public-call parity, explicit requirements, inventory coverage and metadata.
+- `examples/simulation_study.py` and its notebook remain the fast study until the
+  phase-4 retirement condition is met. Phase 2 replaces its scorer as planned.
+- New simulator/evaluation exports, documentation and CHANGELOG entries are added
+  with their implementations. Benchmark-only runner/configuration code stays in examples.
 
 ## Scope and dependency policy
 
@@ -97,7 +82,7 @@ from that commit.
 
 - Real data of any kind (decision 2).
 - Sequence capture, replay-candidate yield (decision 8).
-- A public recipe API (decision 10).
+- Moving or duplicating the public paper-method API into benchmark code (decision 10).
 - Changing any existing detector, its defaults or its output.
 - Tuning the simulator until detectors look good: simulator parameters are set from the literature
   before results are seen (see [Risks](#risks-and-mitigations)).
@@ -121,8 +106,8 @@ figures use matplotlib from the existing `examples` extra.
   examples' scorers become one-to-one, so their recall and precision can fall where one event
   overlapped two windows or two events one window; the PR shows the old and new README tables side
   by side.
-- Phase 3: every declarative recipe returns *exactly* the event bounds the current function returns
-  (array equality, in-process, while both exist), and a rounded snapshot guards it afterwards.
+- Phase 3: every configured call equals its direct public method call, including
+  event diagnostics and metadata; every catalog method is configured or explicitly excluded.
 - Phase 4: the smoke test's measured runtime and output size, and the extrapolation to the full
   grid, are recorded in the PR; outputs follow the [output schema](shared-contracts.md#benchmark-outputs).
 - Phase 5/6: every summary table is regenerated from outputs by one command; every reported
@@ -136,14 +121,14 @@ figures use matplotlib from the existing `examples` extra.
 | The simulator's choices decide the winners ("tuned to the benchmark"). | Parameters are set from published ranges in [designs.md](designs.md#parameter-sources) *before* running detectors; the robustness grid (phase 4-5) varies each; conclusions are reported per condition, not only at the reference. |
 | Truth bounds are a convention (where does a ripple start?). | Truth windows are analytic functions of the envelope, evaluated at 10%, 25% and 50% of peak; boundary errors are reported at all three. |
 | MUA detectors judged against ripple bounds, or ripple detectors against burst bounds. | Every method is scored against every expression and the network event; headline numbers use the method's [primary expression](shared-contracts.md#primary-expression). |
-| Declarative recipes drift from the audited functions. | Phase 3 regression test: exact equality of event bounds for every recipe before the functions are removed. |
+| Benchmark calls drift from package methods. | Phase 3 calls the package directly and verifies input/options and output parity. Phase 6 experimental templates require separate equivalence checks. |
 | Recipes that cannot be decomposed (Kay, Karlsson, Zugaro, Long, Carey, silence-bounded) break attribution. | They are fixed points in agreement analyses and excluded from the Sobol factor space; phase 6 says so. |
 | Runtime grows past a workstation. | Phase 4 smoke-tests one session, measures, and extrapolates before any full run; the grid is one-factor-at-a-time plus two crossed pairs, not full factorial. |
 
 ## Rollout Strategy
 
 Phase order: 1a, then 1b and 2 (2 needs 1a's `truth_windows` for its integration test); 3 after
-2, since both edit `examples/literature_recipes.py` (2 replaces its `score`, 3 its recipes); 4
+2, so adapter validation uses the shared evaluator and integrated package methods; 4
 needs 1a, 1b, 2 and 3; 5 needs 4; 6 needs 3, 4 and 5 (it imports phase 5's `paired_bootstrap`).
 Every phase must pass CI's dependency-floors job (Python 3.10, NumPy 1.24, SciPy 1.10, pandas
 2.0, no matplotlib, `.github/workflows/release.yml:94-111`), which runs the whole test suite,
@@ -168,12 +153,12 @@ each phase adds, which use short sessions.
 3. **Event-type taxonomy.** Accepted "for now" (decision 5). New types go in
    [designs.md](designs.md#event-types) and the truth table's `event_type` vocabulary; no phase
    depends on the list being final.
-4. **Promoting recipe configs to the public API** (decision 10): deferred until users ask.
+4. **Method ownership:** settled by revised decision 10; public methods stay in the package.
 
 ## Estimated Effort
 
-Phase 1a ~600 LOC src + ~400 tests; 1b ~300 + ~200; phase 2 ~450 + ~450; phase 3 ~900 (configs and
-executor) + ~100 tests, net shrink of `literature_recipes.py`; phase 4 ~400 + ~100; phase 5 ~600 +
+Phase 1a ~600 LOC src + ~400 tests; 1b ~300 + ~200; phase 2 ~450 + ~450; phase 3 estimate must be revised for thin call configurations and explicit input
+policies; no detector executor rewrite; phase 4 ~400 + ~100; phase 5 ~600 +
 `examples/benchmark/README.md`; phase 6 ~400 + a README section. Compute: the full grid
 ([designs.md#conditions-grid](designs.md#conditions-grid)) is estimated at 10-15 core-hours before
 the smoke test, and about 0.5 GB of memory per worker for 600 s sessions; phase 6 at about 1 core-hour per

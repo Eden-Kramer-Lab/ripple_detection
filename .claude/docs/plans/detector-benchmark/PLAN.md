@@ -3,7 +3,7 @@
 **Status:** Not started.
 
 A systematic evaluation of how well ripple_detection's nine detectors and the literature recipes
-(`examples/literature_recipes.py`) capture events, on simulated sessions whose truth is known: do
+(`ripple_detection.literature_methods`) capture events, on simulated sessions whose truth is known: do
 they find the same events or different ones, which kinds of event each finds, how much matched
 events overlap, and how accurately (signed) each places onsets and offsets against the truth and
 against each other; plus operating curves, robustness, which rule components explain their
@@ -26,12 +26,12 @@ For agent invocation, **load only the slice you need**:
 
 - [overview.md](overview.md) — every decision made while designing the benchmark, integration points, goals and non-goals, dependency policy, risks
 - [shared-contracts.md](shared-contracts.md) — the truth table, non-event table, event-table input, matching result, recipe config, and benchmark output schemas
-- [designs.md](designs.md) — generator algorithms, matching, agreement statistics, recipe executor, Sobol and Shapley estimators, bootstrap
+- [designs.md](designs.md) — generator algorithms, matching, agreement statistics, public-method adapter, Sobol and Shapley estimators, bootstrap
 - Phases (each ships as a separable PR):
   - [phase-1a-network-events.md](phase-1a-network-events.md) — latent-event simulator: event types and per-expression truth, in `simulate.py`
   - [phase-1b-non-events.md](phase-1b-non-events.md) — spike-waveform leakage, EMG artifacts, fast-gamma and theta-state bursts
   - [phase-2-evaluation.md](phase-2-evaluation.md) — `ripple_detection.evaluate`: matching, overlap, signed boundary errors, agreement, consensus
-  - [phase-3-recipe-configs.md](phase-3-recipe-configs.md) — recipes as declarative configs in `examples/benchmark/`, reproducing today's events exactly
+  - [phase-3-recipe-configs.md](phase-3-recipe-configs.md) — benchmark call configurations using the installed paper methods
   - [phase-4-runner.md](phase-4-runner.md) — benchmark runner: conditions, threshold sweeps, recipes, event-level outputs
   - [phase-5-analyses.md](phase-5-analyses.md) — agreement, boundaries, operating curves, robustness, rates and participation
   - [phase-6-attribution.md](phase-6-attribution.md) — one-component-at-a-time, Sobol and Shapley attribution of disagreement
