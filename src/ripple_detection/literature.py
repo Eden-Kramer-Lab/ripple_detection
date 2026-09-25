@@ -40,11 +40,12 @@ def load_literature_parameters() -> pd.DataFrame:
     """Detection and analysis parameters from 57 replay/reactivation papers.
 
     One row per paper, 1999-2025, compiled from Methods, supplements and released
-    code. Field evidence and source limitations are documented in
-    ``docs/literature/README.md``. Columns cover the trigger (ripple
-    power, multiunit activity, both, or the decoded posterior), thresholds,
-    smoothing widths,
-    the ripple band, duration and merge limits, active-cell minima, the
+    code. Field evidence and source limitations are documented in the
+    literature guide,
+    https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/docs/literature/README.md.
+    Columns cover the trigger (ripple power, multiunit activity, both, or the
+    decoded posterior), thresholds, smoothing widths, the ripple band,
+    duration and merge limits, active-cell minima, the
     decoding settings, and the shuffle and significance procedure.
 
     Secondary/control detectors remain in the numeric columns; the detection

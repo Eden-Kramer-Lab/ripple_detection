@@ -462,15 +462,17 @@ Some detectors use no rate threshold: an event is spiking from chosen cells set 
 silence. `detect_silence_bounded_events` splits the pooled spike train wherever no
 selected unit fires for `minimum_silence` (Foster & Wilson 2006, Liu et al. 2019), or,
 with `window`, takes the window after each silence (Diba & Buzsáki 2007: 60 ms of
-silence, then at least 5 cells in the next 300 ms). `maximum_isi` first collapses each
-unit's bursts to their first spike, as Lee & Wilson 2002 did:
+silence, then at least 5 cells in the next 300 ms). A window ends at its last spike
+unless `window_end_rule="fixed"` keeps the whole window, as Diba did. `maximum_isi`
+first collapses each unit's bursts to their first spike, as Lee & Wilson 2002 did:
 
 ```python
 from ripple_detection import detect_silence_bounded_events
 
 events = detect_silence_bounded_events(
     time, multiunit, sampling_frequency,
-    minimum_silence=0.06, window=0.3, units=template_cells, minimum_active_units=5,
+    minimum_silence=0.06, window=0.3, window_end_rule="fixed",
+    units=template_cells, minimum_active_units=5,
 )
 ```
 
@@ -509,10 +511,13 @@ from ripple_detection import exclude_overlap, require_overlap, state_intervals, 
 ratio = theta_delta_ratio(raw_lfp, sampling_frequency, theta_band=(6, 12), delta_band=(1, 4))
 low_theta = state_intervals(ratio, time, 2.0)                        # ratio below 2
 still = state_intervals(speed, time, 1.0, minimum_duration=300.0)    # < 1 cm/s for 5 min
-sleep = require_overlap(low_theta, still)                            # both
+sleep = require_overlap(low_theta, still)    # low-theta periods touching a still bout
 
-events = require_overlap(events, sleep, minimum_overlap=0.0)
+events = require_overlap(events, sleep)      # events overlapping those periods
 ```
+
+`require_overlap` keeps whole intervals that overlap the others; it does not
+intersect them, and an event need only overlap a period, not lie inside it.
 
 `two_cluster_threshold(ratio)` splits a signal into two states by k-means instead of
 at a fixed level, and `histogram_minimum_threshold` takes a threshold at the first
