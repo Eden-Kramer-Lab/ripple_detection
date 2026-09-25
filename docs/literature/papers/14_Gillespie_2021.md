@@ -67,3 +67,15 @@ Remaining deviations:
 - MUA population rate: package sums per-unit columns then smooths; the paper pools spikes across tetrodes into one histogram — identical (sum of counts). The package z-scores with `normalization_mask`, whose mean is the immobility mean, so "returned to the mean immobility MUA rate" is z = 0 as in the package.
 - MUA speed rule: endpoint rule; text "during immobility periods" (samples not stated).
 Smallest package addition (if C): n/a
+
+## Independent parameter recheck — September 25, 2026
+
+The current CSV supersedes the historical discrepancy list below. Independent checks and
+source limitations are indexed in [the source recheck](../source_recheck.md) and
+[the complete field-status ledger](../parameter_verification_2026-09-25.csv).
+
+- **Place field smooth (cm)**: `Not reported`. Gillespie 2021 Methods, PDF p. 21; main Results median deviation less than one 5 cm spatial bin.
+- **Reconst. Error (cm)**: `<5 (median)`. Gillespie 2021 Methods, PDF p. 21; main Results median deviation less than one 5 cm spatial bin.
+- **Sig. Thresh.**: `Continuous-state posterior >0.8; segment posterior >=0.30`. Gillespie 2021 Methods, PDF p. 21; main Results median deviation less than one 5 cm spatial bin.
+
+Current decoding notes: 5 cm is the position-bin width; the Methods give a 20 microvolt waveform KDE bandwidth but do not establish a 5 cm spatial kernel SD. A spatially continuous event crosses posterior 0.8; if both states cross, continuous must occupy more time bins. A maze segment must contain at least 30% mean posterior. Median error is <5 cm; quality is evaluated at video frames (30 Hz), using the 2 ms decoder.

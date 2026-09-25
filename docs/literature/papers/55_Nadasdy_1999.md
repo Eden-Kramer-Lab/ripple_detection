@@ -52,3 +52,17 @@ Remaining deviations:
 - Roumis averages channels with equal weight; "summed" is the same after z-scoring, but a dead/noisy channel weighs the same either way.
 - "Background" for mean/SD unspecified; theta/delta and sleep scoring are user-supplied.
 Smallest package addition (if C): n/a.
+
+## Independent parameter recheck — September 25, 2026
+
+The current CSV supersedes the historical discrepancy list below. Independent checks and
+source limitations are indexed in [the source recheck](../source_recheck.md) and
+[the complete field-status ledger](../parameter_verification_2026-09-25.csv).
+
+- **SWR electrodes (#)**: `>1`. Csicsvari et al. 1999a, J Neurosci 19:274, Methods, Detection of SPWs and classification of the electrographic activity (PMC6782375); Nadasdy 1999 Methods/Results.
+- **Sig. Thresh.**: `p<0.01 (Methods); p<=0.01 (Fig. 6)`. Csicsvari et al. 1999a, J Neurosci 19:274, Methods, Detection of SPWs and classification of the electrographic activity (PMC6782375); Nadasdy 1999 Methods/Results.
+- **Time bin (ms)**: `5, 6.7, 10 (analysis variants)`. Csicsvari et al. 1999a, J Neurosci 19:274, Methods, Detection of SPWs and classification of the electrographic activity (PMC6782375); Nadasdy 1999 Methods/Results.
+
+Current detection notes: SWR / Template matching searches spike trains directly; ripple parameters describe separate EEG/participation analyses and do not gate sequence discovery. / Cited Csicsvari 1999a Methods independently reopened: 150-250 Hz filtered RMS is computed per electrode and summed across electrodes, then compared with 7 SD. The RMS window is not specified. This verifies multi-electrode aggregation and supersedes the earlier channel-count uncertainty.
+
+Current decoding notes: Template/sequence analysis uses multiple resolutions (5, 6.7 and 10 ms); 10 ms is not a universal Bayesian decoding window. Methods describe p<0.01; Figure 6 describes p<=0.01 against 100 surrogates.

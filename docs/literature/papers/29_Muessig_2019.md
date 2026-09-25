@@ -7,7 +7,7 @@ All from STAR Methods, "Detection of slow-wave sleep, sharp-wave ripples and mul
 
 - **State gate ("rest"; restricts all analyses):** "The brain states slow-wave sleep (SWS), rapid-eye movement sleep (REM) and awake movement were defined following [22]. A multitaper power spectral density estimate of the hippocampal local field potential (LFP) was derived for 1.6 s windows, overlapping by 0.8 s (MATLAB function ‘pmtm’). From this, power in the delta and theta bands were calculated in each window. As theta frequency changes during development [18], theta and delta peak frequencies were calculated for each session, defined as the peak frequency of the fast Fourier transform of the LFP, in the bands 5-11Hz (theta) and 1.5-4Hz (delta). Mean running speed for each 1.6 s bin was also estimated. In the absence of EMG recordings, we could not unequivocally discriminate between slow wave sleep and quiet immmobility, we therefore restricted all analyses to epochs termed ‘rest’. Rest was defined as epochs with running speed < 2.5cm/s, and theta/delta power ratio < 2 and waking movement as theta/delta power ratio > 2 and speed > 2.5cm/s."
   - Ratio: theta power / delta power per 1.6 s window (0.8 s step, multitaper), each band centered on a per-session peak frequency found within 5–11 Hz and 1.5–4 Hz. The width of the band around each peak is not stated. Threshold 2 (absolute), AND speed < 2.5 cm/s.
-  - [22] = O'Neill et al. 2008 Nat Neurosci. Paywalled and not in Dropbox; not read.
+  - [22] = O'Neill et al. 2008 Nat Neurosci, now read from the [Oxford-hosted article and supplement](https://www.mrcbndu.ox.ac.uk/sites/default/files/pdfs/oneill2008natureneurosci.pdf).
   - Role: "restricted all analyses to epochs termed ‘rest’". The events analyzed lie in rest (a detection-time or analysis-time restriction; the text does not separate them). The detection statistics are not said to be computed over rest only (see the SWR threshold below).
 - **SWR detection:** "Sharp-wave ripples were detected by first filtering the LFP in the band 100-250Hz. The instantaneous power of the filtered LFP was then estimated by calculating the root mean square over 7ms intervals (MATLAB function ‘envelope’ with option ‘rms’). From all LFPs across tetrodes in the CA1 layer, the LFP whose power estimate had the highest standard deviation was then used to define ripple events, as 100ms windows around the peak power, whenever the power was greater than the 99th percentile of all powers in the trial (approximately equal to 4 standard deviations above the mean)."
   - Filter type: not stated. Envelope: moving RMS over 7 ms. One channel: the CA1 tetrode whose RMS power has the highest SD. Threshold: the 99th percentile over the whole trial (not z-scored; "≈ 4 SD" is the authors' approximation). Bounds: a **fixed 100 ms window** around the power peak (centered, inferred from "around"). No min/max duration beyond the fixed window.
@@ -22,7 +22,7 @@ Analysis-only:
 - The reactivation (pairwise co-firing) analysis uses "all spikes occurring in rest windows, during SWS epochs" (txt 854). Separate from replay events.
 
 ## Inherited from
-Sleep/rest-state definitions from O'Neill et al. 2008 (ref 22), not accessible (Nature Neuroscience paywall; not in Dropbox). Muessig restates the operative rule (speed < 2.5 cm/s, theta/delta < 2), so the unread citation mainly leaves the band widths around the per-session peak frequencies open. SWR and MUA rules are stated in full and not attributed.
+O'Neill 2008 is now read, including Supplementary Methods (combined PDF p. 13): 1600 ms spectral windows, 800 ms steps, Thomson multitaper, and manual state identification from theta/delta versus speed. It does not specify Muessig's bandwidth around per-session peaks. Retrieval is closed; that bandwidth remains unspecified. Muessig's own speed <2.5 cm/s and theta/delta <2 rules remain authoritative.
 
 ## Code
 None linked in the text.
@@ -82,3 +82,12 @@ Remaining deviations:
 - `require_overlap` with `minimum_overlap=0` requires positive-duration overlap. Events that only touch at an endpoint are dropped; "even in part" suggests any overlap, so this is equivalent except for exact touches.
 - Theta/delta rest scoring with per-session peak frequencies and multitaper windows is user code. The band width around each peak is not stated.
 Smallest package addition (if C): n/a (B). Two options would move the SWR half to A: an RMS-window envelope, and a "fixed window around peak" event-bound mode with a percentile threshold. The package brief lists both as gaps.
+
+## Independent parameter recheck — September 25, 2026
+
+The current CSV supersedes the historical discrepancy list below. Independent checks and
+source limitations are indexed in [the source recheck](../source_recheck.md) and
+[the complete field-status ledger](../parameter_verification_2026-09-25.csv).
+
+
+Current decoding notes:  / The <10 cm median reconstruction error is an ensemble-inclusion criterion, not the mean error achieved across all ensembles.

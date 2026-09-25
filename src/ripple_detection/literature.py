@@ -37,13 +37,20 @@ paper did not state."""
 
 
 def load_literature_parameters() -> pd.DataFrame:
-    """Detection and decoding parameters from 57 papers that decode replay.
+    """Detection and analysis parameters from 57 replay/reactivation papers.
 
-    One row per paper, 1999-2025, each value read from that paper's Methods and
-    checked against it. Columns cover the trigger (ripple power, multiunit
-    activity, both, or the decoded posterior), thresholds, smoothing widths,
+    One row per paper, 1999-2025, compiled from Methods, supplements and released
+    code. Source limitations and corrections are in
+    ``docs/literature/parameter_audit.md``. Columns cover the trigger (ripple
+    power, multiunit activity, both, or the decoded posterior), thresholds,
+    smoothing widths,
     the ripple band, duration and merge limits, active-cell minima, the
     decoding settings, and the shuffle and significance procedure.
+
+    Secondary/control detectors remain in the numeric columns; the detection
+    notes distinguish them from the primary trigger and describe protocol
+    variants. Smoothing widths are not uniformly Gaussian standard deviations,
+    and channel counts are not minimum participation requirements.
 
     The columns in :data:`NUMERIC_COLUMNS` are numeric, with ``#N/A`` and any
     entry that is not a bare number read as missing, so a column can be

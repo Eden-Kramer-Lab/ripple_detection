@@ -48,7 +48,7 @@ def _readme_parameter_table():
     section = text.split("### Published parameter values")[1].split("Three cautions")[0]
     rows = {}
     for line in section.splitlines():
-        if not line.startswith("| `") and not line.startswith("| ripple band"):
+        if not line.startswith("| ") or line.startswith("| Parameter"):
             continue
         cells = [cell.strip() for cell in line.strip("|").split("|")]
         rows[cells[0]] = cells[1:]
@@ -60,12 +60,13 @@ def _readme_parameter_table():
     [
         ("`zscore_threshold` (ripple)", "SWR Z-score Thresh. (STD)"),
         ("`zscore_threshold` (multiunit)", "MUA Z-score Thresh. (STD)"),
-        ("`smoothing_sigma` (ripple)", "SWR smooth (ms)"),
-        ("`smoothing_sigma` (multiunit)", "MUA smooth (ms)"),
+        ("smoothing width (ripple)", "SWR smooth (ms)"),
+        ("smoothing width (multiunit)", "MUA smooth (ms)"),
         ("`speed_threshold`", "Animal Speed (cm/s)"),
         ("`minimum_duration`", "Min. Duration (ms)"),
         ("`maximum_duration`", "Max Duration (ms)"),
         ("`minimum_active_units`", "Min. Cells (#)"),
+        ("event grouping interval", "Combine Events Thresh. (ms)"),
     ],
 )
 def test_readme_table_matches_the_shipped_data(parameters, label, column):
@@ -85,3 +86,35 @@ def test_readme_table_matches_the_shipped_data(parameters, label, column):
     assert low == values.min()
     assert high == values.max()
     assert float(re.findall(r"\d+\.?\d*", stated_median)[0]) == values.median()
+    stated_modes = [float(x) for x in re.findall(r"\d+\.?\d*", table[label][3])]
+    assert stated_modes == values.mode().tolist()
+
+
+def test_readme_ripple_bands_match_data(parameters):
+    stated = _readme_parameter_table()["ripple band"]
+    bands = parameters[["SWR Low Band (Hz)", "SWR High Band (Hz)"]].dropna()
+    assert int(stated[0]) == len(bands)
+    assert [float(x) for x in re.findall(r"\d+\.?\d*", stated[1])] == [
+        bands.iloc[:, 0].min(),
+        bands.iloc[:, 0].max(),
+        bands.iloc[:, 1].min(),
+        bands.iloc[:, 1].max(),
+    ]
+    assert [float(x) for x in re.findall(r"\d+\.?\d*", stated[2])] == bands.median().tolist()
+    counts = bands.value_counts()
+    most_common = counts.index[0]
+    assert [float(x) for x in re.findall(r"\d+\.?\d*", stated[3])] == [
+        *most_common,
+        counts.iloc[0],
+    ]
+
+
+def test_readme_channel_counts_exclude_unknowns(parameters):
+    stated = _readme_parameter_table()["ripple channels sampled"]
+    channels = parameters["SWR electrodes (#)"].dropna()
+    numeric = pd.to_numeric(channels, errors="coerce")
+    one = int((numeric == 1).sum())
+    multiple = int(((numeric > 1) | (channels == ">1")).sum())
+    ranges = int(channels.str.fullmatch(r"\d+-\d+").sum())
+    assert int(stated[0]) == one + multiple + ranges
+    assert [int(x) for x in re.findall(r"\d+", stated[1])] == [one, multiple, ranges]

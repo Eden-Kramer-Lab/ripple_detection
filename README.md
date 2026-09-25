@@ -670,9 +670,12 @@ ripples = Kay_ripple_detector(
 ### Published parameter values
 
 Where the package's defaults sit relative to the literature. Compiled from 57
-papers that decode replay content (1999-2025), each value read from the paper's
-Methods; counts are of papers stating a bare number for that parameter, so
-entries like ">4" or "33% of the ensemble" are excluded rather than coerced.
+replay and reactivation papers (1999-2025), using Methods, supplements and the
+papers' released code. See the [source audit](docs/literature/parameter_audit.md)
+for corrections, code/text differences and unresolved sources. Counts include
+secondary/control analyses and provisional entries, with one entry per paper;
+they are not counts of equivalent primary detectors. Only bare numbers enter
+these summaries; entries like ">4" or "10%" are excluded rather than coerced.
 
 The per-paper table ships with the package, so you can ask it your own question
 rather than take the summary below:
@@ -685,19 +688,20 @@ parameters.groupby("Detection")["SWR Z-score Thresh. (STD)"].median()
 parameters.loc[parameters["Spike sorting"] == "Clusterless", ["First Author", "Year", "DOI"]]
 ```
 
-| Parameter | Papers | Published range | Median | Most common | Package default |
+| Parameter | Papers | Recorded range | Median | Mode | Package default |
 |---|---|---|---|---|---|
-| `zscore_threshold` (ripple) | 27 | 1-8 SD | 3 SD | 3, 2, then 4 and 8 tied | 2.0 Kay/Roumis, 3.0 Karlsson/Shvartsman |
-| `zscore_threshold` (multiunit) | 27 | 2-4 SD | 3 SD | 3, 2, 4 | 2.0 |
-| ripple band | 30 | 80-180 Hz low, 200-300 Hz high | 150-250 Hz | 150-250 Hz (17 papers) | 150-250 Hz |
-| `smoothing_sigma` (ripple) | 18 | 4-100 ms | 12.5 ms | 4, 12.5, 15 | 4 ms; 10 ms on Carey |
-| `smoothing_sigma` (multiunit) | 28 | 5-30 ms | 15 ms | 15, 10, 5 | 15 ms |
-| `speed_threshold` | 42 | 0.05-10 cm/s | 5 cm/s | 5, 4, 2 | 4 cm/s |
-| `minimum_duration` | 41 | 15-100 ms | 50 ms | 50, 100, then 15 and 40 tied | 15 ms, 20 ms on Yu/Zugaro/Carey |
-| `maximum_duration` | 25 | 400-2000 ms | 600 ms | 500, 2000, 750 | none, except Zugaro 100 ms and Long 500 ms (sharp wave) |
-| merge or drop gap | 14 | 20-100 ms | 50 ms | 50, then 20, 40 and 100 tied | 0 (no exclusion); Zugaro merges within 30 ms, Long drops within 50 ms |
-| `minimum_active_units` | 27 | 3-10 units | 5 units | 5, 4, 3 | 0 on the burst detector, 5 on Carey |
-| channels required | 27 | 13 papers use one, 10 more than one, 4 a small number | one | one | one is enough except Shvartsman (2 by default) and Long (exactly 2); Kay, Roumis, Yu and Zugaro pool all channels |
+| `zscore_threshold` (ripple) | 33 | 1-8 SD | 3 SD | 3 | 2.0 Kay/Roumis, 3.0 Karlsson/Shvartsman |
+| `zscore_threshold` (multiunit) | 31 | 2-4 SD | 3 SD | 3 | 2.0 |
+| ripple band | 38 | 80-180 Hz low, 200-300 Hz high | 150-250 Hz | 150-250 Hz (19 papers) | 150-250 Hz |
+| smoothing width (ripple) | 22 | 4-80 ms | 12.5 ms | 4 | Gaussian SD 4 ms; 10 ms on Carey |
+| smoothing width (multiunit) | 32 | 5-80 ms | 15 ms | 15 | Gaussian SD 15 ms |
+| `speed_threshold` | 35 | 1-10 cm/s | 5 cm/s | 5 | 4 cm/s |
+| `minimum_duration` | 40 | 15-100 ms | 50 ms | 100 | 15 ms, 20 ms on Yu/Zugaro/Carey |
+| `maximum_duration` | 24 | 300-2000 ms | 550 ms | 500 | none, except Zugaro 100 ms and Long 500 ms (sharp wave) |
+| event grouping interval | 15 | 20-100 ms | 50 ms | 50 | 0 (no exclusion); Zugaro merges within 30 ms, Long drops within 50 ms |
+| `minimum_active_units` | 28 | 3-10 units | 5 units | 5 | 0 on the burst detector, 5 on Carey |
+| ripple channels sampled | 33 | 11 papers use one, 18 multiple, 4 a range | — | — | See each detector's channel aggregation rule |
+
 
 Three cautions before treating this as a recipe:
 
@@ -709,11 +713,14 @@ Three cautions before treating this as a recipe:
 - **Our thresholds and minimum duration sit at the permissive end.** A 2 SD threshold
   held for 15 ms admits more than the field's median of 3 SD and 50 ms. Tightening to
   the median is a defensible sensitivity check, not an extreme one.
-- **Some published speed values restrict analysis rather than detection**, so that row
-  overstates how many papers gate detection on speed. `minimum_duration` also means
-  different things across papers: on Kay, Karlsson, Roumis, Shvartsman, Yu and the HSE
-  detector it is the run above threshold, before the extension to the mean; on Zugaro,
-  Carey and Long it is the event as reported, as in many papers.
+- **The columns contain different kinds of criteria.** Speed can define an analysis
+  state or gate an event. Duration can constrain a threshold crossing, a bounded
+  event, or a replay candidate. Smoothing widths include Gaussian SDs, moving-average
+  widths, RMS windows and spectral windows: they cannot all be passed as
+  `smoothing_sigma`. Tirole's MUA width is per pass of a forward/backward filter.
+  Grouping intervals include spike gaps, peak separations and gaps between event boundaries. Channels sampled
+  does not mean channels required to participate. Read the per-paper notes before
+  converting any row into detector arguments.
 
 ### Getting Help
 

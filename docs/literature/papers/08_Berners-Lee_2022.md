@@ -60,3 +60,15 @@ Remaining deviations:
 - The "whole session vs speed < 5" baseline ambiguity between the text and the code (the code's behaviour is used above).
 - Units: whether interneurons contribute to the density depends on `spikedata`. The paper says pyramidal.
 Smallest package addition (if C): n/a
+
+## Independent parameter recheck — September 25, 2026
+
+The current CSV supersedes the historical discrepancy list below. Independent checks and
+source limitations are indexed in [the source recheck](../source_recheck.md) and
+[the complete field-status ledger](../parameter_verification_2026-09-25.csv).
+
+- **Time bin step (ms)**: `5 or 20`. Berners-Lee 2022 Methods, PDF pp. 17-18; Zenodo 6330850 Publication release, decode_spikedensity_events.m.
+- **Shuffle Method**: `Time-bin shuffle (test of event counts)`. Berners-Lee 2022 Methods, PDF pp. 17-18; Zenodo 6330850 Publication release, decode_spikedensity_events.m.
+- **Sig. Thresh.**: `Criteria-based events; p<0.05 on counts`. Berners-Lee 2022 Methods, PDF pp. 17-18; Zenodo 6330850 Publication release, decode_spikedensity_events.m.
+
+Current decoding notes: Primary event criteria are abs(weighted correlation)>0.6 and maximum jump<0.4 of track length. Paper describes 20 ms windows both in 5 ms steps and without overlap; the reopened spike-density helper uses nonoverlapping 20 ms windows. The 5000 time shuffles test counts of qualifying events, not a p<0.05 test for each replay.

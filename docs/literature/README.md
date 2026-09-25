@@ -5,6 +5,15 @@ This review covers the 57 papers in the survey that ships with the package,
 `load_literature_parameters()`. For each paper it records what the authors implemented to
 detect events, and whether this package can reproduce it.
 
+The [parameter audit](parameter_audit.md) records the September 25, 2026 corrections
+applied to the shipped CSV, their sources and remaining uncertainties. The
+"Survey CSV discrepancies" sections in the older paper notes describe the table
+**before** those corrections; consult the audit for their disposition. Control and
+secondary-detector values remain in the CSV, with their role identified in the notes.
+The [independent source recheck](source_recheck.md) and
+[complete field-status index](parameter_verification_2026-09-25.csv) distinguish
+verified values, calculations, assumptions and unresolved sources.
+
 Each paper's Methods were read: 54 from local PDFs and 3 from open-access or author copies.
 Citations given as "as previously described" were followed one hop, and released code was
 read where the text left a deciding detail open. The notes for each paper are in
@@ -16,8 +25,8 @@ The review was done in September 2026 by Claude Code agents, one per group of pa
 from the paper texts. Claims about package behaviour were checked against the source. The
 Carey finding below was checked directly against the paper's released candidate file. Tiers
 and recipes describe the package at commit ac23a58, the unreleased development version
-after 1.7.1. The corrections to the survey
-CSV proposed here are on hold and have not been applied.
+after 1.7.1. The earlier [correction proposals](survey_corrections.md) are retained
+as review history; the parameter audit supersedes their original on-hold status.
 
 Tiers:
 
@@ -80,7 +89,7 @@ What the dataset has to supply:
 | [12](papers/12_Berners-Lee_2021.md) | Berners-Lee 2021 | Same, 2 SD, 3 tetrodes | Same |
 | [10](papers/10_Krause_2022.md) | Krause 2022 | Pfeiffer 2015 SWRs trimmed to the population burst (3 ms bins, > 2 spikes/s per cell, ≥ 30 ms) | Mean-amplitude trace + trim. The code uses a 10 ms HSE SD where the text says 20 |
 | [45](papers/45_Pfeiffer_2013.md) | Pfeiffer 2013 | Sorted units, 10 ms, > 3 SD, ≥ 10 % units, 50 ms–2 s; bounds moved inward until the edge windows hold ≥ 2 spikes | The inward trim (~10 lines) |
-| [00](papers/00_Mallory_2025.md) | Mallory 2025 | Linear track: excitatory-cell density, 12.5 ms, > 3 SD over ≤ 5 cm/s, peaks ≤ 70 ms apart merged; then decoding criteria (D) | Peak-to-peak merge. Published Methods unverified; read from the preprint and the code |
+| [00](papers/00_Mallory_2025.md) | Mallory 2025 | Linear track: excitatory-cell density, 12.5 ms, > 3 SD over ≤ 5 cm/s, peaks ≤ 70 ms apart merged; then decoding criteria (D) | Peak-to-peak merge from code; published supplement now checked. Text says all cells, code selects excitatory cells |
 | [06](papers/06_Tirole_2022.md), [03](papers/03_HuelinGorriz_2023.md) | Tirole 2022, Huelin Gorriz 2023 | Pooled sorted and unsorted spikes, 1 ms, z ≥ 3, bounds searched ±300 ms; ≥ 100 ms, merge < 50 ms, median speed ≤ 5, ≥ 5 place cells, **ripple z ≥ 3 inside the event** | Bound search with fallback, peak-inside test, place-cell count. The code differs from the text (kernel, ripple smoothing, the 750 ms maximum not enforced) |
 | [07](papers/07_Bush_2022.md) | Bush 2022 | Principal cells, 5 ms, 3 SD; merge ≤ 40 ms, drop ≤ 40 ms, then ≥ max(5, 15 %) cells, median speed ≤ 10, ≤ 0.5 s | Criteria after the merge. The detectors apply them before |
 | [41](papers/41_Olafsdottir_2015.md) | Ólafsdóttir 2015 | Per template: ≥ 15 % of its cells within ≤ 300 ms, bounded by ≥ 50 ms of silence | Silence segmentation |
@@ -217,18 +226,18 @@ Differences that stay after all of these:
 ## Problems found in this repository
 
 - **Carey docstring.** `Carey_candidate_detector` calls itself "the candidate-event detector of Carey, Tanaka & van der Meer 2019". It reproduces the multiunit half and the state restrictions of that paper, but not its ripple score or threshold rule (see tier C above).
-- **Survey CSV.** [survey_corrections.md](survey_corrections.md) lists proposed changes, each re-checked against the paper by a second reader, and the rules they follow. They are on hold and not applied. Inclusion criteria applied before decoding, such as a decoding-stage minimum cell count, stay. Values from unrelated analyses and from decoded content would be removed. Values of control detectors stay in their columns, by the maintainer's decision. The README's "Published parameter values" table is computed from this file, so applied changes would move its counts. Recurring patterns:
+- **Survey CSV.** The supported corrections are applied and recorded in the [parameter audit](parameter_audit.md); [survey_corrections.md](survey_corrections.md) preserves historical proposals. The README statistics match the current CSV. Control-detector values remain, with their roles identified in the notes. Historical problems addressed by the audit include:
   - **Values from unrelated analyses:** speeds from place-field, run-segment, sleep-labelling or scorer-validation definitions (Wu 2017, Bhattarai, Harvey, Liu 2023, Yamamoto, Bendor, Ólafsdóttir 2015, Drieu).
   - **Values from control detectors:** Bush, Gillespie, Ólafsdóttir 2017 and Farooq 2019 (Neuron) record a control detector's values. These stay, and the notes should say which detector they describe.
   - **Decoded-content lengths entered as minimum durations:** Wu 2014, Stella, Carey.
-  - **Grosmark 2016 and Yang 2024:** their SWR columns hold the multiunit values. The LFP ripple method is not stated in either paper.
+  - **Grosmark 2016 and Yang 2024:** their SWR columns previously held multiunit values. The separate LFP settings are now explicitly unresolved.
   - **"SWR electrodes = 1" for any-tetrode designs:** Karlsson, Carr, Shin.
   - **Wrong value:** Yamamoto's band is 140–200 Hz, not 100–200.
   - **Missing values:** Maboudi's multiunit fields; Carr's 15 ms minimum; Pfeiffer 2013's 10 % units.
   - **Unsupported values:** Ambrose's 50 ms and 500 ms appear in none of the paper, the author manuscript or the supplement.
   - **"MUA" for rates of sorted cells:** Berners-Lee 2022, Pfeiffer 2013, Wu 2014, Silva, Foster 2006, Lee 2002, Diba. Left as is, since the Detection column names the trigger type.
 
-  Each paper's notes list its row's discrepancies with quotes.
+  Each paper’s notes distinguish historical discrepancies from the current disposition.
 
 ## Text versus code
 
@@ -238,15 +247,20 @@ Where both were checked, these papers' released code differs from their Methods:
 - Berners-Lee 2022 (baseline period)
 - Widloski 2025 (merge threshold)
 - Krause 2022 (HSE smoothing)
+- Mallory 2025 (spatial smoothing, spatial merging, COM-jump calculation and cell selection)
 - Yang 2024 (normalization period, ripple-start test)
 - Harvey 2023 (`DetectSWR` and `bz_FindRipples` rather than the described algorithm)
 
 Reproductions should follow the code where it exists. Each paper's notes say which one they followed.
 
-## Sources not fully verified
+## Source verification status
 
-- Mallory 2025's published Methods: the Science supplement returned 403; the preprint and the paper's Zenodo code were used instead.
-- Csicsvari 1999a (for Stella and Nádasdy): only partly retrieved.
-- O'Neill 2008 (Muessig's state definition): paywalled, not read.
-- Jackson 2006 (Redish lineage): read through a web summarizer, so its quotes are not verbatim.
-- The Ambrose 2016 supplement: not retrieved.
+The former source-access list is closed: Mallory and Bhattarai were checked from
+user-supplied supplements; Ambrose’s publisher supplement and the Oxford-hosted
+O’Neill article/supplement were retrieved; Jackson and Csicsvari Methods were read
+directly. See the [source recheck](source_recheck.md) for links and scope.
+
+This does not settle absent method details or original execution settings. The
+[remaining questions](verification_remaining.md) track those separately. Nine CSV
+cells remain unresolved and two are explicitly inferred; checked published values
+can also have unresolved code provenance.

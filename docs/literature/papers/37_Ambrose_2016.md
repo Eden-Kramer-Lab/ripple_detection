@@ -38,7 +38,7 @@ None linked.
 ## Survey CSV discrepancies
 - SWR electrodes: CSV ">1". Paper: "One channel was selected from each of four to seven tetrodes", so 4–7.
 - Min. Duration: CSV 50 ms. Paper: not stated in the main text or the author manuscript.
-- Max Duration: CSV 500 ms. Paper: not stated. The supplement (7 figures, 4 tables, no supplemental methods listed) was not retrieved (Cell/Europe PMC blocked), so a table there cannot be ruled out.
+- Max Duration: original CSV 500 ms. Neither the main Methods nor the now-retrieved supplement supplies this limit. The 12-page supplement contains seven figures and four tables, with no additional detector-duration criterion. Current minimum/maximum duration entries remain `Not reported`.
 - Animal speed 5: consistent, but the paper's restriction is the stopping period, which also requires being within 10 cm of the well.
 - All other detection fields (SWR 3 SD, smoothing 12.5 ms, 150–250 Hz, Combine N/A) match.
 
@@ -67,3 +67,35 @@ Remaining deviations:
 - The normalization period is unstated in the paper. Using stopping periods is an inference from Pfeiffer & Foster 2013.
 - The paper's LFP is sampled at 3,255 Hz. filter_ripple_band designs a remez FIR for any rate.
 Smallest package addition (if C): n/a
+
+## Independent parameter recheck — September 25, 2026
+
+The current CSV supersedes the historical discrepancy list below. Independent checks and
+source limitations are indexed in [the source recheck](../source_recheck.md) and
+[the complete field-status ledger](../parameter_verification_2026-09-25.csv).
+
+- **Reconst. Error bin (ms)**: `200`. Ambrose 2016 Methods, PDF p. 12: nonoverlapping 200 ms behavioral windows.
+
+## Supplement closure — September 25, 2026
+
+The [publisher supplement](https://ars.els-cdn.com/content/image/1-s2.0-S0896627316304639-mmc1.pdf) was retrieved and read in full (12 pages; title
+and authors match). PMC returned a download challenge and Europe PMC did not
+provide an archive, but the publisher PDF is readable. No detector-duration
+limit appears in the supplement; this closes the retrieval question. Later
+related code still cannot establish the original runtime duration settings.
+
+Table S1 (PDF p. 9, visually checked) gives:
+
+| Scope | Replays | SWRs | Replay fraction |
+|---|---:|---:|---:|
+| Experiment 1 | 738 | 3312 | 22.3% |
+| Experiment 2 | 409 | 2636 | 15.5% |
+| Pooled | 1147 | 5948 | 19.3% |
+
+These count-derived values replace the rough `15-20%` CSV entry. Table S1's
+74–95% bidirectional / 74–96% directional behavioral bins with error <10 cm
+are accuracy fractions, not a mean error in centimeters; the latter remains
+`Not reported`. Tables S2–S3 (pp. 10–11) confirm the stricter correlation
+threshold 0.7 and the separate shuffle control, supplementing the main
+Methods' 1500-shuffle, p<0.05 description. Four CSV fields and the evidence
+ledgers were updated.

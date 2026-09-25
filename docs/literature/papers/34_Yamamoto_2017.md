@@ -76,3 +76,12 @@ Remaining deviations:
 - The package has no state classification. The delta/theta ratio (AR PSD, SD-unit thresholds, 10 s or 60 s smoothing) and the 15 s head-movement epochs are user code.
 - Ripple-burst labelling (lags < 70 ms, 70–200 ms, ≥ 200 ms between peaks) is user code on the event peaks. The package reports peak_time only for Zugaro and Long.
 Smallest package addition (if C): not needed for an approximate B. For A, add a `bounds_zscore` option to `multiunit_HSE_detector` plus a documented "require ripple-power overlap" recipe (require_overlap already exists). The paper's ambiguities would remain.
+
+## Independent parameter recheck — September 25, 2026
+
+The current CSV supersedes the historical discrepancy list below. Independent checks and
+source limitations are indexed in [the source recheck](../source_recheck.md) and
+[the complete field-status ledger](../parameter_verification_2026-09-25.csv).
+
+- **Sig. Thresh.**: `Not reported`. Yamamoto 2017 Methods, PDF p. 16: 2000 column shuffles, but no numerical replay p-value cutoff stated.
+- **Time bin step (ms)**: `Not reported`. Yamamoto 2017 Methods, PDF p. 16: 10 ms bins; step not stated.

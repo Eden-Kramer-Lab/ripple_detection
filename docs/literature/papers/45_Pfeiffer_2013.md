@@ -65,3 +65,11 @@ Remaining deviations:
 - The minimum duration applies to the extended event, so it is imposed by filtering `duration`. The HSE `minimum_duration` would instead apply to the above-threshold run, which is why it is set to 0.
 - Threshold inequality: "greater than" 3 SD (strict) versus the package's ≥.
 Smallest package addition (if C): n/a. A boundary-trimming helper (trim event bounds until k spikes fall in the edge window) would make this A.
+
+## Independent parameter recheck — September 25, 2026
+
+The current CSV supersedes the historical discrepancy list below. Independent checks and
+source limitations are indexed in [the source recheck](../source_recheck.md) and
+[the complete field-status ledger](../parameter_verification_2026-09-25.csv).
+
+- **Sig. Thresh.**: `Criteria-based events; all p<0.02 under both shuffles in verification`. Pfeiffer 2013 Methods, PDF p. 8: 5000 cell-ID and place-field-shift shuffles verify the selected trajectory events.

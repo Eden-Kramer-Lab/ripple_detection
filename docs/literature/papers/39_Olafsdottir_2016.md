@@ -57,3 +57,20 @@ Remaining deviations:
 - Rounding of 15% to a cell count (ceil assumed) is not stated.
 - The duration minimum is imposed by filtering `duration`, because the detector's `minimum_duration` would apply to the above-threshold run. `duration` is the time from first to last sample of the event.
 Smallest package addition (if C): n/a.
+
+## Independent parameter recheck — September 25, 2026
+
+The current CSV supersedes the historical discrepancy list below. Independent checks and
+source limitations are indexed in [the source recheck](../source_recheck.md) and
+[the complete field-status ledger](../parameter_verification_2026-09-25.csv).
+
+- **Time bin (ms)**: `10`. Olafsdottir 2016 Methods, PDF pp. 4-5; publisher Supplementary Software, lineTraj_decode.m takes time/spatial bin arguments.
+- **Time bin step (ms)**: `10 (inferred nonoverlapping)`. Olafsdottir 2016 Methods, PDF pp. 4-5; publisher Supplementary Software, lineTraj_decode.m takes time/spatial bin arguments.
+- **Shuffle Method**: `Independent place-field rotation`. Olafsdottir 2016 Methods, PDF pp. 4-5; publisher Supplementary Software, lineTraj_decode.m takes time/spatial bin arguments.
+- **Shuffles (#)**: `100`. Olafsdottir 2016 Methods, PDF pp. 4-5; publisher Supplementary Software, lineTraj_decode.m takes time/spatial bin arguments.
+- **Reconst. Error (cm)**: `20 (mean)`. Olafsdottir 2016 Methods, PDF pp. 4-5; publisher Supplementary Software, lineTraj_decode.m takes time/spatial bin arguments.
+- **Reconst. Error bin (ms)**: `500`. Olafsdottir 2016 Methods, PDF pp. 4-5; publisher Supplementary Software, lineTraj_decode.m takes time/spatial bin arguments.
+- **% Decoded**: `41.7%`. Olafsdottir 2016 Methods, PDF pp. 4-5; publisher Supplementary Software, lineTraj_decode.m takes time/spatial bin arguments.
+- **% Decoded denom.**: `putative events`. Olafsdottir 2016 Methods, PDF pp. 4-5; publisher Supplementary Software, lineTraj_decode.m takes time/spatial bin arguments.
+
+Current decoding notes: Exhaustive line-fit search over velocity and intercept / Methods: 10 ms replay bins, 100 independent place-field rotations and p<0.2 for the main analysis; strongest replay subset uses p<0.025. Mean behavioral reconstruction error is 20 cm with 500 ms bins. Fraction 41.7% is derived from 1826/4382 putative events. Nonoverlapping steps are inferred from binning; released fitting functions take bin size as an argument and do not supply a detector caller.

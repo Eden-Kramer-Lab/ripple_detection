@@ -1,69 +1,141 @@
 # Mallory 2025 — The time course and organization of hippocampal replay
-Source:
-- (a) Published Science main text (9 pp): Zotero full-text cache of the published PDF. It contains no Materials and Methods, which are in the online supplement.
-- (b) Methods: bioRxiv preprint v1 "Self-avoidance dominates the selection of hippocampal replay" (Mallory, Widloski, Foster; doi 10.1101/2024.07.18.604185; PMC11275714), rendered in a browser and saved to a local copy
-- (c) Code: Zenodo 10.5281/zenodo.14237298 (caitlinmallory/TimeCourseOrganizationOfHippocampalReplay v1.0.0, 2024-11-28; this is the code the Science paper cites as ref. 80), in a local copy
-- The Science supplement (science.ads4760_sm.pdf) could not be retrieved (HTTP 403 / Cloudflare), so the published methods text itself is unverified. Everything below comes from (b) and (c) and should be checked against the Science supplement.
-title verified: yes for (a) (Mallory, Widloski, Foster; Science 387:541–548). (b) is the preprint of the same study under an earlier title.
-Trigger: MUA (linear track: spike-density events as candidates, then decoding criteria) + decoding (open field: decoded posterior only)
 
-## Method as implemented
-Published main text (a):
-- "Decoding on a fine timescale revealed abundant replay during reward-associated immobility (materials and methods)."
-- "We obtained similar results when requiring replays to coincide with a sharp-wave ripple or applying alternative replay detection methods (fig. S2)."
-- "Although the overall rates of spike density events, sharp-wave ripples, and replays were similar between MEC active or inactive trials (fig. S5)". So SDEs and SWRs are detected as event types in the published study.
+## Sources and verification status
 
-Preprint Methods (b), "Spike density and sharp-wave ripple amplitude":
-- "Population spike density was computed by totaling the number of spikes from all cells in 1 ms non-overlapping time bins. The LFP from a selected tetrode in the pyramidal layer with visually identified sharp-wave ripples was band-pass filtered between 150 and 250 Hz, and the amplitude was computed as the envelope of the Hilbert transform. Spike density and ripple amplitude were both smoothed with a Gaussian kernel (12.5 ms standard deviation [SD]). Periods in which the rat's speed was below 5 cm/s were z-scored. Peaks in the z-scored spike density or ripple amplitude traces exceeding 3 SD above the mean were identified as spike density or ripple events. The start and end time of each event was defined as the times on either side of the peak at which the z-scored signal crossed the mean."
+Updated September 25, 2026 after reading the user-supplied published supplement,
+`science.ads4760_sm.pdf` (37 pages; 6,996,578 bytes). Its cover identifies Science
+387, 541 (2025), DOI 10.1126/science.ads4760. Methods pp. 5–8 and Fig. S2 pp. 16–17
+were checked directly. This closes the earlier supplement retrieval gap.
 
-Preprint Methods (b), "Replay detection – Linear Track" (DETECTION = SDE candidate + decoding criteria):
-- "The posterior probability over position and movement direction was computed for each candidate replay event (spike density events). Replay events were required to satisfy the following criteria: >66% of the posterior probability located in one of the directional maps, weighted correlation >0.6, max. jump distance<40% of the track, spatial coverage > 20% of the track and at least 10 cells participating ... We verified our results using SWRs as candidates". Decoding window: "linear track: 20 ms overlapping by 5 ms".
+- Published main text: matched Zotero attachment V86BPFP4; positional errors on p. 541.
+- Published supplement: user-supplied local Downloads copy. SHA-256:
+  `11de2fe56bfcd149e24dd81d2b02c3d29156c70f3f46c26bb1cbe1050f2bea59`.
+- [Paper code v1.0.0](https://github.com/caitlinmallory/TimeCourseOrganizationOfHippocampalReplay/tree/128513a656bdacfc11a0e0dfbcaf20e2c4515520),
+  commit `128513a656bdacfc11a0e0dfbcaf20e2c4515520`, also archived as
+  [Zenodo 14237298](https://doi.org/10.5281/zenodo.14237298).
+- Earlier comparison source: bioRxiv v1, DOI 10.1101/2024.07.18.604185,
+  under the title “Self-avoidance dominates the selection of hippocampal replay.”
+  The published supplement now supplies the authoritative text citations below.
 
-Preprint Methods (b), "Replay detection – Open Field" (DETECTION = decoding only):
-- "To identify replay, we decoded the posterior probability over position over the entire session using 80 ms time windows overlapping by 5 ms ... A subsequence was defined as a set of contiguous bins meeting the following criteria: rat speed <5 cm/s, posterior spread (m<0.0048L ...) and posterior COM jump size ... Neighboring subsequences were merged if they were separated by less than 20cm and 50ms. The final sequence was required to have a duration greater than 50ms."
-- "Except in [fig. S2], we did not require events to overlap with SWRs or SDEs or impose a minimum spatial coverage threshold. These relatively permissive criteria were selected to avoid detection heuristics that may inadvertently bias the content of replay discovered."
+Trigger: MUA/SDE candidates followed by decoding criteria on the linear track;
+decoding over the entire session in the open field. SWRs provide a control candidate
+source. The row combines protocols; its scalar columns do not define one detector.
 
-Code (c) confirms the linear track uses SDE candidates and gives the exact detection:
-- `do_combine_linear_track_replay_events.m` (block marked "% MANUSCRIPT:"): `candidate_events_to_plot = 'spike_filtered'` gives `event_choice = 6`, the SDE-derived events. It also sets `num_cells_participating_thr = 10`, `override_coverage_thr = 0.2`, `override_weighted_r_thr = 0.6`, `override_posterior_diff_thr = 0.33` (a 0.33 left/right difference is equivalent to > 66.5% in one map), `override_sde_thr = -inf`, `override_ripple_thr = -inf`. README: "Fig S2: as in fig 2, but using ripples instead of SDEs as candidate events".
-- `load_spikeDensity_pyramidal_only.m`: `restrict_to_excitatory_cells = 1`; 1 ms bins (`spikeDensityStepSize = 1e-3` in `load_AnalysisInformation_cm.m`). The code uses excitatory cells only, whereas the preprint says "all cells".
-- `load_candidateEventTimes.m`, per session segment:
-  - Smoothing: `smoothing_sigma = 0.0125` for both spike density and ripple amplitude.
-  - Baseline: mean and SD over samples with speed <= `speedThr` (5 cm/s) and, for ripples, not in artifact samples (`bad_inds = unique([artifact_inds; moving_inds])`).
-  - Masking: moving (and artifact) samples are set to NaN before peak finding, so events cannot extend into movement.
-  - Ripple LFP: a single tetrode (`Experiment_Information.ripple_refs`), band `SWRFreqRange = [150,250]` (comment: "John used 120-170"). Artifacts are removed by `remove_lfp_artifacts_cm(LFP, t, Experiment_Information.artifact_threshold, 0.2, 0.2, ...)`, called with a per-session threshold and ±0.2 s padding (the function body is not in the repo, so the kind of threshold is not visible), plus a hand-made `bad_lfp` list.
-- `find_candidate_events_2.m` (used for both SDEs and ripples):
-  - `events_lo_std_cutoff = 0; events_hi_std_cutoff = 3; events_min_peak_separation = 0.07; events_min_length = 0.0; events_max_length = inf;`
-  - `findpeaks(...,'minpeakheight',3)`, with bounds walked outward while z > 0.
-  - Peaks sharing a start are collapsed.
-  - Peaks within 70 ms (peak to peak) are merged, taking the earlier start and the larger peak. The later event's end is kept.
-  - No minimum or maximum duration.
-- `filter_candidate_events.m` (linear track, within each SDE):
-  - Decoding bins are kept where the jump is < 40% of the track and the peak posterior is > 5/n_bins.
-  - Segments are merged across gaps < 50 ms and jumps < 40% of the track, and segments < 30 ms are removed.
-  - Only the longest segment is kept, so the replay is a sub-interval of the SDE.
-- `load_replay_criterion.m`: `duration_thr = 0.05; max_jump_distance_thr = 0.4; weighted_r_thr = 0.6; coverage_thr_percent_of_track = 0.20`.
-- Open field: the decoder "filtering" method (Analysis_Information: `sequence_posteriorSpreadThr = 10`, `sequence_jumpThr = 20`, `sequence_deltThr = 0.05`, `sequence_deltxThr = 20`, `sequence_spikeDensityThr = -Inf`).
+## Published Methods
 
-Behavioural windows (analysis): replays were analysed within stopping periods at reward, "the first time the rat entered within 5 cm of the filled reward well at a speed of 3 cm/s or less" (preprint), with rates over 0–10 s. Brain state, radiatum: not used.
+| Quantity | Published value and scope | Supplement page |
+|---|---|---|
+| Spike density | All cells, 1 ms nonoverlapping spike-count bins | 5 |
+| Ripple signal | One selected pyramidal-layer tetrode, 150–250 Hz, Hilbert envelope | 5 |
+| SDE/SWR smoothing and detection | Gaussian SD 12.5 ms; z-score during speed <5 cm/s; peaks >3 SD; extend to the mean | 5 |
+| Track replay | SDE candidates; >66% posterior in one directional map; weighted correlation >0.6; maximum jump <40% of track; coverage >20%; ≥10 cells | 6 |
+| Track controls | SWR candidates; increased correlation threshold 0.7; independent rank-order method | 6–7; Fig. S2, 16–17 |
+| Rank-order control | Median spike times versus place-field-peak order, separate direction templates; Spearman p<0.05; ≥10 participating cells in a >3-SD SDE | 7 |
+| Replay decoding | Track 20 ms; arena 80 ms; text describes overlap by 5 ms, code specifies a 5 ms step | 6–7 |
+| Place fields | Movement >5 cm/s; 2 cm track / 2×2 cm arena bins; Gaussian SD 2 cm track / 8 cm arena | 5 |
+| Behavioral decoding | Nonoverlapping 400 ms windows; discard sessions with mean error >10 cm | 6 |
+| Arena subsequences | Speed <5 cm/s; spread <0.0048L cm; COM jump threshold 0.4√L cm, where L is the number of spatial bins | 7 |
+| Arena merging/duration | Merge gaps <20 cm and <50 ms; final duration >50 ms | 7 |
+| Arena overlap/range | Primary analysis has no SDE/SWR-overlap requirement or minimum spatial range; Fig. S2 supplies controls | 8 |
+
+The published main text (p. 541) reports mean positional errors of 2.9 cm on the
+track and 3.4 cm in the arena. These use the behavioral 400 ms windows, not the
+20/80 ms replay windows.
+
+For the rank-order control, positive/negative correlations label forward/reverse
+replay. If both direction templates pass, retain the larger absolute correlation.
+The released `spearman_median.m` computes median spike times and calls MATLAB
+`corr(..., 'type', 'Spearman')`. No shuffle count is specified for event detection.
+The 5000 shuffles on supplement pp. 8–9 test replay-pair timing/content statistics;
+they must not populate the per-event `Shuffles (#)` field.
+
+## Released implementation and text/code differences
+
+SDE/ripple candidates:
+
+- `load_candidateEventTimes.m` uses Gaussian SD 0.0125 s, speed ≤5 cm/s,
+  segment-wise baseline normalization and NaN masking of movement/artifacts.
+- `find_candidate_events_2.m` sets peak 3 SD, bounds 0 SD, 70 ms peak separation,
+  minimum length 0 and maximum infinity. Candidate peaks sharing a start are
+  collapsed; nearby peaks are merged. This is distinct from replay-subsequence
+  merging at 50 ms.
+- `load_spikeDensity_pyramidal_only.m` selects excitatory cells. The published
+  text says all cells; these source descriptions remain different.
+- Ripple artifact rejection calls the unprovided `remove_lfp_artifacts_cm` with a
+  session threshold and ±0.2 s padding, plus a manual bad-LFP list. The original
+  threshold implementation cannot be established from this release.
+
+Track replay:
+
+- The manuscript block of `do_combine_linear_track_replay_events.m` selects
+  `spike_filtered` / event choice 6, ≥10 cells, coverage 0.2, correlation 0.6 and
+  posterior-map difference 0.33. The latter corresponds to >66.5% in one map;
+  the text rounds this to >66%.
+- `filter_candidate_events.m` keeps bins with jump <40% of track and posterior
+  peak >5/n_bins, merges gaps <50 ms with jump <40%, removes segments <30 ms,
+  then keeps the longest segment. `load_replay_criterion.m` sets a 50 ms replay
+  minimum. Neither duration rule is an initial SDE duration limit.
+
+Arena replay:
+
+- **The earlier 50/100 ms discrepancy is resolved at the configuration level.**
+  `load_AnalysisInformation_cm.m:22–25` contains 100 ms defaults, but
+  `load_replayEvents_cm.m:55–61` overrides replay and sequence duration to 50 ms.
+  `Open_Field/do_combine_open_field_replay_events.m:40,77`, named by the README
+  for the paper figures, independently requires duration ≥50 ms. Text says >50 ms;
+  the inclusive code boundary remains a small difference. The 100 ms default is
+  not evidence of the final replay cutoff.
+- `load_replayEvents_cm.m:56–58` uses spread `0.0012*maze_size^2` and jump
+  `0.2*maze_size` cm. For square arenas with 2 cm bins, these equal the published
+  `0.0048L` and `0.4√L` thresholds. It also uses `0.2*maze_size` cm for the
+  **between-sequence spatial merge**, whereas the published text specifies 20 cm.
+  `compute_allSequences_NaNseparated_merge.m` confirms the spatial threshold is
+  divided by bin size before comparing bin-coordinate distances; these merge
+  rules coincide only when maze size is 100 cm.
+- `compute_filtering_binDecoding_cm.m:15` computes `abs(diff(x(:,2)))`, the
+  first COM coordinate's change. Supplement p. 8 defines the jump as the
+  two-dimensional Euclidean distance. The merging helper does use both spatial
+  coordinates; it does not resolve the separate within-sequence jump difference.
+- The arena figure-combination script excludes a session flag described as
+  decoding worse than 5 cm, whereas the published session-error cutoff is 10 cm.
+  It consumes stored tables; the original flag-generation/runtime provenance is
+  not established here, so this does not replace the published 10 cm criterion.
+
+Spatial smoothing:
+
+- Track `compute_rateMap.m` uses a nominal one-bin (2 cm) Gaussian through
+  `filtfilt`, so 2 cm describes each pass, not the combined kernel.
+- Arena configuration sets smoothing 8 and bin size 2; `compute_rateMap.m`
+  passes 8/2 to `setUp_gaussFilt.m`. That helper uses the argument as the
+  covariance in `mvnpdf`, yielding nominal SD √4 bins ×2 cm =4 cm. Published
+  supplement p. 5 explicitly states SD 8 cm. The CSV preserves both values.
+
+These are inspections of the pinned released implementation, not execution of
+its MATLAB pipeline or proof of every historical session override. Resolving the
+remaining text/code differences needs original configurations or author clarification.
 
 ## Inherited from
-- Open-field replay detection follows Widloski & Foster 2022 (manifest 09; code comments call it "John Widloski's filtering method"). The preprint differs in the numbers: spread threshold scaled to arena size, duration > 50 ms instead of > 100 ms.
-- The linear-track criteria cite Ambrose 2016 for the posterior-difference threshold (code comment `posterior_in_map_thr = 0.33; %Ambrose: 0.33`).
-- The SDE/ripple rules (12.5 ms smoothing, 3 SD, bounds at mean) match the Pfeiffer & Foster 2013 / Ambrose 2016 lineage, restated rather than cited.
 
-## Code
-Zenodo 10.5281/zenodo.14237298. GitHub: https://github.com/caitlinmallory/TimeCourseOrganizationOfHippocampalReplay/tree/v1.0.0.
+Open-field decoding follows Widloski & Foster 2022; the published Methods explicitly
+scale spread/jump thresholds to arena size and use >50 ms duration. Track criteria
+follow the Ambrose/Pfeiffer/Foster lineage. The 3-SD, 12.5-ms candidate rules are
+restated directly in the published supplement.
 
-## Survey CSV discrepancies
-- Detection "Decoding": for the linear track (the source of the CSV's own notes and its Min. Cells = 10), candidates are spike-density events: "The posterior probability over position and movement direction was computed for each candidate replay event (spike density events)" (preprint; code `event_choice = 6`). It should read MUA/SDE + decoding criteria for the linear track and decoding for the open field. This is the most important discrepancy.
-- MUA Z-score Thresh.: CSV N/A. The value is 3 ("Peaks ... exceeding 3 SD above the mean were identified as spike density ... events").
-- MUA smooth: CSV N/A. The value is 12.5 ms ("smoothed with a Gaussian kernel (12.5 ms standard deviation [SD])").
-- Min. Duration 50 ms and Combine 50 ms: these are open-field decoding parameters ("merged if they were separated by less than 20cm and 50ms ... duration greater than 50ms"). The linear-track SDE detection has no duration limit (`events_min_length = 0.0; events_max_length = inf`). The linear replay has `duration_thr = 0.05` in the code. The SDE merge rule is peak-to-peak < 70 ms (code only).
-- Min. Cells 10: linear track only ("at least 10 cells participating").
-- Detection Notes (linear-track criteria) match the preprint text.
-- Caveat: all of this rests on the preprint and the code, not the published supplement.
+## Current CSV disposition
+
+Seven fields were refined after receiving the supplement: detection notes, decoding
+method, spatial smoothing, trajectory, decoding notes, shuffle method and significance.
+The row now includes the rank-order control and distinguishes published versus code
+smoothing. Existing 3-SD peaks, 12.5-ms smoothing, 150–250 Hz ripple band, 20/80-ms
+replay windows and 400-ms behavioral windows are directly confirmed.
+
+All 35 cell citations were updated in the [field-status index](../parameter_verification_2026-09-25.csv).
+The [correction ledger](../parameter_corrections_2026-09-25.csv) and
+[follow-up history](../parameter_recheck_changes_2026-09-25.csv) preserve the baseline
+and current values. No other paper's CSV row changed in this supplement follow-up.
 
 ## Package mapping
+
 Tier: B for the linear-track SDE candidate step (the decoding criteria that follow are D); D for open-field replay.     Needs radiatum: n   Needs theta: n   Needs sleep scoring: n
 Recipe (SDE candidates, code-exact):
 ```python
@@ -82,11 +154,12 @@ sde = np.array(threshold_by_zscore(z, time, minimum_duration=0.0, zscore_thresho
 Tier-A approximation for the SDE step: `multiunit_HSE_detector(time, spikes, speed, 1000, speed_threshold=5, minimum_duration=0.0, zscore_threshold=3, smoothing_sigma=0.0125, normalization_mask=speed <= 5, minimum_active_units=10)`. The 10-cell rule in the paper applies to the replay sub-interval, not the SDE, so it is only a loose proxy.
 Ripple events for the fig. S2 variant (B): a single pyramidal-layer channel, `filter_ripple_band(lfp, fs, band=(150, 250))` → `get_envelope` → `gaussian_smooth(0.0125)` → `normalize_signal(mask=still & ~artifact)` → set moving/artifact samples to NaN → `threshold_by_zscore(z, time, 0.0, 3)`. Tier-A approximation: `Kay_ripple_detector` with one channel, `smoothing_sigma=0.0125, zscore_threshold=3, minimum_duration=0.0, speed_threshold=5, normalization_mask=still`. With a single channel, Kay's trace is sqrt(smoothed squared envelope). That is close to the code's smoothed envelope but not identical.
 Remaining deviations:
+
 - Peak-separation merge (peaks <= 70 ms apart merged, earlier start / later end) versus the package's gap-based `merge_close_events` or drop-later `exclude_close_events`. Close, not identical. Exact reproduction needs peak times from user code.
 - Movement: code-exact via NaN masking (B). The endpoint speed rule (A) drops events touching movement instead of truncating them.
-- Units: the preprint says all cells, the code uses excitatory cells.
+- Units: the published supplement says all cells; the code uses excitatory cells.
 - Kernel: the code's `gausswin` window is 5σ wide (±2.5σ), versus the package's Gaussian truncated at 8σ. Minor.
 - Artifact rejection for ripples (per-session threshold with ±0.2 s padding, plus a manual bad_lfp list) is user-supplied as NaN or a normalization mask.
 - The replay criteria (posterior-map fraction, weighted correlation, jump, coverage, cell count, longest smooth sub-segment) and all open-field detection need a decoder, which is out of scope.
-- Published methods are unverified (Science supplement not retrieved).
+- Published Methods are now checked; the text/code differences above remain explicit.
 Smallest package addition (if C): n/a. Optional convenience: a `peak_time` column on the threshold detectors plus a peak-separation merge would make the 70 ms merge direct.

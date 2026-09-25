@@ -19,8 +19,8 @@ Later analysis restrictions (not detection): decoding in 10 ms windows, "only ti
 
 ## Inherited from
 - "As in previous studies (e.g. Karlsson and Frank 2009)" is attached to the ripple-power thresholding. Karlsson & Frank 2009 used a 3 SD threshold on a 4 ms-smoothed Hilbert envelope with bounds at the mean (see findings/49_Karlsson_2009.md); it has no 150 ms window. So only the general approach is inherited; the window and the 1 SD threshold are this paper's.
-- Theta-delta ratio: Jackson, Johnson & Redish 2006 (J Neurosci 26:12415; PMC6674885, read via WebFetch, so the quotes are as returned by the page summarizer): theta (6–10 Hz) and delta (2–4 Hz) Hilbert amplitudes "averaged across traces", then non-theta periods from the log-transformed theta/delta ratio relative to the session mean. Jackson 2006 detected SWRs differently (100–250 Hz, log amplitude > 2.5σ, crossings < 20 ms removed, events concatenated if < 100 ms apart); Wikenheiser does not cite it for ripple detection.
-- Preprocessing "as described previously (Jackson et al., 2006; Wikenheiser and Redish, 2011)".
+- Theta-delta ratio: Jackson, Johnson & Redish 2006 (J Neurosci 26:12415; PMC6674885, primary Methods directly reopened September 25, 2026): theta (6–10 Hz) and delta (2–4 Hz) Hilbert amplitudes "averaged across traces", then non-theta periods from the log-transformed theta/delta ratio relative to the session mean. Jackson 2006 detected SWRs differently (100–250 Hz, log amplitude > 2.5σ, crossings < 20 ms removed, events concatenated if < 100 ms apart); Wikenheiser does not cite it for ripple detection.
+- Preprocessing cites Jackson et al. (2006) and Wikenheiser and Redish (2011). The [Jackson Methods](https://pmc.ncbi.nlm.nih.gov/articles/PMC6674885/) now supply the direct source; they do not establish Wikenheiser-specific runtime settings.
 
 ## Code
 No code link.
@@ -65,3 +65,12 @@ Remaining deviations:
 - Speed: mean over the event (run-LIA) or a 30 s surround (rest), not the package's endpoint rule; computed in user code.
 - `filter_ripple_band` at 140–220 Hz designs an equiripple FIR; the paper's filter is not stated.
 Smallest package addition (if C): n/a. A fixed-window option (window of given length around each threshold crossing or peak) and a theta/delta-ratio helper would make it A apart from the spike-count and 30 s-surround criteria.
+
+## Independent parameter recheck — September 25, 2026
+
+The current CSV supersedes the historical discrepancy list below. Independent checks and
+source limitations are indexed in [the source recheck](../source_recheck.md) and
+[the complete field-status ledger](../parameter_verification_2026-09-25.csv).
+
+
+Current decoding notes: Only time steps with at least 1 spike included

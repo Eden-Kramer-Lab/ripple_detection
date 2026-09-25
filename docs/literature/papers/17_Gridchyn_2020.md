@@ -19,7 +19,7 @@ Secondary SWR detection (analysis only: cross-correlation with HSEs, SWR counts)
 - Theta and delta: RMS of 2–4 / 6–10 Hz band-passed signal "in the 60 s intervals" (p. e4), used only for analysis (Fig. S3A).
 
 ## Inherited from
-- The SWR detection cites Csicsvari et al. 1999, J Neurosci 19:274–287 ("Oscillatory coupling ..."). Not retrievable here (403/CAPTCHA on jneurosci.org, PMC, Europe PMC, academia.edu), so its RMS window and bound rule are UNKNOWN. This affects only the secondary SWR detector.
+- The cited [Csicsvari 1999 Methods](https://pmc.ncbi.nlm.nih.gov/articles/PMC6782375/) were directly reopened on September 25, 2026. The retrieval gap is closed; the ripple RMS window and exact event-boundary rule remain unstated. The 0.2 ms RMS window elsewhere in that source is for spike detection, not ripples.
 - The real-time decoding is based on Kloosterman et al. 2014 (clusterless KDE decoding). That is the manipulation, not detection.
 
 ## Code

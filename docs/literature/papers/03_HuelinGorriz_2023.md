@@ -66,3 +66,18 @@ Remaining deviations: as in Tirole 2022:
 - Peak-inside-event ripple test and place-cell participation both need user code.
 - Median versus majority speed rule on ties.
 Smallest package addition (if C): n/a (B). As for Tirole, public `count_active_units` and `peak_within` / `require_peak` helpers would bring it close to A.
+
+## Independent parameter recheck — September 25, 2026
+
+The current CSV supersedes the historical discrepancy list below. Independent checks and
+source limitations are indexed in [the source recheck](../source_recheck.md) and
+[the complete field-status ledger](../parameter_verification_2026-09-25.csv).
+
+- **MUA smooth (ms)**: `10`. Zenodo 10085294 / dbendor/Nat_Com_Huelin_Gorriz_et_al b0676a5: batch_analysis_folders.m, list_of_parameters.m, process_clusters.m and extract_CSC.m.
+- **SWR smooth (ms)**: `15`. Zenodo 10085294 / dbendor/Nat_Com_Huelin_Gorriz_et_al b0676a5: batch_analysis_folders.m, list_of_parameters.m, process_clusters.m and extract_CSC.m.
+- **Shuffles (#)**: `1000`. Zenodo 10085294 / dbendor/Nat_Com_Huelin_Gorriz_et_al b0676a5: batch_analysis_folders.m, list_of_parameters.m, process_clusters.m and extract_CSC.m.
+- **Sig. Thresh.**: `Whole event p<0.05; split half p<0.025 (all three)`. Huelin Gorriz Methods, PDF p. 12; release b0676a5.
+
+Current detection notes: MUA and SWR / Independently reopened release: 41-point gausswin(alpha=2) on 1 ms MUA bins gives nominal SD 10 ms per pass (filtfilt effective finite-kernel SD about 12.58 ms); paper says 5 ms. Ripple envelope uses smooth(...,15) at 1 kHz (15 ms moving average); paper says 100 ms. The batch script calls extract_replay_events, but that function is absent from the complete release, so the paper's 750 ms maximum is retained.
+
+Current decoding notes: Whole-event replay must pass all three shuffle tests at p<0.05; a split half must pass all three at p<0.025. Shuffles are 1000 per method.

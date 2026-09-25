@@ -1,12 +1,15 @@
-# Proposed corrections to the literature survey CSV
+# Historical proposals for correcting the literature survey CSV
 
-Status: **on hold, not applied**. The maintainer has not accepted these rules yet, and has
-declined the control-detector rule: values of a control or secondary detector stay in their
-columns. The rows that followed that rule have been withdrawn. Each remaining change was checked
-against the paper, and against released code where the text was ambiguous, by a reader who did
-not write the proposal.
-Next step: the maintainer checks a few of the changes against the papers before deciding on the
-rest.
+Status: **superseded by the [September 25 parameter audit](parameter_audit.md)**.
+The table below preserves the original proposals and pre-audit values, not the current
+CSV. The audit applies supported corrections and records exceptions, additional findings
+and unresolved sources. In particular, Yamamoto's 70 ms grouping value is retained,
+Ambrose’s unsupported duration limits become `Not reported` after checking both
+main text and supplement, and Ji’s numerical frame gaps are verified from
+Supplementary Figure 12. The old proposed values below are historical.
+
+The maintainer's recorded convention remains: values of a control or secondary detector
+stay in their columns. Proposals to remove those values were withdrawn.
 
 Code (the maintainer's rule): where a paper's own released code or data files set a value, the
 code's value is proposed, and a divergence from the text is stated. Code from the same lab that
@@ -163,6 +166,6 @@ Yamamoto 2 cm/s, Ólafsdóttir 2015 10 cm/s) to event detection.
 
 ## Not changed, pending a decision
 
-- **Mallory 2025 (row 00).** The linear-track candidates look like spike-density events (3 SD, 12.5 ms), not decoding alone, and the 50 ms minimum and 50 ms merge look like open-field decoding values. This rests on the preprint and the released code. The published supplement could not be retrieved, so no change is proposed until it is read.
+- **Mallory 2025 (row 00): resolved after this historical list.** The user-supplied published supplement was read on September 25, 2026. It confirms SDE candidates (3 SD, 12.5 ms), track/arena decoding differences and the Spearman p<0.05 control. The CSV and ledgers are updated. The replay caller overrides 100 ms defaults to 50 ms; remaining spatial/cell-selection text/code differences are documented in the [paper note](papers/00_Mallory_2025.md).
 - **Nádasdy 1999 (row 55).** Template matching searched the whole spike train, not ripple windows. The 7 SD, 150-250 Hz ripple detector serves only the participation and EEG analyses. The Detection column has no category for "no event detection".
 - **Strict minima.** Papers that say ">60 ms" are recorded as 60. This is left as is throughout.

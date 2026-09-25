@@ -39,3 +39,11 @@ cand = cand[(cand[:, 1] - cand[:, 0]) > 0.1]
 The reference traces (not detection) are B: `filter_ripple_band(lfp, fs, band=(120, 170))`, `get_envelope`, `gaussian_smooth(..., 0.080, fs)`, `normalize_signal`; `get_multiunit_population_firing_rate(spikes_all_clusters, 1000, 0.080)` then `normalize_signal`.
 Remaining deviations: decoding is out of scope. merge_close_events uses a time gap only; the paper's merge needs both the time gap < 50 ms and a spatial gap < 20 cm.
 Smallest package addition (if C): n/a (D: event defined by the decoded posterior)
+
+## Independent parameter recheck — September 25, 2026
+
+The current CSV supersedes the historical discrepancy list below. Independent checks and
+source limitations are indexed in [the source recheck](../source_recheck.md) and
+[the complete field-status ledger](../parameter_verification_2026-09-25.csv).
+
+- **Reconst. Error bin (ms)**: `250`. Widloski 2022 Methods, PDF p. 19: behavioral decoding in 250 ms windows.

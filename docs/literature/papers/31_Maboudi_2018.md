@@ -61,3 +61,17 @@ Remaining deviations:
 - Duration "less than four time bins" is a bin count after 20 ms binning; the recipe uses a continuous 80 ms.
 - Active-pyramidal count is user code (the detector's `minimum_active_units` counts every column of `units`, including multi-units and interneurons).
 Smallest package addition (if C): n/a. (Optional convenience: let `minimum_active_units` count a column subset, e.g. a boolean `unit_mask`.)
+
+## Independent parameter recheck — September 25, 2026
+
+The current CSV supersedes the historical discrepancy list below. Independent checks and
+source limitations are indexed in [the source recheck](../source_recheck.md) and
+[the complete field-status ledger](../parameter_verification_2026-09-25.csv).
+
+- **Decoding**: `HMM; Bayes (comparison)`. Maboudi 2018 Methods, PDF pp. 18-19 and Results p. 7.
+- **Trajectory**: `HMM sequence likelihood; Bayesian line fit`. Maboudi 2018 Methods, PDF pp. 18-19 and Results p. 7.
+- **Shuffle Method**: `HMM off-diagonal transition shuffle; Bayesian posterior column-cycle`. Maboudi 2018 Methods, PDF pp. 18-19 and Results p. 7.
+- **Shuffles (#)**: `5000`. Maboudi 2018 Methods, PDF pp. 18-19 and Results p. 7.
+- **Sig. Thresh.**: `Varied; Bayesian comparison 99th percentile`. Maboudi 2018 Methods, PDF pp. 18-19 and Results p. 7.
+
+Current decoding notes: Both HMM model-congruence and Bayesian replay scores use 5000 surrogates per event. HMM shuffle permutes off-diagonal transitions within rows; Bayesian shuffle circularly shifts each posterior column. Significance thresholds are varied for ROC analyses; the pooled Bayesian comparison uses 99%, with HMM threshold adjusted to match its event fraction. Temporal/time-swap/Poisson surrogates in the earlier entry were model-training controls.

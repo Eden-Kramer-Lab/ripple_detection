@@ -58,3 +58,13 @@ Remaining deviations:
 - MUA population rate: 0.1.8.dev0 averaged over tetrodes, current sums; z-scoring removes the constant factor.
 - ">= 2 tetrodes with spikes" is user code (no public helper counting units/tetrodes in LFP-detected events).
 Smallest package addition (if C): n/a
+
+## Independent parameter recheck — September 25, 2026
+
+The current CSV supersedes the historical discrepancy list below. Independent checks and
+source limitations are indexed in [the source recheck](../source_recheck.md) and
+[the complete field-status ledger](../parameter_verification_2026-09-25.csv).
+
+- **MUA smooth (ms)**: `15`. replay_trajectory_paper f2d2b3c, src/load_data.py and environment.yml; pinned ripple_detection 0.1.8.dev0 / local 71298f0 detectors.py default smoothing_sigma=0.015.
+
+Current detection notes: SWR / only SWRs with spikes on >= 2 tetrodes analyzed / MUA done as control (2 SD, >= 15 ms) / The original caller bins MUA at 500 Hz and calls multiunit_HSE_detector with z=2 and minimum duration 15 ms, without overriding the pinned package's Gaussian SD 15 ms.
