@@ -5505,14 +5505,20 @@ class TestStateIntervals:
             [[1, 3], [7, 9]],
         )
 
-    def test_a_length_equal_to_the_minimum_is_kept_despite_rounding(self):
-        """0.7 - 0.4 is 0.2999...96 in binary floating point."""
+    def test_the_minimum_is_an_inclusive_sample_count(self):
+        """At 10 Hz, 0.3 s is 3 samples: a run of 3 samples (0.2 s from first
+        to last) is kept and a run of 2 dropped, as the detectors count an
+        event's duration."""
         from ripple_detection import state_intervals
 
         time = np.arange(10) / 10
-        values = np.array([3, 3, 3, 3, 1, 1, 1, 1, 3, 3.0])
+        values = np.array([3, 1, 1, 3, 1, 1, 1, 3, 3, 3.0])
         np.testing.assert_allclose(
-            state_intervals(values, time, 2.0, minimum_duration=0.3), [[0.4, 0.7]]
+            state_intervals(values, time, 2.0, minimum_duration=0.3), [[0.4, 0.6]]
+        )
+        np.testing.assert_allclose(
+            state_intervals(self.RATIO, self.TIME, 2.0, minimum_duration=3.0),
+            [[1, 3], [7, 9]],
         )
 
     def test_unknown_values_are_not_in_the_state(self):

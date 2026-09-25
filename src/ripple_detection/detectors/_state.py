@@ -10,6 +10,8 @@ from ripple_detection.core import (
     _check_choice,
     get_envelope,
     merge_close_events,
+    nearest_sample_index,
+    sample_count_within,
 )
 from ripple_detection.detectors._blocks import _contiguous_valid_blocks, _drop_short_blocks
 from ripple_detection.detectors._validation import _check_band, _check_positive
@@ -200,8 +202,10 @@ def state_intervals(
         A sample is in the state when ``values comparison threshold``.
         Default ``'<'``.
     minimum_duration : float, optional
-        Intervals shorter than this, from first to last sample in seconds,
-        are dropped, after merging. Default 0.0.
+        Intervals holding fewer samples than this many seconds spans, first
+        to last inclusive (``sample_count_within``, the detectors' duration
+        rule), are dropped, after merging. At 10 Hz, 0.3 s keeps an interval
+        of 3 samples. Default 0.0.
     merge_gap : float, optional
         Intervals separated by less than this many seconds are joined first,
         unless a missing sample or a gap in time lies between them. Default
@@ -271,6 +275,9 @@ def state_intervals(
                 for block in np.unique(block_of_run)
             ]
         )
-    lengths = intervals[:, 1] - intervals[:, 0]
-    long_enough = (lengths >= minimum_duration) | np.isclose(lengths, minimum_duration)
-    return intervals[long_enough]
+    n_samples = (
+        nearest_sample_index(time, intervals[:, 1])
+        - nearest_sample_index(time, intervals[:, 0])
+        + 1
+    )
+    return intervals[sample_count_within(n_samples, time, minimum_duration)]
