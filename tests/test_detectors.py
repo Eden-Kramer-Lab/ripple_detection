@@ -5968,7 +5968,7 @@ class TestCareySpectralScore:
         from ripple_detection import carey_spectral_ripple_score
 
         time, data, examples = self._lfp()
-        longer = examples + [0.0, 1 / self.FS]
+        longer = examples + np.array([0.0, 1 / self.FS])
         np.testing.assert_allclose(
             carey_spectral_ripple_score(origin + time, data, self.FS, origin + longer),
             carey_spectral_ripple_score(time, data, self.FS, examples),
