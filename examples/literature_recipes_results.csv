@@ -56,5 +56,5 @@ row,paper,method,configuration,doi,trigger,role,options,supplied_baseline_interv
 52,Ji 2007,ji_2007,default,https://doi.org/10.1038/nn1825,MUA,candidate_detection,"{""histogram_bins"": 100, ""histogram_smoothing"": 3, ""merge_gap"": 0.08, ""stage"": ""detection""}","[[0.0, 12.0]]",16,1.0,0
 53,Foster 2006,foster_2006,default,https://doi.org/10.1038/nature04587,MUA,candidate_detection,{},"[[0.0, 12.0]]",9,0.5625,0
 54,Lee 2002,lee_2002,default,https://doi.org/10.1016/S0896-6273(02)01096-6,MUA,candidate_detection,{},"[[0.0, 12.0]]",205,1.0,189
-55,Nadasdy 1999,nadasdy_1999,default,https://doi.org/10.1523/JNEUROSCI.19-21-09497.1999,SWR,candidate_detection,"{""bound_threshold"": null, ""rms_window"": null}","[[0.0, 12.0]]",16,1.0,0
+55,Nadasdy 1999,nadasdy_1999,default,https://doi.org/10.1523/JNEUROSCI.19-21-09497.1999,SWR,candidate_detection,"{""bound_threshold"": null, ""rms_window"": null}","[[0.0, 12.0]]",15,0.9375,0
 56,Kudrimoti 1999,kudrimoti_1999,default,https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,SWR,candidate_detection,"{""threshold_sd"": null}","[[0.0, 12.0]]",12,0.75,0
