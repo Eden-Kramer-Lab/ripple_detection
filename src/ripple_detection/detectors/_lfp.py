@@ -2,7 +2,7 @@
 Shvartsman and Yu, with their consensus traces."""
 
 from itertools import chain
-from typing import cast
+from typing import Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -13,6 +13,7 @@ from ripple_detection.core import (
     BoolArray,
     FloatArray,
     IntArray,
+    NormalizationMethod,
     _is_immobile,
     _is_immobile_at_endpoints,
     _is_immobile_by_majority,
@@ -332,7 +333,7 @@ def Shvartsman_ripple_detector(
     zscore_threshold: float = 3.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
-    normalization_method: str = "zscore",
+    normalization_method: NormalizationMethod | Literal["manual"] = "zscore",
     normalization_mask: ArrayLike | None = None,
     channel_baselines: ArrayLike | None = None,
     channel_deviations: ArrayLike | None = None,
@@ -561,7 +562,7 @@ def Shvartsman_ripple_detector(
     _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
-    if manual:
+    if normalization_method == "manual":
         normalized = normalize_signal_manually(
             smoothed, cast(ArrayLike, channel_baselines), cast(ArrayLike, channel_deviations)
         )
@@ -625,7 +626,7 @@ def Kay_ripple_detector(
     zscore_threshold: float = 2.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
-    normalization_method: str = "zscore",
+    normalization_method: NormalizationMethod = "zscore",
     normalization_mask: ArrayLike | None = None,
     maximum_duration: float | None = None,
 ) -> pd.DataFrame:
@@ -1002,7 +1003,7 @@ def Karlsson_ripple_detector(
     zscore_threshold: float = 3.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
-    normalization_method: str = "zscore",
+    normalization_method: NormalizationMethod = "zscore",
     normalization_mask: ArrayLike | None = None,
     maximum_duration: float | None = None,
 ) -> pd.DataFrame:
@@ -1173,7 +1174,7 @@ def Roumis_ripple_detector(
     zscore_threshold: float = 2.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
-    normalization_method: str = "zscore",
+    normalization_method: NormalizationMethod = "zscore",
     normalization_mask: ArrayLike | None = None,
     maximum_duration: float | None = None,
 ) -> pd.DataFrame:

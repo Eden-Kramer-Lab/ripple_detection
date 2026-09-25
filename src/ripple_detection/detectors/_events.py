@@ -10,6 +10,7 @@ from ripple_detection.core import (
     BoolArray,
     FloatArray,
     IntArray,
+    NormalizationMethod,
     _check_non_negative,
     _is_clear_of_close_events,
     _is_immobile_at_endpoints,
@@ -80,7 +81,7 @@ def _threshold_trace(
     *,
     minimum_duration: float,
     zscore_threshold: float,
-    normalization_method: str = "zscore",
+    normalization_method: NormalizationMethod = "zscore",
     normalization_mask: ArrayLike | None = None,
 ) -> tuple[FloatArray, FloatArray]:
     """Normalize one detection trace over the valid samples and threshold it.
@@ -153,7 +154,7 @@ def _detect_from_trace(
     speed_threshold: float,
     close_event_threshold: float,
     maximum_duration: float | None = None,
-    normalization_method: str = "zscore",
+    normalization_method: NormalizationMethod = "zscore",
     normalization_mask: ArrayLike | None = None,
 ) -> pd.DataFrame:
     """Threshold one trace, apply the endpoint speed rule and the shared last

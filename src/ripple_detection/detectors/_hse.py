@@ -6,6 +6,7 @@ from numpy.typing import ArrayLike
 
 from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import (
+    NormalizationMethod,
     _is_immobile_at_endpoints,
     get_multiunit_population_firing_rate,
     nearest_sample_index,
@@ -42,7 +43,7 @@ def multiunit_HSE_detector(
     zscore_threshold: float = 2.0,
     smoothing_sigma: float = 0.015,
     close_event_threshold: float = 0.0,
-    normalization_method: str = "zscore",
+    normalization_method: NormalizationMethod = "zscore",
     normalization_mask: ArrayLike | None = None,
     maximum_duration: float | None = None,
     minimum_active_units: int = 0,

@@ -1,5 +1,7 @@
 """The Carey, Tanaka & van der Meer joint ripple-power and multiunit candidate detector."""
 
+from typing import Literal, get_args
+
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
@@ -139,13 +141,19 @@ def _theta_envelope(
     return envelope
 
 
-CAREY_THRESHOLD_METHODS = ("zscore", "mean")
+CareyThresholdMethod = Literal["zscore", "mean"]
+"""How ``Carey_candidate_detector`` scales the joint score before thresholding."""
+
+CAREY_THRESHOLD_METHODS: tuple[CareyThresholdMethod, ...] = get_args(CareyThresholdMethod)
 """How ``Carey_candidate_detector`` scales the joint score before thresholding."""
 
 CAREY_SMOOTHING_KERNEL = np.array([0.1, 0.2, 0.4, 0.2, 0.1])
 """The narrow kernel ``SWRfreak`` smooths its spectra with."""
 
-WEIGHTINGS = ("amplitude", "power")
+Weighting = Literal["amplitude", "power"]
+"""How ``carey_spectral_ripple_score`` weights the Fourier magnitudes."""
+
+WEIGHTINGS: tuple[Weighting, ...] = get_args(Weighting)
 """How ``carey_spectral_ripple_score`` weights the Fourier magnitudes."""
 
 _SPECTRUM_CHUNK = 65_536
@@ -160,7 +168,11 @@ class _WindowedSpectrum:
     ``window`` (``n_window`` samples) to transform."""
 
     def __init__(
-        self, sampling_frequency: float, window: float, high_pass_cutoff: float, weight_by: str
+        self,
+        sampling_frequency: float,
+        window: float,
+        high_pass_cutoff: float,
+        weight_by: Weighting,
     ) -> None:
         self.n_window = round(window * sampling_frequency)
         self.n_taper = round(sampling_frequency / high_pass_cutoff)
@@ -214,7 +226,7 @@ def carey_spectral_ripple_score(
     window: float = 0.06,
     high_pass_cutoff: float = 100.0,
     noise_offset: float = 2.0,
-    weight_by: str = "amplitude",
+    weight_by: Weighting = "amplitude",
     step: int = 1,
 ) -> FloatArray:
     """The spectral ripple score behind the candidates of Carey et al. 2019.
@@ -431,7 +443,7 @@ def Carey_candidate_detector(
     minimum_state_duration: float = 0.050,
     maximum_duration: float | None = None,
     ripple_score: ArrayLike | None = None,
-    threshold_method: str = "zscore",
+    threshold_method: CareyThresholdMethod = "zscore",
 ) -> pd.DataFrame:
     """Detect candidate replay events from ripple power and multiunit activity jointly.
 

@@ -1,6 +1,7 @@
 """Detect events on any trace with the package's thresholding and conventions."""
 
 from collections.abc import Sequence
+from typing import Literal, get_args
 
 import numpy as np
 import pandas as pd
@@ -8,10 +9,13 @@ from numpy.typing import ArrayLike
 
 from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import (
+    NORMALIZATION_METHODS,
     SPEED_RULES,
     BoolArray,
     FloatArray,
     IntArray,
+    NormalizationMethod,
+    SpeedRule,
     _boolean_run_bounds,
     _check_choice,
     _is_immobile,
@@ -38,13 +42,25 @@ from ripple_detection.detectors._validation import (
     _validate_duration_limits,
 )
 
-TRACE_NORMALIZATION_METHODS = ("zscore", "median_mad", "none")
+TraceNormalizationMethod = NormalizationMethod | Literal["none"]
 """How :func:`detect_events_from_trace` can scale the trace before thresholding."""
 
-TRACE_SPEED_RULES = (*SPEED_RULES, "restrict")
+TRACE_NORMALIZATION_METHODS: tuple[TraceNormalizationMethod, ...] = (
+    *NORMALIZATION_METHODS,
+    "none",
+)
+"""How :func:`detect_events_from_trace` can scale the trace before thresholding."""
+
+TraceSpeedRule = SpeedRule | Literal["restrict"]
 """The speed rules of :func:`exclude_movement`, plus detecting only while slow."""
 
-CLOSE_EVENT_RULES = ("drop", "merge")
+TRACE_SPEED_RULES: tuple[TraceSpeedRule, ...] = (*SPEED_RULES, "restrict")
+"""The speed rules of :func:`exclude_movement`, plus detecting only while slow."""
+
+CloseEventRule = Literal["drop", "merge"]
+"""What :func:`detect_events_from_trace` does with events closer than the gap."""
+
+CLOSE_EVENT_RULES: tuple[CloseEventRule, ...] = get_args(CloseEventRule)
 """What :func:`detect_events_from_trace` does with events closer than the gap."""
 
 
@@ -225,15 +241,15 @@ def detect_events_from_trace(
     bound_threshold: float | Sequence[float] = 0.0,
     bound_search_window: float | None = None,
     smoothing_sigma: float | None = None,
-    normalization_method: str = "zscore",
+    normalization_method: TraceNormalizationMethod = "zscore",
     normalization_mask: ArrayLike | None = None,
     minimum_duration: float = 0.015,
     minimum_event_duration: float | None = None,
     maximum_duration: float | None = None,
     speed_threshold: float = 4.0,
-    speed_rule: str = "endpoints",
+    speed_rule: TraceSpeedRule = "endpoints",
     close_event_threshold: float = 0.0,
-    close_event_rule: str = "drop",
+    close_event_rule: CloseEventRule = "drop",
 ) -> pd.DataFrame:
     """Detect events on a trace you build, with the package's thresholding.
 

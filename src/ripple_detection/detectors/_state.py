@@ -1,5 +1,7 @@
 """Brain and behavioural state: a theta/delta ratio and the intervals of a state."""
 
+from typing import Literal, get_args
+
 import numpy as np
 from numpy.typing import ArrayLike
 from scipy.signal import butter, oaconvolve, sosfiltfilt
@@ -16,10 +18,16 @@ from ripple_detection.core import (
 from ripple_detection.detectors._blocks import _contiguous_valid_blocks, _drop_short_blocks
 from ripple_detection.detectors._validation import _check_band, _check_positive
 
-STATE_COMPARISONS = ("<", "<=", ">", ">=")
+StateComparison = Literal["<", "<=", ">", ">="]
 """How :func:`state_intervals` compares values with its threshold."""
 
-RATIO_MEASURES = ("amplitude", "power")
+STATE_COMPARISONS: tuple[StateComparison, ...] = get_args(StateComparison)
+"""How :func:`state_intervals` compares values with its threshold."""
+
+RatioMeasure = Literal["amplitude", "power"]
+"""What :func:`theta_delta_ratio` divides: band envelopes, or their squares."""
+
+RATIO_MEASURES: tuple[RatioMeasure, ...] = get_args(RatioMeasure)
 """What :func:`theta_delta_ratio` divides: band envelopes, or their squares."""
 
 
@@ -57,7 +65,7 @@ def theta_delta_ratio(
     theta_band: tuple[float, float] = (6.0, 12.0),
     delta_band: tuple[float, float] = (1.0, 4.0),
     smoothing_sigma: float | None = 1.0,
-    measure: str = "amplitude",
+    measure: RatioMeasure = "amplitude",
 ) -> FloatArray:
     """The ratio of theta to delta band activity at each sample.
 
@@ -176,7 +184,7 @@ def state_intervals(
     time: ArrayLike,
     threshold: float,
     *,
-    comparison: str = "<",
+    comparison: StateComparison = "<",
     minimum_duration: float = 0.0,
     merge_gap: float = 0.0,
 ) -> FloatArray:

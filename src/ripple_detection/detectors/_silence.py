@@ -1,5 +1,7 @@
 """Population events bounded by silences in the spike trains."""
 
+from typing import Literal, get_args
+
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
@@ -35,6 +37,12 @@ COLUMNS = (
     "clipped_end",
 )
 """The columns :func:`detect_silence_bounded_events` returns, in order."""
+
+WindowEndRule = Literal["last_spike", "fixed"]
+"""Where :func:`detect_silence_bounded_events` ends the window after a silence."""
+
+WINDOW_END_RULES: tuple[WindowEndRule, ...] = get_args(WindowEndRule)
+"""Where :func:`detect_silence_bounded_events` ends the window after a silence."""
 
 
 def _time_scale(time: FloatArray) -> float:
@@ -99,7 +107,7 @@ def _window_events(
     time: FloatArray,
     minimum_silence: float,
     window: float,
-    window_end_rule: str,
+    window_end_rule: WindowEndRule,
 ) -> tuple[IntArray, BoolArray]:
     """The window after each silence of at least ``minimum_silence``: from
     the spike that ends the silence to either the last spike or the fixed
@@ -141,7 +149,7 @@ def detect_silence_bounded_events(
     *,
     minimum_silence: float,
     window: float | None = None,
-    window_end_rule: str = "last_spike",
+    window_end_rule: WindowEndRule = "last_spike",
     maximum_isi: float | None = None,
     units: ArrayLike | None = None,
     minimum_active_units: int = 1,
@@ -246,7 +254,7 @@ def detect_silence_bounded_events(
     _check_positive(sampling_frequency=sampling_frequency)
     _check_positive(minimum_silence=minimum_silence)
     _check_gap(minimum_silence=minimum_silence)
-    _check_choice("window_end_rule", window_end_rule, ("last_spike", "fixed"))
+    _check_choice("window_end_rule", window_end_rule, WINDOW_END_RULES)
     if window is None and window_end_rule == "fixed":
         msg = "window_end_rule='fixed' requires window."
         raise ValueError(msg)

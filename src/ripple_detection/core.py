@@ -10,7 +10,7 @@ from collections.abc import Generator, Iterable
 from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args
 
 import numpy as np
 import pandas as pd
@@ -735,7 +735,10 @@ def _is_immobile_at_endpoints(
     return np.asarray(at_start & at_end, dtype=bool)
 
 
-SPEED_RULES = ("endpoints", "all", "mean", "median")
+SpeedRule = Literal["endpoints", "all", "mean", "median"]
+"""The ways :func:`exclude_movement` can test an event's speed."""
+
+SPEED_RULES: tuple[SpeedRule, ...] = get_args(SpeedRule)
 """The ways :func:`exclude_movement` can test an event's speed."""
 
 
@@ -773,7 +776,7 @@ def _is_immobile_by_rule(
     speed: ArrayLike,
     time: ArrayLike,
     speed_threshold: float,
-    rule: str,
+    rule: SpeedRule,
 ) -> BoolArray:
     """Whether each event passes the speed test ``rule`` (see
     :func:`exclude_movement`); a bool mask over events."""
@@ -806,7 +809,7 @@ def exclude_movement(
     speed: ArrayLike,
     time: ArrayLike,
     speed_threshold: float = 4.0,
-    rule: str = "endpoints",
+    rule: SpeedRule = "endpoints",
 ) -> FloatArray | pd.DataFrame:
     """Filter out candidate ripples that occur during animal movement.
 
@@ -1103,6 +1106,13 @@ def gaussian_smooth(
     return np.asarray(smoothed, dtype=float)
 
 
+NormalizationMethod = Literal["zscore", "median_mad"]
+"""How :func:`normalize_signal` centers and scales a signal."""
+
+NORMALIZATION_METHODS: tuple[NormalizationMethod, ...] = get_args(NormalizationMethod)
+"""How :func:`normalize_signal` centers and scales a signal."""
+
+
 def _get_normalization_mask(
     data_shape: tuple[int, ...], normalization_mask: ArrayLike | None
 ) -> BoolArray | None:
@@ -1156,7 +1166,7 @@ def _get_normalization_mask(
 
 
 def _normalization_statistics(
-    data: FloatArray, mask: BoolArray | None, method: str
+    data: FloatArray, mask: BoolArray | None, method: NormalizationMethod
 ) -> tuple[FloatArray, FloatArray]:
     """The center and scale :func:`_normalize` divides by, from ``data[mask]``.
 
@@ -1211,7 +1221,9 @@ def _normalization_statistics(
     return np.asarray(center, dtype=float), np.asarray(scale, dtype=float)
 
 
-def _normalize(data: FloatArray, mask: BoolArray | None, method: str) -> FloatArray:
+def _normalize(
+    data: FloatArray, mask: BoolArray | None, method: NormalizationMethod
+) -> FloatArray:
     """Center and scale ``data`` with :func:`_normalization_statistics` from
     ``data[mask]``; raises as it does for a zero or undefined scale."""
     center, scale = _normalization_statistics(data, mask, method)
@@ -1221,7 +1233,7 @@ def _normalize(data: FloatArray, mask: BoolArray | None, method: str) -> FloatAr
 @explain_call_errors
 def normalize_signal(
     data: ArrayLike,
-    method: str = "zscore",
+    method: NormalizationMethod = "zscore",
     normalization_mask: ArrayLike | None = None,
 ) -> FloatArray:
     """Normalize signal using mean/std (z-score) or median/MAD.
@@ -1333,7 +1345,7 @@ def normalize_signal(
             f"{NORMALIZE_SIGNAL_WITHOUT_TIME}"
         )
         raise TypeError(msg)
-    if method not in ("zscore", "median_mad"):
+    if method not in NORMALIZATION_METHODS:
         msg = (
             f"Invalid normalization method: '{method}'. "
             "Must be either 'zscore' or 'median_mad'."
@@ -1606,7 +1618,10 @@ def _check_non_negative(**values: float) -> None:
             raise ValueError(msg)
 
 
-CLOSE_EVENT_REFERENCES = ("end", "start")
+CloseEventReference = Literal["end", "start"]
+"""What :func:`exclude_close_events` measures a gap from, in the last kept event."""
+
+CLOSE_EVENT_REFERENCES: tuple[CloseEventReference, ...] = get_args(CloseEventReference)
 """What :func:`exclude_close_events` measures a gap from, in the last kept event."""
 
 
@@ -1618,7 +1633,7 @@ def _check_choice(name: str, value: str, choices: tuple[str, ...]) -> None:
 
 
 def _is_clear_of_close_events(
-    events: FloatArray, close_event_threshold: float, measure_from: str = "end"
+    events: FloatArray, close_event_threshold: float, measure_from: CloseEventReference = "end"
 ) -> BoolArray:
     """Which of the sorted ``(n_events, 2)`` events to keep: each is compared
     with the last *retained* event, so a cluster is reduced to its first
@@ -1644,7 +1659,7 @@ def _is_clear_of_close_events(
 def exclude_close_events(
     candidate_event_times: ArrayLike | pd.DataFrame,
     close_event_threshold: float = 1.0,
-    measure_from: str = "end",
+    measure_from: CloseEventReference = "end",
 ) -> FloatArray | pd.DataFrame:
     """Remove events that occur too close together in time.
 
@@ -1779,7 +1794,10 @@ def require_isolation(
     return events[keep]
 
 
-MERGE_MEASURES = ("gap", "peak")
+MergeMeasure = Literal["gap", "peak"]
+"""What :func:`merge_close_events` compares with its threshold."""
+
+MERGE_MEASURES: tuple[MergeMeasure, ...] = get_args(MergeMeasure)
 """What :func:`merge_close_events` compares with its threshold."""
 
 
@@ -1789,7 +1807,7 @@ def merge_close_events(
     maximum_duration: float | None = None,
     *,
     inclusive: bool = False,
-    measure: str = "gap",
+    measure: MergeMeasure = "gap",
 ) -> FloatArray:
     """Join events separated by less than a gap into one longer event.
 
@@ -2178,7 +2196,10 @@ def require_trace_peak(
     return events[keep]
 
 
-TRIM_SIDES = ("both", "start", "end")
+TrimSide = Literal["both", "start", "end"]
+"""Which bounds :func:`trim_events_to_trace` moves."""
+
+TRIM_SIDES: tuple[TrimSide, ...] = get_args(TrimSide)
 """Which bounds :func:`trim_events_to_trace` moves."""
 
 
@@ -2188,7 +2209,7 @@ def trim_events_to_trace(
     time: ArrayLike,
     threshold: float,
     *,
-    sides: str = "both",
+    sides: TrimSide = "both",
     minimum_duration: float = 0.0,
 ) -> FloatArray:
     """Move each event's bounds inward to where a trace is at or above a threshold.
