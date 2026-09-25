@@ -60,4 +60,4 @@ Nonoverlapping 10 ms steps are inferred; the published 10 ms bin width is explic
 
 ## Package mapping
 
-Executable example: `olafsdottir_2016` in [literature_recipes.py](../../../examples/literature_recipes.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+Packaged primary method: `olafsdottir_2016` in [literature_methods.py](../../../src/ripple_detection/literature_methods.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.

@@ -70,4 +70,6 @@ Required external helpers are not bundled in the code deposit. Raw/data arrays w
 
 ## Package mapping
 
-Executable example: `widloski_2025` in [literature_recipes.py](../../../examples/literature_recipes.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+Packaged secondary ripple label: `widloski_2025` in [literature_methods.py](../../../src/ripple_detection/literature_methods.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+
+Additional inventories in the same module: `widloski_2025_bursts`. See their docstrings for required settings and output stages.

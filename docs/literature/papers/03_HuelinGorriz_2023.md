@@ -65,8 +65,8 @@ The published maximum duration is 750 ms. The released preprocessing uses nomina
 
 ## Uncertainties
 
-`extract_replay_events` is absent from the complete release. Its original implementation is needed to establish runtime duration handling. The example recipe uses the related Tirole path and omits the published 750 ms cap; it is an approximation, not evidence for changing the CSV.
+`extract_replay_events` is absent from the complete release. Its original implementation is needed to establish runtime duration handling. The packaged method reconstructs the related Tirole path and applies the published 750 ms cap by default (`interpretation="published_cap"`). The explicit `related_code` option omits that cap. Both are reconstructions; neither establishes the missing original extractor's behavior.
 
 ## Package mapping
 
-Executable example: `huelin_gorriz_2023` in [literature_recipes.py](../../../examples/literature_recipes.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+Packaged primary method: `huelin_gorriz_2023` in [literature_methods.py](../../../src/ripple_detection/literature_methods.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.

@@ -116,6 +116,8 @@ Gridchyn 2020: [igridchyn/lfp_online@a2d9cde](https://github.com/igridchyn/lfp_o
 
 LFPBuffer.cpp, Utils.cpp and configuration inventory. Threshold is expected spike count times a factor, updated by +0.5*(measured rate-target) per minute. Default target is 1 Hz. EXPERIMENTAL_assembly_inhibition.conf has initial factor 3.5, 20 ms window and 150 ms refractory at 24 kHz. This compatible example is not proven to be the paper configuration; inhibition target 0.8 is a different setting.
 
+Also inspected at the same commit: [LFPPipeline.cpp](https://github.com/igridchyn/lfp_online/blob/a2d9cde41b389d7fee47ab5ae4188788c617f81e/lfp_online/LFPPipeline.cpp#L173), [PackageExractorProcessor.cpp](https://github.com/igridchyn/lfp_online/blob/a2d9cde41b389d7fee47ab5ae4188788c617f81e/lfp_online/PackageExractorProcessor.cpp#L192) and [LPTTriggerProcessor.cpp](https://github.com/igridchyn/lfp_online/blob/a2d9cde41b389d7fee47ab5ae4188788c617f81e/lfp_online/LPTTriggerProcessor.cpp#L326). The pipeline processes buffered chunks; the trigger logic can accumulate further evidence before making an inhibition decision.
+
 ### chenani-code
 
 Chenani 2019: [cleibold/ReactivationCode@c008676](https://github.com/cleibold/ReactivationCode/tree/c008676683bc07f0395ff9df863e3b3b971c6bc2)
@@ -152,7 +154,7 @@ Followed protocol configurations, candidate extraction, replay criteria/combinat
 
 Krause 2022: [DrugowitschLab/HippocampalSWRDynamics@cda23b7](https://github.com/DrugowitschLab/HippocampalSWRDynamics/tree/cda23b7fcc8a97222238a26c15d011d3593be39b)
 
-ripple_preprocessing.py, ratday_preprocessing.py, config.py and highsynchronyevents.py. Original SWRs are precomputed input. Population-burst trimming uses a mean per-cell rate criterion (>2 Hz), first-to-last above-threshold samples and 30 ms minimum. Secondary HSE Gaussian SD is 10 ms in code; primary decode is 3 ms/4 cm.
+ripple_preprocessing.py, ratday_preprocessing.py, config.py, highsynchronyevents.py and utils.py. The reopened binning helper excludes bins ending exactly at the SWR end; trimming retains the unbinned remainder in its end coordinate. Original SWRs are precomputed input. Population-burst trimming uses a mean per-cell rate criterion (>2 Hz), first-to-last above-threshold samples and 30 ms minimum. Secondary HSE Gaussian SD is 10 ms in code; primary decode is 3 ms/4 cm.
 
 ### harvey-code
 
@@ -419,6 +421,8 @@ SHA-256 and byte counts identify the inspected copies. `*_listing.txt` and `dand
 | `ambrose2016_publisher_supplement.pdf` | [ambrose-supplement](#ambrose-supplement) | `6eb04d129fe724456322db4c3944faa0e1727da7fea487ce292389aada0ccdff` | 1158744 |
 | `jackson2006.html` | [jackson-2006](#jackson-2006) | `bc453fc2789b7bbbd0e45badbf6c745b66deaa6ce50e8d64a4cec8f1b2449838` | 250423 |
 | `csicsvari1999a.html` | [csicsvari-1999](#csicsvari-1999) | `9a91d9616ba16c0806dfb763106b1bee7182670e5bd1ccb574e2dcfc8145fd8e` | 231069 |
+| `krause_cda23b7/replay_structure/utils.py` | [krause-code](#krause-code) | `690712cd995404ad386e77b085f3720e37547ae4cdb995871140ce57798d9536` | 13946 |
+| `krause_cda23b7/replay_structure/ripple_preprocessing.py` | [krause-code](#krause-code) | `8529b4378c98f5bf4f87c0dad095570af5e1d915cbdd99187b0ac5cdb1d0007a` | 7541 |
 
 ## Code-availability search scope
 

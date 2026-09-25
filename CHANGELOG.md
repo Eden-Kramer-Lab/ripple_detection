@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Packaged literature methods with measured-recording inputs, per-protocol
+  inventories, DOI/output metadata and explicit settings for unresolved choices.
+  Includes secondary ripple/HFE/MUA controls, native spike bins and source-specific
+  kernels, peak merging, adaptive triggers and spectral windows. See the
+  [implementation guide](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/docs/literature/implementation.md)
+  for scope and remaining historical verification.
 - `window_end_rule="fixed"` for silence-triggered windows; the default remains
   `"last_spike"`. The Diba method uses a fixed window.
 
@@ -21,7 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Filtering and Hilbert envelopes preserve valid data around missing samples and
-  optional timestamp gaps (`time=`).
+  optional timestamp gaps (`time=`). Literature post-processing preserves those
+  gaps when merging events.
 
 ## [2.0.0] - 2026-09-22
 

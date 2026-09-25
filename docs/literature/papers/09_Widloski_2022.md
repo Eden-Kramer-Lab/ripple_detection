@@ -52,4 +52,4 @@ The method-specific qualifications above apply. The executable recipe documents 
 
 ## Package mapping
 
-Replay is defined by decoding, outside this package’s detector scope. [literature_recipes.py](../../../examples/literature_recipes.py) records the reason in `NOT_REPRODUCED`.
+Replay is defined by decoding, outside this package’s detector scope. [literature_methods.py](../../../src/ripple_detection/literature_methods.py) records the reason in `NOT_REPRODUCED`.

@@ -44,7 +44,7 @@ Secondary SWR detection (analysis only: cross-correlation with HSEs, SWR counts)
 
 https://github.com/igridchyn/lfp_online (listed in the Key Resources table p. e1, and "The real-time decoding software is available online", p. e6). The adaptive rule is implemented as follows:
 
-- `LFPBuffer::IsHighSynchrony()` (lfp_online/LFPBuffer.cpp): `return (high_synchrony_tetrode_spikes_ >= sync_spikes_window_ * high_synchrony_factor_);`. It counts spikes on the configured "synchrony tetrodes" in a SLIDING window of `pop.vec.win.len.ms` ending at the current sample. `sync_spikes_window_` is the sum over those tetrodes of (estimated firing rate × window length).
+- `LFPBuffer::IsHighSynchrony()` (lfp_online/LFPBuffer.cpp): `return (high_synchrony_tetrode_spikes_ >= sync_spikes_window_ * high_synchrony_factor_);`. It counts spikes on the configured "synchrony tetrodes" in a sliding window of `pop.vec.win.len.ms` ending at `last_pkg_id`, the latest buffered sample index. `sync_spikes_window_` is the sum over those tetrodes of (estimated firing rate × window length).
 
 - The "Newton-Raphson" update is a fixed-gain proportional step (`Utils::NewtonSolver::Update`: `current_x_ += (target_f_ - f_value_) * alpha_;`), constructed as `NewtonSolver(TARGET_SYNC_RATE, 24000*60, -0.5, high_synchrony_factor_)`. So every minute (24000×60 samples), factor ← factor + 0.5 × (observed rate − target rate).
 
@@ -58,7 +58,7 @@ https://github.com/igridchyn/lfp_online (listed in the Key Resources table p. e1
 
 ## Analysis and interpretation
 
-Real-time decoding classifies each HSE once, from the spikes of its 20 ms detection window; the 20 ms time bin is that window. The text states no step between windows, and `LFPBuffer::IsHighSynchrony()` counts spikes in a window that slides with each sample, so the time bin step is not reported.
+The CSV's 20 ms time bin refers to the HSE detection window used for real-time environment decoding (Methods PDF pp. 15-17, printed pp. e2-e4; Figure S3E). The paper does not state a step between windows. In the released code, `PackageExractorProcessor::process()` advances `last_pkg_id` by buffered chunks, and `LPTTriggerProcessor::process()` can accumulate additional evidence before deciding whether to inhibit an HSE. The update cadence and number of decoding evaluations per HSE depend on that processing; the time bin step remains not reported.
 
 ## Uncertainties
 
@@ -66,4 +66,10 @@ The adaptive rule and compatible example configuration are inspected, but paper-
 
 ## Package mapping
 
-Executable example: `gridchyn_2020` in [literature_recipes.py](../../../examples/literature_recipes.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+Packaged primary method: `gridchyn_2020` in [literature_methods.py](../../../src/ripple_detection/literature_methods.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+
+Additional inventories in the same module: `gridchyn_2020_ripples`. See their docstrings for required settings and output stages.
+
+The package pauses its feedback-update clock across missing samples or timestamp
+gaps; rate updates use observed time. This is an explicit offline missing-data
+policy, separate from the hardware pipeline's elapsed-clock behavior.

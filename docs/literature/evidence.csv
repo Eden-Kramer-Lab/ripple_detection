@@ -623,7 +623,7 @@ https://doi.org/10.1016/j.neuron.2020.01.021,Decoding notes,reviewed_context,Met
 https://doi.org/10.1016/j.neuron.2020.01.021,Reconst. Error (cm),not_reported,Methods pp. 15-17,papers/17_Gridchyn_2020.md
 https://doi.org/10.1016/j.neuron.2020.01.021,% Decoded,not_reported,Methods pp. 15-17,papers/17_Gridchyn_2020.md
 https://doi.org/10.1016/j.neuron.2020.01.021,Spike sorting,checked_paper,Methods pp. 15-17,papers/17_Gridchyn_2020.md
-https://doi.org/10.1016/j.neuron.2020.01.021,Time bin step (ms),not_reported,"Methods pp. 15-17: fixed 20 ms windows, no step stated; each HSE is decoded once from its detection window",papers/17_Gridchyn_2020.md
+https://doi.org/10.1016/j.neuron.2020.01.021,Time bin step (ms),not_reported,Methods pp. 15-17 and Figure S3E: 20 ms HSE detection window used for real-time environment decoding; no step between windows stated,papers/17_Gridchyn_2020.md
 https://doi.org/10.1016/j.neuron.2020.01.021,Shuffle Method,checked_paper,Methods pp. 15-17,papers/17_Gridchyn_2020.md
 https://doi.org/10.1016/j.neuron.2020.01.021,Shuffles (#),not_applicable,Methods pp. 15-17,papers/17_Gridchyn_2020.md
 https://doi.org/10.1016/j.neuron.2020.01.021,Sig. Thresh.,not_applicable,Methods pp. 15-17,papers/17_Gridchyn_2020.md

@@ -57,7 +57,7 @@ uv run python examples/literature_recipes.py
 
 ### Core Module Structure
 
-The package lives under `src/` (the Scientific Python guide's layout, so tests import the installed package, never the checkout) and is organized into five modules, one of them a package:
+The package lives under `src/` (the Scientific Python guide's layout, so tests import the installed package, never the checkout) and is organized into six modules, one of them a package:
 
 1. **[src/ripple_detection/core.py](src/ripple_detection/core.py)** - Low-level signal processing utilities
 
@@ -94,6 +94,11 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
    - The survey of detection parameters from 57 replay papers, shipped as `data/literature_detection_parameters.csv`
    - The README's "Published parameter values" table is computed from it
    - [docs/literature/README.md](docs/literature/README.md) defines the current survey conventions: the packaged CSV owns values, `evidence.csv` owns field statuses/citations, `sources.md` owns source versions/fingerprints, and one note per paper explains methods and uncertainties. Git preserves correction history.
+
+6. **[src/ripple_detection/literature_methods.py](src/ripple_detection/literature_methods.py)** - Packaged paper/protocol methods
+   - `Recording.from_arrays`, native population grids, `list_methods` and `run_method`
+   - Primary recipes and separate ripple/HFE/MUA/protocol inventories, identified by function name, DOI and output role
+   - The simulation script only supplies demonstration inputs; [implementation.md](docs/literature/implementation.md) owns usage and current implementation limits
 
 Two private modules serve callers rather than detection: [_call_hints.py](src/ripple_detection/_call_hints.py) wraps the public functions so a call written for 1.x fails with the 2.0 change behind it (add a removed or renamed argument to `REMOVED_ARGUMENTS` there, keyed by function, and only for a name a release shipped: users upgrade from a release, so a name that changed between releases gets no hint; `SAME_ROLE` maps other detectors' and libraries' names for a parameter by what it does), and [_descriptions.py](src/ripple_detection/_descriptions.py) holds what `describe()` reports. Warnings go through `core._warn_at_caller`, which attributes them to the first frame outside the package, so no function passes a `stacklevel`.
 

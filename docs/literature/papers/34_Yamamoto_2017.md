@@ -66,4 +66,4 @@ The replay decoding bin, numerical replay p-value cutoff and decoding step are n
 
 ## Package mapping
 
-Executable example: `yamamoto_2017` in [literature_recipes.py](../../../examples/literature_recipes.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+Packaged primary method: `yamamoto_2017` in [literature_methods.py](../../../src/ripple_detection/literature_methods.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.

@@ -11,8 +11,11 @@ schema and paper order.
   inspection scopes and selected artifact fingerprints.
 - [Paper notes](#papers) explain methods, inherited definitions, text/code
   differences, interpretation and remaining uncertainties, with one note per paper.
-- [Executable recipes](../../examples/literature_recipes.py) own the package examples
-  and their assumptions. Their simulated checks do not establish historical replication.
+- [Packaged methods](../../src/ripple_detection/literature_methods.py) own executable
+  interpretations and required inputs; the [simulation script](../../examples/literature_recipes.py)
+  supplies demonstration data. Simulated checks do not establish historical replication.
+- [Implementation guide](implementation.md) explains measured inputs, available
+  detector inventories, remaining limitations and verification.
 
 These files describe the current state. Git records corrections and earlier audit
 snapshots; separate change ledgers are unnecessary. Source inspection is current

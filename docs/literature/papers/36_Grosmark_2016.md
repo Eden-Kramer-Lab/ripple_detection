@@ -56,4 +56,10 @@ The original independent LFP detector and its threshold, band, channel count and
 
 ## Package mapping
 
-Executable example: `grosmark_2016` in [literature_recipes.py](../../../examples/literature_recipes.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+Packaged primary method: `grosmark_2016` in [literature_methods.py](../../../src/ripple_detection/literature_methods.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+
+The default `stage="detection"` returns the 50–500 ms population/ripple inventory
+with at least five pyramidal cells. `stage="decoding_candidates"` additionally
+requires at least 100 ms and at least five or 10% of supplied place cells,
+whichever is larger. NREM normalization, eligible behavioral intervals and
+external ripple peaks remain explicit caller inputs.

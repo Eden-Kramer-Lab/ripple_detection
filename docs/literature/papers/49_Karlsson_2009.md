@@ -58,4 +58,4 @@ FFPhy is supporting lab code; it cannot establish the exact 2009 per-session opt
 
 ## Package mapping
 
-Executable example: `karlsson_2009` in [literature_recipes.py](../../../examples/literature_recipes.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+Packaged primary method: `karlsson_2009` in [literature_methods.py](../../../src/ripple_detection/literature_methods.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.

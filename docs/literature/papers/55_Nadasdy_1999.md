@@ -55,4 +55,4 @@ The cited Csicsvari 1999a Methods establish summed per-electrode RMS, but do not
 
 ## Package mapping
 
-Executable example: `nadasdy_1999` in [literature_recipes.py](../../../examples/literature_recipes.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+Packaged primary method: `nadasdy_1999` in [literature_methods.py](../../../src/ripple_detection/literature_methods.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.

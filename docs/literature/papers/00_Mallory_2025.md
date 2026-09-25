@@ -141,4 +141,6 @@ Original session configurations and flag-generation code are needed to resolve t
 
 ## Package mapping
 
-Executable example: `mallory_2025` in [literature_recipes.py](../../../examples/literature_recipes.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+Packaged primary method: `mallory_2025` in [literature_methods.py](../../../src/ripple_detection/literature_methods.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+
+Additional inventories in the same module: `mallory_2025_ripples`. See their docstrings for required settings and output stages.

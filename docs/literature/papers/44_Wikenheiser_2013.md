@@ -56,4 +56,9 @@ The method-specific qualifications above apply. The executable recipe documents 
 
 ## Package mapping
 
-Executable example: `wikenheiser_2013` in [literature_recipes.py](../../../examples/literature_recipes.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+Packaged primary method: `wikenheiser_2013` in [literature_methods.py](../../../src/ripple_detection/literature_methods.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+
+The package uses whole-session statistics by default because the published
+baseline epoch is undefined. `normalization="baseline"` explicitly selects
+caller-supplied `baseline_intervals`; supplying those intervals alone does not
+change this method's normalization. Both are documented interpretations.

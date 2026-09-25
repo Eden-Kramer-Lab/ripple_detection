@@ -62,4 +62,6 @@ Related later lab code cannot establish the original population-event caller or 
 
 ## Package mapping
 
-Executable example: `pfeiffer_2013` in [literature_recipes.py](../../../examples/literature_recipes.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+Packaged primary method: `pfeiffer_2013` in [literature_methods.py](../../../src/ripple_detection/literature_methods.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+
+Additional inventories in the same module: `pfeiffer_2013_ripples`. See their docstrings for required settings and output stages.

@@ -52,4 +52,4 @@ Related later lab code cannot prove historical per-session settings. Text/code c
 
 ## Package mapping
 
-Executable example: `pfeiffer_2015` in [literature_recipes.py](../../../examples/literature_recipes.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.
+Packaged primary method: `pfeiffer_2015` in [literature_methods.py](../../../src/ripple_detection/literature_methods.py). Its docstring records implementation choices and assumptions. Simulation checks establish that it runs; they do not establish equivalence to the authors’ original event set.

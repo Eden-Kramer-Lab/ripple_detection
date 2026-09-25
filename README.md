@@ -520,6 +520,29 @@ trough of a distribution after its peak, as for a population spike count. Publis
 state rules differ in the bands, the power estimate and the threshold, and rarely
 report all of them, so these reproduce a rule's shape rather than its numbers.
 
+### Running a surveyed literature method
+
+Use `ripple_detection.literature_methods` for per-paper and per-protocol
+inventories, including secondary ripple and MUA controls:
+
+```python
+from ripple_detection.literature_methods import Recording, list_methods, run_method
+
+recording = Recording.from_arrays(
+    time, sampling_frequency, lfps=raw_lfps, speed=speed,
+    multiunit=spike_counts, place_cells=place_cell_mask, pyramidal=pyramidal_mask,
+)
+methods = list_methods()  # names, DOI, output role, required options, interpretation
+events = run_method("pfeiffer_2013_ripples", recording)
+```
+
+Select channels and cells before calling. Methods needing sleep states, templates,
+reference channels or settings absent from the paper require explicit inputs.
+`events.attrs` records the method and interpretation. See the
+[implementation guide](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/docs/literature/implementation.md)
+for input conventions, method coverage and remaining verification. These functions
+implement candidate/ripple rules; they do not perform replay decoding.
+
 ### Simulating realistic ripples
 
 The simulator's noise is pink (1/f) by default, whose ripple-band background is closest to
@@ -576,7 +599,7 @@ See the [examples](https://github.com/Eden-Kramer-Lab/ripple_detection/tree/mast
 - [Detection Examples](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/detection_examples.ipynb) - Using different detectors
 - [Algorithm Components](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/test_individual_algorithm_components.ipynb) - Testing individual components
 - [Simulation Study](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/simulation_study.ipynb) - Recall, precision, timing and false positives of every detector on simulated sessions
-- [Literature recipes](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/literature_recipes.py) - One function per surveyed paper, its event rule written with the package, run on a simulated session (`uv run python examples/literature_recipes.py`)
+- [Literature recipes](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/literature_recipes.py) - Runs the packaged primary literature methods on a simulated session (`uv run python examples/literature_recipes.py`)
 
 ## Troubleshooting
 
