@@ -2702,6 +2702,7 @@ def two_cluster_threshold(values: ArrayLike, maximum_iterations: int = 100) -> f
         flattened.
     maximum_iterations : int, optional
         Cap on the updates. Default 100; the split usually settles in a few.
+        Reaching it warns.
 
     Returns
     -------
@@ -2713,6 +2714,12 @@ def two_cluster_threshold(values: ArrayLike, maximum_iterations: int = 100) -> f
     ------
     ValueError
         If fewer than two distinct finite values are given.
+
+    Warns
+    -----
+    UserWarning
+        If the assignment still changes after `maximum_iterations` updates;
+        the last boundary is returned.
 
     Examples
     --------
@@ -2733,6 +2740,10 @@ def two_cluster_threshold(values: ArrayLike, maximum_iterations: int = 100) -> f
         if np.array_equal(finite <= updated, lower):
             return float(updated)
         threshold = updated
+    _warn_at_caller(
+        f"two_cluster_threshold did not settle within {maximum_iterations} iteration(s); "
+        "the last boundary is returned. Raise maximum_iterations for the converged split."
+    )
     return float(threshold)
 
 

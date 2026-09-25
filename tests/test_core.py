@@ -1630,7 +1630,9 @@ class TestTwoClusterThreshold:
         settles at the means of (0.4, 0.6) and (4.6, 5.3, 9.2)."""
         values = np.array([0.4, 0.6, 4.6, 5.3, 9.2])
         first = ((0.4 + 0.6 + 4.6) / 3 + (5.3 + 9.2) / 2) / 2
-        assert two_cluster_threshold(values, maximum_iterations=1) == pytest.approx(first)
+        with pytest.warns(UserWarning, match="did not settle within 1 iteration"):
+            capped = two_cluster_threshold(values, maximum_iterations=1)
+        assert capped == pytest.approx(first)
         assert two_cluster_threshold(values) == pytest.approx(
             (0.5 + (4.6 + 5.3 + 9.2) / 3) / 2
         )
