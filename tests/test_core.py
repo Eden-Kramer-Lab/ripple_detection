@@ -349,6 +349,46 @@ class TestFilterRippleBandSamplingRate:
 class TestGetEnvelope:
     """Test Hilbert transform envelope extraction."""
 
+    @pytest.mark.parametrize("missing", [np.nan, np.inf])
+    @pytest.mark.parametrize("axis", [0, 1])
+    def test_a_missing_sample_splits_the_transform_without_poisoning_other_blocks(
+        self, missing, axis
+    ):
+        from scipy.signal import hilbert
+
+        data = np.random.default_rng(6).normal(size=(200, 2))
+        data[100, 0] = missing
+        actual = get_envelope(data if axis == 0 else data.T, axis=axis)
+        actual = actual if axis == 0 else actual.T
+        np.testing.assert_allclose(actual[:100], np.abs(hilbert(data[:100], axis=0)))
+        # 99 samples are padded to next_fast_len (100), then cropped.
+        np.testing.assert_allclose(
+            actual[101:], np.abs(hilbert(data[101:], N=100, axis=0))[:99]
+        )
+        assert np.isnan(actual[100]).all()
+
+    def test_timestamp_gaps_split_filtering_and_envelope(self):
+        data = np.random.default_rng(12).normal(size=(6000, 2))
+        time = np.arange(len(data)) / 1500
+        time[3000:] += 1
+        expected = np.concatenate(
+            [filter_ripple_band(block, 1500) for block in np.split(data, 2)]
+        )
+        filtered = filter_ripple_band(data, 1500, time=time)
+        np.testing.assert_array_equal(filtered, expected)
+        expected_envelope = np.concatenate(
+            [get_envelope(block) for block in np.split(filtered, 2)]
+        )
+        np.testing.assert_array_equal(get_envelope(filtered, time=time), expected_envelope)
+
+    @pytest.mark.parametrize("bad_time", [np.arange(2), np.zeros(6000), np.full(6000, np.nan)])
+    def test_bad_preprocessing_timestamps_raise(self, bad_time):
+        data = np.ones(6000)
+        with pytest.raises(ValueError, match="time"):
+            get_envelope(data, time=bad_time)
+        with pytest.raises(ValueError, match="time"):
+            filter_ripple_band(data, 1500, time=bad_time)
+
     def test_constant_amplitude_sine(self):
         """Test envelope of constant amplitude sine wave."""
         time = np.linspace(0, 1, 1500)

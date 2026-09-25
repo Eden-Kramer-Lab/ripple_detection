@@ -8,6 +8,7 @@ import sys
 import warnings
 from collections.abc import Generator, Iterable
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -337,6 +338,8 @@ def filter_ripple_band(
     sampling_frequency: float,
     band: tuple[float, float] | None = None,
     transition_width: float | None = None,
+    *,
+    time: ArrayLike | None = None,
 ) -> FloatArray:
     """Bandpass filter signal(s) to the ripple band, 150-250 Hz by default.
 
@@ -372,6 +375,10 @@ def filter_ripple_band(
         ``transition_width=25.0`` at 1500 Hz is a different filter from the
         default (155 taps and 48 dB against the kernel's 318 taps and 40 dB;
         their outputs differ by up to 0.8 SD).
+    time : array_like, shape (n_time,), optional
+        Increasing sample timestamps in seconds. When supplied, filtering also
+        splits wherever a timestamp step exceeds 1.5 times the median step.
+        Default None assumes a regular sample grid.
 
     Returns
     -------
@@ -434,7 +441,7 @@ def filter_ripple_band(
     # needs only as many samples as the kernel.
     padlen = len(filter_numerator) - 1
     min_required_length = len(filter_numerator)
-    runs = _boolean_run_bounds(is_present)
+    runs = np.asarray(_contiguous_valid_blocks(is_present, time), dtype=int).reshape(-1, 2)
     long_enough = (runs[:, 1] - runs[:, 0]) >= min_required_length
     if not np.any(long_enough):
         longest = int((runs[:, 1] - runs[:, 0]).max()) if len(runs) else 0
@@ -937,11 +944,43 @@ def exclude_movement_by_majority(
     return events[keep]
 
 
-def get_envelope(data: ArrayLike, axis: int = 0) -> FloatArray:
+def _contiguous_valid_blocks(
+    is_valid: BoolArray, time: ArrayLike | None
+) -> list[tuple[int, int]]:
+    """Half-open valid row ranges, split at missing rows and timestamp gaps."""
+    n_time = len(is_valid)
+    boundary = np.zeros(n_time + 1, dtype=bool)
+    boundary[0] = boundary[-1] = True
+    boundary[1:-1] |= is_valid[1:] != is_valid[:-1]
+    if time is not None:
+        timestamps = np.asarray(time, dtype=float)
+        if timestamps.shape != (n_time,):
+            msg = f"time must have shape ({n_time},), got {timestamps.shape}."
+            raise ValueError(msg)
+        steps = np.diff(timestamps)
+        if not np.all(np.isfinite(timestamps)) or np.any(steps < 0):
+            msg = "time must contain finite, nondecreasing timestamps."
+            raise ValueError(msg)
+        if n_time > 1:
+            median_step = np.median(steps)
+            if median_step <= 0:
+                msg = "time must have a positive median timestamp step."
+                raise ValueError(msg)
+            boundary[1:-1] |= steps > 1.5 * median_step
+    edges = np.flatnonzero(boundary)
+    return [(int(start), int(stop)) for start, stop in pairwise(edges) if is_valid[start]]
+
+
+def get_envelope(
+    data: ArrayLike, axis: int = 0, *, time: ArrayLike | None = None
+) -> FloatArray:
     """Extract the instantaneous amplitude (envelope) using Hilbert transform.
 
     Computes the analytic signal via Hilbert transform and returns its
     magnitude, representing the instantaneous amplitude envelope.
+    A nonfinite value in any channel marks that sample missing in every channel.
+    Each contiguous valid block is transformed independently, preserving NaNs at
+    missing samples instead of propagating them through the entire recording.
 
     Parameters
     ----------
@@ -949,6 +988,10 @@ def get_envelope(data: ArrayLike, axis: int = 0) -> FloatArray:
         Input signal. Can be multi-dimensional.
     axis : int, optional
         Axis along which to compute the envelope. Default is 0.
+    time : array_like, optional
+        Increasing timestamps, one per sample along ``axis``. Splits blocks at
+        steps exceeding 1.5 times the median step. Default None assumes regular
+        sampling and splits only at nonfinite samples.
 
     Returns
     -------
@@ -957,9 +1000,13 @@ def get_envelope(data: ArrayLike, axis: int = 0) -> FloatArray:
 
     """
     data = np.asarray(data, dtype=float)
-    n_samples = data.shape[axis]
-    instantaneous_amplitude = np.abs(hilbert(data, N=next_fast_len(n_samples), axis=axis))
-    return np.take(instantaneous_amplitude, np.arange(n_samples), axis=axis)
+    values = np.moveaxis(data, axis, 0)
+    finite = np.all(np.isfinite(values), axis=tuple(range(1, values.ndim)))
+    envelope = np.full_like(values, np.nan)
+    for start, stop in _contiguous_valid_blocks(finite, time):
+        analytic = hilbert(values[start:stop], N=next_fast_len(stop - start), axis=0)
+        envelope[start:stop] = np.abs(analytic[: stop - start])
+    return np.moveaxis(envelope, 0, axis)
 
 
 def gaussian_smooth(

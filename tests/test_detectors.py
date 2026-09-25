@@ -6249,3 +6249,28 @@ class TestTrimEventsToSpikeWindows:
             trim_events_to_spike_windows(
                 np.array([(0.0, 0.99)]), self._spikes([30]), self.TIME, **kwargs
             )
+
+
+@pytest.mark.parametrize(
+    "detector",
+    [
+        Kay_ripple_detector,
+        Karlsson_ripple_detector,
+        Roumis_ripple_detector,
+        Shvartsman_ripple_detector,
+        Yu_ripple_detector,
+        Zugaro_ripple_detector,
+        multiunit_HSE_detector,
+    ],
+)
+def test_isolated_duplicate_timestamp_preserves_detector_compatibility(detector):
+    time = np.arange(5000) / 1000
+    time[1000] = time[999]
+    signal = _synthetic_ripple_band(5000, 1000, [(2000, 2060, 20.0)])
+    if detector is multiunit_HSE_detector:
+        signal = np.zeros((5000, 4))
+        signal[2000:2060] = 1
+    options = {"percentile": 99} if detector is Yu_ripple_detector else {}
+    result = detector(time, signal, np.full(5000, 2.0), 1000, **options)
+    assert len(result)
+    assert ((result.start_time < 2.03) & (result.end_time > 2.03)).any()
