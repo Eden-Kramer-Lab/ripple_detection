@@ -2130,7 +2130,7 @@ def trim_events_to_trace(
     threshold : float
         Level at or above which a sample stays in the event.
     sides : {'both', 'start', 'end'}, optional
-        Which bounds move. Default both.
+        Which bounds move; the other keeps its value. Default both.
     minimum_duration : float, optional
         Trimmed events holding fewer samples than this spans
         (``sample_count_within``) are dropped. Default 0.0, none.
@@ -2176,7 +2176,7 @@ def trim_events_to_trace(
         msg = f"No sample of time falls within event [{start_time}, {end_time}]."
         raise ValueError(msg)
     trimmed = []
-    for a, b in zip(first, last, strict=True):
+    for (start_time, end_time), a, b in zip(events, first, last, strict=True):
         with np.errstate(invalid="ignore"):
             above = np.flatnonzero(values[a:b] >= threshold)
         if above.size == 0:
@@ -2184,7 +2184,14 @@ def trim_events_to_trace(
         start = a + above[0] if sides in ("both", "start") else a
         stop = a + above[-1] if sides in ("both", "end") else b - 1
         if sample_count_within(stop - start + 1, time, minimum_duration):
-            trimmed.append((time[start], time[stop]))
+            # a bound that does not move keeps its value, which need not be
+            # a sample's time
+            trimmed.append(
+                (
+                    time[start] if sides in ("both", "start") else start_time,
+                    time[stop] if sides in ("both", "end") else end_time,
+                )
+            )
     return np.asarray(trimmed, dtype=float).reshape(-1, 2)
 
 

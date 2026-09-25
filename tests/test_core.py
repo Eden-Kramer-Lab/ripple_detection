@@ -1373,7 +1373,9 @@ class TestCloseEventVariants:
         np.testing.assert_allclose(
             merge_close_events(far, 0.07, measure="peak"), [[0.0, 1.0], [0.1, 0.2]]
         )
-        np.testing.assert_allclose(merge_close_events(near, 0.07, measure="peak"), [[0.0, 1.0]])
+        np.testing.assert_allclose(
+            merge_close_events(near, 0.07, measure="peak"), [[0.0, 1.0]]
+        )
 
     def test_peak_measure_respects_the_ceiling(self):
         frame = self._frame([(0.0, 0.1), (0.12, 0.3)], [0.09, 0.13])
@@ -1637,6 +1639,19 @@ class TestTrimEventsToTrace:
     def test_one_side_only(self, sides, expected):
         np.testing.assert_allclose(
             trim_events_to_trace(self.EVENT, self.RATE, self.TIME, 3.0, sides=sides), expected
+        )
+
+    @pytest.mark.parametrize(
+        ("sides", "expected"), [("start", [[0.2, 0.85]]), ("end", [[0.05, 0.5]])]
+    )
+    def test_the_bound_that_does_not_move_keeps_its_value(self, sides, expected):
+        """Bounds between samples: the one not trimmed is not snapped to the
+        last or first sample inside the event."""
+        np.testing.assert_allclose(
+            trim_events_to_trace(
+                np.array([(0.05, 0.85)]), self.RATE, self.TIME, 3.0, sides=sides
+            ),
+            expected,
         )
 
     def test_an_event_never_reaching_the_threshold_is_dropped(self):
