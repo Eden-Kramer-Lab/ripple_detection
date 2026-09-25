@@ -1823,3 +1823,147 @@ def test_sleep_frames_come_only_from_curated_sleep_intervals(name):
     del inputs["sleep_intervals"]
     with pytest.raises(ValueError, match="sleep_intervals"):
         lm.run_method(name, lm.Recording.from_arrays(**inputs))
+
+
+def _changed(fs=1500, drop=(), **changes):
+    """Measured inputs at ``fs`` without ``drop`` and with ``changes``; a
+    callable change receives the unchanged inputs."""
+
+    def make():
+        inputs = _measured_inputs(fs)
+        for key in drop:
+            del inputs[key]
+        for key, value in changes.items():
+            inputs[key] = value(inputs) if callable(value) else value
+        return inputs
+
+    return make
+
+
+def _slow_recording():
+    """Four samples per second: too slow for any 20 ms step."""
+    time = np.arange(100) / 4
+    return {
+        "time": time,
+        "sampling_frequency": 4,
+        "lfps": np.random.default_rng(0).normal(size=(100, 1)),
+        "reference_lfp": np.zeros(100),
+        "baseline_intervals": [[0, time[-1]]],
+    }
+
+
+def _silent_baseline(inputs):
+    spikes = inputs["multiunit"].astype(float)
+    spikes[inputs["time"] < 2] = 0
+    return spikes
+
+
+ERROR_PATHS = [
+    # Sampling-rate guards.
+    ("denovellis_2021", _changed(fs=1000), {}, "sampled at 1500 Hz"),
+    ("bush_2022_ripples", _changed(fs=1500), {}, "sampled at 4800 Hz"),
+    ("olafsdottir_2017_ripples", _changed(fs=1500), {}, "sampled at 1200 Hz"),
+    ("tirole_2022", _changed(fs=1234.5678), {}, "Resample LFP to 1000 Hz"),
+    ("kaefer_2020", _slow_recording, {}, "too low for FFT windows"),
+    ("stella_2019", _changed(), {"frequencies": [150, 800], "cycles": 7}, "Nyquist"),
+    # Constant or empty baselines.
+    (
+        "ji_2007_ripples",
+        _changed(lfps=lambda inputs: np.zeros_like(inputs["lfps"])),
+        {},
+        "positive finite SD",
+    ),
+    (
+        "mou_2022",
+        _changed(multiunit=lambda inputs: np.zeros_like(inputs["multiunit"])),
+        {},
+        "nonconstant population trace",
+    ),
+    (
+        "gridchyn_2020",
+        _changed(artifact_intervals=[[0, 2]], baseline_intervals=[[0.5, 1.5]]),
+        {},
+        "no valid spikes",
+    ),
+    (
+        "gridchyn_2020",
+        _changed(multiunit=_silent_baseline, baseline_intervals=[[0, 1.9]]),
+        {},
+        "positive population firing rate",
+    ),
+    ("gridchyn_2020", _changed(), {"gain": -1.0}, "Invalid adaptive detector parameters"),
+    # Required inputs.
+    ("gillespie_2021", _changed(drop=["lfps"]), {}, "selected raw LFP channels"),
+    ("tirole_2022", _changed(drop=["lfps"]), {}, "selected raw LFP channel"),
+    ("kaefer_2020", _changed(drop=["reference_lfp"]), {}, "Supply reference_lfp"),
+    ("gridchyn_2020_ripples", _changed(drop=["reference_lfp"]), {}, "reference subtraction"),
+    ("diba_2007_ripples", _changed(drop=["lfps"]), {}, "at least one LFP channel"),
+    (
+        "chenani_2019_hfe",
+        _changed(drop=["lfps"]),
+        {"ar_coefficients": np.zeros((0, 2))},
+        "at least one LFP channel",
+    ),
+    (
+        "bhattarai_2020_ripples",
+        _changed(lfps=lambda inputs: inputs["lfps"][:, :1]),
+        {},
+        "two reported LFP channels",
+    ),
+    ("olafsdottir_2015", _changed(templates=[]), {}, "Supply templates"),
+    (
+        "farooq_2019_science_awake",
+        _changed(drop=["behavior_intervals"]),
+        {},
+        "behavior_intervals",
+    ),
+    ("liu_2019_awake", _changed(drop=["behavior_intervals"]), {}, "behavior_intervals"),
+    ("wikenheiser_2013", _changed(), {"window_anchor": None}, "window_anchor explicitly"),
+    ("wikenheiser_2013", _changed(), {"branch": "run_lia"}, "theta_delta trace"),
+    (
+        "wikenheiser_2013",
+        _changed(),
+        {"branch": "run_lia", "theta_delta": np.zeros(10)},
+        "one value per input timestamp",
+    ),
+    # Unknown or invalid options.
+    ("huelin_gorriz_2023", _changed(), {"interpretation": "other"}, "interpretation must be"),
+    ("krause_2022_hse", _changed(), {"interpretation": "other"}, "interpretation must be"),
+    ("harvey_2023_text", _changed(), {"sharp_wave_polarity": 0.0}, "sharp_wave_polarity"),
+    ("mou_2022", _changed(), {"normalization": "zscore"}, "normalization must be"),
+    ("michon_2021", _changed(), {"order": "reverse"}, "order must be"),
+    ("muessig_2019", _changed(), {"trial": "sleep"}, "trial must be"),
+    ("olafsdottir_2017", _changed(), {"analysis": "sequence"}, "analysis must be"),
+    ("wikenheiser_2013", _changed(), {"branch": "sleep"}, "branch must be"),
+    ("wikenheiser_2013", _changed(), {"window_anchor": "troughs"}, "window_anchor must be"),
+    ("nadasdy_1999", _changed(), {"rms_window": -0.004}, "rms_window must be positive"),
+    ("farooq_2019_science_ripples", _changed(), {"power_measure": "rms"}, "power_measure"),
+    ("bhattarai_2020_ripples", _changed(), {"power_measure": "rms"}, "power_measure"),
+    ("chenani_2019_hfe", _changed(), {"ar_coefficients": np.zeros((2, 2))}, "ar_coefficients"),
+    ("liu_2019_ripples", _changed(), {"window": -0.1}, "window must be nonnegative"),
+    ("drieu_2018_ripples", _changed(), {"signal_measure": "rms"}, "signal_measure must be"),
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "make_inputs", "options", "message"),
+    ERROR_PATHS,
+    ids=[f"{name}-{message}" for name, _, _, message in ERROR_PATHS],
+)
+def test_literature_method_error_paths(name, make_inputs, options, message):
+    options = {**VARIANT_OPTIONS, **RECIPE_OPTIONS}.get(name, {}) | options
+    rec = lm.Recording.from_arrays(**make_inputs())
+    with pytest.raises(ValueError, match=message):
+        lm.run_method(name, rec, **options)
+
+
+@pytest.mark.parametrize(
+    ("bin_width", "n_time", "message"),
+    [(0.0, 100, "bin_width"), (np.nan, 100, "bin_width"), (0.06, 100, "two complete bins")],
+)
+def test_population_trace_error_paths(bin_width, n_time, message):
+    rec = lm.Recording.from_arrays(
+        np.arange(n_time) / 1000, 1000, multiunit=np.zeros((n_time, 1))
+    )
+    with pytest.raises(ValueError, match=message):
+        lm.population_trace(rec, bin_width=bin_width)
