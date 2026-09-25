@@ -136,7 +136,10 @@ Other inventories are exercised with their required settings in the tests.
 - Native population grids replace the sliding-count substitutes for Mou,
   Wu 2014/2017, Ji, Michon, Krause and the shared population recipes. Berners-Lee
   and Maboudi use their documented finite kernels. Sample timestamps remain
-  quantized to the caller's input clock.
+  quantized to the caller's input clock. Native-grid events are reported at the
+  outer edges of their first and last complete bins, so an event of n bins lasts
+  n bin widths; duration limits and close-event gaps are measured between those
+  edges. Tirole applies its released rules to bin times and reports edges.
 - Tirole uses the finite forward/backward kernel, threshold-anchor grouping,
   inclusive crossing samples, fallback bounds, sampled-speed rule and a
   reconstructed ripple preprocessing path. Polyphase LFP resampling and modern

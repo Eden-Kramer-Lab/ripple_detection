@@ -954,9 +954,10 @@ def test_mou_scaling_options_change_bounds_when_background_is_nonzero(monkeypatc
         return lm.PopulationTrace(np.arange(100) / 100, rate.copy(), np.zeros(100), 100)
 
     monkeypatch.setattr(lm, "population_trace", trace)
-    np.testing.assert_allclose(lm.bounds(lm.mou_2022(rec)), [[0.4, 0.59]])
+    # Bins centered on 0.40-0.59 s; bounds are their outer edges.
+    np.testing.assert_allclose(lm.bounds(lm.mou_2022(rec)), [[0.395, 0.595]])
     np.testing.assert_allclose(
-        lm.bounds(lm.mou_2022(rec, normalization="maximum")), [[0, 0.99]]
+        lm.bounds(lm.mou_2022(rec, normalization="maximum")), [[-0.005, 0.995]]
     )
 
 
@@ -1227,3 +1228,62 @@ def test_stella_wavelet_response_is_centered_and_symmetric(monkeypatch):
     assert np.argmax(captured[0]) == 1000
     assert np.ptp(captured[0]) > 1
     np.testing.assert_allclose(captured[0], captured[0][::-1], atol=1e-12)
+
+
+def _burst_trace(bursts, bin_width=0.01):
+    """A 20 s, 1 kHz recording whose one unit fires every sample in each burst."""
+    time = np.arange(20_000) / 1000
+    spikes = np.zeros((len(time), 1))
+    for start, stop in bursts:
+        spikes[round(start * 1000) : round(stop * 1000)] = 1
+    rec = lm.Recording.from_arrays(time, 1000, multiunit=spikes)
+    return lm.population_trace(rec, bin_width=bin_width)
+
+
+def _detect_bursts(trace, **options):
+    return trace.detect(
+        threshold=50,
+        bound_threshold=50,
+        normalization_method="none",
+        minimum_duration=0.0,
+        speed_threshold=np.inf,
+        **options,
+    )
+
+
+def test_native_grid_events_are_reported_at_bin_edges():
+    # Spikes fill 10.000-10.049 s: five complete 10 ms bins, 50 ms edge to edge.
+    trace = _burst_trace([(10.0, 10.05)])
+    events = _detect_bursts(trace)
+    np.testing.assert_allclose(lm.bounds(events), [[10.0, 10.05]], atol=1e-9)
+    np.testing.assert_allclose(events.duration, [0.05], atol=1e-9)
+    # Duration limits count bins, so they agree with the reported edges.
+    assert len(_detect_bursts(trace, minimum_event_duration=0.05, maximum_duration=0.05))
+    assert not len(_detect_bursts(trace, minimum_event_duration=0.06))
+    assert not len(_detect_bursts(trace, maximum_duration=0.04))
+    # The merge accepts the edges it reports.
+    np.testing.assert_allclose(trace.merge(events, 0.0), [[10.0, 10.05]], atol=1e-9)
+
+
+def test_native_grid_close_event_gaps_are_measured_between_edges():
+    trace = _burst_trace([(10.0, 10.05), (10.08, 10.1)])  # 30 ms from edge to edge
+    kept_apart = _detect_bursts(trace, close_event_threshold=0.03, close_event_rule="merge")
+    np.testing.assert_allclose(
+        lm.bounds(kept_apart), [[10.0, 10.05], [10.08, 10.1]], atol=1e-9
+    )
+    merged = _detect_bursts(trace, close_event_threshold=0.031, close_event_rule="merge")
+    np.testing.assert_allclose(lm.bounds(merged), [[10.0, 10.1]], atol=1e-9)
+    np.testing.assert_allclose(trace.merge(kept_apart, 0.031), [[10.0, 10.1]], atol=1e-9)
+    np.testing.assert_allclose(trace.merge(kept_apart, 0.03), lm.bounds(kept_apart), atol=1e-9)
+
+
+def test_native_bins_leave_out_a_sample_on_the_final_edge():
+    # 1001 samples: the last, at exactly 1.0 s, starts an incomplete bin.
+    time = np.arange(1001) / 1000
+    spikes = np.zeros((1001, 1))
+    spikes[-1] = 1
+    trace = lm.population_trace(
+        lm.Recording.from_arrays(time, 1000, multiunit=spikes), bin_width=0.01
+    )
+    assert len(trace.time) == 100
+    np.testing.assert_array_equal(trace.data, 0)

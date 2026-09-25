@@ -664,10 +664,17 @@ def _time_tolerance(time: FloatArray) -> float:
     return max(1e-9, 4 * float(np.spacing(np.max(np.abs(time), initial=0.0))))
 
 
-def _event_block_groups(time: FloatArray, trace: FloatArray, events: FloatArray) -> IntArray:
-    """Validate complete block containment and return each event's block index."""
+def _event_block_groups(
+    time: FloatArray, trace: FloatArray, events: FloatArray, margin: float = 0.0
+) -> IntArray:
+    """Validate complete block containment and return each event's block index.
+
+    ``margin`` widens each block on both sides, half a bin for bin-edge bounds.
+    """
     _, blocks = _valid_blocks(time, trace)
-    intervals = np.asarray([(time[a], time[b - 1]) for a, b in blocks]).reshape(-1, 2)
+    intervals = np.asarray(
+        [(time[a] - margin, time[b - 1] + margin) for a, b in blocks]
+    ).reshape(-1, 2)
     groups = np.searchsorted(intervals[:, 0], events[:, 0], side="right") - 1
     if (
         not np.isfinite(events).all()
@@ -801,14 +808,27 @@ class PopulationTrace:
         )
 
     def detect(self, **kwargs: Any) -> pd.DataFrame:
-        """Threshold this trace using detect_events_from_trace options."""
+        """Threshold this trace using detect_events_from_trace options.
+
+        Bounds are the outer edges of an event's first and last bins, so an
+        event of n bins lasts n bin widths, as the duration limits count it.
+        ``close_event_threshold`` is likewise the gap between edges.
+        """
         default = inspect.signature(rd.detect_events_from_trace).parameters["speed_threshold"]
         if self.speed is None and np.isfinite(kwargs.get("speed_threshold", default.default)):
             raise ValueError(_NO_SPEED)
         speed = np.full(len(self.time), np.nan) if self.speed is None else self.speed
-        return rd.detect_events_from_trace(
+        width = 1 / self.sampling_frequency
+        if kwargs.get("close_event_threshold", 0.0) > 0:
+            # Between centers, the gap between edges is one bin width longer.
+            kwargs["close_event_threshold"] = kwargs["close_event_threshold"] + width
+        events = rd.detect_events_from_trace(
             self.time, self.data, speed, self.sampling_frequency, **kwargs
         )
+        events["start_time"] -= width / 2
+        events["end_time"] += width / 2
+        events["duration"] = events.end_time - events.start_time
+        return events
 
     def merge(
         self, events: pd.DataFrame | FloatArray, gap: float, *, inclusive: bool = False
@@ -823,7 +843,9 @@ class PopulationTrace:
         event_bounds = bounds(events)
         if len(event_bounds) == 0:
             return event_bounds
-        groups = _event_block_groups(self.time, self.data, event_bounds)
+        groups = _event_block_groups(
+            self.time, self.data, event_bounds, margin=0.5 / self.sampling_frequency
+        )
         merged = []
         for group in np.unique(groups):
             selected = event_bounds[groups == group]
@@ -855,8 +877,9 @@ def population_trace(
     Returns
     -------
     trace : PopulationTrace
-        Counts per second at bin centers. Bins with incomplete observed support
-        are NaN. Binning cannot restore the precision of original spike times.
+        Counts per second at bin centers. Only complete bins are formed, and
+        bins with incomplete observed support are NaN. Binning cannot restore
+        the precision of original spike times.
     """
     if not np.isfinite(bin_width) or bin_width <= 0:
         msg = "bin_width must be positive and finite."
@@ -871,8 +894,13 @@ def population_trace(
         msg = "The recording must span at least two complete bins."
         raise ValueError(msg)
     edges = np.arange(n + 1, dtype=float) * bin_width
+    # np.histogram closes its last bin, so a sample on the final edge, which
+    # starts an incomplete bin, would otherwise be counted in the last one.
+    inside = relative < edges[-1]
     values = np.histogram(
-        relative, edges, weights=np.nan_to_num(count, nan=0.0, posinf=0.0, neginf=0.0)
+        relative[inside],
+        edges,
+        weights=np.nan_to_num(count[inside], nan=0.0, posinf=0.0, neginf=0.0),
     )[0]
     centers = edges[:-1] + bin_width / 2
     observed = np.zeros(n, dtype=bool)
@@ -1152,6 +1180,9 @@ def _tirole(rec: Recording) -> FloatArray:
     crossings with 0.25/0.5 fallbacks within 300 ms; >=100 ms before <50 ms
     merging. Speed is sampled every 10 ms; place-cell and ripple gates follow.
     Bin origin is the recording start; counts retain the input timestamp precision.
+    The duration, merge, speed, cell and ripple rules use bin centers, as the
+    release's onset-offset differences do; the reported bounds are the outer
+    bin edges, half a bin wider on each side, as for other native grids.
     LFP resampling uses scipy's polyphase anti-alias filter, whose edge behavior
     can differ from the original acquisition/downsampling pipeline.
     """
@@ -1184,7 +1215,8 @@ def _tirole(rec: Recording) -> FloatArray:
     selected = np.asarray(
         [np.any(z[(ripple_time > a) & (ripple_time < b)] >= 3) for a, b in events], dtype=bool
     )
-    return np.asarray(events[selected], dtype=float)
+    half_bin = 0.5 / trace.sampling_frequency
+    return np.asarray(events[selected] + np.array([-half_bin, half_bin]), dtype=float)
 
 
 @recipe(3, "Huelin Gorriz 2023", "SWR+MUA")
