@@ -1812,7 +1812,9 @@ def gridchyn_2020(
     sample grid. Supply a pre-rest baseline. The initial multiplier is 3.5; every minute
     it changes by 0.5*(observed trigger rate - 1 Hz). Trigger refractory is
     150 ms. Offline bounds extend to baseline crossings, onset to first spike.
-    Outputs retain trigger time, multiplier, and update history in attrs.
+    Outputs retain each trigger's time and multiplier as columns, and the
+    update history and expected count in attrs. The multiplier has no floor;
+    a warning reports the first update that takes it to zero or below.
 
     This implements the published feedback rule, not hardware integration.
     The C++ release's apparent +1 rate-count offset is not reproduced; rate
@@ -1857,7 +1859,7 @@ def gridchyn_2020(
     observed_time = 0.0
     last_trigger = -np.inf
     recent = 0
-    history = []
+    history: list[tuple[float, float, float]] = []
     rows = []
     for block_start, block_stop in blocks:
         block_clock = observed_time + (1 / rec.fs if block_start != blocks[0][0] else 0)
@@ -1868,6 +1870,12 @@ def gridchyn_2020(
                 rate = recent / (observed_time - last_update)
                 factor += gain * (rate - target_rate)
                 # The published feedback rule has no documented floor.
+                if factor <= 0 and not any(f <= 0 for _, _, f in history):
+                    rd.core._warn_at_caller(
+                        f"The Gridchyn threshold multiplier reached {factor:.3g} at "
+                        f"{now:.6g} s; the published rule has no floor, so every "
+                        "sample with a spike can trigger until it recovers."
+                    )
                 history.append((now, rate, factor))
                 last_update, recent = observed_time, 0
             if (

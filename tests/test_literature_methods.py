@@ -1477,3 +1477,18 @@ def test_local_peak_windows_flag_a_cut_at_a_block_edge(measured):
     )
     np.testing.assert_array_equal(events.clipped_start, [True, False])
     np.testing.assert_array_equal(events.clipped_end, [False, False])
+
+
+def test_gridchyn_warns_when_the_multiplier_reaches_zero():
+    time = np.arange(3000) / 1000
+    spikes = np.zeros((3000, 1))
+    spikes[::100] = 1
+    rec = lm.Recording.from_arrays(
+        time, 1000, multiunit=spikes, baseline_intervals=[[0, 0.999]]
+    )
+    # Too few triggers for the target rate drive the multiplier below zero,
+    # where the published rule, which has no floor, triggers on any spike.
+    with pytest.warns(UserWarning, match="multiplier reached -"):
+        events = lm.gridchyn_2020(rec, update_interval=1, target_rate=20)
+    assert events.threshold_multiplier.min() <= 0
+    lm.gridchyn_2020(rec, update_interval=1, target_rate=0)  # rises: no warning
