@@ -355,7 +355,7 @@ def simulate_LFP(
     Examples
     --------
     >>> time = simulate_time(3000, 1000)  # 3 seconds at 1000 Hz
-    >>> lfp = simulate_LFP(time, [1.0, 2.0])
+    >>> lfp = simulate_LFP(time, [1.0, 2.0], rng=0)
 
     Ripples five times the ripple-band background, varying in frequency and
     duration, on a pink-noise background:

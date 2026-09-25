@@ -120,13 +120,13 @@ class TestWhiteNoise:
     def test_white_noise_shape(self):
         """Test that white noise has correct shape."""
         N = 1000
-        noise = white(N)
+        noise = white(N, rng=0)
         assert len(noise) == N
 
     def test_white_noise_statistics(self):
         """Test that white noise has approximately correct statistics."""
         N = 10000
-        noise = white(N)
+        noise = white(N, rng=0)
 
         # Should have approximately zero mean and unit variance
         assert np.abs(np.mean(noise)) < 0.1
@@ -145,7 +145,7 @@ class TestWhiteNoise:
     def test_white_noise_normalized(self):
         """Test that white noise is normalized to unit power."""
         N = 10000
-        noise = white(N)
+        noise = white(N, rng=0)
         # White noise should already be normalized
         assert np.allclose(mean_squared(noise), 1.0, atol=0.1)
 
@@ -156,13 +156,13 @@ class TestPinkNoise:
     def test_pink_noise_shape(self):
         """Test that pink noise has correct shape."""
         N = 1000
-        noise = pink(N)
+        noise = pink(N, rng=0)
         assert len(noise) == N
 
     def test_pink_noise_normalized(self):
         """Test that pink noise is normalized to unit power."""
         N = 10000
-        noise = pink(N)
+        noise = pink(N, rng=0)
         assert np.allclose(mean_squared(noise), 1.0, atol=0.1)
 
     def test_pink_noise_reproducible(self):
@@ -178,7 +178,7 @@ class TestPinkNoise:
     def test_pink_noise_frequency_content(self):
         """Test that pink noise has 1/f power spectrum."""
         N = 8192
-        noise = pink(N)
+        noise = pink(N, rng=0)
 
         # Compute power spectrum
         fft = np.fft.rfft(noise)
@@ -203,13 +203,13 @@ class TestBrownNoise:
     def test_brown_noise_shape(self):
         """Test that brown noise has correct shape."""
         N = 1000
-        noise = brown(N)
+        noise = brown(N, rng=0)
         assert len(noise) == N
 
     def test_brown_noise_normalized(self):
         """Test that brown noise is normalized to unit power."""
         N = 10000
-        noise = brown(N)
+        noise = brown(N, rng=0)
         assert np.allclose(mean_squared(noise), 1.0, atol=0.1)
 
     def test_brown_noise_reproducible(self):
@@ -225,7 +225,7 @@ class TestBrownNoise:
     def test_brown_noise_frequency_content(self):
         """Test that brown noise has 1/f^2 power spectrum."""
         N = 8192
-        noise = brown(N)
+        noise = brown(N, rng=0)
 
         # Compute power spectrum
         fft = np.fft.rfft(noise)
@@ -272,7 +272,7 @@ class TestSimulateLFP:
         time = simulate_time(n_samples, sampling_frequency)
         ripple_times = [0.5]
 
-        lfp = simulate_LFP(time, ripple_times)
+        lfp = simulate_LFP(time, ripple_times, rng=0)
 
         assert len(lfp) == n_samples
         assert not np.all(np.isnan(lfp)), "LFP should not be all NaN"
@@ -284,7 +284,7 @@ class TestSimulateLFP:
         time = simulate_time(n_samples, sampling_frequency)
         ripple_times = [0.5, 1.5, 2.5]
 
-        lfp = simulate_LFP(time, ripple_times)
+        lfp = simulate_LFP(time, ripple_times, rng=0)
 
         assert len(lfp) == n_samples
 
@@ -295,7 +295,7 @@ class TestSimulateLFP:
         time = simulate_time(n_samples, sampling_frequency)
         ripple_times = []
 
-        lfp = simulate_LFP(time, ripple_times)
+        lfp = simulate_LFP(time, ripple_times, rng=0)
 
         assert len(lfp) == n_samples
         # Should be mostly noise with no obvious structure
@@ -307,7 +307,7 @@ class TestSimulateLFP:
         time = simulate_time(n_samples, sampling_frequency)
         ripple_time = 0.5  # Single value, not list
 
-        lfp = simulate_LFP(time, ripple_time)
+        lfp = simulate_LFP(time, ripple_time, rng=0)
 
         assert len(lfp) == n_samples
 
@@ -319,7 +319,7 @@ class TestSimulateLFP:
         ripple_times = [0.5]
 
         for noise_type in ["white", "pink", "brown"]:
-            lfp = simulate_LFP(time, ripple_times, noise_type=noise_type)
+            lfp = simulate_LFP(time, ripple_times, noise_type=noise_type, rng=0)
             assert len(lfp) == n_samples
             assert not np.all(lfp == 0), f"LFP with {noise_type} noise should not be all zeros"
 
@@ -330,8 +330,12 @@ class TestSimulateLFP:
         time = simulate_time(n_samples, sampling_frequency)
         ripple_time = 0.5
 
-        lfp_low = simulate_LFP(time, ripple_time, ripple_amplitude=1.0, noise_amplitude=0.5)
-        lfp_high = simulate_LFP(time, ripple_time, ripple_amplitude=5.0, noise_amplitude=0.5)
+        lfp_low = simulate_LFP(
+            time, ripple_time, ripple_amplitude=1.0, noise_amplitude=0.5, rng=0
+        )
+        lfp_high = simulate_LFP(
+            time, ripple_time, ripple_amplitude=5.0, noise_amplitude=0.5, rng=0
+        )
 
         # Higher ripple amplitude should create larger peak
         ripple_idx = int(ripple_time * sampling_frequency)
@@ -346,8 +350,8 @@ class TestSimulateLFP:
         time = simulate_time(n_samples, sampling_frequency)
         ripple_times = []  # No ripples, just noise
 
-        lfp_low_noise = simulate_LFP(time, ripple_times, noise_amplitude=0.5)
-        lfp_high_noise = simulate_LFP(time, ripple_times, noise_amplitude=2.0)
+        lfp_low_noise = simulate_LFP(time, ripple_times, noise_amplitude=0.5, rng=0)
+        lfp_high_noise = simulate_LFP(time, ripple_times, noise_amplitude=2.0, rng=0)
 
         # Higher noise amplitude should have higher variance
         assert np.std(lfp_high_noise) > np.std(lfp_low_noise)
@@ -365,6 +369,7 @@ class TestSimulateLFP:
             ripple_duration=0.050,
             noise_amplitude=0.1,
             ripple_amplitude=2.0,
+            rng=0,
         )
         lfp_long = simulate_LFP(
             time,
@@ -372,6 +377,7 @@ class TestSimulateLFP:
             ripple_duration=0.200,
             noise_amplitude=0.1,
             ripple_amplitude=2.0,
+            rng=0,
         )
 
         # Longer duration ripple should have more samples above threshold
@@ -398,6 +404,7 @@ class TestSimulateLFP:
             ripple_amplitude=5.0,
             noise_amplitude=0.5,
             ripple_duration=0.100,
+            rng=0,
         )
 
         # Extract region around ripple
@@ -426,7 +433,7 @@ class TestSimulateErrorHandling:
         """Test white noise with negative N."""
         # Should handle gracefully or raise appropriate error
         try:
-            noise = white(-10)
+            noise = white(-10, rng=0)
             assert len(noise) == 0 or True  # May return empty or handle
         except ValueError:
             pass  # Expected error
@@ -438,7 +445,7 @@ class TestSimulateErrorHandling:
 
         # Empty time will cause ValueError in FFT
         try:
-            lfp = simulate_LFP(time, ripple_times)
+            lfp = simulate_LFP(time, ripple_times, rng=0)
             assert len(lfp) == 0
         except ValueError:
             # Expected for empty input
@@ -515,7 +522,7 @@ class TestSimulateLFPRealism:
     def test_windowed_bursts_match_whole_record_bursts(self):
         """The 8-sigma window drops less than 1e-13 of a burst's peak."""
         t = simulate_time(self.FS * 4, self.FS)
-        y = simulate_LFP(t, [1.0, 2.5], noise_amplitude=0.0, ripple_amplitude=2.0)
+        y = simulate_LFP(t, [1.0, 2.5], noise_amplitude=0.0, ripple_amplitude=2.0, rng=0)
         whole = sum(  # unit peak per burst, at its centre
             np.cos(2 * np.pi * 200.0 * (t - m))
             * np.exp(-((t - m) ** 2) / (2 * (0.1 / 6) ** 2))
@@ -610,7 +617,7 @@ class TestSimulateLFPRealism:
 
     def test_scalar_frequency_is_reproduced_in_every_ripple(self):
         t = simulate_time(self.FS * 4, self.FS)
-        y = simulate_LFP(t, [1.0, 3.0], noise_amplitude=0.0, ripple_frequency=180.0)
+        y = simulate_LFP(t, [1.0, 3.0], noise_amplitude=0.0, ripple_frequency=180.0, rng=0)
         for r in (1.0, 3.0):
             seg = y[np.abs(t - r) < 0.05]
             assert abs(_dominant_frequency(seg, self.FS) - 180.0) <= 10.0
@@ -828,7 +835,12 @@ class TestSimulateSharpWaveRipplePair:
     def test_sharp_wave_is_negative_on_the_radiatum_channel_and_leaks_positive(self):
         t = simulate_time(3000, self.FS)
         raw_lfp, sharp_wave_lfp = simulate_sharp_wave_ripple_pair(
-            t, [1.0], noise_amplitude=0.0, ripple_amplitude=2.0, sharp_wave_amplitude=2.0
+            t,
+            [1.0],
+            noise_amplitude=0.0,
+            ripple_amplitude=2.0,
+            sharp_wave_amplitude=2.0,
+            rng=0,
         )
         near = (t > 0.95) & (t < 1.05)
         far = (t < 0.85) | (t > 1.15)
@@ -843,7 +855,9 @@ class TestSimulateSharpWaveRipplePair:
 
     def test_no_sharp_wave_without_ripples(self):
         t = simulate_time(3000, self.FS)
-        raw_lfp, sharp_wave_lfp = simulate_sharp_wave_ripple_pair(t, [], noise_amplitude=0.0)
+        raw_lfp, sharp_wave_lfp = simulate_sharp_wave_ripple_pair(
+            t, [], noise_amplitude=0.0, rng=0
+        )
         assert np.all(raw_lfp == 0.0)
         assert np.all(sharp_wave_lfp == 0.0)
 

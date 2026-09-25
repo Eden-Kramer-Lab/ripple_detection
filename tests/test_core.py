@@ -256,8 +256,8 @@ class TestFilterRippleBand:
         time = simulate_time(n_samples, sampling_frequency)
 
         # Generate two channels with ripples
-        lfp1 = simulate_LFP(time, [1.1], noise_amplitude=1.2, ripple_amplitude=1.5)
-        lfp2 = simulate_LFP(time, [1.2], noise_amplitude=1.2, ripple_amplitude=1.5)
+        lfp1 = simulate_LFP(time, [1.1], noise_amplitude=1.2, ripple_amplitude=1.5, rng=1)
+        lfp2 = simulate_LFP(time, [1.2], noise_amplitude=1.2, ripple_amplitude=1.5, rng=2)
         multi_channel = np.column_stack([lfp1, lfp2])
 
         filtered = filter_ripple_band(multi_channel, 1500)
