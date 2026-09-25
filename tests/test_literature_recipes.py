@@ -176,7 +176,12 @@ def test_diba_recipe_keeps_the_fixed_window(recipes):
     session = SimpleNamespace(
         time=time, sampling_frequency=1000, speed=np.zeros(len(time)), multiunit=spikes
     )
-    rec = recipes.Recording(session, np.ones(5, dtype=bool), np.ones(5, dtype=bool))
+    rec = recipes.Recording(
+        session,
+        np.ones(5, dtype=bool),
+        np.ones(5, dtype=bool),
+        behavior_intervals=np.array([[0.0, 2.0]]),
+    )
     np.testing.assert_allclose(recipes.bounds(recipes.diba_2007(rec)), [[0.5, 0.8]])
 
 

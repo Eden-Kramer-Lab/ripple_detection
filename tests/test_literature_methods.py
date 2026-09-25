@@ -469,7 +469,9 @@ def test_template_inventory_uses_caller_ensemble_size():
     time = np.arange(2000) / 1000
     spikes = np.zeros((2000, 8))
     spikes[[500, 510, 520], [1, 3, 6]] = 1
-    rec = lm.Recording.from_arrays(time, 1000, multiunit=spikes, templates=[[1, 3, 6]])
+    rec = lm.Recording.from_arrays(
+        time, 1000, multiunit=spikes, templates=[[1, 3, 6]], behavior_intervals=[[0, 2]]
+    )
     events = lm.run_method("olafsdottir_2015", rec)
     np.testing.assert_allclose(lm.bounds(events), [[0.5, 0.52]])
     assert not len(lm.run_method("olafsdottir_2015", rec, minimum_active_units=7))
@@ -575,6 +577,7 @@ def test_analysis_participation_does_not_change_initial_detection(monkeypatch):
         place_cells=np.arange(20),
         pyramidal=np.arange(20),
         sleep_intervals=[[0, 2.999]],
+        behavior_intervals=[[0, 2.999]],
     )
     candidates = np.array([[0.5, 0.575], [1.5, 1.7]])
     monkeypatch.setattr(lm, "_population_with_ripple_peak", lambda *args: candidates.copy())
@@ -1359,3 +1362,15 @@ def test_a_fixed_channel_count_is_not_filled_from_fewer_channels(monkeypatch):
     monkeypatch.setattr(lm.Recording, "mean_envelope", record)
     lm.michon_2021(rec)
     assert requested == [2]
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["chenani_2019", "olafsdottir_2017", "olafsdottir_2015", "diba_2007", "foster_2006"],
+)
+def test_measured_recordings_need_the_documented_behavior_intervals(measured, name):
+    from dataclasses import replace
+
+    lm.run_method(name, measured)  # runs with them
+    with pytest.raises(ValueError, match="behavior_intervals"):
+        lm.run_method(name, replace(measured, behavior_intervals=None))

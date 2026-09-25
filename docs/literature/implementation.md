@@ -71,7 +71,9 @@ historical ripple gate, and `reference_lfp` for reference-subtracted methods.
 For external ripples, three columns give start/end/peak; two columns explicitly
 use the midpoint as the peak. Supply true peaks when the rule requires them.
 Yang/Grosmark also require eligible quiet-waking/NREM `behavior_intervals`,
-separate from the NREM normalization baseline. Transforms are computed afresh
+separate from the NREM normalization baseline. Chenani (reward zones),
+Ólafsdóttir 2015 (rest) and 2017 (corners), Diba (track-end reward areas) and
+Foster (facing-direction epochs) require their eligible `behavior_intervals` too. Transforms are computed afresh
 on each call, so a recording can be released after use and changed arrays do
 not retain stale filtered results. Simulation fallbacks are limited to explicit
 `SimulatedSession` inputs.

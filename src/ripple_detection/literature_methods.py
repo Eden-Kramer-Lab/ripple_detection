@@ -754,6 +754,13 @@ def _interval_array(value: ArrayLike | None) -> FloatArray | None:
     return intervals
 
 
+def _require_behavior_intervals(rec: Recording, what: str) -> None:
+    """Measured data must say which epochs are eligible; only simulation may not."""
+    if rec.behavior_intervals is None and not isinstance(rec.session, rd.SimulatedSession):
+        msg = f"Supply behavior_intervals for the eligible {what}."
+        raise ValueError(msg)
+
+
 def _baseline(rec: Recording, *, required: bool = False) -> BoolArray:
     if rec.baseline_intervals is not None:
         return rec.intervals_to_mask(rec.baseline_intervals)
@@ -2027,7 +2034,9 @@ def farooq_2019_science(rec: Recording) -> pd.DataFrame | FloatArray:
 def chenani_2019(rec: Recording) -> pd.DataFrame | FloatArray:
     """Place-cell rate, 30 ms Gaussian, peak >= 3 SD, bounds >= 1 SD, >= 5
     active cells. Supply reward-zone behavior_intervals to run_method; zones
-    chosen by eye are not inferred automatically."""
+    chosen by eye are not inferred automatically; measured recordings without
+    them raise."""
+    _require_behavior_intervals(rec, "reward zones")
     events = _detect_population(
         rec, rec.place_cells, 0.030,
         threshold=3.0, bound_threshold=1.0, minimum_duration=0.0, speed_threshold=np.inf,
@@ -2239,12 +2248,14 @@ def olafsdottir_2017(rec: Recording, *, analysis: str = "arm") -> pd.DataFrame |
     """Native place-cell MUA candidates, with separate arm/trajectory participation.
 
     5 ms Gaussian, 3 SD/mean, >=40 ms, all event speeds <=3. Supply corner
-    behavior_intervals to run_method. Arm reactivation adds no cell-count
-    criterion; analysis='trajectory' requires >=15% and >5 place cells.
+    behavior_intervals to run_method; measured recordings without them raise.
+    Arm reactivation adds no cell-count criterion; analysis='trajectory'
+    requires >=15% and >5 place cells.
     """
     if analysis not in {"arm", "trajectory"}:
         msg = "analysis must be 'arm' or 'trajectory'."
         raise ValueError(msg)
+    _require_behavior_intervals(rec, "corner epochs")
     events = _detect_population(
         rec,
         rec.place_cells,
@@ -2401,11 +2412,13 @@ def olafsdottir_2015(rec: Recording, *, minimum_active_units: int = 0) -> FloatA
     Supply templates as cell masks; >=15% of a template in <=300 ms bounded
     by >=50 ms of silence. The optional minimum_active_units can impose the
     decoding-stage seven-cell criterion. Rest epochs are caller-supplied
-    behavior_intervals to run_method. No ensemble size is assumed.
+    behavior_intervals to run_method; measured recordings without them raise.
+    No ensemble size is assumed.
     """
     if not rec.templates:
         msg = "Supply templates: one cell selection per directional template."
         raise ValueError(msg)
+    _require_behavior_intervals(rec, "rest epochs")
     found = []
     for template in rec.templates:
         if template.sum() < max(1, minimum_active_units):
@@ -2612,7 +2625,9 @@ def diba_2007(rec: Recording) -> pd.DataFrame | FloatArray:
     """>= 60 ms of silence (of the template's cells, assumed), then >= 5 and
     >= 30% of the template's cells (whichever is greater) in the next 300 ms,
     speed <=10 at both ends (assumed). Supply place_cells for one directional
-    template and behavior_intervals for the eligible track-end reward areas."""
+    template and behavior_intervals for the eligible track-end reward areas;
+    measured recordings without them raise."""
+    _require_behavior_intervals(rec, "track-end reward areas")
     events = rd.detect_silence_bounded_events(
         rec.time, rec.multiunit, rec.fs,
         minimum_silence=0.06, window=0.3, window_end_rule="fixed", units=rec.place_cells,
@@ -2668,7 +2683,8 @@ def foster_2006(rec: Recording) -> pd.DataFrame | FloatArray:
     """Probe cells' spikes during stopping (< 5 cm/s, assumed) pooled and split
     at gaps of more than 50 ms, >=1/3 of the cells, <=500 ms. Supply
     place_cells for one probe sequence and behavior_intervals for the
-    eligible facing-direction epochs."""
+    eligible facing-direction epochs; measured recordings without them raise."""
+    _require_behavior_intervals(rec, "facing-direction epochs")
     stopped = rec.mask_to_intervals(rec.speed < 5)
     return rd.detect_silence_bounded_events(
         rec.time, only_in(rec, rec.multiunit, stopped), rec.fs,
