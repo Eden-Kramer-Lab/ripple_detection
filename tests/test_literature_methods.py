@@ -303,28 +303,36 @@ def test_methods_without_speed_raise_or_do_not_use_it(name):
     pd.testing.assert_frame_equal(without, moving)
 
 
-@pytest.mark.parametrize("entry", lm.VARIANTS, ids=lambda x: x.run.__name__)
-def test_every_added_inventory_runs_with_explicit_inputs(measured, entry):
-    rec = measured
-    if entry.run.__name__ in {"bush_2022_ripples", "olafsdottir_2017_ripples"}:
-        fs = 4800 if entry.run.__name__ == "bush_2022_ripples" else 1200
-        time = np.arange(int(20 * fs)) / fs
-        session = rd.simulate_session(
-            time, [3, 6, 9, 12, 15, 18], n_units=20, n_channels=3, ripple_rate_gain=40, rng=21
-        )
-        rec = lm.Recording.from_arrays(
-            time,
-            fs,
-            lfps=session.lfps,
-            multiunit=session.multiunit,
-            speed=np.zeros(len(time)),
-            pyramidal=np.arange(20),
-        )
-    events = lm.run_method(
-        entry.run.__name__, rec, **VARIANT_OPTIONS.get(entry.run.__name__, {})
+# Rectified-LFP thresholds need a stronger ripple than the generic simulation.
+RECTIFIED_LFP_METHODS = {"ji_2007_ripples", "lee_2002_ripples", "foster_2006_ripples"}
+# Added inventories that find nothing on the measured fixture, and why.
+EMPTY_ON_THE_FIXTURE = {
+    # Its population bursts stay above 2 SD for at most 93 ms, short of 100 ms.
+    "farooq_2019_science_awake",
+}
+
+
+def _with_strong_ripple(inputs, at=9.0):
+    """A 180 Hz, 35 ms SD ripple of amplitude 50 added to the first channel."""
+    lfps = inputs["lfps"].copy()
+    relative = inputs["time"] - at
+    lfps[:, 0] += (
+        50 * np.cos(2 * np.pi * 180 * relative) * np.exp(-0.5 * (relative / 0.035) ** 2)
     )
+    return {**inputs, "lfps": lfps}
+
+
+@pytest.mark.parametrize("entry", lm.VARIANTS, ids=lambda x: x.run.__name__)
+def test_every_added_inventory_runs_with_explicit_inputs(entry):
+    name = entry.run.__name__
+    inputs = _measured_inputs(METHOD_RATES.get(name, 1500))
+    if name in RECTIFIED_LFP_METHODS:
+        inputs = _with_strong_ripple(inputs)
+    rec = lm.Recording.from_arrays(**inputs)
+    events = lm.run_method(name, rec, **VARIANT_OPTIONS.get(name, {}))
     assert isinstance(events, pd.DataFrame)
-    assert events.attrs["method"] == entry.run.__name__
+    assert bool(len(events)) is (name not in EMPTY_ON_THE_FIXTURE), name
+    assert events.attrs["method"] == name
     assert events.attrs["doi"].startswith("https://doi.org/")
     assert (events.start_time <= events.end_time).all()
     assert (events.start_time >= rec.time[0]).all()
@@ -393,18 +401,10 @@ def test_run_method_applies_behavior_containment_and_preserves_context(measured)
     ],
 )
 def test_secondary_ripples_do_not_bridge_artifact_intervals(measured, name):
-    lfps = measured.session.lfps.copy()
-    if name in {"ji_2007_ripples", "lee_2002_ripples", "foster_2006_ripples"}:
-        # These rectified-LFP thresholds need a stronger ripple than the
-        # generic envelope-based demonstration supplies.
-        relative = measured.time - 9
-        lfps[:, 0] += (
-            50 * np.cos(2 * np.pi * 180 * relative) * np.exp(-0.5 * (relative / 0.035) ** 2)
-        )
     inputs = {
         "time": measured.time,
         "sampling_frequency": measured.fs,
-        "lfps": lfps,
+        "lfps": measured.session.lfps,
         "multiunit": measured.multiunit,
         "speed": measured.speed,
         "reference_lfp": measured.reference_lfp,
@@ -413,6 +413,8 @@ def test_secondary_ripples_do_not_bridge_artifact_intervals(measured, name):
         "sleep_intervals": measured.sleep_intervals,
         "baseline_intervals": measured.baseline_intervals,
     }
+    if name in RECTIFIED_LFP_METHODS:
+        inputs = _with_strong_ripple(inputs)
     clean = lm.Recording.from_arrays(**inputs)
     rec = lm.Recording.from_arrays(**inputs, artifact_intervals=[[8.99, 9.01]])
     before = lm.run_method(name, clean, **VARIANT_OPTIONS.get(name, {}))

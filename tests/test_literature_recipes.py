@@ -124,10 +124,20 @@ def test_every_recipe_returns_events_inside_the_recording(recipes, recording):
         assert np.all(events <= recording.time[-1]), entry.paper
 
 
-def test_most_recipes_find_the_simulated_ripples(results):
+# Recipes that find no simulated ripple on the demonstration, and why.
+NO_RECALL_ON_THE_DEMONSTRATION = {
+    # A third of the 40 place cells never fire within one silence-bounded
+    # group here: 8 groups reach a fifth of them, none a third.
+    "foster_2006": "one third of the probe cells",
+}
+
+
+def test_every_recipe_finds_the_simulated_ripples(results):
     """Not a claim about the papers: a recipe that finds nothing on data full
-    of ripples is more likely broken than strict."""
-    assert (results.recall > 0).mean() > 0.8
+    of ripples is more likely broken than strict, unless its criterion is
+    known to exceed what the demonstration's cells supply."""
+    missed = set(results.loc[results.recall == 0, "method"])
+    assert missed == set(NO_RECALL_ON_THE_DEMONSTRATION)
 
 
 def test_pfeiffer_recipe_retains_data_on_both_sides_of_missing_lfp(recipes, example):
