@@ -257,14 +257,14 @@ seeds:
 
 | Detector | Recall, `ripple_snr` 2 | Recall, `ripple_snr` 4 | False positives per minute, no ripples (4 / 16 / 32 ch) | Recall with the ripple on a quarter of 32 channels, `ripple_snr` 3 | Precision with 20 common-mode artifacts |
 |---|---|---|---|---|---|
-| Kay | 0.46 | 0.98 | 18 / 21 / 24 | 0.15 | 0.00 |
-| Karlsson | 0.32 | 0.98 | 2 / 9 / 19 | 0.60 | 0.00 |
-| Roumis | 0.46 | 0.99 | 21 / 23 / 26 | 0.10 | 0.00 |
-| Shvartsman | 0.08 | 0.92 | 0 / 0.7 / 2 | 0.40 | 0.00 |
-| Yu | 0.47 | 1.00 | 15 / 25 / 70 | 0.18 | 0.27 |
-| Zugaro | 0.27 | 0.92 | 11 / 14 / 16 | 0.06 | 0.00 |
-| Long | 0.42 | 0.81 | 8 / 8 / 8 | 0.58 | 0.94 |
-| Carey | 0.92 | 0.98 | 0.7 / 0.5 / 0.2 | 0.87 | 0.79 |
+| Kay | 0.48 | 0.99 | 18 / 21 / 24 | 0.14 | 0.00 |
+| Karlsson | 0.30 | 0.98 | 2 / 9 / 19 | 0.64 | 0.02 |
+| Roumis | 0.48 | 0.99 | 21 / 23 / 26 | 0.11 | 0.00 |
+| Shvartsman | 0.13 | 0.93 | 0 / 0.7 / 2 | 0.48 | 0.00 |
+| Yu | 0.58 | 1.00 | 15 / 25 / 70 | 0.17 | 0.30 |
+| Zugaro | 0.32 | 0.93 | 11 / 14 / 16 | 0.07 | 0.00 |
+| Long | 0.42 | 0.83 | 8 / 8 / 8 | 0.61 | 0.93 |
+| Carey | 0.96 | 0.99 | 0.7 / 0.5 / 0.2 | 0.86 | 0.79 |
 | HSE | 0.99 | 0.99 | 50 / 50 / 53 | 0.98 | 0.85 |
 
 What it shows:
@@ -273,9 +273,10 @@ What it shows:
   count, since any one channel crossing 3 SD makes an event; Yu's data-driven threshold falls the
   more correlated channels feed its median. Kay, Roumis, Zugaro, Long and Shvartsman barely move.
 - **At a matched false-positive rate the ripple-band algorithms are close, and Shvartsman
-  leads.** On 16 channels Kay at 3.0 SD (1.5 false positives a minute) and Karlsson at 3.5
-  (1.8) recall 0.62 to 0.64 of ripples at `ripple_snr` 3; Zugaro needs 8 SD to fall below one
-  a minute (0.8), and then recalls 0.32. Shvartsman at its default allows 0.7 and recalls 0.67.
+  trades a little recall for half the false positives.** On 16 channels Kay at 3.0 SD (1.5
+  false positives a minute) and Karlsson at 3.5 (1.8) recall 0.76 and 0.67 of ripples at
+  `ripple_snr` 3; Zugaro needs 8 SD to fall below one a minute (0.8), and then recalls 0.37.
+  Shvartsman at its default allows 0.7 and recalls 0.72.
   Most of what separates the defaults is where the threshold sits. Kay at 2 SD is a candidate
   generator, about 20 events a minute on noise.
 - **Which channels carry the ripple matters more than how many there are.** Pooled traces are
@@ -287,8 +288,8 @@ What it shows:
   from 0.83 to 0.32. HSE at 2 SD gives 50 events a minute on noise.
 - **Long's recall plateaus near 0.9** by construction: its percentile cuts drop the weakest tenth
   of the sharp-wave cluster, and it does not evaluate candidates within 5 s of a block edge. Its
-  events mark the sharp wave, so they start about 18 ms after the ripple window and end 18 ms
-  before it.
+  events mark the sharp wave, so they start about 18 ms after the ripple window starts and end
+  17 ms before it ends.
 - **Common-mode artifacts silence the ripple-band detectors at their defaults, except Yu and Long**,
   whose threshold is read off the noise side of the histogram. Long cancels them in its channel
   difference. The notebook shows what
