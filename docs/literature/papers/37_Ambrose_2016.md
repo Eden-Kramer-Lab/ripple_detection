@@ -32,7 +32,7 @@ Analysis (not detection):
 
 ## Inherited from
 
-Nothing is deferred for SWR detection; the paragraph stands alone. Pfeiffer & Foster 2013 (manifest 45) is cited only for the drive and for decoding. Its LFP paragraph is nearly identical and fills in the unstated baseline: "smoothed (Gaussian kernel, s.d. = 12.5 ms). This processed signal was averaged across all tetrodes and ripple events were identified as local peaks with an amplitude greater than 3 s.d. above the mean, using only periods when the rat's velocity was less than 5 cm s-1. The start and end boundaries for each event were defined as the point when the signal crossed the mean." (the extracted text, Methods, "Local field potential analysis"). Treat this as the lab convention (an inference), not as Ambrose's stated method.
+Nothing is deferred for SWR detection; the paragraph stands alone. Pfeiffer & Foster 2013 ([paper note](45_Pfeiffer_2013.md)) is cited only for the drive and for decoding. Its LFP paragraph is nearly identical and fills in the unstated baseline: "smoothed (Gaussian kernel, s.d. = 12.5 ms). This processed signal was averaged across all tetrodes and ripple events were identified as local peaks with an amplitude greater than 3 s.d. above the mean, using only periods when the rat's velocity was less than 5 cm s-1. The start and end boundaries for each event were defined as the point when the signal crossed the mean." (the extracted text, Methods, "Local field potential analysis"). Treat this as the lab convention (an inference), not as Ambrose's stated method.
 
 ## Code
 

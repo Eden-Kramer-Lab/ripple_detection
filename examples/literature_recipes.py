@@ -900,9 +900,10 @@ def grosmark_2016(rec):
 @recipe(37, "Ambrose 2016", "SWR")
 def ambrose_2016(rec):
     """Pfeiffer & Foster 2015's trace on 4 tetrodes, > 3 SD, detected only
-    while stopped (< 5 cm/s; the lab's convention, inferred), so the
-    statistics come from stopping too; no duration limits are reported in the
-    main Methods or supplement. The proximity to the well is not reproduced."""
+    while stopped (< 5 cm/s, stated in the paper). Statistics also come from
+    stopping periods (the lab's convention, inferred); no duration limits are
+    reported in the main Methods or supplement. The proximity to the well is
+    not reproduced."""
     return rd.detect_events_from_trace(
         rec.time, rec.mean_envelope((150.0, 250.0)), rec.speed, rec.fs,
         threshold=3.0, smoothing_sigma=0.0125, minimum_duration=0.0,

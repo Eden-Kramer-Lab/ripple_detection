@@ -37,7 +37,7 @@ Detection (candidate ripple / replay events):
 
 ## Inherited from
 
-"similar algorithm to the previous report (Davidson et al., 2009)". Davidson (manifest 50_Davidson_2009; findings file exists) uses MUA from all > 100 µV spikes in 1 ms bins with σ = 15 ms, peak ≥ 3 SD, bounds at the mean, and statistics over STOP (< 5 cm/s). Yamamoto differs:
+"similar algorithm to the previous report (Davidson et al., 2009)". Davidson ([paper note](50_Davidson_2009.md)) uses MUA from all > 100 µV spikes in 1 ms bins with σ = 15 ms, peak ≥ 3 SD, bounds at the mean, and statistics over STOP (< 5 cm/s). Yamamoto differs:
 
 - 10 ms bins and no stated smoothing.
 

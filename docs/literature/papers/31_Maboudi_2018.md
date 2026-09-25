@@ -32,7 +32,7 @@ Materials and methods, "Population burst events" (p. 16), linear-track data (Dib
 
 ## Inherited from
 
-Linear track: nothing deferred (fully specified). Open field: Pfeiffer & Foster 2013 (manifest 45_Pfeiffer_2013; the paper restates its criteria; note Pfeiffer's text there says the stopped-period histogram uses speed <5 cm/s and a 10 ms SD kernel).
+Linear track: nothing deferred (fully specified). Open field: Pfeiffer & Foster 2013 ([paper note](45_Pfeiffer_2013.md); the paper restates its criteria; note Pfeiffer's text there says the stopped-period histogram uses speed <5 cm/s and a 10 ms SD kernel).
 
 ## Code
 

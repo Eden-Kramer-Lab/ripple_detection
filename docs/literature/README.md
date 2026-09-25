@@ -18,6 +18,35 @@ These files describe the current state. Git records corrections and earlier audi
 snapshots; separate change ledgers are unnecessary. Source inspection is current
 through September 25, 2026. No original author pipeline was rerun.
 
+## Reading a paper's record
+
+Start with its note in the [paper index](#papers), then look up the paper's DOI in
+the packaged CSV. Match that DOI and the exact column name in `evidence.csv` to
+find the supporting citation and verification status. The DOI identifies the
+paper: two Farooq 2019 papers have different journals and DOIs. Numeric filename
+prefixes retain the survey's original zero-based order; they are not citation numbers.
+
+For example, Bhattarai 2020 has 20 ms replay windows with 10 ms steps, while its
+behavioral reconstruction uses 50 ms windows. Those belong to `Time bin (ms)`,
+`Time bin step (ms)` and `Reconst. Error bin (ms)`, respectively. The paper note
+explains the distinction, and the evidence index points to the supplement.
+
+The loader is convenient for numeric summaries. To inspect the original text of
+every cell, read the CSV with `pandas.read_csv(..., dtype=str, keep_default_na=False)`;
+this preserves ranges, qualified values and the literal missing-value markers.
+
+In citations, `PDF` or `combined PDF` page numbers count from the beginning of the
+inspected file. Supplement/SI references identify the supplemental document;
+printed journal pages are also used in the notes. Section names, figure/table
+numbers and quoted passages help locate the evidence across different copies.
+
+Common abbreviations: **LFP**, local field potential; **SWR/SPW-R**, sharp-wave
+ripple; **MUA/MU**, multiunit activity; **PBE**, population burst event; **HSE**,
+high-synchrony event; **SDE/SDF**, spike-density event/function; **SWS**, slow-wave
+sleep; **NREM/REM**, non-rapid/rapid-eye-movement sleep; **SD**, standard deviation;
+**SEM**, standard error of the mean; **COM**, center of mass. Event names describe
+the authors' definitions and do not guarantee equivalent detection rules.
+
 ## Interpretation
 
 A row may combine a primary detector, candidate-inclusion criteria and a control or
@@ -42,12 +71,21 @@ are distinct. Electrode counts describe sampled/combined channels, not the minim
 number that must cross threshold. Strict inequalities and analysis-specific scopes
 are explained in the paper notes.
 
+`Time bin` and `Time bin step` describe the replay or sequence analysis;
+`Reconst. Error bin` describes the behavioral reconstruction used to assess error.
+`Position bin` and `Place field smooth` describe spatial templates. `% Decoded`
+must be read with `% Decoded denom.` and the condition-specific notes. Shuffle
+counts and significance thresholds may describe per-event selection, control
+analyses or aggregate event-count tests; the notes distinguish those uses.
+Despite the legacy column names, a threshold need not be a z-score: raw,
+adaptive and multiplicative thresholds are labeled explicitly in their entries.
+
 ## Evidence statuses
 
 | Status | Meaning |
 |---|---|
 | `checked_paper` | Supported by the primary text or figure at the cited location. |
-| `checked_code` | Supported by inspected released code; original execution may still have provenance limits. |
+| `checked_code` | Supported by an inspected released implementation or stored configuration; original execution may still have provenance limits. |
 | `checked_metadata` | Bibliographic or species metadata checked against the matched source. |
 | `derived` | Arithmetic, unit conversion or explicitly approximate figure reading. |
 | `inferred` | Requires the stated assumption. |
@@ -75,7 +113,8 @@ pytest tests/test_literature.py tests/test_literature_recipes.py -q --no-cov
 ```
 
 The checks cover table loading, README statistics, evidence coverage and links,
-source fingerprints, and execution/coverage of the example recipes.
+fingerprint formatting, and execution/coverage of the example recipes. They do
+not re-read publications or verify the scientific meaning of a changed value.
 
 ## Papers
 

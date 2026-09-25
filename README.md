@@ -700,7 +700,7 @@ parameters.loc[parameters["Spike sorting"] == "Clusterless", ["First Author", "Y
 | `maximum_duration` | 24 | 300-2000 ms | 550 ms | 500 | none, except Zugaro 100 ms and Long 500 ms (sharp wave) |
 | event grouping interval | 15 | 20-100 ms | 50 ms | 50 | 0 (no exclusion); Zugaro merges within 30 ms, Long drops within 50 ms |
 | `minimum_active_units` | 28 | 3-10 units | 5 units | 5 | 0 on the burst detector, 5 on Carey |
-| ripple channels sampled | 33 | 11 papers use one, 18 multiple, 4 a range | — | — | See each detector's channel aggregation rule |
+| ripple channels sampled | 32 | 10 papers use one, 18 multiple, 4 a range | — | — | See each detector's channel aggregation rule |
 
 
 Three cautions before treating this as a recipe:

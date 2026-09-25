@@ -50,9 +50,9 @@ Control analyses only (not detection). STAR Methods, "Control analyses" and "Loc
 
 ## Inherited from
 
-- Ólafsdóttir 2016 (in the manifest as 39_Olafsdottir_2016). This paper is the same rule plus a 3 cm/s speed rule, the corner restriction and the max(15%, > 5) participation.
+- Ólafsdóttir 2016 ([paper note](39_Olafsdottir_2016.md)). This paper is the same rule plus a 3 cm/s speed rule, the corner restriction and the max(15%, > 5) participation.
 
-- Pfeiffer & Foster 2013 (in the manifest as 45_Pfeiffer_2013). Followed one hop: all clustered units, 10 ms Gaussian, peak > mean + 3 SD with statistics from times < 5 cm/s, bounds at the mean, ≥ 10% of units, 50–2000 ms.
+- Pfeiffer & Foster 2013 ([paper note](45_Pfeiffer_2013.md)). Followed one hop: all clustered units, 10 ms Gaussian, peak > mean + 3 SD with statistics from times < 5 cm/s, bounds at the mean, ≥ 10% of units, 50–2000 ms.
 
 - The paper states its candidate-event rule directly.
 

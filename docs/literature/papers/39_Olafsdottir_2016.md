@@ -38,9 +38,9 @@ Later analysis restrictions (not detection):
 
 ## Inherited from
 
-- Ólafsdóttir 2015 (ref 9, in the manifest as 41_Olafsdottir_2015). It takes the 15% participation idea from there, but the 2015 rule is silence-bounded, not a rate threshold.
+- Ólafsdóttir 2015 (ref 9, [paper note](41_Olafsdottir_2015.md)). It takes the 15% participation idea from there, but the 2015 rule is silence-bounded, not a rate threshold.
 
-- Pfeiffer & Foster 2013 (ref 7, in the manifest as 45_Pfeiffer_2013). Followed one hop: "A histogram (1-ms bins) of all clustered units for times when the rat's velocity was less than 5 cm s−1 was smoothed (Gaussian kernel, standard deviation of 10 ms). Population events were defined as peaks in the smoothed histogram greater than the mean + 3 standard deviations. Start and end boundaries ... where the smoothed histogram crossed the mean ... fewer than 10% of the clustered units participated or with boundaries less than 50 ms or greater than 2,000 ms apart were excluded".
+- Pfeiffer & Foster 2013 (ref 7, [paper note](45_Pfeiffer_2013.md)). Followed one hop: "A histogram (1-ms bins) of all clustered units for times when the rat's velocity was less than 5 cm s−1 was smoothed (Gaussian kernel, standard deviation of 10 ms). Population events were defined as peaks in the smoothed histogram greater than the mean + 3 standard deviations. Start and end boundaries ... where the smoothed histogram crossed the mean ... fewer than 10% of the clustered units participated or with boundaries less than 50 ms or greater than 2,000 ms apart were excluded".
 
 - The 2016 paper changes these to place cells only, 5 ms, 40 ms, 15%, no maximum and no speed rule.
 

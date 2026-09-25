@@ -38,7 +38,7 @@ Analysis (not detection):
 
 ## Inherited from
 
-Detection is stated in full. The code comment cites Pfeiffer & Foster 2013 (manifest 45) for the kernel. Pfeiffer 2013: "A histogram (1-ms bins) of all clustered units for times when the rat's velocity was less than 5 cm s-1 was smoothed (Gaussian kernel, standard deviation of 10 ms). Population events were defined as peaks in the smoothed histogram greater than the mean + 3 standard deviations. Start and end boundaries ... where the smoothed histogram crossed the mean ... Candidate events in which fewer than 10% of the clustered units participated or with boundaries less than 50 ms or greater than 2,000 ms apart were excluded" (the extracted text, "Sequential event analysis"). Berners-Lee 2022 drops the 10% participation rule and uses 100–500 ms.
+Detection is stated in full. The code comment cites Pfeiffer & Foster 2013 ([paper note](45_Pfeiffer_2013.md)) for the kernel. Pfeiffer 2013: "A histogram (1-ms bins) of all clustered units for times when the rat's velocity was less than 5 cm s-1 was smoothed (Gaussian kernel, standard deviation of 10 ms). Population events were defined as peaks in the smoothed histogram greater than the mean + 3 standard deviations. Start and end boundaries ... where the smoothed histogram crossed the mean ... Candidate events in which fewer than 10% of the clustered units participated or with boundaries less than 50 ms or greater than 2,000 ms apart were excluded" (the extracted text, "Sequential event analysis"). Berners-Lee 2022 drops the 10% participation rule and uses 100–500 ms.
 
 ## Code
 

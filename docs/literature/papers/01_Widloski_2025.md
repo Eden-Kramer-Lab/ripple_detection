@@ -50,9 +50,9 @@ Code observations (`plot_replayEvents_rippleStats_allSessions.m`; the detection 
 
 ## Inherited from
 
-- Replay detection: Widloski & Foster 2022 (manifest 09; see that finding), plus a new cell-ID shuffle test.
+- Replay detection: Widloski & Foster 2022 ([paper note](09_Widloski_2022.md)), plus a new cell-ID shuffle test.
 
-- Ripple rule "2 SD for at least 15 ms": Kay et al. 2016 (ref 45; not in the manifest; this is the rule the package's Kay_ripple_detector implements, with `minimum_duration` on the above-threshold run). Averaging across tetrodes follows Pfeiffer & Foster 2013 (ref 22, manifest 45), which averaged smoothed envelopes across tetrodes, used a 3 SD threshold, and used only velocity < 5 periods.
+- Ripple rule "2 SD for at least 15 ms": Kay et al. 2016 (ref 45; not one of the 57 surveyed papers; this is the rule the package's Kay_ripple_detector implements, with `minimum_duration` on the above-threshold run). Averaging across tetrodes follows Pfeiffer & Foster 2013 (ref 22, [paper note](45_Pfeiffer_2013.md)), which averaged smoothed envelopes across tetrodes, used a 3 SD threshold, and used only velocity < 5 periods.
 
 - Burst rule "3 SD, >= 50 ms": Pfeiffer & Foster 2013. There: 1 ms histogram of all clustered units at velocity < 5 cm/s, Gaussian SD 10 ms, peak > mean + 3 SD, bounds at the mean, events with boundaries < 50 ms or > 2,000 ms apart excluded, and >= 10% of units participating. Widloski 2025 keeps only the 3 SD and 50 ms parts.
 

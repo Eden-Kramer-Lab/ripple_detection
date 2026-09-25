@@ -993,7 +993,7 @@ https://doi.org/10.1038/s41593-019-0464-6,Animal Speed (cm/s),checked_paper,Meth
 https://doi.org/10.1038/s41593-019-0464-6,MUA smooth (ms),checked_code,Methods pp. 11-12; published candidate MAT and original toolbox,papers/28_Carey_2019.md
 https://doi.org/10.1038/s41593-019-0464-6,SWR smooth (ms),checked_paper,Methods pp. 11-12; published candidate MAT and original toolbox,papers/28_Carey_2019.md
 https://doi.org/10.1038/s41593-019-0464-6,Min. Cells (#),checked_code,Methods pp. 11-12; published candidate MAT and original toolbox,papers/28_Carey_2019.md
-https://doi.org/10.1038/s41593-019-0464-6,SWR electrodes (#),checked_paper,Methods pp. 11-12; published candidate MAT and original toolbox,papers/28_Carey_2019.md
+https://doi.org/10.1038/s41593-019-0464-6,SWR electrodes (#),checked_code,"Released R050-2014-03-29-candidates.mat, evt.parameters.amSWR.csc = R050-2014-03-29-CSC03a.ncs (one channel in this session); vandermeerlab/papers 3aebc8e. Paper Methods do not state the channel count.",papers/28_Carey_2019.md
 https://doi.org/10.1038/s41593-019-0464-6,SWR Low Band (Hz),not_reported,Methods pp. 11-12; published candidate MAT and original toolbox,papers/28_Carey_2019.md
 https://doi.org/10.1038/s41593-019-0464-6,SWR High Band (Hz),not_reported,Methods pp. 11-12; published candidate MAT and original toolbox,papers/28_Carey_2019.md
 https://doi.org/10.1038/s41593-019-0464-6,Min. Duration (ms),checked_code,Methods pp. 11-12; published candidate MAT and original toolbox,papers/28_Carey_2019.md
@@ -1704,7 +1704,7 @@ https://doi.org/10.1016/j.neuron.2010.01.034,Time bin (ms),checked_paper,"Gupta 
 https://doi.org/10.1016/j.neuron.2010.01.034,Position bin (cm),checked_paper,"Supplementary Experimental Procedures, combined PDF pp. 21-23",papers/48_Gupta_2010.md
 https://doi.org/10.1016/j.neuron.2010.01.034,Place field smooth (cm),not_reported,"Supplementary Experimental Procedures, combined PDF pp. 21-23",papers/48_Gupta_2010.md
 https://doi.org/10.1016/j.neuron.2010.01.034,Trajectory,not_applicable,"Supplementary Experimental Procedures, combined PDF pp. 21-23",papers/48_Gupta_2010.md
-https://doi.org/10.1016/j.neuron.2010.01.034,Decoding notes,reviewed_context,"Gupta 2010 supplementary Experimental Procedures, combined PDF pp. 21-23.",papers/48_Gupta_2010.md
+https://doi.org/10.1016/j.neuron.2010.01.034,Decoding notes,reviewed_context,"Main Experimental Procedures, printed p. 703 (PDF p. 9): Bayesian control uses a 20 ms sliding window; step not stated. Supplementary Experimental Procedures, combined PDF pp. 21-23: primary sequence windows 40-600 ms, scanned in 10 ms steps.",papers/48_Gupta_2010.md
 https://doi.org/10.1016/j.neuron.2010.01.034,Reconst. Error (cm),not_reported,"Supplementary Experimental Procedures, combined PDF pp. 21-23",papers/48_Gupta_2010.md
 https://doi.org/10.1016/j.neuron.2010.01.034,% Decoded,checked_paper,"Supplementary Experimental Procedures, combined PDF pp. 21-23",papers/48_Gupta_2010.md
 https://doi.org/10.1016/j.neuron.2010.01.034,Spike sorting,checked_paper,"Supplementary Experimental Procedures, combined PDF pp. 21-23",papers/48_Gupta_2010.md
@@ -1826,7 +1826,7 @@ https://doi.org/10.1038/nn1825,DOI,checked_metadata,Main Methods; Supplementary 
 https://doi.org/10.1038/nn1825,Journal,checked_metadata,Main Methods; Supplementary Figure 12,papers/52_Ji_2007.md
 https://doi.org/10.1038/nn1825,Species,checked_metadata,Main Methods; Supplementary Figure 12,papers/52_Ji_2007.md
 https://doi.org/10.1038/nn1825,Detection,checked_paper,Main Methods; Supplementary Figure 12,papers/52_Ji_2007.md
-https://doi.org/10.1038/nn1825,Detection Notes,reviewed_context,"Ji 2007 Supplementary Figure 12, caption p. 2; publisher 41593_2007_BFnn1825_MOESM12_ESM.pdf. 12.",papers/52_Ji_2007.md
+https://doi.org/10.1038/nn1825,Detection Notes,reviewed_context,"Ji 2007 Supplementary Figure 12, caption p. 2; publisher 41593_2007_BFnn1825_MOESM12_ESM.pdf.",papers/52_Ji_2007.md
 https://doi.org/10.1038/nn1825,MUA Z-score Thresh. (STD),checked_paper,Main Methods; Supplementary Figure 12,papers/52_Ji_2007.md
 https://doi.org/10.1038/nn1825,SWR Z-score Thresh. (STD),checked_paper,Main Methods; Supplementary Figure 12,papers/52_Ji_2007.md
 https://doi.org/10.1038/nn1825,Animal Speed (cm/s),not_applicable,Main Methods; Supplementary Figure 12,papers/52_Ji_2007.md
@@ -1966,14 +1966,14 @@ https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,DOI,checked_metadata,"Methods
 https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,Journal,checked_metadata,"Methods, cell-pair correlations and ripple analysis",papers/56_Kudrimoti_1999.md
 https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,Species,checked_metadata,"Methods, cell-pair correlations and ripple analysis",papers/56_Kudrimoti_1999.md
 https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,Detection,checked_paper,"Methods, cell-pair correlations and ripple analysis",papers/56_Kudrimoti_1999.md
-https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,Detection Notes,reviewed_context,"Methods, cell-pair correlations and ripple analysis",papers/56_Kudrimoti_1999.md
+https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,Detection Notes,reviewed_context,"Methods, EEG analysis and Sleep scoring, printed p. 4092 (PDF p. 3); one ripple-channel inference and manual state scoring are qualified in the paper note.",papers/56_Kudrimoti_1999.md
 https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,MUA Z-score Thresh. (STD),not_applicable,"Methods, cell-pair correlations and ripple analysis",papers/56_Kudrimoti_1999.md
 https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,SWR Z-score Thresh. (STD),not_reported,"Methods, cell-pair correlations and ripple analysis",papers/56_Kudrimoti_1999.md
 https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,Animal Speed (cm/s),not_applicable,"Methods, cell-pair correlations and ripple analysis",papers/56_Kudrimoti_1999.md
 https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,MUA smooth (ms),not_applicable,"Methods, cell-pair correlations and ripple analysis",papers/56_Kudrimoti_1999.md
 https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,SWR smooth (ms),not_applicable,"Methods, cell-pair correlations and ripple analysis",papers/56_Kudrimoti_1999.md
 https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,Min. Cells (#),not_applicable,"Methods, cell-pair correlations and ripple analysis",papers/56_Kudrimoti_1999.md
-https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,SWR electrodes (#),checked_paper,"Methods, cell-pair correlations and ripple analysis",papers/56_Kudrimoti_1999.md
+https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,SWR electrodes (#),inferred,"Methods, EEG analysis, printed p. 4092 (PDF p. 3): two selected EEG traces, one at 200 Hz and one at 1 kHz; ripples detected from the 1 kHz trace(s). One channel is inferred, not explicitly enumerated.",papers/56_Kudrimoti_1999.md
 https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,SWR Low Band (Hz),checked_paper,"Methods, cell-pair correlations and ripple analysis",papers/56_Kudrimoti_1999.md
 https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,SWR High Band (Hz),checked_paper,"Methods, cell-pair correlations and ripple analysis",papers/56_Kudrimoti_1999.md
 https://doi.org/10.1523/JNEUROSCI.19-10-04090.1999,Min. Duration (ms),checked_paper,"Methods, cell-pair correlations and ripple analysis",papers/56_Kudrimoti_1999.md

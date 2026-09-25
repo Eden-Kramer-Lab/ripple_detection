@@ -34,7 +34,7 @@ None linked.
 
 ## Uncertainties
 
-The absolute ripple threshold is not reported. Any executable recipe must assume a threshold and sleep-state rule; it cannot be an exact reconstruction.
+The single ripple-channel count is inferred from the selected EEG traces, not explicitly stated. The absolute ripple threshold is not reported. Any executable recipe must assume a threshold and sleep-state rule; it cannot be an exact reconstruction.
 
 ## Package mapping
 

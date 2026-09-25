@@ -32,9 +32,9 @@ Later analysis restrictions (not detection): decoding in 10 ms windows, "only ti
 
 ## Inherited from
 
-- "As in previous studies (e.g. Karlsson and Frank 2009)" is attached to the ripple-power thresholding. Karlsson & Frank 2009 used a 3 SD threshold on a 4 ms-smoothed Hilbert envelope with bounds at the mean (see findings/49_Karlsson_2009.md); it has no 150 ms window. So only the general approach is inherited; the window and the 1 SD threshold are this paper's.
+- "As in previous studies (e.g. Karlsson and Frank 2009)" is attached to the ripple-power thresholding. Karlsson & Frank 2009 used a 3 SD threshold on a 4 ms-smoothed Hilbert envelope with bounds at the mean (see [paper note](49_Karlsson_2009.md)); it has no 150 ms window. So only the general approach is inherited; the window and the 1 SD threshold are this paper's.
 
-- Theta-delta ratio: Jackson, Johnson & Redish 2006 (J Neurosci 26:12415; PMC6674885, primary Methods primary Methods inspected): theta (6–10 Hz) and delta (2–4 Hz) Hilbert amplitudes "averaged across traces", then non-theta periods from the log-transformed theta/delta ratio relative to the session mean. Jackson 2006 detected SWRs differently (100–250 Hz, log amplitude > 2.5σ, crossings < 20 ms removed, events concatenated if < 100 ms apart); Wikenheiser does not cite it for ripple detection.
+- Theta-delta ratio: Jackson, Johnson & Redish 2006 (J Neurosci 26:12415; PMC6674885, primary Methods inspected): theta (6–10 Hz) and delta (2–4 Hz) Hilbert amplitudes "averaged across traces", then non-theta periods from the log-transformed theta/delta ratio relative to the session mean. Jackson 2006 detected SWRs differently (100–250 Hz, log amplitude > 2.5σ, crossings < 20 ms removed, events concatenated if < 100 ms apart); Wikenheiser does not cite it for ripple detection.
 
 - Preprocessing cites Jackson et al. (2006) and Wikenheiser and Redish (2011). The [Jackson Methods](https://pmc.ncbi.nlm.nih.gov/articles/PMC6674885/) supply the direct source; they do not establish Wikenheiser-specific runtime settings.
 

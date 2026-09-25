@@ -49,7 +49,7 @@ Later analysis restrictions (not detection):
 
 ## Inherited from
 
-Tirole et al. 2022 (ref 27), which is in the manifest (06_Tirole_2022); followed one hop through its code. The released trace helpers and shuffle settings can be inspected directly; the missing event extractor remains a provenance limit.
+Tirole et al. 2022 (ref 27), see [paper note](06_Tirole_2022.md); followed one hop through its code. The released trace helpers and shuffle settings can be inspected directly; the missing event extractor remains a provenance limit.
 
 ## Code
 
