@@ -1,7 +1,9 @@
 """The shipped survey of published detection parameters."""
 
+import csv
 import re
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 import pandas as pd
 import pytest
@@ -9,6 +11,7 @@ import pytest
 from ripple_detection import load_literature_parameters
 
 README = Path(__file__).resolve().parents[1] / "README.md"
+LITERATURE = README.parent / "docs" / "literature"
 
 
 @pytest.fixture(scope="module")
@@ -118,3 +121,79 @@ def test_readme_channel_counts_exclude_unknowns(parameters):
     ranges = int(channels.str.fullmatch(r"\d+-\d+").sum())
     assert int(stated[0]) == one + multiple + ranges
     assert [int(x) for x in re.findall(r"\d+", stated[1])] == [one, multiple, ranges]
+
+
+def test_evidence_covers_every_field_once_and_links_each_paper(parameters):
+    """Evidence joins to the table by DOI/column without caching its values."""
+    with (LITERATURE / "evidence.csv").open() as file:
+        reader = csv.DictReader(file)
+        assert reader.fieldnames == [
+            "doi",
+            "column",
+            "status",
+            "source_location",
+            "paper_note",
+        ]
+        evidence = list(reader)
+
+    expected = {(doi, column) for doi in parameters.DOI for column in parameters}
+    keys = [(entry["doi"], entry["column"]) for entry in evidence]
+    assert len(keys) == len(set(keys))
+    assert set(keys) == expected
+
+    statuses = {
+        "checked_paper",
+        "checked_code",
+        "checked_metadata",
+        "derived",
+        "inferred",
+        "unresolved",
+        "not_reported",
+        "not_applicable",
+        "reviewed_context",
+    }
+    paper_notes = {}
+    for entry in evidence:
+        assert entry["status"] in statuses
+        assert entry["source_location"].strip()
+        note = LITERATURE / entry["paper_note"]
+        assert note.is_file()
+        assert f"[Paper]({entry['doi']})" in note.read_text()
+        paper_notes.setdefault(entry["doi"], set()).add(note)
+    assert all(len(notes) == 1 for notes in paper_notes.values())
+    assert {note for notes in paper_notes.values() for note in notes} == set(
+        (LITERATURE / "papers").glob("*.md")
+    )
+
+
+def test_literature_navigation_has_no_missing_files_or_anchors():
+    """Moving a source or note must not strand its evidence/navigation links."""
+    for document in LITERATURE.rglob("*.md"):
+        for target in re.findall(r"\]\(([^)]+)\)", document.read_text()):
+            link = urlsplit(target)
+            if link.scheme or link.netloc:
+                continue
+            path = (document.parent / unquote(link.path)) if link.path else document
+            assert path.exists(), f"{document.name}: {target}"
+            if link.fragment:
+                headings = re.findall(r"^#+ (.+)$", path.read_text(), re.MULTILINE)
+                anchors = {
+                    re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
+                    for heading in headings
+                }
+                assert unquote(link.fragment) in anchors, f"{document.name}: {target}"
+
+
+def test_source_fingerprints_identify_distinct_artifacts():
+    text = (LITERATURE / "sources.md").read_text()
+    table = text.split("## Artifact fingerprints\n")[1].split("\n## ")[0]
+    rows = [line for line in table.splitlines() if line.startswith("| `")]
+    assert rows
+    names = []
+    for row in rows:
+        artifact, source, digest, size = [part.strip() for part in row.strip("|").split("|")]
+        names.append(artifact)
+        assert re.fullmatch(r"`[0-9a-f]{64}`", digest), artifact
+        assert int(size) > 0, artifact
+        assert re.fullmatch(r"\[[^]]+\]\(#[^)]+\)", source), artifact
+    assert len(names) == len(set(names))

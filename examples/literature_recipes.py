@@ -2,8 +2,9 @@
 
 Each function below reproduces, as closely as the package allows, the event
 detection a paper in the literature survey (``load_literature_parameters()``)
-describes. The parameters and their sources are in that paper's notes under
-``docs/literature/papers/``, named by the survey's 0-based row; each recipe's
+describes. Parameter values live in the packaged CSV; field evidence and source
+versions are indexed by ``docs/literature/README.md``. Paper notes under
+``docs/literature/papers/`` explain interpretation and uncertainties. Each recipe's
 docstring names the rule and says where it departs from the paper. Papers
 whose events are defined by decoding have no recipe, only the detection they
 use to label events where they have one.
@@ -308,9 +309,11 @@ def yang_2024(rec):
 
 
 def _tirole(rec):
-    """Tirole 2022 / Huelin Gorriz 2023 (shared code), following the code: all
-    spikes (for sorted plus unsorted), Gaussian 10 ms SD applied forward and
-    back (about 14 ms; the text says 5 ms), z >= 3, bounds at z < 0 sought
+    """Approximation to Tirole 2022's released pipeline: all spikes (for sorted
+    plus unsorted), nominal Gaussian 10 ms SD applied forward and back. This
+    example uses the untruncated approximation (about 14.14 ms); the finite
+    41-point released kernel has effective SD about 12.58 ms, and the text
+    says 5 ms. Then z >= 3, bounds at z < 0 sought
     within 300 ms and relaxed to 0.25 then 0.5; events >= 100 ms, then merged
     < 50 ms, median speed <= 5, >= 5 place cells, and the ripple-band amplitude
     (channel 0 for the best channel, 125-300 Hz Hilbert amplitude, 15 ms moving
@@ -332,7 +335,10 @@ def _tirole(rec):
 
 @recipe(3, "Huelin Gorriz 2023", "SWR+MUA")
 def huelin_gorriz_2023(rec):
-    """Tirole 2022's pipeline, which the paper's code calls unchanged; see _tirole."""
+    """Related Tirole pipeline as an approximation; see _tirole. Huelin Gorriz's
+    release omits the called extract_replay_events function, so its identity
+    with Tirole's extractor is unproven. This example omits the published
+    750 ms cap; the survey retains that published limit."""
     return _tirole(rec)
 
 
@@ -895,8 +901,8 @@ def grosmark_2016(rec):
 def ambrose_2016(rec):
     """Pfeiffer & Foster 2015's trace on 4 tetrodes, > 3 SD, detected only
     while stopped (< 5 cm/s; the lab's convention, inferred), so the
-    statistics come from stopping too; no duration limits (the survey's 50 and
-    500 ms are in no source). The proximity to the well is not reproduced."""
+    statistics come from stopping too; no duration limits are reported in the
+    main Methods or supplement. The proximity to the well is not reproduced."""
     return rd.detect_events_from_trace(
         rec.time, rec.mean_envelope((150.0, 250.0)), rec.speed, rec.fs,
         threshold=3.0, smoothing_sigma=0.0125, minimum_duration=0.0,
