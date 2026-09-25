@@ -13,7 +13,7 @@ from ripple_detection import literature_methods as lm
 RIPPLE_TIMES = [3, 6, 9, 12, 15, 18]
 
 
-def _measured_inputs(fs=1500, origin=0.0):
+def _measured_inputs(fs=1500, origin=0.0, ripple_duration=(0.08, 0.16)):
     """from_arrays inputs for 20 s of simulated signals, as measured data."""
     time = np.arange(int(20 * fs)) / fs
     session = rd.simulate_session(
@@ -23,7 +23,7 @@ def _measured_inputs(fs=1500, origin=0.0):
         n_units=20,
         baseline_rate=1,
         ripple_rate_gain=40,
-        ripple_duration=(0.08, 0.16),
+        ripple_duration=ripple_duration,
         rng=21,
     )
     time = time + origin
@@ -1740,3 +1740,86 @@ def test_every_recipe_gives_the_same_bounds_at_a_unix_clock_origin(entry):
     tolerance = 16 * np.spacing(UNIX_ORIGIN + 20.0)
     assert found[0].shape == found[1].shape, name
     np.testing.assert_allclose(found[1], found[0], rtol=0, atol=tolerance, err_msg=name)
+
+
+def test_carey_builds_its_template_from_the_supplied_example_ripples(monkeypatch):
+    inputs, _ = _method_inputs("carey_2019")
+    captured = []
+    original = lm.rd.carey_spectral_ripple_score
+
+    def capture(time, lfp, fs, examples, **kwargs):
+        captured.append(np.asarray(examples))
+        return original(time, lfp, fs, examples, **kwargs)
+
+    monkeypatch.setattr(lm.rd, "carey_spectral_ripple_score", capture)
+    events = lm.carey_2019(lm.Recording.from_arrays(**inputs))
+    np.testing.assert_array_equal(captured[0], inputs["example_ripples"])
+    assert len(events)
+    assert rd.require_overlap(lm.bounds(events), inputs["example_ripples"]).size
+
+
+CANDIDATES = np.array([[1.0, 1.2], [2.0, 2.2], [3.0, 3.2]])
+
+
+@pytest.fixture
+def population_candidates(monkeypatch):
+    """Yang/Grosmark candidates fixed, so only the ripple and state gates act."""
+    frame = pd.DataFrame(CANDIDATES, columns=["start_time", "end_time"])
+    monkeypatch.setattr(lm, "_detect_population", lambda *args, **kwargs: frame.copy())
+    monkeypatch.setattr(lm.rd, "require_active_units", lambda events, *args, **kwargs: events)
+    return _measured_inputs()
+
+
+@pytest.mark.parametrize("name", ["yang_2024", "grosmark_2016"])
+@pytest.mark.parametrize(
+    ("external", "kept"),
+    [
+        # Three columns: the supplied peak must lie inside the candidate.
+        ([[1.15, 1.3, 1.18], [2.3, 2.5, 2.4]], [0]),
+        # A peak outside every candidate keeps none, although the ripple overlaps.
+        ([[2.15, 2.4, 2.35]], []),
+        # Two columns: the midpoint stands for the peak.
+        ([[2.05, 2.15], [2.16, 2.36]], [1]),
+        ([[0.9, 1.3], [2.95, 3.15]], [0, 2]),
+    ],
+)
+def test_population_candidates_need_an_external_ripple_peak_inside(
+    population_candidates, name, external, kept
+):
+    rec = lm.Recording.from_arrays(**population_candidates, external_ripples=external)
+    np.testing.assert_allclose(
+        lm.bounds(lm.run_method(name, rec)), CANDIDATES[kept].reshape(-1, 2)
+    )
+
+
+def test_population_candidates_keep_only_eligible_behavior_epochs(population_candidates):
+    external = np.c_[CANDIDATES, CANDIDATES.mean(axis=1)]
+    inputs = {**population_candidates, "external_ripples": external}
+    inputs["behavior_intervals"] = [[0.5, 1.5], [2.9, 3.25]]
+    np.testing.assert_allclose(
+        lm.bounds(lm.yang_2024(lm.Recording.from_arrays(**inputs))), CANDIDATES[[0, 2]]
+    )
+    # The eligible epochs are applied inside the method, not only by run_method.
+    np.testing.assert_allclose(
+        lm._population_with_ripple_peak(
+            lm.Recording.from_arrays(**inputs), np.array([[0, 20]])
+        ),
+        CANDIDATES[[0, 2]],
+    )
+    del inputs["behavior_intervals"]
+    with pytest.raises(ValueError, match="behavior_intervals"):
+        lm.yang_2024(lm.Recording.from_arrays(**inputs))
+
+
+@pytest.mark.parametrize("name", ["farooq_2019_science", "drieu_2018"])
+def test_sleep_frames_come_only_from_curated_sleep_intervals(name):
+    # Long ripples, so the population stays above 2 SD for Farooq's 100 ms.
+    inputs = _measured_inputs(ripple_duration=(0.25, 0.3))
+    whole = lm.bounds(lm.run_method(name, lm.Recording.from_arrays(**inputs)))
+    inputs["sleep_intervals"] = [[7.0, 13.5]]
+    curated = lm.bounds(lm.run_method(name, lm.Recording.from_arrays(**inputs)))
+    assert len(whole) > len(curated) > 0, name
+    assert np.all((curated[:, 0] >= 7.0) & (curated[:, 1] <= 13.5)), name
+    del inputs["sleep_intervals"]
+    with pytest.raises(ValueError, match="sleep_intervals"):
+        lm.run_method(name, lm.Recording.from_arrays(**inputs))
