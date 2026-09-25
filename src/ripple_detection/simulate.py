@@ -544,7 +544,9 @@ def _add_ripple_bursts(
         ripple_times, frequencies, durations, strict=True
     ):
         window, carrier = _gaussian_window(time, ripple_time, duration / 6, 8.0)
-        burst = np.sin(2 * np.pi * time[window] * frequency) * carrier  # unit peak
+        # phase from the ripple's centre, not the clock, so a ripple looks the
+        # same at any time origin; the cosine puts the unit peak at the centre
+        burst = np.cos(2 * np.pi * frequency * (time[window] - ripple_time)) * carrier
         if ripple_snr is not None:
             # scale so that this burst's peak *after the filter* is ripple_snr
             # background SDs; the filter's gain depends on frequency and duration.

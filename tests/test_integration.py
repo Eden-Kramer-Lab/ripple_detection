@@ -662,11 +662,6 @@ class TestTimeOrigin:
             rd.simulate_multiunit(time, ripples, 100, rng=0),
         )
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="the ripple carrier is sin(2 pi f t) on the clock, so its phase under "
-        "the envelope moves with the origin",
-    )
     @pytest.mark.parametrize("origin", ORIGINS)
     def test_simulated_ripples(self, origin):
         time = simulate_time(int(30 * FS), FS)

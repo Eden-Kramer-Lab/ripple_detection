@@ -133,6 +133,10 @@ here is relative to 1.7.1.
 - **Breaking.** The sampling-rate check raises beyond a 10 % mismatch and warns
   from 2 %, where 1.7 warned from 20 %.
 - **Breaking.** `simulate_LFP` defaults to pink (1/f) noise instead of brown.
+- **Breaking.** A simulated ripple's carrier is a cosine from the ripple's
+  centre, `cos(2 pi f (t - ripple_time))`, where it was `sin(2 pi f t)` on the
+  clock: the same ripple now looks the same at any time origin, and its peak is
+  at its centre. Every simulated recording with ripples changes.
 - Faster: `filter_ripple_band` convolves by FFT (equal to `filtfilt` to 1e-15;
   3x faster at 1500 Hz, 12x at 30 kHz, where an hour of 32 channels took 17
   min), Karlsson's thresholding is no longer quadratic in the recording (4.2 s

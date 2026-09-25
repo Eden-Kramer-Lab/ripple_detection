@@ -485,15 +485,16 @@ class TestSimulateLFPRealism:
     def test_default_output_is_pinned(self):
         """The default call's output, pinned so an unintended change to the
         draw order or the noise shows up. Re-pinned for 2.0, which draws from
-        numpy.random.default_rng rather than the legacy RandomState and whose
-        default noise is pink; the explicit brown call is the 1.x default."""
+        numpy.random.default_rng rather than the legacy RandomState, whose
+        default noise is pink, and whose ripple carrier runs from each ripple's
+        centre; the explicit brown call is the 1.x default."""
         t = simulate_time(4500, self.FS)
         y = simulate_LFP(t, [1.0, 2.0], rng=0)
-        assert _digest(y) == "38aba443e5f044ca"
+        assert _digest(y) == "919c4927dd5c0afa"
         y = simulate_LFP(t, [1.0, 2.0], rng=0, noise_type="brown")
-        assert _digest(y) == "aec97d07aeeb5ff9"
+        assert _digest(y) == "49e980344a661ab2"
         y = simulate_LFP(t, [1.0, 2.0], rng=0, noise_type="pink", ripple_amplitude=1.0)
-        assert _digest(y) == "fb97eb68f45ea538"
+        assert _digest(y) == "622bcde6f398694f"
 
     def test_memory_does_not_grow_with_the_ripple_count(self):
         """Ten minutes at 1500 Hz with 100 ripples peaked at 1.5 GB when every
@@ -515,8 +516,11 @@ class TestSimulateLFPRealism:
         """The 8-sigma window drops less than 1e-13 of a burst's peak."""
         t = simulate_time(self.FS * 4, self.FS)
         y = simulate_LFP(t, [1.0, 2.5], noise_amplitude=0.0, ripple_amplitude=2.0)
-        carrier = sum(np.exp(-((t - m) ** 2) / (2 * (0.1 / 6) ** 2)) for m in (1.0, 2.5))
-        whole = np.sin(2 * np.pi * t * 200.0) * carrier  # unit peak per burst
+        whole = sum(  # unit peak per burst, at its centre
+            np.cos(2 * np.pi * 200.0 * (t - m))
+            * np.exp(-((t - m) ** 2) / (2 * (0.1 / 6) ** 2))
+            for m in (1.0, 2.5)
+        )
         assert np.allclose(y, whole, atol=1e-12, rtol=0.0)
 
     def test_ripple_snr_sets_peak_relative_to_in_band_background(self):
