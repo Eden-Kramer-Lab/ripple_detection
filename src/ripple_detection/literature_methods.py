@@ -546,7 +546,9 @@ class Recording:
                 events.loc[keep] if isinstance(events, pd.DataFrame) else event_bounds[keep]
             )
             merged.append(
-                rd.merge_close_events(selected, gap, inclusive=inclusive, measure=measure)
+                bounds(
+                    rd.merge_close_events(selected, gap, inclusive=inclusive, measure=measure)
+                )
             )
         return np.concatenate(merged)
 
