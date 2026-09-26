@@ -2057,3 +2057,48 @@ def test_duration_limits_on_sample_bounds_count_samples_inclusively(fs):
     # Fifty 1 ms bins last 50 ms by the package's inclusive sample count.
     assert len(lm.within_duration(events, 0.05, sampling_frequency=fs)) == 1
     assert not len(lm.within_duration(events, 0.05 + 1 / fs, sampling_frequency=fs))
+
+
+def _uneven_time(origin, n):
+    """1 kHz timestamps with every odd sample 0.3 ms early: steps of 0.7 and
+    1.3 ms (median 1 ms, no gap), and every other 1 ms bin holds no sample."""
+    return origin + np.arange(n) / 1000 - 0.0003 * (np.arange(n) % 2)
+
+
+@pytest.mark.parametrize("origin", [0.0, 1_700_000_000.0])
+@pytest.mark.parametrize("grid", ["500 Hz", "uneven 1 kHz"])
+def test_bounds_stay_on_counted_samples_when_edge_bins_are_empty(origin, grid):
+    if grid == "500 Hz":
+        time = origin + np.arange(10_000) / 500
+        fs = 500.0
+    else:
+        time = _uneven_time(origin, 20_001)  # an even number of steps: median 1 ms
+        fs = 1000.0
+    spikes = np.zeros((len(time), 3))
+    burst = (time - origin >= 10.0) & (time - origin < 10.3)
+    spikes[burst] = 1
+    rec = lm.Recording.from_arrays(time, fs, multiunit=spikes)
+    trace = lm.population_trace(rec, bin_width=0.001, smoothing_sigma=0.005)
+    assert np.isnan(trace.first_sample).any()  # the grid has empty bins
+    found = lm.bounds(
+        trace.detect(**{**_EXACT_RATE, "threshold": 500.0, "bound_threshold": 500.0})
+    )
+    assert len(found)
+    assert np.isfinite(found).all()
+    # Every bound is a recorded timestamp inside the event's own bins.
+    assert np.isin(found, time).all()
+    assert (found[:, 0] <= found[:, 1]).all()
+
+
+@pytest.mark.parametrize("origin", [0.0, 1_700_000_000.0])
+def test_ji_frames_stay_inside_unaligned_sleep_intervals(origin, monkeypatch):
+    sleep = [[origin + 10.024, origin + 10.176]]
+    rec, _, _ = _burst_recording(
+        origin, 1000.0, burst=(10.0, 10.3), next_cell_spike=False, sleep_intervals=sleep
+    )
+    # Isolate the sleep restriction from the histogram-minimum level.
+    monkeypatch.setattr(lm.rd, "histogram_minimum_threshold", lambda *a, **k: 0.5)
+    found = lm.bounds(lm.ji_2007(rec))
+    assert len(found)
+    assert (found[:, 0] >= sleep[0][0]).all()
+    assert (found[:, 1] <= sleep[0][1]).all()

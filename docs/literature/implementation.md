@@ -141,7 +141,9 @@ Other inventories are exercised with their required settings in the tests.
   quantized to the caller's input clock. Native-grid events are reported at the
   first and last recorded samples of their first and last bins: closed bounds
   holding exactly the samples those bins counted, so participation counts see no
-  spike from a neighboring bin. Duration limits count bins (n bins last n bin
+  spike from a neighboring bin. Bins holding no sample (bins narrower than the
+  sample spacing, or uneven timestamps) are skipped, so bounds are always
+  recorded timestamps. Duration limits count bins (n bins last n bin
   widths) and close-event gaps are measured edge to edge; later duration rules on
   these bounds count samples inclusively. Interval restrictions (curated sleep
   or rest) keep only bins whose counted samples all lie inside an interval, and

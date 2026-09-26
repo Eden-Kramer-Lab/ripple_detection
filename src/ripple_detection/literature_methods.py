@@ -1062,16 +1062,50 @@ class PopulationTrace:
         Returns
         -------
         bounds : ndarray, shape (n_events, 2)
-            The first recorded sample of each start bin and the last of each
-            end bin: closed bounds holding exactly the samples counted in the
-            event's bins. Bin centers for a trace built by hand.
+            The first sample counted in the event's bins and the last: closed
+            bounds holding exactly those samples. A bin holding no sample (bins
+            narrower than the sample spacing, or uneven timestamps) is skipped,
+            so bounds are always recorded timestamps. Bin centers for a trace
+            built by hand, or for an event whose bins hold no sample.
         """
         centers = np.asarray(centers, dtype=float).reshape(-1, 2)
         if self.first_sample is None or self.last_sample is None or not len(centers):
             return centers.copy()
-        first = rd.core.nearest_sample_index(self.time, centers[:, 0])
-        last = rd.core.nearest_sample_index(self.time, centers[:, 1])
-        return np.column_stack([self.first_sample[first], self.last_sample[last]])
+        start_bin = rd.core.nearest_sample_index(self.time, centers[:, 0])
+        end_bin = rd.core.nearest_sample_index(self.time, centers[:, 1])
+        counted = np.flatnonzero(np.isfinite(self.first_sample))
+        first = np.searchsorted(counted, start_bin, side="left")
+        last = np.searchsorted(counted, end_bin, side="right") - 1
+        has_samples = (first < len(counted)) & (last >= 0) & (first <= last)
+        first = counted[np.clip(first, 0, len(counted) - 1)]
+        last = counted[np.clip(last, 0, len(counted) - 1)]
+        return np.where(
+            has_samples[:, None],
+            np.column_stack([self.first_sample[first], self.last_sample[last]]),
+            centers,
+        )
+
+    def bins_inside(self, intervals: ArrayLike) -> BoolArray:
+        """Which bins lie wholly inside one of the intervals.
+
+        Parameters
+        ----------
+        intervals : array_like, shape (n_intervals, 2)
+            Sorted, disjoint, inclusive [start, end] intervals in seconds.
+
+        Returns
+        -------
+        inside : ndarray of bool, shape (n_bins,)
+            True for a bin whose counted samples all lie inside one interval,
+            so events restricted to these bins are reported inside it. A bin
+            holding no sample, or a trace built by hand, is judged by its
+            center.
+        """
+        first = self.time if self.first_sample is None else self.first_sample
+        last = self.time if self.last_sample is None else self.last_sample
+        first = np.where(np.isfinite(first), first, self.time)
+        last = np.where(np.isfinite(last), last, self.time)
+        return _within_intervals_mask(np.column_stack([first, last]), intervals)
 
     def smooth(self, sigma: float) -> FloatArray:
         """Gaussian-smooth the trace without crossing missing bins.
@@ -3118,7 +3152,7 @@ def ji_2007(
     sleep = rec.sleep(4.0, 1.0)
     trace = population_trace(rec, bin_width=0.01, smoothing_sigma=0.03)
     counts = trace.data * 0.01
-    mask = _intervals_to_mask(trace.time, sleep)
+    mask = trace.bins_inside(sleep)
     level = rd.histogram_minimum_threshold(
         counts[mask], bins=histogram_bins, smoothing_window=histogram_smoothing
     )
@@ -3354,11 +3388,7 @@ def _detect_population_in(
     rec: Recording, intervals: FloatArray, units: BoolArray | None, sigma: float, **kwargs: Any
 ) -> pd.DataFrame:
     trace = population_trace(rec, bin_width=0.001, units=units, smoothing_sigma=sigma)
-    # A bin counts as inside only when every sample it counted is inside, so
-    # events reported at those samples stay within the supplied intervals.
-    first = trace.time if trace.first_sample is None else trace.first_sample
-    last = trace.time if trace.last_sample is None else trace.last_sample
-    mask = _within_intervals_mask(np.column_stack([first, last]), intervals)
+    mask = trace.bins_inside(intervals)
     return dataclasses.replace(trace, data=np.where(mask, trace.data, np.nan)).detect(**kwargs)
 
 
