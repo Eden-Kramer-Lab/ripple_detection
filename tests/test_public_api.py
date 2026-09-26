@@ -108,6 +108,8 @@ LITERATURE_HELPERS = [
     "Recipe",
     "RecordedSignals",
     "Recording",
+    "Requirement",
+    "RequirementKind",
     "Role",
     "Stage",
     "bounds",

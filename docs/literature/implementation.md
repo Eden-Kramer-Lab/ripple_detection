@@ -54,12 +54,22 @@ events = run_method("pfeiffer_2013_ripples", recording)
 print(events.attrs["doi"], events.attrs["output"])
 ```
 
-`list_methods()` lists names, DOI, output role, signature-required options, demonstration grouping and
-interpretation. `role` describes scientific use; `inventory` distinguishes default
-from additional demonstration entries, independently of that role. Read the function's docstring and its paper note before choosing
-an entry: a burst candidate, a ripple control and a decoded replay are different
-objects. Functions with conditional measured-data requirements describe them in
-their docstrings; the signature-only option list cannot express those conditions.
+`list_methods()` lists names, DOI, output, role, demonstration grouping and
+interpretation, and what each method needs: recorded signals (and which LFP
+channels it uses), cell selections, curated intervals with what they must mean,
+external inventories, options that measured data must set, a fixed input rate,
+the accepted stages and the native bin width. Its docstring defines each column.
+`role` describes scientific use; `inventory` distinguishes default from
+additional demonstration entries, independently of that role. Read the
+function's docstring and its paper note before choosing an entry: a burst
+candidate, a ripple control and a decoded replay are different objects.
+
+The requirements are declared once, with each method's registration
+(`Recipe.requirements`, `Requirement`), and `run_method` tests them before
+running: a call missing any fails listing every missing input. A test runs each
+method on a recording holding exactly its declared inputs, then removes each in
+turn and checks the call fails naming it, so the catalog neither understates nor
+overstates what a method needs.
 
 `Recording.from_arrays` copies inputs, validates selections, and masks artifact
 intervals. NaN speed remains unknown; omitted speed makes every method whose

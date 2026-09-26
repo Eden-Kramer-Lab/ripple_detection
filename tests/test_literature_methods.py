@@ -46,7 +46,7 @@ def _measured_inputs(fs=1500, origin=0.0, ripple_duration=(0.08, 0.16)):
 
 def _eligible_epochs(name, time):
     """behavior_intervals spanning the recording, for a method that needs them."""
-    if lm._ENTRIES[name].behavior is None:
+    if "behavior_intervals" not in {need.input for need in lm._ENTRIES[name].requirements}:
         return {}
     return {"behavior_intervals": [[time[0], time[-1]]]}
 
@@ -610,6 +610,8 @@ def test_analysis_participation_does_not_change_initial_detection(monkeypatch):
         place_cells=np.arange(20),
         pyramidal=np.arange(20),
         sleep_intervals=[[0, 2.999]],
+        external_ripples=[[0.5, 0.6]],  # the candidates are replaced below
+        speed=np.zeros(len(time)),
     )
     eligible = {"behavior_intervals": [[0, 2.999]]}
     candidates = np.array([[0.5, 0.575], [1.5, 1.7]])
@@ -870,6 +872,7 @@ def test_detection_and_decoding_stages_have_distinct_participation_rules(
     rec = lm.Recording.from_arrays(
         time,
         1000,
+        lfps=np.zeros(len(time)),  # the detections are replaced below
         multiunit=spikes,
         place_cells=np.arange(5),
         speed=np.zeros(len(time)),
@@ -1038,6 +1041,7 @@ def test_muessig_optional_sample_veto_uses_trial_speed_limits(monkeypatch):
         multiunit=spikes,
         speed=np.full(len(time), 1.5),
         pyramidal=np.arange(10),
+        lfps=np.zeros(len(time)),  # the ripple windows are replaced below
         sleep_intervals=[[0, time[-1]]],
     )
     monkeypatch.setitem(
@@ -1070,6 +1074,7 @@ def test_muessig_curated_state_accepts_brief_speed_excursions(monkeypatch, trial
         multiunit=spikes,
         speed=speed,
         pyramidal=np.arange(10),
+        lfps=np.zeros(len(time)),  # the ripple windows are replaced below
         sleep_intervals=[[0, 1.599]],
     )
     monkeypatch.setitem(
@@ -1109,7 +1114,13 @@ def test_bhattarai_window_policy_changes_candidate_end(monkeypatch):
     time = np.arange(2000) / 1000
     spikes = np.zeros((len(time), 5))
     spikes[[500, 520, 540, 560, 580], np.arange(5)] = 1
-    rec = lm.Recording.from_arrays(time, 1000, multiunit=spikes, place_cells=np.arange(5))
+    rec = lm.Recording.from_arrays(
+        time,
+        1000,
+        lfps=np.zeros((len(time), 2)),  # the ripples are replaced below
+        multiunit=spikes,
+        place_cells=np.arange(5),
+    )
     monkeypatch.setitem(
         lm._IMPLEMENTATIONS,
         "bhattarai_2020_ripples",
@@ -1408,7 +1419,12 @@ def test_a_fixed_channel_count_is_not_filled_from_fewer_channels(monkeypatch):
 )
 def test_measured_recordings_need_the_documented_behavior_intervals(measured, name):
     lm.run_method(name, measured, **_eligible_epochs(name, measured.time))  # runs with them
-    with pytest.raises(ValueError, match=f"behavior_intervals.*{lm._ENTRIES[name].behavior}"):
+    meaning = next(
+        need.meaning
+        for need in lm._ENTRIES[name].requirements
+        if need.input == "behavior_intervals"
+    )
+    with pytest.raises(ValueError, match=f"behavior_intervals: {meaning}"):
         lm.run_method(name, measured)
 
 
@@ -1678,9 +1694,9 @@ def test_population_trace_arrays_share_the_bin_grid():
 def test_registry_rejects_a_duplicate_name_without_changing_the_inventory():
     before = (len(lm.RECIPES), len(lm.VARIANTS), dict(lm._IMPLEMENTATIONS))
     with pytest.raises(ValueError, match="already registered"):
-        lm._register(
-            lm.VARIANTS, 0, "Mallory 2025", "MUA", "candidate_detection", None, False
-        )(lm._IMPLEMENTATIONS["mallory_2025"])
+        lm._register(lm.VARIANTS, 0, "Mallory 2025", "MUA")(
+            lm._IMPLEMENTATIONS["mallory_2025"]
+        )
     assert (len(lm.RECIPES), len(lm.VARIANTS), dict(lm._IMPLEMENTATIONS)) == before
 
 
@@ -1694,7 +1710,11 @@ def test_each_entry_records_its_inventory():
 
 def test_grosmark_rejects_an_unknown_stage(measured):
     with pytest.raises(ValueError, match="stage must be"):
-        lm.grosmark_2016(measured, stage="replay", behavior_intervals=[[0, 20]])
+        lm.grosmark_2016(
+            lm.Recording.from_arrays(**_method_inputs("grosmark_2016")[0]),
+            stage="replay",
+            behavior_intervals=[[0, 20]],
+        )
 
 
 def test_within_intervals_rejects_unsorted_or_overlapping_intervals():
@@ -1926,24 +1946,24 @@ ERROR_PATHS = [
     ),
     ("gridchyn_2020", _changed(), {"gain": -1.0}, "Invalid adaptive detector parameters"),
     # Required inputs.
-    ("gillespie_2021", _changed(drop=["lfps"]), {}, "selected raw LFP channels"),
-    ("tirole_2022", _changed(drop=["lfps"]), {}, "selected raw LFP channel"),
-    ("kaefer_2020", _changed(drop=["reference_lfp"]), {}, "Supply reference_lfp"),
-    ("gridchyn_2020_ripples", _changed(drop=["reference_lfp"]), {}, "reference subtraction"),
-    ("diba_2007_ripples", _changed(drop=["lfps"]), {}, "at least one LFP channel"),
+    ("gillespie_2021", _changed(drop=["lfps"]), {}, "lfps: every selected channel"),
+    ("tirole_2022", _changed(drop=["lfps"]), {}, "lfps: the first selected channel"),
+    ("kaefer_2020", _changed(drop=["reference_lfp"]), {}, "pass reference_lfp"),
+    ("gridchyn_2020_ripples", _changed(drop=["reference_lfp"]), {}, "pass reference_lfp"),
+    ("diba_2007_ripples", _changed(drop=["lfps"]), {}, "pass lfps"),
     (
         "chenani_2019_hfe",
         _changed(drop=["lfps"]),
         {"ar_coefficients": np.zeros((0, 2))},
-        "at least one LFP channel",
+        "pass lfps",
     ),
     (
         "bhattarai_2020_ripples",
         _changed(lfps=lambda inputs: inputs["lfps"][:, :1]),
         {},
-        "two reported LFP channels",
+        "at least 2 selected LFP channels, got 1",
     ),
-    ("olafsdottir_2015", _changed(templates=[]), {}, "Supply templates"),
+    ("olafsdottir_2015", _changed(templates=[]), {}, "pass templates"),
     (
         "farooq_2019_science_awake",
         _changed(),
@@ -1951,8 +1971,8 @@ ERROR_PATHS = [
         "behavior_intervals",
     ),
     ("liu_2019_awake", _changed(), {"behavior_intervals": None}, "behavior_intervals"),
-    ("wikenheiser_2013", _changed(), {"window_anchor": None}, "window_anchor explicitly"),
-    ("wikenheiser_2013", _changed(), {"branch": "run_lia"}, "theta_delta trace"),
+    ("wikenheiser_2013", _changed(), {"window_anchor": None}, "pass window_anchor="),
+    ("wikenheiser_2013", _changed(), {"branch": "run_lia"}, "theta_delta: the caller"),
     (
         "wikenheiser_2013",
         _changed(),
@@ -2205,5 +2225,161 @@ def test_not_reproduced_names_the_methods_that_remain():
 
 def test_list_methods_defines_every_column_once():
     doc = inspect.getdoc(lm.list_methods)
-    terms = [line.strip() for line in doc.splitlines() if re.fullmatch(r"    [a-z_]+", line)]
+    terms = [
+        term
+        for line in doc.splitlines()
+        if re.fullmatch(r"    [a-z_]+(, [a-z_]+)*", line)
+        for term in line.strip().split(", ")
+    ]
     assert sorted(terms) == sorted(lm.list_methods().columns)
+
+
+# ---------------------------------------------------------------- declared requirements
+
+
+def _defaults(name):
+    """The implementation's keyword defaults, for evaluating ``when`` conditions."""
+    return {
+        key: parameter.default
+        for key, parameter in inspect.signature(lm._IMPLEMENTATIONS[name]).parameters.items()
+        if parameter.default is not inspect.Parameter.empty
+    }
+
+
+def _applies(need, options):
+    return all(options.get(option) == value for option, value in need.when)
+
+
+def _scenarios(entry):
+    """Default options, then each option setting a requirement is conditional on."""
+    conditions = sorted({need.when for need in entry.requirements if need.when}, key=repr)
+    return [{}] + [dict(condition) for condition in conditions]
+
+
+REQUIREMENT_CASES = [
+    (entry.run.__name__, index, need.input)
+    for entry in (*lm.RECIPES, *lm.VARIANTS)
+    for index, scenario in enumerate(_scenarios(entry))
+    for need in entry.requirements
+    if _applies(need, _defaults(entry.run.__name__) | scenario)
+]
+
+
+def _declared_call(name, index, remove=None):
+    """A measured recording and call holding exactly the method's declared
+    requirements under scenario ``index``, less ``remove``."""
+    entry = lm._ENTRIES[name]
+    scenario = _scenarios(entry)[index]
+    options_now = _defaults(name) | scenario
+    active = [need for need in entry.requirements if _applies(need, options_now)]
+    everything, table_options = _method_inputs(name)
+    n_time = len(everything["time"])
+    keep = {"time", "sampling_frequency"} | {need.input for need in active}
+    inputs = {key: value for key, value in everything.items() if key in keep}
+    options = {
+        key: value
+        for key, value in table_options.items()
+        if key in keep or key not in _defaults(name)  # the signature requires it
+    } | scenario
+    if "theta_delta" in keep:
+        options["theta_delta"] = -np.ones(n_time)
+    options.pop("behavior_intervals", None)
+    if "behavior_intervals" in keep:
+        options["behavior_intervals"] = [[everything["time"][0], everything["time"][-1]]]
+    need = next((need for need in active if need.input == remove), None)
+    if remove == "multiunit":
+        for key in ("multiunit", "place_cells", "pyramidal", "templates"):
+            inputs.pop(key, None)
+    elif remove == "lfps" and need.minimum > 1:
+        inputs["lfps"] = inputs["lfps"][:, : need.minimum - 1]
+    elif remove is not None:
+        inputs.pop(remove, None)
+        options.pop(remove, None)
+    return lm.Recording.from_arrays(**inputs), options
+
+
+@pytest.mark.parametrize(
+    ("name", "index"),
+    sorted({(name, index) for name, index, _ in REQUIREMENT_CASES}),
+)
+def test_each_method_runs_with_exactly_its_declared_requirements(name, index, monkeypatch):
+    """The catalog cannot understate what a method needs: a recording holding
+    only the declared inputs runs, and its population grid is the declared one."""
+    widths = []
+    original = lm.population_trace
+
+    def spy(rec, *, bin_width, **kwargs):
+        widths.append(bin_width)
+        return original(rec, bin_width=bin_width, **kwargs)
+
+    monkeypatch.setattr(lm, "population_trace", spy)
+    rec, options = _declared_call(name, index)
+    events = lm.run_method(name, rec, **options)
+    assert isinstance(events, pd.DataFrame)
+    declared = lm._ENTRIES[name].bin_width
+    assert set(widths) <= {declared}, (name, widths, declared)
+
+
+@pytest.mark.parametrize(("name", "index", "missing"), REQUIREMENT_CASES)
+def test_removing_a_declared_requirement_fails_naming_it(name, index, missing):
+    """The catalog cannot overstate either: without any one declared input the
+    call fails naming it, and the method itself could not have run."""
+    rec, options = _declared_call(name, index, remove=missing)
+    with pytest.raises(ValueError, match=rf"(^|\n)- {missing}\b"):
+        lm.run_method(name, rec, **options)
+    implementation = lm._IMPLEMENTATIONS[name]
+    parameters = inspect.signature(implementation).parameters
+    if missing == "behavior_intervals" and missing not in parameters:
+        return  # applied by the dispatcher as whole-event containment
+    options.pop("behavior_intervals", None)
+    if "behavior_intervals" in parameters:
+        options["behavior_intervals"] = (
+            None
+            if missing == "behavior_intervals"
+            else (np.array([[rec.time[0], rec.time[-1]]]))
+        )
+    # Without the pre-check a missing input fails, if only by a warning about
+    # an empty channel set (every warning is an error here).
+    with pytest.raises((ValueError, RuntimeWarning)):
+        implementation(rec, **options)
+
+
+@pytest.mark.parametrize(
+    "entry", [e for e in (*lm.RECIPES, *lm.VARIANTS) if e.sampling_frequency]
+)
+def test_a_fixed_sampling_rate_is_checked_before_running(entry):
+    name = entry.run.__name__
+    inputs, options = _method_inputs(name)
+    rate = 1000.0 if entry.sampling_frequency != 1000 else 1500.0
+    time = np.arange(len(inputs["time"])) / rate
+    rec = lm.Recording.from_arrays(**{**inputs, "time": time, "sampling_frequency": rate})
+    with pytest.raises(ValueError, match=f"sampled at {entry.sampling_frequency:g} Hz"):
+        lm.run_method(name, rec, **options)
+
+
+def test_the_catalog_reports_the_declared_requirements():
+    catalog = lm.list_methods().set_index("name")
+    bush = catalog.loc["bush_2022_ripples"]
+    assert bush.sampling_frequency == 4800
+    assert bush.signals[0] == "lfps: the first selected channel: the highest theta SNR"
+    assert "speed" in bush.signals
+    assert catalog.loc["diba_2007", "intervals"] == (
+        "behavior_intervals: track-end reward areas (measured data)",
+    )
+    assert catalog.loc["harvey_2023_code", "signals"][1] == (
+        "sharp_wave_lfp: the stratum radiatum channel"
+    )
+    assert catalog.loc["mou_2022", "cells"] == (
+        "place_cells: one template's cells (if stage='decoding_candidates')",
+    )
+    assert catalog.loc["mou_2022", "stages"] == ("detection", "decoding_candidates")
+    assert catalog.loc["karlsson_2009", "stages"] == ("detection",)
+    assert catalog.loc["wikenheiser_2013", "measured_options"][0].startswith("window_anchor")
+    assert catalog.loc["carey_2019", "external_inputs"][0].startswith("example_ripples")
+    assert catalog.loc["ji_2007", "bin_width"] == 0.01
+    assert np.isnan(catalog.loc["karlsson_2009", "bin_width"])
+    assert np.isnan(catalog.loc["karlsson_2009", "sampling_frequency"])
+    krause = {need["input"]: need for need in catalog.loc["krause_2022", "requirements"]}
+    assert krause["lfps"]["unless"] == "external_ripples"
+    assert krause["place_cells"]["kind"] == "cells"
+    assert catalog.loc["bendor_2012", "signals"] == ("multiunit",)

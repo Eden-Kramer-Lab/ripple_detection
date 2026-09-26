@@ -1417,6 +1417,213 @@ Stage = Literal["detection", "decoding_candidates"]
 Inventory = Literal["default", "additional"]
 """Whether the demonstration runs a method by default or it is an addition."""
 
+RequirementKind = Literal["signal", "cells", "intervals", "external", "option"]
+"""What a requirement is: a recorded signal, a cell selection, curated
+intervals, an external inventory, or a method option."""
+
+# Recording inputs and ``behavior_intervals``, the call's epochs, by kind; any
+# other requirement names a method option.
+_INPUT_KINDS: dict[str, RequirementKind] = {
+    "lfps": "signal",
+    "sharp_wave_lfp": "signal",
+    "reference_lfp": "signal",
+    "multiunit": "signal",
+    "speed": "signal",
+    "place_cells": "cells",
+    "pyramidal": "cells",
+    "templates": "cells",
+    "sleep_intervals": "intervals",
+    "baseline_intervals": "intervals",
+    "behavior_intervals": "intervals",
+    "example_ripples": "external",
+    "external_ripples": "external",
+}
+
+_INPUT_DESCRIPTIONS = {
+    "lfps": "raw LFP channels",
+    "sharp_wave_lfp": "the stratum radiatum LFP",
+    "reference_lfp": "a reference LFP",
+    "multiunit": "spike counts per unit",
+    "speed": "speed in cm/s",
+    "place_cells": "a place-cell selection",
+    "pyramidal": "a pyramidal-cell selection",
+    "templates": "template cell selections",
+    "sleep_intervals": "curated sleep intervals",
+    "baseline_intervals": "baseline intervals",
+    "behavior_intervals": "eligible behavioral epochs",
+    "example_ripples": "example ripple intervals",
+    "external_ripples": "an external ripple inventory",
+}
+
+
+@dataclass(frozen=True)
+class Requirement:
+    """An input a literature method needs, declared with its registration.
+
+    ``check_method`` and ``run_method`` test these before running, and
+    ``list_methods`` reports them, so the catalog and the checks share one
+    declaration.
+
+    Attributes
+    ----------
+    input : str
+        A ``Recording.from_arrays`` input (``lfps``, ``sharp_wave_lfp``,
+        ``reference_lfp``, ``multiunit``, ``speed``, ``place_cells``,
+        ``pyramidal``, ``templates``, ``sleep_intervals``,
+        ``baseline_intervals``, ``example_ripples``, ``external_ripples``),
+        the call's ``behavior_intervals``, or a method option.
+    meaning : str
+        What it must hold for this method, such as "the first selected
+        channel" or "track-end reward areas". Empty for the input's plain
+        meaning.
+    minimum : int
+        Least number of selected LFP channels (``lfps`` only).
+    measured_only : bool
+        Whether only measured data need it: a ``SimulatedSession`` stands in
+        with the documented simulation proxy.
+    when : tuple of (str, object) pairs
+        Needed only when every named option has that value, such as
+        ``(("stage", "decoding_candidates"),)``; always when empty.
+    unless : str or None
+        Not needed when this other input is supplied (Krause's SWRs come
+        from ``external_ripples`` or are detected from ``lfps``).
+    """
+
+    input: str
+    meaning: str = ""
+    minimum: int = 1
+    measured_only: bool = False
+    when: tuple[tuple[str, Any], ...] = ()
+    unless: str | None = None
+
+    @property
+    def kind(self) -> RequirementKind:
+        """What the input is.
+
+        Returns
+        -------
+        kind : {"signal", "cells", "intervals", "external", "option"}
+            The input's kind; any name that is not a recording input or
+            ``behavior_intervals`` is a method option.
+        """
+        return _INPUT_KINDS.get(self.input, "option")
+
+    def describe(self) -> str:
+        """One line naming the input, its meaning and when it is needed.
+
+        Returns
+        -------
+        description : str
+            Such as ``"lfps: the first two selected channels (at least 2
+            channels)"`` or ``"place_cells (if stage='decoding_candidates')"``.
+        """
+        text = self.input
+        if self.meaning:
+            text += f": {self.meaning}"
+        notes = []
+        if self.minimum > 1:
+            notes.append(f"at least {self.minimum} channels")
+        notes += [f"if {option}={value!r}" for option, value in self.when]
+        if self.unless:
+            notes.append(f"unless {self.unless} is supplied")
+        if self.measured_only:
+            notes.append("measured data")
+        return text + (f" ({'; '.join(notes)})" if notes else "")
+
+
+def _lfps(meaning: str, minimum: int = 1) -> Requirement:
+    """Raw LFP channels, saying which of them the method uses."""
+    return Requirement("lfps", meaning, minimum=minimum)
+
+
+def _measured(input: str, meaning: str = "") -> Requirement:
+    """An input a SimulatedSession replaces with its documented proxy."""
+    return Requirement(input, meaning, measured_only=True)
+
+
+def _when(input: str, meaning: str = "", **options: Any) -> Requirement:
+    """An input needed only for these option values."""
+    return Requirement(input, meaning, when=tuple(options.items()))
+
+
+def _unmet(
+    requirement: Requirement,
+    rec: Recording,
+    behavior_intervals: FloatArray | None,
+    options: dict[str, Any],
+) -> str | None:
+    """Why ``requirement`` is unmet by this call, or None when it is met or
+    does not apply."""
+    if any(options.get(option) != value for option, value in requirement.when):
+        return None
+    if requirement.measured_only and rec.allows_simulation_proxies:
+        return None
+    if (
+        requirement.unless
+        and _unmet(Requirement(requirement.unless), rec, None, options) is None
+    ):
+        return None
+    name = requirement.input
+    session = rec.session
+    if name == "lfps":
+        lfps = getattr(session, "lfps", None)
+        n_channels = 0 if lfps is None else int(np.shape(lfps)[1])
+        if n_channels >= requirement.minimum:
+            return None
+        if requirement.minimum > 1:
+            return (
+                f"needs at least {requirement.minimum} selected LFP channels, got "
+                f"{n_channels}; pass them to Recording.from_arrays"
+            )
+    elif name == "sharp_wave_lfp":
+        values = getattr(session, "sharp_wave_lfp", None)
+        if values is not None and np.isfinite(values).any():
+            return None
+    elif name in {"speed", "multiunit"}:
+        values = getattr(session, name, None)
+        if values is not None and (name == "speed" or np.shape(values)[1] > 0):
+            return None
+    elif name in {"place_cells", "pyramidal"}:
+        if np.any(getattr(rec, name)):
+            return None
+    elif name == "templates":
+        if rec.templates:
+            return None
+    elif name == "behavior_intervals":
+        if behavior_intervals is not None:
+            return None
+        return "pass behavior_intervals to run_method or the named method"
+    elif name in _INPUT_KINDS:
+        if getattr(rec, name) is not None:
+            return None
+    else:
+        if options.get(name) is not None:
+            return None
+        return f"pass {name}= explicitly (no published value is assumed for measured data)"
+    return f"pass {name} to Recording.from_arrays"
+
+
+def _requirement_problems(
+    entry: Recipe,
+    rec: Recording,
+    behavior_intervals: FloatArray | None,
+    options: dict[str, Any],
+) -> list[str]:
+    """Every declared requirement this call does not meet, one line each."""
+    problems = []
+    for requirement in entry.requirements:
+        reason = _unmet(requirement, rec, behavior_intervals, options)
+        if reason is not None:
+            problems.append(f"{requirement.describe()} - {reason}")
+    if entry.sampling_frequency is not None and not np.isclose(
+        rec.fs, entry.sampling_frequency
+    ):
+        problems.append(
+            f"input sampled at {entry.sampling_frequency:g} Hz - this recording is "
+            f"{rec.fs:g} Hz; resample before building the Recording"
+        )
+    return problems
+
 
 @dataclass(frozen=True)
 class Recipe:
@@ -1440,12 +1647,12 @@ class Recipe:
     inventory : {"default", "additional"}
         ``list_methods``' ``inventory``: "default" entries are in ``RECIPES``,
         "additional" ones in ``VARIANTS``.
-    behavior : str or None
-        The epochs ``behavior_intervals`` must select, when the method needs
-        them; None when they are optional.
-    behavior_everywhere : bool
-        Whether a SimulatedSession needs them too (otherwise the simulation
-        uses a documented proxy).
+    requirements : tuple of Requirement
+        ``list_methods``' ``requirements``.
+    sampling_frequency : float or None
+        ``list_methods``' ``sampling_frequency``.
+    bin_width : float or None
+        ``list_methods``' ``bin_width``.
     """
 
     row: int
@@ -1455,8 +1662,9 @@ class Recipe:
     note: str
     role: Role = "candidate_detection"
     inventory: Inventory = "default"
-    behavior: str | None = None
-    behavior_everywhere: bool = False
+    requirements: tuple[Requirement, ...] = ()
+    sampling_frequency: float | None = None
+    bin_width: float | None = None
 
 
 RECIPES: list[Recipe] = []
@@ -1476,11 +1684,19 @@ def _register(
     row: int,
     paper: str,
     trigger: str,
-    role: Role,
-    behavior: str | None,
-    behavior_everywhere: bool,
+    *,
+    role: Role = "candidate_detection",
+    needs: Sequence[str | Requirement] = (),
+    sampling_frequency: float | None = None,
+    bin_width: float | None = None,
 ) -> Callable[[Callable[P, pd.DataFrame | FloatArray]], Callable[..., pd.DataFrame]]:
     inventory: Inventory = "default" if registry is RECIPES else "additional"
+    requirements = tuple(
+        need if isinstance(need, Requirement) else Requirement(need) for need in needs
+    )
+    behavior = next(
+        (need.meaning for need in requirements if need.input == "behavior_intervals"), None
+    )
 
     def register(
         function: Callable[P, pd.DataFrame | FloatArray],
@@ -1517,8 +1733,9 @@ def _register(
             (function.__doc__ or "").strip(),
             role,
             inventory,
-            behavior,
-            behavior_everywhere,
+            requirements,
+            sampling_frequency,
+            bin_width,
         )
         registry.append(entry)
         _ENTRIES[name] = entry
@@ -1586,18 +1803,13 @@ def _parameter_section(signature: inspect.Signature, behavior: str | None) -> st
 
 
 def _recipe(
-    row: int,
-    paper: str,
-    trigger: str,
-    *,
-    role: Role = "candidate_detection",
-    behavior: str | None = None,
-    behavior_everywhere: bool = False,
+    row: int, paper: str, trigger: str, **metadata: Any
 ) -> Callable[[Callable[P, pd.DataFrame | FloatArray]], Callable[..., pd.DataFrame]]:
-    return _register(RECIPES, row, paper, trigger, role, behavior, behavior_everywhere)
+    """Register a default inventory; ``metadata`` are ``_register``'s keywords."""
+    return _register(RECIPES, row, paper, trigger, **metadata)
 
 
-@_recipe(0, "Mallory 2025", "MUA")
+@_recipe(0, "Mallory 2025", "MUA", needs=("multiunit", "pyramidal", "speed"))
 def mallory_2025(rec: Recording) -> pd.DataFrame:
     """Linear-track MUA candidates using the released peak-merging rule.
 
@@ -1612,7 +1824,13 @@ def mallory_2025(rec: Recording) -> pd.DataFrame:
     return _mallory_candidates(rec.time, _zscore(trace, ddof=1))
 
 
-@_recipe(1, "Widloski 2025", "ripple label", role="secondary")
+@_recipe(
+    1,
+    "Widloski 2025",
+    "ripple label",
+    role="secondary",
+    needs=(_lfps("one channel per tetrode, envelopes averaged"), "speed"),
+)
 def widloski_2025(rec: Recording) -> pd.DataFrame | FloatArray:
     """Replays are defined by decoding (not reproduced). This is the ripple
     label: 100-220 Hz, one channel per tetrode, envelope smoothed with an
@@ -1672,7 +1890,19 @@ def _population_with_ripple_peak(
     return within_intervals(events, eligible)
 
 
-@_recipe(2, "Yang 2024", "SWR+MUA", behavior="quiet-waking/NREM epochs")
+@_recipe(
+    2,
+    "Yang 2024",
+    "SWR+MUA",
+    needs=(
+        "multiunit",
+        "pyramidal",
+        _measured("sleep_intervals", "curated NREM, the normalization epoch"),
+        _measured("behavior_intervals", "quiet-waking/NREM epochs"),
+        _measured("external_ripples", "ripple intervals, peaks as a third column"),
+    ),
+    bin_width=0.001,
+)
 def yang_2024(
     rec: Recording, *, behavior_intervals: FloatArray | None = None
 ) -> pd.DataFrame | FloatArray:
@@ -1741,7 +1971,18 @@ def _tirole(rec: Recording) -> pd.DataFrame:
     )
 
 
-@_recipe(3, "Huelin Gorriz 2023", "SWR+MUA")
+@_recipe(
+    3,
+    "Huelin Gorriz 2023",
+    "SWR+MUA",
+    needs=(
+        "multiunit",
+        "place_cells",
+        "speed",
+        _lfps("the first selected channel, for the ripple gate"),
+    ),
+    bin_width=0.001,
+)
 def huelin_gorriz_2023(
     rec: Recording, *, interpretation: str = "published_cap"
 ) -> pd.DataFrame | FloatArray:
@@ -1813,7 +2054,18 @@ def _harvey_stage(
     return np.asarray(candidates[np.asarray(keep, dtype=bool)], dtype=float)
 
 
-@_recipe(4, "Harvey 2023 (code)", "SWR")
+@_recipe(
+    4,
+    "Harvey 2023 (code)",
+    "SWR",
+    needs=(
+        _lfps("the first selected channel: CA1 pyramidal layer"),
+        Requirement("sharp_wave_lfp", "the stratum radiatum channel"),
+        "multiunit",
+        "pyramidal",
+        _when("place_cells", stage="decoding_candidates"),
+    ),
+)
 def harvey_2023_code(
     rec: Recording, *, stage: Stage = "detection"
 ) -> pd.DataFrame | FloatArray:
@@ -1832,7 +2084,18 @@ def harvey_2023_code(
     return _harvey_stage(rec, _spiking_filter(rec, ripples), stage)
 
 
-@_recipe(4, "Harvey 2023 (text)", "SWR (needs radiatum)")
+@_recipe(
+    4,
+    "Harvey 2023 (text)",
+    "SWR (needs radiatum)",
+    needs=(
+        _lfps("the first selected channel: CA1 pyramidal layer"),
+        Requirement("sharp_wave_lfp", "the stratum radiatum channel"),
+        _measured("baseline_intervals", "the normalization epoch (unstated in the paper)"),
+        _when("multiunit", stage="decoding_candidates"),
+        _when("place_cells", stage="decoding_candidates"),
+    ),
+)
 def harvey_2023_text(
     rec: Recording, *, sharp_wave_polarity: float = -1.0, stage: Stage = "detection"
 ) -> FloatArray:
@@ -1887,7 +2150,18 @@ def harvey_2023_text(
     return _harvey_stage(rec, rd.require_overlap(ripples, waves), stage)
 
 
-@_recipe(5, "Liu 2023", "SWR+MUA (needs radiatum)")
+@_recipe(
+    5,
+    "Liu 2023",
+    "SWR+MUA (needs radiatum)",
+    needs=(
+        _lfps("the first selected channel: CA1 pyramidal layer"),
+        Requirement("sharp_wave_lfp", "the stratum radiatum channel"),
+        "multiunit",
+        "pyramidal",
+    ),
+    bin_width=0.001,
+)
 def liu_2023(rec: Recording) -> pd.DataFrame | FloatArray:
     """DetectSWR at neurocode defaults on the pyramidal and radiatum channels
     (the text's 1 SD bounds and 15-400 ms limits are not applied; manual
@@ -1906,7 +2180,18 @@ def liu_2023(rec: Recording) -> pd.DataFrame | FloatArray:
     return rd.require_overlap(bursts, swrs)
 
 
-@_recipe(6, "Tirole 2022", "SWR+MUA")
+@_recipe(
+    6,
+    "Tirole 2022",
+    "SWR+MUA",
+    needs=(
+        "multiunit",
+        "place_cells",
+        "speed",
+        _lfps("the first selected channel, for the ripple gate"),
+    ),
+    bin_width=0.001,
+)
 def tirole_2022(rec: Recording) -> pd.DataFrame | FloatArray:
     """Released Tirole finite kernels and candidate order, with supplied cells.
 
@@ -1929,7 +2214,7 @@ def tirole_2022(rec: Recording) -> pd.DataFrame | FloatArray:
     return _tirole(rec)
 
 
-@_recipe(7, "Bush 2022", "MUA")
+@_recipe(7, "Bush 2022", "MUA", needs=("multiunit", "pyramidal", "speed"))
 def bush_2022(rec: Recording) -> pd.DataFrame | FloatArray:
     """Pyramidal cells, 5 ms Gaussian, peak z >= 3, bounds at z >= 0; merged
     when <= 40 ms apart, events <= 40 ms dropped, then >= 5 or 15% of
@@ -1949,7 +2234,7 @@ def bush_2022(rec: Recording) -> pd.DataFrame | FloatArray:
     return within_duration(merged, high=0.5)
 
 
-@_recipe(8, "Berners-Lee 2022", "MUA")
+@_recipe(8, "Berners-Lee 2022", "MUA", needs=("multiunit", "speed"), bin_width=0.001)
 def berners_lee_2022(rec: Recording) -> pd.DataFrame:
     """Released finite-kernel SDEs on the caller-selected spike population.
 
@@ -1997,7 +2282,22 @@ def _pfeiffer_2015_swrs(
     )  # fmt: skip
 
 
-@_recipe(10, "Krause 2022", "SWR")
+@_recipe(
+    10,
+    "Krause 2022",
+    "SWR",
+    needs=(
+        "multiunit",
+        "place_cells",
+        Requirement(
+            "lfps",
+            "every selected channel, averaged, for Pfeiffer 2015 SWRs",
+            unless="external_ripples",
+        ),
+        Requirement("speed", unless="external_ripples"),
+    ),
+    bin_width=0.003,
+)
 def krause_2022(rec: Recording) -> FloatArray:
     """Supplied or Pfeiffer-style SWRs trimmed using per-SWR 3 ms place-cell bins.
 
@@ -2056,7 +2356,16 @@ def krause_2022(rec: Recording) -> FloatArray:
     return np.asarray(found, float).reshape(-1, 2)
 
 
-@_recipe(11, "Mou 2022", "MUA")
+@_recipe(
+    11,
+    "Mou 2022",
+    "MUA",
+    needs=(
+        "multiunit",
+        _when("place_cells", "one template's cells", stage="decoding_candidates"),
+    ),
+    bin_width=0.01,
+)
 def mou_2022(
     rec: Recording, *, normalization: str = "minmax", stage: Stage = "detection"
 ) -> FloatArray:
@@ -2095,7 +2404,18 @@ def mou_2022(
     )
 
 
-@_recipe(12, "Berners-Lee 2021", "SWR")
+@_recipe(
+    12,
+    "Berners-Lee 2021",
+    "SWR",
+    needs=(
+        _lfps(
+            "the first three selected channels (the tetrodes with the most pyramidal cells), averaged",
+            minimum=3,
+        ),
+        "speed",
+    ),
+)
 def berners_lee_2021(rec: Recording) -> pd.DataFrame | FloatArray:
     """Pfeiffer & Foster 2015's rule at 2 SD on three selected tetrodes.
 
@@ -2105,7 +2425,13 @@ def berners_lee_2021(rec: Recording) -> pd.DataFrame | FloatArray:
     return _pfeiffer_2015_swrs(rec, threshold=2.0, channels=3)
 
 
-@_recipe(13, "Denovellis 2021", "SWR")
+@_recipe(
+    13,
+    "Denovellis 2021",
+    "SWR",
+    needs=(_lfps("every selected CA1 channel, squared and summed"), "speed"),
+    sampling_frequency=1500.0,
+)
 def denovellis_2021(rec: Recording) -> pd.DataFrame:
     """Historical Kay trace: square filtered LFP, sum, 4 ms Gaussian, then root.
 
@@ -2139,7 +2465,12 @@ def denovellis_2021(rec: Recording) -> pd.DataFrame:
     )
 
 
-@_recipe(14, "Gillespie 2021", "SWR")
+@_recipe(
+    14,
+    "Gillespie 2021",
+    "SWR",
+    needs=(_lfps("every selected channel, combined by the Kay consensus"), "speed"),
+)
 def gillespie_2021(rec: Recording) -> pd.DataFrame | FloatArray:
     """Kay consensus trace over every selected channel (square root of the
     summed squared 150-250 Hz envelopes, 4 ms Gaussian), 2 SD for >= 15 ms,
@@ -2204,13 +2535,25 @@ def _michon(rec: Recording, *, order: str = "text") -> FloatArray:
     return rd.exclude_movement(rd.require_overlap(bursts, ripples), rec.speed, rec.time, 5.0)
 
 
-@_recipe(15, "Michon 2021", "SWR+MUA")
+@_recipe(
+    15,
+    "Michon 2021",
+    "SWR+MUA",
+    needs=(
+        _lfps("the first three selected channels (all, if fewer), averaged"),
+        "multiunit",
+        "speed",
+    ),
+    bin_width=0.005,
+)
 def michon_2021(rec: Recording, *, order: str = "text") -> FloatArray:
     """5 ms MUA bins; 15 ms smoothing, 3 s detrending; text/code order selectable."""
     return _michon(rec, order=order)
 
 
-@_recipe(16, "Igata 2021 (candidates)", "SWR+MUA")
+@_recipe(
+    16, "Igata 2021 (candidates)", "SWR+MUA", needs=("multiunit", "speed"), bin_width=0.001
+)
 def igata_2021(rec: Recording) -> pd.DataFrame | FloatArray:
     """The candidate stage only: the rate of all recorded neurons (15 ms
     Gaussian) z-scored over stopping (< 5 cm/s), > 2 SD, bounds at the mean,
@@ -2224,7 +2567,12 @@ def igata_2021(rec: Recording) -> pd.DataFrame | FloatArray:
     return rd.require_active_units(events, rec.multiunit, rec.time, minimum_active_units=5)
 
 
-@_recipe(17, "Gridchyn 2020", "adaptive MUA triggers")
+@_recipe(
+    17,
+    "Gridchyn 2020",
+    "adaptive MUA triggers",
+    needs=("multiunit", Requirement("baseline_intervals", "the pre-rest epoch")),
+)
 def gridchyn_2020(
     rec: Recording,
     *,
@@ -2349,7 +2697,20 @@ def gridchyn_2020(
     return result
 
 
-@_recipe(18, "Kaefer 2020", "SWR label", role="secondary")
+@_recipe(
+    18,
+    "Kaefer 2020",
+    "SWR label",
+    role="secondary",
+    needs=(
+        _lfps("every selected channel, band RMS averaged"),
+        "reference_lfp",
+        Requirement(
+            "baseline_intervals", "the normalization epoch (unspecified in the paper)"
+        ),
+    ),
+    bin_width=0.02,
+)
 def kaefer_2020(rec: Recording) -> pd.DataFrame:
     """Secondary SWR label: reference-subtracted 240 ms FFT chunks every 20 ms.
 
@@ -2399,7 +2760,16 @@ def kaefer_2020(rec: Recording) -> pd.DataFrame:
     )
 
 
-@_recipe(19, "Bhattarai 2020", "SWR+MUA")
+@_recipe(
+    19,
+    "Bhattarai 2020",
+    "SWR+MUA",
+    needs=(
+        _lfps("the first two selected channels", minimum=2),
+        "multiunit",
+        Requirement("place_cells", "the block-specific place cells"),
+    ),
+)
 def bhattarai_2020(
     rec: Recording,
     *,
@@ -2421,7 +2791,17 @@ def bhattarai_2020(
     return rd.require_overlap(replays, swrs)
 
 
-@_recipe(20, "Stella 2019", "SWR")
+@_recipe(
+    20,
+    "Stella 2019",
+    "SWR",
+    needs=(
+        _lfps("each selected electrode; the maximum z-scored RMS"),
+        _measured("sleep_intervals", "curated non-REM"),
+        _measured("frequencies", "wavelet frequencies in Hz"),
+        _measured("cycles", "wavelet cycles"),
+    ),
+)
 def stella_2019(
     rec: Recording, *, frequencies: ArrayLike | None = None, cycles: float | None = None
 ) -> pd.DataFrame:
@@ -2479,7 +2859,7 @@ def stella_2019(
     )
 
 
-@_recipe(21, "Xu 2019", "MUA")
+@_recipe(21, "Xu 2019", "MUA", needs=("multiunit", "pyramidal"), bin_width=0.001)
 def xu_2019(rec: Recording) -> pd.DataFrame | FloatArray:
     """Pyramidal cells, 15 ms Gaussian, peak > 3 SD, bounds at the mean,
     75-750 ms, >= 4 cells, >= 5 spikes, >= 10% of cells, onset at the first
@@ -2521,7 +2901,13 @@ def _farooq(rec: Recording, sleep: FloatArray, units: BoolArray) -> FloatArray:
     )
 
 
-@_recipe(22, "Farooq 2019 (Neuron)", "MUA")
+@_recipe(
+    22,
+    "Farooq 2019 (Neuron)",
+    "MUA",
+    needs=("multiunit", "pyramidal", _measured("sleep_intervals", "curated SWS")),
+    bin_width=0.001,
+)
 def farooq_2019_neuron(rec: Recording) -> pd.DataFrame | FloatArray:
     """Population frames in caller-supplied SWS, with 15 ms interpreted as Gaussian SD.
 
@@ -2533,7 +2919,18 @@ def farooq_2019_neuron(rec: Recording) -> pd.DataFrame | FloatArray:
     return _farooq(rec, rec.sleep(1.0, 2.0, stillness=5.0, smoothing_sigma=5.0), rec.pyramidal)
 
 
-@_recipe(23, "Farooq 2019 (Science)", "MUA")
+@_recipe(
+    23,
+    "Farooq 2019 (Science)",
+    "MUA",
+    needs=(
+        "multiunit",
+        "pyramidal",
+        Requirement("place_cells", "the place-responsive cells"),
+        _measured("sleep_intervals", "curated SWS"),
+    ),
+    bin_width=0.001,
+)
 def farooq_2019_science(rec: Recording) -> pd.DataFrame | FloatArray:
     """The reported 15 ms Gaussian width is interpreted as SD (unresolved).
 
@@ -2549,7 +2946,13 @@ def farooq_2019_science(rec: Recording) -> pd.DataFrame | FloatArray:
     return _farooq(rec, sleep, rec.place_cells)
 
 
-@_recipe(24, "Chenani 2019", "MUA", behavior="reward zones")
+@_recipe(
+    24,
+    "Chenani 2019",
+    "MUA",
+    needs=("multiunit", "place_cells", _measured("behavior_intervals", "reward zones")),
+    bin_width=0.001,
+)
 def chenani_2019(rec: Recording) -> pd.DataFrame | FloatArray:
     """Place-cell rate, 30 ms Gaussian, peak >= 3 SD, bounds >= 1 SD, >= 5
     active cells. Supply reward-zone behavior_intervals; zones chosen by eye
@@ -2563,13 +2966,28 @@ def chenani_2019(rec: Recording) -> pd.DataFrame | FloatArray:
     )
 
 
-@_recipe(25, "Michon 2019", "SWR+MUA")
+@_recipe(
+    25,
+    "Michon 2019",
+    "SWR+MUA",
+    needs=(
+        _lfps("the first three selected channels (all, if fewer), averaged"),
+        "multiunit",
+        "speed",
+    ),
+    bin_width=0.005,
+)
 def michon_2019(rec: Recording, *, order: str = "text") -> FloatArray:
     """Same offline conjunction as Michon 2021; text/code preprocessing order selectable."""
     return _michon(rec, order=order)
 
 
-@_recipe(26, "Liu 2019", "MUA")
+@_recipe(
+    26,
+    "Liu 2019",
+    "MUA",
+    needs=("multiunit", "pyramidal", _measured("sleep_intervals", "curated SWS")),
+)
 def liu_2019(rec: Recording) -> pd.DataFrame | FloatArray:
     """Pyramidal spikes inside SWS (speed < 1 cm/s and theta/delta < 2, 5 s
     Gaussian), split at >= 100 ms of silence, >= 4 cells, 80 ms-1.2 s. The
@@ -2597,7 +3015,17 @@ def _karlsson_rule(rec: Recording, speed_threshold: float) -> pd.DataFrame:
     )
 
 
-@_recipe(27, "Shin 2019", "SWR")
+@_recipe(
+    27,
+    "Shin 2019",
+    "SWR",
+    needs=(
+        _lfps("each selected channel"),
+        "speed",
+        _when("multiunit", stage="decoding_candidates"),
+        _when("place_cells", stage="decoding_candidates"),
+    ),
+)
 def shin_2019(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | FloatArray:
     """The Karlsson rule at <= 4 cm/s; for the analyses, whole events >= 50 ms
     with >= 5 place cells are selected by stage='decoding_candidates'.
@@ -2612,7 +3040,17 @@ def shin_2019(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | F
     )
 
 
-@_recipe(28, "Carey 2019", "SWR+MUA")
+@_recipe(
+    28,
+    "Carey 2019",
+    "SWR+MUA",
+    needs=(
+        _lfps("the first selected channel, for the spectral template and theta"),
+        "multiunit",
+        "speed",
+        _measured("example_ripples", "manually selected ripple intervals"),
+    ),
+)
 def carey_2019(rec: Recording) -> pd.DataFrame:
     """Published amSWR spectral score and joint MUA candidates.
 
@@ -2645,7 +3083,19 @@ def carey_2019(rec: Recording) -> pd.DataFrame:
     )
 
 
-@_recipe(29, "Muessig 2019", "SWR+MUA")
+@_recipe(
+    29,
+    "Muessig 2019",
+    "SWR+MUA",
+    needs=(
+        "multiunit",
+        "pyramidal",
+        _lfps("each selected channel; the most variable one is used"),
+        _measured("sleep_intervals", "the curated rest or RUN state of the trial"),
+        _when("speed", sample_speed_veto=True),
+    ),
+    bin_width=0.001,
+)
 def muessig_2019(
     rec: Recording, *, trial: str = "rest", sample_speed_veto: bool = False
 ) -> FloatArray:
@@ -2684,7 +3134,13 @@ def muessig_2019(
     return within_intervals(events, rec.sleep(limit, 2.0, measure="power"))
 
 
-@_recipe(30, "Drieu 2018", "MUA")
+@_recipe(
+    30,
+    "Drieu 2018",
+    "MUA",
+    needs=("multiunit", "place_cells", _measured("sleep_intervals", "curated SWS")),
+    bin_width=0.001,
+)
 def drieu_2018(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | FloatArray:
     """Place-cell bursts in supplied SWS: 10 ms Gaussian, 3 SD/mean, <=500 ms.
 
@@ -2734,7 +3190,7 @@ def _drieu_events(rec: Recording) -> pd.DataFrame | FloatArray:
     )  # fmt: skip
 
 
-@_recipe(31, "Maboudi 2018", "MUA")
+@_recipe(31, "Maboudi 2018", "MUA", needs=("multiunit", "pyramidal", "speed"), bin_width=0.001)
 def maboudi_2018(rec: Recording) -> FloatArray:
     """Linear-track PBEs: pooled 1 ms bins, finite 20 ms SD/60 ms half-width Gaussian.
 
@@ -2766,7 +3222,18 @@ def maboudi_2018(rec: Recording) -> FloatArray:
     )
 
 
-@_recipe(32, "Ólafsdóttir 2017", "MUA", behavior="corner epochs")
+@_recipe(
+    32,
+    "Ólafsdóttir 2017",
+    "MUA",
+    needs=(
+        "multiunit",
+        "place_cells",
+        "speed",
+        _measured("behavior_intervals", "corner epochs"),
+    ),
+    bin_width=0.001,
+)
 def olafsdottir_2017(rec: Recording, *, analysis: str = "arm") -> pd.DataFrame | FloatArray:
     """Native place-cell MUA candidates, with separate arm/trajectory participation.
 
@@ -2800,7 +3267,16 @@ def olafsdottir_2017(rec: Recording, *, analysis: str = "arm") -> pd.DataFrame |
     )
 
 
-@_recipe(33, "Wu 2017", "MUA")
+@_recipe(
+    33,
+    "Wu 2017",
+    "MUA",
+    needs=(
+        "multiunit",
+        _when("place_cells", "one template's cells", stage="decoding_candidates"),
+    ),
+    bin_width=0.01,
+)
 def wu_2017(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | FloatArray:
     """Nonoverlapping 10 ms all-spike bins, no smoothing; 4 SD, mean bounds, 50-400 ms.
 
@@ -2826,7 +3302,13 @@ def wu_2017(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | Flo
     )
 
 
-@_recipe(34, "Yamamoto 2017 (one reading)", "SWR+MUA")
+@_recipe(
+    34,
+    "Yamamoto 2017 (one reading)",
+    "SWR+MUA",
+    needs=(_lfps("the first selected channel"), "multiunit"),
+    bin_width=0.01,
+)
 def yamamoto_2017(rec: Recording) -> pd.DataFrame | FloatArray:
     """One reading of an ambiguous rule: summed spikes in nonoverlapping 10 ms bins, peak > 3 SD, bounds at 1 SD, kept when
     overlapping a period of 140-200 Hz power above 3 SD on one channel. The
@@ -2842,13 +3324,26 @@ def yamamoto_2017(rec: Recording) -> pd.DataFrame | FloatArray:
     return rd.require_overlap(bursts, ripples)
 
 
-@_recipe(35, "Tang 2017", "SWR")
+@_recipe(35, "Tang 2017", "SWR", needs=(_lfps("each selected channel"), "speed"))
 def tang_2017(rec: Recording) -> pd.DataFrame | FloatArray:
     """The Karlsson rule at < 4 cm/s (smoothing and minimum inherited)."""
     return _karlsson_rule(rec, np.nextafter(4.0, -np.inf))
 
 
-@_recipe(36, "Grosmark 2016", "SWR+MUA", behavior="quiet-waking/NREM epochs")
+@_recipe(
+    36,
+    "Grosmark 2016",
+    "SWR+MUA",
+    needs=(
+        "multiunit",
+        "pyramidal",
+        _measured("sleep_intervals", "curated NREM, the normalization epoch"),
+        _measured("behavior_intervals", "quiet-waking/NREM epochs"),
+        _measured("external_ripples", "ripple intervals, peaks as a third column"),
+        _when("place_cells", stage="decoding_candidates"),
+    ),
+    bin_width=0.001,
+)
 def grosmark_2016(
     rec: Recording,
     *,
@@ -2877,7 +3372,12 @@ def grosmark_2016(
     )
 
 
-@_recipe(37, "Ambrose 2016", "SWR")
+@_recipe(
+    37,
+    "Ambrose 2016",
+    "SWR",
+    needs=(_lfps("every selected channel (one per tetrode), averaged"), "speed"),
+)
 def ambrose_2016(rec: Recording) -> pd.DataFrame | FloatArray:
     """Pfeiffer & Foster 2015's trace, the mean envelope over every selected
     channel (the paper used one channel from each of four to seven tetrodes;
@@ -2893,7 +3393,16 @@ def ambrose_2016(rec: Recording) -> pd.DataFrame | FloatArray:
     )  # fmt: skip
 
 
-@_recipe(38, "Jadhav 2016", "SWR")
+@_recipe(
+    38,
+    "Jadhav 2016",
+    "SWR",
+    needs=(
+        _lfps("each selected channel"),
+        "speed",
+        _when("multiunit", stage="decoding_candidates"),
+    ),
+)
 def jadhav_2016(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | FloatArray:
     """The Karlsson rule at < 4 cm/s; SWRs within 1 s after the previous
     one's start dropped; stage='decoding_candidates' adds >=4 active CA1 cells (all supplied units).
@@ -2907,7 +3416,7 @@ def jadhav_2016(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame |
     return rd.require_active_units(events, rec.multiunit, rec.time, minimum_active_units=4)
 
 
-@_recipe(39, "Ólafsdóttir 2016", "MUA")
+@_recipe(39, "Ólafsdóttir 2016", "MUA", needs=("multiunit", "place_cells"), bin_width=0.001)
 def olafsdottir_2016(rec: Recording) -> pd.DataFrame | FloatArray:
     """Place cells, 5 ms Gaussian, > 3 SD, bounds at the mean, >= 40 ms,
     >=15% of the place cells; no speed rule. Supply a rest recording;
@@ -2922,7 +3431,7 @@ def olafsdottir_2016(rec: Recording) -> pd.DataFrame | FloatArray:
     )
 
 
-@_recipe(40, "Silva 2015", "MUA")
+@_recipe(40, "Silva 2015", "MUA", needs=("multiunit", "pyramidal", "speed"), bin_width=0.001)
 def silva_2015(rec: Recording) -> pd.DataFrame | FloatArray:
     """Sorted units without interneurons (pyramidal; the Results say all
     recorded units, the Fig. 1c legend place cells), 10 ms Gaussian, > 3 SD,
@@ -2935,7 +3444,16 @@ def silva_2015(rec: Recording) -> pd.DataFrame | FloatArray:
     )  # fmt: skip
 
 
-@_recipe(41, "Ólafsdóttir 2015", "MUA", behavior="rest epochs")
+@_recipe(
+    41,
+    "Ólafsdóttir 2015",
+    "MUA",
+    needs=(
+        "multiunit",
+        Requirement("templates", "one cell selection per directional template"),
+        _measured("behavior_intervals", "rest epochs"),
+    ),
+)
 def olafsdottir_2015(rec: Recording, *, minimum_active_units: int = 0) -> FloatArray:
     """Per-template silence-bounded candidates before optional decoding filters.
 
@@ -2977,7 +3495,12 @@ def olafsdottir_2015(rec: Recording, *, minimum_active_units: int = 0) -> FloatA
     return np.asarray(events[np.argsort(events[:, 0], kind="stable")], float)
 
 
-@_recipe(42, "Pfeiffer 2015", "SWR")
+@_recipe(
+    42,
+    "Pfeiffer 2015",
+    "SWR",
+    needs=(_lfps("every selected channel (one per tetrode), averaged"), "speed"),
+)
 def pfeiffer_2015(rec: Recording) -> pd.DataFrame | FloatArray:
     """Mean 150-250 Hz Hilbert envelope over every selected channel (one per
     tetrode; select them before calling), 12.5 ms Gaussian, above 3 SD with
@@ -2986,7 +3509,7 @@ def pfeiffer_2015(rec: Recording) -> pd.DataFrame | FloatArray:
     return _pfeiffer_2015_swrs(rec)
 
 
-@_recipe(43, "Wu 2014", "MUA")
+@_recipe(43, "Wu 2014", "MUA", needs=("multiunit", "place_cells", "speed"), bin_width=0.01)
 def wu_2014(rec: Recording) -> pd.DataFrame | FloatArray:
     """Place-cell density in nonoverlapping 10 ms bins, 15 ms Gaussian, > 2 SD
     over the session, bounds at the mean, speed < 5 at both ends (assumed; the
@@ -2998,7 +3521,25 @@ def wu_2014(rec: Recording) -> pd.DataFrame | FloatArray:
     )  # fmt: skip
 
 
-@_recipe(44, "Wikenheiser 2013", "SWR")
+@_recipe(
+    44,
+    "Wikenheiser 2013",
+    "SWR",
+    needs=(
+        _lfps("every selected channel, averaged"),
+        "multiunit",
+        _measured("window_anchor", "'samples', 'peaks' or 'onsets'"),
+        Requirement(
+            "sleep_intervals",
+            "curated rest, including the stillness rule",
+            measured_only=True,
+            when=(("branch", "rest"),),
+        ),
+        _when("theta_delta", "the caller's z-scored theta/delta trace", branch="run_lia"),
+        _when("speed", branch="run_lia"),
+        _when("baseline_intervals", "the normalization epoch", normalization="baseline"),
+    ),
+)
 def wikenheiser_2013(
     rec: Recording,
     *,
@@ -3083,7 +3624,9 @@ def wikenheiser_2013(
     return np.asarray(events[np.asarray(keep, dtype=bool)], float)
 
 
-@_recipe(45, "Pfeiffer 2013", "MUA")
+@_recipe(
+    45, "Pfeiffer 2013", "MUA", needs=("multiunit", "pyramidal", "speed"), bin_width=0.001
+)
 def pfeiffer_2013(rec: Recording) -> pd.DataFrame | FloatArray:
     """Clustered pyramidal units' histogram (interneurons excluded, inferred)
     only while < 5 cm/s, 10 ms Gaussian, > 3 SD, bounds at the mean; bounds
@@ -3103,7 +3646,17 @@ def pfeiffer_2013(rec: Recording) -> pd.DataFrame | FloatArray:
     return within_duration(events, 0.05, 2.0, sampling_frequency=rec.fs)
 
 
-@_recipe(46, "Carr 2012", "SWR")
+@_recipe(
+    46,
+    "Carr 2012",
+    "SWR",
+    needs=(
+        _lfps("each selected CA1 channel"),
+        "speed",
+        _when("multiunit", stage="decoding_candidates"),
+        _when("place_cells", stage="decoding_candidates"),
+    ),
+)
 def carr_2012(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | FloatArray:
     """The Karlsson rule on CA1 at < 4 cm/s; stage='decoding_candidates'
     adds >=5 active place cells; the default returns the initial SWR inventory."""
@@ -3117,7 +3670,7 @@ def carr_2012(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | F
     )  # fmt: skip
 
 
-@_recipe(47, "Bendor 2012", "MUA")
+@_recipe(47, "Bendor 2012", "MUA", needs=("multiunit",), bin_width=0.001)
 def bendor_2012(rec: Recording) -> pd.DataFrame | FloatArray:
     """Davidson's multiunit signal (all spikes, 15 ms Gaussian), peak z >= 4,
     bounds z >= 2, merged < 50 ms, >= 50 ms; z over the whole session
@@ -3130,7 +3683,13 @@ def bendor_2012(rec: Recording) -> pd.DataFrame | FloatArray:
     )  # fmt: skip
 
 
-@_recipe(48, "Gupta 2010", "SWR gate only", role="candidate_gate")
+@_recipe(
+    48,
+    "Gupta 2010",
+    "SWR gate only",
+    role="candidate_gate",
+    needs=(_lfps("every selected channel (one per tetrode), averaged"),),
+)
 def gupta_2010(rec: Recording, *, log_amplitude: bool = True) -> pd.DataFrame | FloatArray:
     """Events are windows grown by a spike-order score (not reproduced). This
     is the SWR gate: 180-220 Hz Hilbert amplitude averaged over tetrodes,
@@ -3146,7 +3705,7 @@ def gupta_2010(rec: Recording, *, log_amplitude: bool = True) -> pd.DataFrame | 
     )  # fmt: skip
 
 
-@_recipe(49, "Karlsson 2009", "SWR")
+@_recipe(49, "Karlsson 2009", "SWR", needs=(_lfps("each selected channel"), "speed"))
 def karlsson_2009(rec: Recording) -> pd.DataFrame | FloatArray:
     """The Karlsson rule: each selected channel's 150-250 Hz envelope, 4 ms
     Gaussian, 3 SD for >= 15 ms on any channel, bounds at the mean,
@@ -3155,7 +3714,7 @@ def karlsson_2009(rec: Recording) -> pd.DataFrame | FloatArray:
     return _karlsson_rule(rec, np.nextafter(2.0, -np.inf))
 
 
-@_recipe(50, "Davidson 2009", "MUA")
+@_recipe(50, "Davidson 2009", "MUA", needs=("multiunit", "speed"), bin_width=0.001)
 def davidson_2009(rec: Recording) -> pd.DataFrame | FloatArray:
     """All spikes, 15 ms Gaussian, peak >= 3 SD over stopping (< 5 cm/s),
     bounds at the mean, speed < 5 at both ends; within 30 s of running (RUN:
@@ -3169,7 +3728,17 @@ def davidson_2009(rec: Recording) -> pd.DataFrame | FloatArray:
     return rd.require_overlap(events, running + np.array([-30.0, 30.0]))
 
 
-@_recipe(51, "Diba 2007", "MUA", behavior="track-end reward areas")
+@_recipe(
+    51,
+    "Diba 2007",
+    "MUA",
+    needs=(
+        "multiunit",
+        Requirement("place_cells", "one directional template's cells"),
+        "speed",
+        _measured("behavior_intervals", "track-end reward areas"),
+    ),
+)
 def diba_2007(rec: Recording) -> pd.DataFrame | FloatArray:
     """>= 60 ms of silence (of the template's cells, assumed), then >= 5 and
     >= 30% of the template's cells (whichever is greater) in the next 300 ms,
@@ -3184,7 +3753,17 @@ def diba_2007(rec: Recording) -> pd.DataFrame | FloatArray:
     return rd.exclude_movement(events, rec.speed, rec.time, 10.0)
 
 
-@_recipe(52, "Ji 2007", "MUA")
+@_recipe(
+    52,
+    "Ji 2007",
+    "MUA",
+    needs=(
+        "multiunit",
+        _measured("sleep_intervals", "curated SWS"),
+        _when("place_cells", "one template's cells", stage="decoding_candidates"),
+    ),
+    bin_width=0.01,
+)
 def ji_2007(
     rec: Recording,
     *,
@@ -3226,7 +3805,17 @@ def ji_2007(
     )
 
 
-@_recipe(53, "Foster 2006", "MUA", behavior="facing-direction epochs")
+@_recipe(
+    53,
+    "Foster 2006",
+    "MUA",
+    needs=(
+        "multiunit",
+        Requirement("place_cells", "one probe sequence's cells"),
+        "speed",
+        _measured("behavior_intervals", "facing-direction epochs"),
+    ),
+)
 def foster_2006(rec: Recording) -> pd.DataFrame | FloatArray:
     """Probe cells' spikes during stopping (< 5 cm/s, assumed) pooled and split
     at gaps of more than 50 ms, >=1/3 of the cells, <=500 ms. Supply
@@ -3240,7 +3829,16 @@ def foster_2006(rec: Recording) -> pd.DataFrame | FloatArray:
     )  # fmt: skip
 
 
-@_recipe(54, "Lee 2002", "MUA")
+@_recipe(
+    54,
+    "Lee 2002",
+    "MUA",
+    needs=(
+        "multiunit",
+        Requirement("place_cells", "one directional template's cells"),
+        _measured("sleep_intervals", "curated SWS"),
+    ),
+)
 def lee_2002(rec: Recording) -> pd.DataFrame | FloatArray:
     """Template cells' spikes in supplied SWS, with within-cell bursts collapsed.
 
@@ -3255,7 +3853,18 @@ def lee_2002(rec: Recording) -> pd.DataFrame | FloatArray:
     )  # fmt: skip
 
 
-@_recipe(55, "Nádasdy 1999", "SWR")
+@_recipe(
+    55,
+    "Nádasdy 1999",
+    "SWR",
+    needs=(
+        _lfps("each selected channel, RMS summed"),
+        Requirement("baseline_intervals", "the normalization epoch (unreported)"),
+        _measured("sleep_intervals", "curated sleep"),
+        _measured("rms_window", "RMS window in seconds"),
+        _measured("bound_threshold", "boundary threshold in SD"),
+    ),
+)
 def nadasdy_1999(
     rec: Recording, *, rms_window: float | None = None, bound_threshold: float | None = None
 ) -> FloatArray:
@@ -3281,7 +3890,16 @@ def nadasdy_1999(
     return within_intervals(events, rec.sleep(4.0, 1.0, theta=(5.0, 10.0), delta=(2.0, 4.0)))
 
 
-@_recipe(56, "Kudrimoti 1999", "SWR")
+@_recipe(
+    56,
+    "Kudrimoti 1999",
+    "SWR",
+    needs=(
+        _lfps("the first selected channel"),
+        _measured("sleep_intervals", "curated SWS, also the normalization epoch"),
+        _measured("threshold_sd", "threshold in SD"),
+    ),
+)
 def kudrimoti_1999(rec: Recording, *, threshold_sd: float | None = None) -> pd.DataFrame:
     """100-300 Hz amplitude above a caller-selected threshold for >=25 ms in SWS.
 
@@ -3467,18 +4085,23 @@ VARIANTS: list[Recipe] = []
 
 
 def _variant(
-    row: int,
-    paper: str,
-    trigger: str,
-    *,
-    role: Role = "candidate_detection",
-    behavior: str | None = None,
-    behavior_everywhere: bool = False,
+    row: int, paper: str, trigger: str, **metadata: Any
 ) -> Callable[[Callable[P, pd.DataFrame | FloatArray]], Callable[..., pd.DataFrame]]:
-    return _register(VARIANTS, row, paper, trigger, role, behavior, behavior_everywhere)
+    """Register an additional inventory; ``metadata`` are ``_register``'s keywords."""
+    return _register(VARIANTS, row, paper, trigger, **metadata)
 
 
-@_variant(4, "Harvey 2023 (no radiatum)", "SWR")
+@_variant(
+    4,
+    "Harvey 2023 (no radiatum)",
+    "SWR",
+    needs=(
+        _lfps("the first selected channel: the highest ripple power"),
+        "multiunit",
+        "pyramidal",
+        _when("place_cells", stage="decoding_candidates"),
+    ),
+)
 def harvey_2023_no_radiatum(rec: Recording, *, stage: Stage = "detection") -> FloatArray:
     """Released FindRipples branch for sessions without a radiatum channel.
 
@@ -3503,7 +4126,13 @@ def harvey_2023_no_radiatum(rec: Recording, *, stage: Stage = "detection") -> Fl
     return _harvey_stage(rec, _spiking_filter(rec, ripples), stage)
 
 
-@_variant(0, "Mallory 2025", "ripple candidates", role="secondary")
+@_variant(
+    0,
+    "Mallory 2025",
+    "ripple candidates",
+    role="secondary",
+    needs=(_lfps("the first selected channel"), "speed"),
+)
 def mallory_2025_ripples(rec: Recording) -> pd.DataFrame:
     """Single-channel 150-250 Hz Hilbert amplitude, 12.5 ms smoothing.
 
@@ -3517,7 +4146,19 @@ def mallory_2025_ripples(rec: Recording) -> pd.DataFrame:
     return _mallory_candidates(rec.time, _zscore(amplitude, ddof=1))
 
 
-@_variant(7, "Bush 2022", "ripple candidates", role="secondary")
+@_variant(
+    7,
+    "Bush 2022",
+    "ripple candidates",
+    role="secondary",
+    needs=(
+        _lfps("the first selected channel: the highest theta SNR"),
+        "multiunit",
+        "pyramidal",
+        "speed",
+    ),
+    sampling_frequency=4800.0,
+)
 def bush_2022_ripples(rec: Recording, *, fir_window: str = "hamming") -> FloatArray:
     """400th-order 150-250 Hz FIR, Hilbert amplitude, 5 ms Gaussian.
 
@@ -3559,7 +4200,13 @@ def bush_2022_ripples(rec: Recording, *, fir_window: str = "hamming") -> FloatAr
     )
 
 
-@_variant(16, "Igata 2021", "per-channel ripple candidates", role="secondary")
+@_variant(
+    16,
+    "Igata 2021",
+    "per-channel ripple candidates",
+    role="secondary",
+    needs=(_lfps("each selected channel"), "speed"),
+)
 def igata_2021_ripples(rec: Recording) -> pd.DataFrame:
     """150-250 Hz envelope, 4 ms Gaussian, stopped baseline, 3 SD/mean, 50-500 ms.
 
@@ -3627,7 +4274,17 @@ def _rms_ripples(
     )
 
 
-@_variant(17, "Gridchyn 2020", "ripple candidates", role="secondary")
+@_variant(
+    17,
+    "Gridchyn 2020",
+    "ripple candidates",
+    role="secondary",
+    needs=(
+        _lfps("each selected channel, RMS summed"),
+        "reference_lfp",
+        Requirement("baseline_intervals", "the pre-rest epoch"),
+    ),
+)
 def gridchyn_2020_ripples(
     rec: Recording, *, rms_window: float, bound_threshold: float
 ) -> pd.DataFrame:
@@ -3646,7 +4303,17 @@ def gridchyn_2020_ripples(
     )
 
 
-@_variant(21, "Xu 2019", "ripple candidates", role="secondary")
+@_variant(
+    21,
+    "Xu 2019",
+    "ripple candidates",
+    role="secondary",
+    needs=(
+        _lfps("each selected channel, RMS summed"),
+        "reference_lfp",
+        Requirement("baseline_intervals", "the first-sleep epoch"),
+    ),
+)
 def xu_2019_ripples(
     rec: Recording, *, rms_window: float, bound_threshold: float
 ) -> pd.DataFrame:
@@ -3665,7 +4332,16 @@ def xu_2019_ripples(
     )
 
 
-@_variant(22, "Farooq 2019 (Neuron)", "ripple candidates", role="secondary")
+@_variant(
+    22,
+    "Farooq 2019 (Neuron)",
+    "ripple candidates",
+    role="secondary",
+    needs=(
+        _lfps("the first selected channel"),
+        Requirement("baseline_intervals", "the normalization epoch"),
+    ),
+)
 def farooq_2019_neuron_ripples(
     rec: Recording, *, threshold: float, bound_threshold: float, smoothing_sigma: float
 ) -> pd.DataFrame:
@@ -3684,7 +4360,17 @@ def farooq_2019_neuron_ripples(
     )
 
 
-@_variant(23, "Farooq 2019 (Science)", "ripple candidates", role="secondary")
+@_variant(
+    23,
+    "Farooq 2019 (Science)",
+    "ripple candidates",
+    role="secondary",
+    needs=(
+        _lfps("the first selected channel"),
+        "speed",
+        _measured("sleep_intervals", "curated sleep"),
+    ),
+)
 def farooq_2019_science_ripples(
     rec: Recording, *, power_measure: str, bound_threshold: float
 ) -> pd.DataFrame:
@@ -3715,7 +4401,9 @@ def _power(rec: Recording, band: tuple[float, float], measure: str) -> FloatArra
     raise ValueError(msg)
 
 
-@_variant(24, "Chenani 2019", "unclassified HFE candidates")
+@_variant(
+    24, "Chenani 2019", "unclassified HFE candidates", needs=(_lfps("each selected channel"),)
+)
 def chenani_2019_hfe(rec: Recording, *, ar_coefficients: ArrayLike) -> pd.DataFrame:
     """AR(2)-whitened 100-250 Hz Hilbert amplitude, 12 ms Gaussian, 3/1 SD.
 
@@ -3752,7 +4440,16 @@ def chenani_2019_hfe(rec: Recording, *, ar_coefficients: ArrayLike) -> pd.DataFr
     return pd.concat(rows, ignore_index=True)
 
 
-@_variant(26, "Liu 2019", "ripple peaks and centered controls", role="secondary")
+@_variant(
+    26,
+    "Liu 2019",
+    "ripple peaks and centered controls",
+    role="secondary",
+    needs=(
+        _lfps("the first selected channel"),
+        Requirement("baseline_intervals", "the normalization epoch"),
+    ),
+)
 def liu_2019_ripples(
     rec: Recording, *, smoothing_sigma: float, window: float = 0.24
 ) -> pd.DataFrame:
@@ -3775,7 +4472,13 @@ def liu_2019_ripples(
     )
 
 
-@_variant(30, "Drieu 2018", "ripple candidates", role="secondary")
+@_variant(
+    30,
+    "Drieu 2018",
+    "ripple candidates",
+    role="secondary",
+    needs=(_lfps("every selected channel, averaged per band"),),
+)
 def drieu_2018_ripples(rec: Recording, *, signal_measure: str) -> pd.DataFrame:
     """Detrended 100-250 Hz minus 300-500 Hz signal, 3/1 SD, >20 and <110 ms.
 
@@ -3808,7 +4511,14 @@ def drieu_2018_ripples(rec: Recording, *, signal_measure: str) -> pd.DataFrame:
     )
 
 
-@_variant(32, "Ólafsdóttir 2017", "ripple candidates", role="secondary")
+@_variant(
+    32,
+    "Ólafsdóttir 2017",
+    "ripple candidates",
+    role="secondary",
+    needs=(_lfps("the first selected channel"),),
+    sampling_frequency=1200.0,
+)
 def olafsdottir_2017_ripples(rec: Recording) -> FloatArray:
     """150-250 Hz squared Hilbert modulus, 2.5 SD/mean, 40-500 ms, then <40 ms merge.
 
@@ -3825,14 +4535,26 @@ def olafsdottir_2017_ripples(rec: Recording) -> FloatArray:
     return rec.merge(events, 0.04, power)
 
 
-@_variant(43, "Wu 2014", "ripple peaks", role="secondary")
+@_variant(
+    43,
+    "Wu 2014",
+    "ripple peaks",
+    role="secondary",
+    needs=(_lfps("every selected channel, averaged"), "speed"),
+)
 def wu_2014_ripples(rec: Recording) -> pd.DataFrame:
     """150-250 Hz mean envelope, 8 ms Gaussian, local peaks >2.5 stopped-baseline SD."""
     trace = rec.smooth(rec.mean_envelope((150.0, 250.0)), 0.008)
     return _local_peaks(rec, _zscore(trace, rec.speed < 5), 2.5)
 
 
-@_variant(45, "Pfeiffer 2013", "ripple candidates", role="secondary")
+@_variant(
+    45,
+    "Pfeiffer 2013",
+    "ripple candidates",
+    role="secondary",
+    needs=(_lfps("every selected channel, averaged"), "speed"),
+)
 def pfeiffer_2013_ripples(rec: Recording) -> pd.DataFrame:
     """150-250 Hz mean envelope, 12.5 ms Gaussian, 3 SD/mean over stopping.
 
@@ -3850,14 +4572,29 @@ def pfeiffer_2013_ripples(rec: Recording) -> pd.DataFrame:
     )
 
 
-@_variant(50, "Davidson 2009", "ripple peaks", role="secondary")
+@_variant(
+    50,
+    "Davidson 2009",
+    "ripple peaks",
+    role="secondary",
+    needs=(_lfps("every selected channel, averaged"), "speed"),
+)
 def davidson_2009_ripples(rec: Recording) -> pd.DataFrame:
     """150-250 Hz mean envelope, 12.5 ms Gaussian, local peaks >2.5 stopped-baseline SD."""
     trace = rec.smooth(rec.mean_envelope((150.0, 250.0)), 0.0125)
     return _local_peaks(rec, _zscore(trace, rec.speed < 5), 2.5)
 
 
-@_variant(51, "Diba 2007", "ripple candidates", role="secondary")
+@_variant(
+    51,
+    "Diba 2007",
+    "ripple candidates",
+    role="secondary",
+    needs=(
+        _lfps("the first selected channel: CA1"),
+        Requirement("baseline_intervals", "the normalization epoch"),
+    ),
+)
 def diba_2007_ripples(rec: Recording, *, rms_window: float) -> pd.DataFrame:
     """Single CA1 channel, 100-300 Hz RMS, 2 SD peak and 1.5 SD bounds.
 
@@ -3875,7 +4612,18 @@ def diba_2007_ripples(rec: Recording, *, rms_window: float) -> pd.DataFrame:
     )
 
 
-@_variant(52, "Ji 2007", "ripple candidates", role="secondary")
+@_variant(
+    52,
+    "Ji 2007",
+    "ripple candidates",
+    role="secondary",
+    needs=(
+        _lfps("the first selected channel"),
+        Requirement(
+            "baseline_intervals", "the epoch whose filtered-LFP SD sets the thresholds"
+        ),
+    ),
+)
 def ji_2007_ripples(rec: Recording) -> FloatArray:
     """Rectified 80-250 Hz LFP, low 3*S/high 7*S where S is filtered-LFP SD.
 
@@ -3896,7 +4644,13 @@ def ji_2007_ripples(rec: Recording) -> FloatArray:
     return rd.require_trace_peak(merged, trace, rec.time, 7 * scale)
 
 
-@_variant(54, "Lee 2002", "ripple candidates", role="secondary")
+@_variant(
+    54,
+    "Lee 2002",
+    "ripple candidates",
+    role="secondary",
+    needs=(_lfps("the first selected channel"), _measured("sleep_intervals", "curated SWS")),
+)
 def lee_2002_ripples(rec: Recording) -> FloatArray:
     """Rectified 100-400 Hz, SWS mean+5 SD, crossings <=20 ms apart joined, >=20 ms.
 
@@ -3912,7 +4666,13 @@ def lee_2002_ripples(rec: Recording) -> FloatArray:
     return within_duration(rec.merge(events, 0.02, trace, inclusive=True), low=0.02)
 
 
-@_variant(53, "Foster 2006", "ripple candidates", role="secondary")
+@_variant(
+    53,
+    "Foster 2006",
+    "ripple candidates",
+    role="secondary",
+    needs=(_lfps("the first selected channel"), _measured("sleep_intervals", "curated SWS")),
+)
 def foster_2006_ripples(rec: Recording) -> pd.DataFrame:
     """Inherited Lee ripple rule; reported event time is the interval midpoint."""
     events = _IMPLEMENTATIONS["lee_2002_ripples"](rec)
@@ -3921,7 +4681,14 @@ def foster_2006_ripples(rec: Recording) -> pd.DataFrame:
     return result
 
 
-@_variant(1, "Widloski 2025", "population burst labels", role="secondary")
+@_variant(
+    1,
+    "Widloski 2025",
+    "population burst labels",
+    role="secondary",
+    needs=("multiunit", "speed"),
+    bin_width=0.001,
+)
 def widloski_2025_bursts(rec: Recording) -> pd.DataFrame:
     """All good clusters in 1 ms bins, 80 ms Gaussian, stopped baseline, 3 SD/mean, >=50 ms."""
     return _detect_population(
@@ -3936,7 +4703,14 @@ def widloski_2025_bursts(rec: Recording) -> pd.DataFrame:
     )
 
 
-@_variant(10, "Krause 2022", "HSE candidates", role="secondary")
+@_variant(
+    10,
+    "Krause 2022",
+    "HSE candidates",
+    role="secondary",
+    needs=("multiunit", "speed"),
+    bin_width=0.001,
+)
 def krause_2022_hse(rec: Recording, *, interpretation: str = "text") -> pd.DataFrame:
     """Pooled 1 ms spike bins, 3 SD/mean, explicitly distinct text/code branches.
 
@@ -3973,7 +4747,14 @@ def krause_2022_hse(rec: Recording, *, interpretation: str = "text") -> pd.DataF
     )
 
 
-@_variant(13, "Denovellis 2021", "MUA candidates", role="secondary")
+@_variant(
+    13,
+    "Denovellis 2021",
+    "MUA candidates",
+    role="secondary",
+    needs=("multiunit", "speed"),
+    bin_width=0.002,
+)
 def denovellis_2021_mua(rec: Recording) -> pd.DataFrame:
     """Historical 2 ms MUA grid, 15 ms Gaussian, 2 SD for >=15 ms, speed <=4 cm/s.
 
@@ -3991,7 +4772,14 @@ def denovellis_2021_mua(rec: Recording) -> pd.DataFrame:
     )
 
 
-@_variant(14, "Gillespie 2021", "MUA candidates", role="secondary")
+@_variant(
+    14,
+    "Gillespie 2021",
+    "MUA candidates",
+    role="secondary",
+    needs=("multiunit", "speed"),
+    bin_width=0.001,
+)
 def gillespie_2021_mua(rec: Recording) -> pd.DataFrame:
     """Published 1 ms MUA bins, 15 ms Gaussian, stopped (<4) baseline, 3 SD/mean,
     speed <4 at both ends (which samples is not stated).
@@ -4009,13 +4797,25 @@ def gillespie_2021_mua(rec: Recording) -> pd.DataFrame:
     )
 
 
-@_variant(31, "Maboudi 2018", "open-field population candidates")
+@_variant(
+    31,
+    "Maboudi 2018",
+    "open-field population candidates",
+    needs=("multiunit", "pyramidal", "speed"),
+    bin_width=0.001,
+)
 def maboudi_2018_open_field(rec: Recording) -> FloatArray:
     """Open-field Pfeiffer 2013 criteria; separate from linear-track PBEs."""
     return _IMPLEMENTATIONS["pfeiffer_2013"](rec)
 
 
-@_variant(29, "Muessig 2019", "ripple windows", role="secondary")
+@_variant(
+    29,
+    "Muessig 2019",
+    "ripple windows",
+    role="secondary",
+    needs=(_lfps("each selected channel; the most variable one is used"),),
+)
 def muessig_2019_ripples(rec: Recording) -> pd.DataFrame:
     """7 ms RMS, 100-250 Hz, most-variable channel, >99th percentile, +/-50 ms.
 
@@ -4030,7 +4830,13 @@ def muessig_2019_ripples(rec: Recording) -> pd.DataFrame:
     return _local_peaks(rec, rms, level, before=0.05, after=0.05)
 
 
-@_variant(19, "Bhattarai 2020", "ripple candidates", role="secondary")
+@_variant(
+    19,
+    "Bhattarai 2020",
+    "ripple candidates",
+    role="secondary",
+    needs=(_lfps("the first two selected channels", minimum=2), "multiunit", "place_cells"),
+)
 def bhattarai_2020_ripples(
     rec: Recording, *, power_measure: str = "squared_signal"
 ) -> FloatArray:
@@ -4064,8 +4870,14 @@ def bhattarai_2020_ripples(
     23,
     "Farooq 2019 (Science)",
     "awake-rest population frames",
-    behavior="awake rest on the track",
-    behavior_everywhere=True,
+    needs=(
+        "multiunit",
+        "pyramidal",
+        "place_cells",
+        "speed",
+        Requirement("behavior_intervals", "awake rest on the track"),
+    ),
+    bin_width=0.001,
 )
 def farooq_2019_science_awake(
     rec: Recording, *, behavior_intervals: FloatArray | None = None
@@ -4086,8 +4898,12 @@ def farooq_2019_science_awake(
     26,
     "Liu 2019",
     "awake-rest silence-bounded frames",
-    behavior="track-end rest epochs",
-    behavior_everywhere=True,
+    needs=(
+        "multiunit",
+        "pyramidal",
+        "speed",
+        Requirement("behavior_intervals", "track-end rest epochs"),
+    ),
 )
 def liu_2019_awake(
     rec: Recording, *, behavior_intervals: FloatArray | None = None
@@ -4110,7 +4926,18 @@ def liu_2019_awake(
     )
 
 
-@_variant(26, "Liu 2019", "ripple-associated sleep frames")
+@_variant(
+    26,
+    "Liu 2019",
+    "ripple-associated sleep frames",
+    needs=(
+        _lfps("the first selected channel"),
+        Requirement("baseline_intervals", "the ripple power's normalization epoch"),
+        "multiunit",
+        "pyramidal",
+        _measured("sleep_intervals", "curated SWS"),
+    ),
+)
 def liu_2019_ripple_frames(rec: Recording, *, smoothing_sigma: float) -> FloatArray:
     """liu_2019's silence-bounded SWS frames that contain a >3 SD local peak
     of liu_2019_ripples' power (first selected channel, caller-selected
@@ -4152,13 +4979,40 @@ def list_methods() -> pd.DataFrame:
             "additional" for the others.
         required_options
             Keyword options the signature requires.
+        signals, cells, intervals, external_inputs, measured_options
+            The ``requirements`` of each kind (signal; cell selection; sleep,
+            baseline or behavior intervals; example or external ripples;
+            options without a published value that measured data must set),
+            each described as ``Requirement.describe`` does: what it must
+            hold and when it is needed. ``behavior_intervals`` are passed per
+            call; everything else except options goes to
+            ``Recording.from_arrays``.
+        requirements
+            Every ``Requirement`` as a dict of its fields (``input``, ``kind``,
+            ``meaning``, ``minimum``, ``measured_only``, ``when``, ``unless``),
+            the declaration ``check_method`` and ``run_method`` test.
+        sampling_frequency
+            The input rate in Hz the method's filter requires, or NaN for any.
+        stages
+            The ``stage`` values accepted: ``("detection",)``, or also
+            ``"decoding_candidates"`` for methods with a decoding-candidate stage.
+        bin_width
+            The native bin width in seconds of the grid the events are found on
+            (population bins, Krause's per-SWR bins, Kaefer's FFT stride), or
+            NaN for the input samples. On a bin grid, duration limits count
+            bins while ``duration`` is the elapsed time between the closed
+            bounds (see ``run_method``).
         interpretation
             The method's docstring: its rule, interpretation and assumptions.
     """
     survey = rd.load_literature_parameters()
     rows = []
     for entry in (*RECIPES, *VARIANTS):
-        parameters = inspect.signature(entry.run).parameters
+        parameters = inspect.signature(_IMPLEMENTATIONS[entry.run.__name__]).parameters
+
+        def described(*kinds: RequirementKind, entry: Recipe = entry) -> tuple[str, ...]:
+            return tuple(need.describe() for need in entry.requirements if need.kind in kinds)
+
         rows.append(
             {
                 "name": entry.run.__name__,
@@ -4172,6 +5026,20 @@ def list_methods() -> pd.DataFrame:
                     for name, parameter in parameters.items()
                     if name != "rec" and parameter.default is inspect.Parameter.empty
                 ),
+                "signals": described("signal"),
+                "cells": described("cells"),
+                "intervals": described("intervals"),
+                "external_inputs": described("external"),
+                "measured_options": described("option"),
+                "requirements": tuple(
+                    {**dataclasses.asdict(need), "kind": need.kind}
+                    for need in entry.requirements
+                ),
+                "sampling_frequency": entry.sampling_frequency,
+                "stages": ("detection", "decoding_candidates")
+                if "stage" in parameters
+                else ("detection",),
+                "bin_width": entry.bin_width,
                 "interpretation": entry.note,
             }
         )
@@ -4199,7 +5067,7 @@ def run_method(
         for this call only: their meaning differs between methods (reward
         zones, rest, corners, track ends, facing direction). Events not
         wholly inside one interval are dropped; normalization is unchanged.
-        Methods that name the epochs they need (``Recipe.behavior``) raise on
+        Methods whose ``requirements`` name the epochs they need raise on
         measured data without them; awake-frame methods also restrict their
         detection trace to them, as their docstrings say.
     **options
@@ -4224,26 +5092,21 @@ def run_method(
     TypeError
         Missing required method options or unknown keyword arguments.
     ValueError
-        Missing or invalid recording inputs for the selected method.
+        Missing or invalid recording inputs for the selected method: every
+        unmet requirement (see ``list_methods``) is listed at once.
     """
     if name not in _ENTRIES:
         msg = f"Unknown literature method {name!r}; inspect list_methods()."
         raise KeyError(msg)
     entry = _ENTRIES[name]
     eligible = _interval_array(behavior_intervals)
-    if (
-        entry.behavior is not None
-        and eligible is None
-        and (entry.behavior_everywhere or not recording.allows_simulation_proxies)
-    ):
-        msg = (
-            f"{name} needs behavior_intervals selecting the eligible {entry.behavior}; "
-            f"pass them to run_method or {name}(..., behavior_intervals=...)."
-        )
-        raise ValueError(msg)
     implementation = _IMPLEMENTATIONS[name]
     call = inspect.signature(implementation).bind(recording, **options)
     call.apply_defaults()
+    problems = _requirement_problems(entry, recording, eligible, dict(call.arguments))
+    if problems:
+        msg = f"{name} cannot run on this call:\n- " + "\n- ".join(problems)
+        raise ValueError(msg)
     if "behavior_intervals" in call.arguments:
         call.arguments["behavior_intervals"] = eligible
     raw = implementation(*call.args, **call.kwargs)
@@ -4285,6 +5148,8 @@ __all__ = [
     "Recipe",
     "RecordedSignals",
     "Recording",
+    "Requirement",
+    "RequirementKind",
     "Role",
     "Stage",
     "bounds",
