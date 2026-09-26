@@ -205,7 +205,9 @@ def detect_silence_bounded_events(
         spike. Default None, every spike kept.
     units : array_like, optional
         The units whose spikes count: a boolean mask over the columns of
-        ``multiunit`` or their indices. Default None, all.
+        ``multiunit`` or their indices. Default None, all. Integers are
+        indices; a 0/1 integer array with one entry per unit and a repeat
+        raises, as a mask of the wrong dtype.
     minimum_active_units : int, optional
         Least number of selected units firing in an event. Default 1.
     minimum_active_fraction : float, optional

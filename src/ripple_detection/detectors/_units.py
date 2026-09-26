@@ -39,6 +39,19 @@ def _selected_units(units: ArrayLike | None, n_units: int) -> IntArray:
     if selection.size and (selection.min() < 0 or selection.max() >= n_units):
         msg = f"units holds indices outside 0 to {n_units - 1}, the units multiunit has."
         raise ValueError(msg)
+    if (
+        selection.size == n_units
+        and np.isin(selection, (0, 1)).all()
+        and len(np.unique(selection)) < selection.size
+    ):
+        # one 0 or 1 per unit, repeated: a mask written as integers, which
+        # would select units 0 and 1 rather than the units marked
+        msg = (
+            f"units is {n_units} integers, all 0 or 1, one per unit: a mask written as "
+            "integers? Integers are unit indices, so this selects units 0 and 1 only. "
+            "Pass a boolean mask (dtype=bool), or the indices with np.flatnonzero(units)."
+        )
+        raise ValueError(msg)
     return np.unique(selection)
 
 
@@ -161,7 +174,9 @@ def require_active_units(
     units : array_like, optional
         The units that count: a boolean mask over the columns of
         `multiunit`, or their indices, such as the place cells. The fraction
-        is of these. Default None, every unit.
+        is of these. Default None, every unit. Integers are indices; a 0/1
+        integer array with one entry per unit and a repeat raises, as a
+        mask of the wrong dtype.
 
     Returns
     -------
@@ -260,6 +275,8 @@ def trim_events_to_spike_windows(
         Spikes each edge window must hold. Default 2.
     units : array_like, optional
         The units whose spikes count, a boolean mask or indices. Default all.
+        A 0/1 integer array with one entry per unit and a repeat raises, as
+        a mask of the wrong dtype.
     minimum_duration : float, optional
         Trimmed events holding fewer samples than this spans are dropped.
         Default 0.0.

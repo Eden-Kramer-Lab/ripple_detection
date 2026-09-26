@@ -5417,6 +5417,38 @@ class TestActiveUnits:
         np.testing.assert_array_equal(counts, [[3, 1, 1, 0], [0, 0, 0, 1]])
         assert counts.dtype.kind == "i"
 
+    def test_a_zero_one_integer_mask_raises_as_ambiguous(self):
+        """[1, 0, 1, 1] as integers selects units 0 and 1, not 0, 2 and 3."""
+        from ripple_detection import (
+            detect_silence_bounded_events,
+            require_active_units,
+            trim_events_to_spike_windows,
+        )
+
+        mask = np.array([1, 0, 1, 1])
+        calls = [
+            lambda: require_active_units(self.EVENTS, self._spikes(), self.TIME, units=mask),
+            lambda: trim_events_to_spike_windows(
+                self.EVENTS, self._spikes(), self.TIME, units=mask, window=0.1, step=0.1
+            ),
+            lambda: detect_silence_bounded_events(
+                self.TIME, self._spikes(), 10, minimum_silence=0.2, units=mask
+            ),
+        ]
+        for call in calls:
+            with pytest.raises(ValueError, match=r"unit indices[\s\S]*dtype=bool"):
+                call()
+
+    def test_indices_that_happen_to_be_zero_and_one_are_indices(self):
+        from ripple_detection import require_active_units
+
+        np.testing.assert_array_equal(
+            require_active_units(
+                self.EVENTS, self._spikes()[:, :2], self.TIME, units=np.array([0, 1])
+            ),
+            self.EVENTS[:1],
+        )
+
     def test_both_ends_of_an_event_are_inside_it(self):
         from ripple_detection import count_spikes_in_events
 
