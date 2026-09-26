@@ -80,7 +80,11 @@ turn and checks the call fails naming it, so the catalog neither understates nor
 overstates what a method needs.
 
 `Recording.from_arrays` copies inputs, validates selections, and masks artifact
-intervals. NaN speed remains unknown; omitted speed makes every method whose
+intervals. It holds every signal as float64, so NaN can mark missing samples:
+8 bytes per sample per LFP channel and per unit, whatever the input type. One
+hour at 1500 Hz with 100 units is 4.32 GB of spike counts, and construction
+peaks at about that retained size (ten minutes of 8 int16 channels and 60
+uint8 units, 83 MB of input, retain 518 MB and peak at 527 MB). NaN speed remains unknown; omitted speed makes every method whose
 result depends on speed raise instead. Missing cell selections are empty;
 methods needing those cells raise. Measured data never acquire synthetic sleep
 labels or synthetic templates. Pass actual `templates` for Ólafsdóttir 2015,

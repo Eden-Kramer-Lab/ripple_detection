@@ -2701,3 +2701,45 @@ def test_save_events_refuses_a_table_without_provenance(tmp_path):
         )
     with pytest.raises(ValueError, match=r"\.json"):
         lm.save_events(pd.DataFrame(), tmp_path / "x.json")
+
+
+def test_from_arrays_holds_one_float_copy_at_its_peak():
+    """Counts arrive as small integers; converting them to float64 (for NaN
+    missing samples) is the one copy. Validation used to make three more."""
+    import tracemalloc
+
+    n_time, n_units = 60_000, 60
+    time = np.arange(n_time) / 1500
+    spikes = (np.random.default_rng(0).random((n_time, n_units)) < 0.01).astype(np.uint8)
+    lfps = np.zeros((n_time, 2), dtype=np.int16)
+    tracemalloc.start()
+    rec = lm.Recording.from_arrays(time, 1500, lfps=lfps, multiunit=spikes)
+    retained, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    float_spikes = n_time * n_units * 8
+    assert rec.multiunit.dtype == np.float64
+    assert retained >= float_spikes
+    assert peak < 1.3 * float_spikes, peak / float_spikes
+
+
+@pytest.mark.parametrize("dtype", [np.uint8, np.int16, np.int64, np.float32, np.float64, bool])
+def test_from_arrays_accepts_counts_of_any_numeric_type(dtype):
+    counts = np.zeros((100, 3), dtype=dtype)
+    counts[10, 1] = 1
+    rec = lm.Recording.from_arrays(np.arange(100) / 1000, 1000, multiunit=counts)
+    assert rec.multiunit.dtype == np.float64
+    assert rec.multiunit.sum() == 1
+    assert not np.shares_memory(rec.multiunit, counts)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [np.full((5000, 3), -1, dtype=np.int8), np.full((5000, 3), 0.5), np.full((5000, 3), -2.0)],
+)
+def test_from_arrays_rejects_noninteger_or_negative_counts_anywhere(bad):
+    counts = np.zeros((300_000, 3), dtype=bad.dtype)
+    if bad.dtype.kind == "f":
+        counts[:5000] = np.nan  # missing samples are allowed; the bad rows come last
+    counts[-5000:] = bad
+    with pytest.raises(ValueError, match="nonnegative integer"):
+        lm.Recording.from_arrays(np.arange(300_000) / 1000, 1000, multiunit=counts)

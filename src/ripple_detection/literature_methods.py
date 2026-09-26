@@ -245,8 +245,18 @@ class Recording:
         ValueError
             Timestamps, sampling rate, signal shapes, counts, selections or
             intervals are invalid or inconsistent.
+
+        Notes
+        -----
+        The recording holds one float64 copy of every signal, so NaN can mark
+        missing samples: 8 bytes per sample for each LFP channel and each
+        unit, whatever the input's type. One hour at 1500 Hz with 100 units is
+        4.32 GB of spike counts (5.4 million samples x 100 x 8 bytes); int16
+        LFP and uint8 counts grow 4- and 8-fold. Construction peaks at about
+        that retained size; select channels and units, or split long sessions,
+        before building a recording from them.
         """
-        timestamps = np.asarray(time, dtype=float).copy()
+        timestamps = np.array(time, dtype=float)
         if timestamps.ndim != 1 or len(timestamps) < 2:
             msg = "time must be a one-dimensional array with at least two samples."
             raise ValueError(msg)
@@ -265,7 +275,8 @@ class Recording:
         def signal(value: ArrayLike | None, channels: bool = False) -> FloatArray:
             if value is None:
                 return np.empty((n, 0)) if channels else np.full(n, np.nan)
-            data = np.asarray(value, dtype=float).copy()
+            # The one copy, as float64 so NaN can mark missing samples.
+            data = np.array(value, dtype=float)
             if channels and data.ndim == 1:
                 data = data[:, None]
             if data.ndim != (2 if channels else 1) or data.shape[0] != n:
@@ -273,11 +284,9 @@ class Recording:
                 raise ValueError(msg)
             return data
 
+        if multiunit is not None:
+            _check_counts(np.asarray(multiunit))
         lfp_array, spikes = signal(lfps, True), signal(multiunit, True)
-        finite_spikes = spikes[np.isfinite(spikes)]
-        if np.any(finite_spikes < 0) or np.any(finite_spikes != np.floor(finite_spikes)):
-            msg = "multiunit must contain nonnegative integer spike counts."
-            raise ValueError(msg)
         sharp, reference = signal(sharp_wave_lfp), signal(reference_lfp)
         artifacts = _interval_array(artifact_intervals)
         if artifacts is not None:
@@ -898,6 +907,28 @@ def _zugaro_ripple_peaks(rec: Recording, band: tuple[float, float]) -> pd.DataFr
         low_threshold=2.0, high_threshold=5.0, maximum_duration=0.2,
         speed_threshold=np.inf,
     )  # fmt: skip
+
+
+# Float validation reads this many elements at a time (8 MB of float64), so
+# checking counts never copies the whole array.
+_CHUNK_ELEMENTS = 2**20
+
+
+def _check_counts(counts: np.ndarray[Any, Any]) -> None:
+    """Raise unless every finite value is a nonnegative whole number."""
+    msg = "multiunit must contain nonnegative integer spike counts."
+    if counts.dtype == bool or counts.ndim == 0:
+        return
+    if np.issubdtype(counts.dtype, np.integer):
+        if counts.size and counts.min() < 0:
+            raise ValueError(msg)
+        return
+    rows = max(1, _CHUNK_ELEMENTS // max(1, int(np.prod(counts.shape[1:]))))
+    for start in range(0, len(counts), rows):
+        chunk = np.asarray(counts[start : start + rows], dtype=float)
+        finite = chunk[np.isfinite(chunk)]
+        if np.any(finite < 0) or np.any(finite != np.floor(finite)):
+            raise ValueError(msg)
 
 
 def _cell_mask(mask: ArrayLike, n_units: int) -> BoolArray:
