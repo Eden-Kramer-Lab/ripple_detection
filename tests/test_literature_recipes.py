@@ -222,3 +222,22 @@ def test_the_measured_data_walkthrough_runs(tmp_path):
     for name in results:
         assert (tmp_path / f"{name}.csv").exists()
         assert (tmp_path / f"{name}.json").exists()
+
+
+def test_walkthrough_bins_only_spikes_within_recorded_samples():
+    """Spikes before the recording, after its last sample's period, or inside a
+    timestamp gap belong to no LFP sample and must not be counted."""
+    path = SCRIPT.with_name("measured_walkthrough.py")
+    spec = importlib.util.spec_from_file_location("measured_walkthrough_binning", path)
+    assert spec is not None
+    assert spec.loader is not None
+    walkthrough = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(walkthrough)
+    origin = 1_700_000_000.0
+    time = origin + np.r_[np.arange(1000), np.arange(2000, 3000)] / 1000  # 1 s gap
+    inside = origin + np.array([0.0, 0.5005, 0.999, 2.0, 2.9994])
+    outside = origin + np.array([-0.5, 1.5, 3.5, 100.0])
+    counts = walkthrough.spike_counts(time, [np.sort(np.r_[inside, outside])])
+    assert counts.sum() == len(inside)
+    assert counts[-1, 0] == 1  # only the spike at 2.9994 s, not those after the end
+    assert counts[999, 0] == 1  # only 0.999 s, not the spike in the gap at 1.5 s

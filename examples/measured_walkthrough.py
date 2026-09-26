@@ -84,6 +84,24 @@ def load_position_speed() -> tuple[np.ndarray, np.ndarray]:
 # 1. Prepare inputs.
 
 
+def spike_counts(time: np.ndarray, spike_times: list[np.ndarray]) -> np.ndarray:
+    """Count each unit's spikes per LFP sample, shape (n_time, n_units).
+
+    A spike belongs to the sample at or before it, and only while it falls
+    within that sample's period: spikes before the first sample, after the
+    last sample's period, or inside a gap in the timestamps (spike sorting
+    often covers more than the selected LFP) are not counted.
+    """
+    sample_period = np.median(np.diff(time))
+    counts = np.zeros((len(time), len(spike_times)), dtype=np.uint8)
+    for unit, times in enumerate(spike_times):
+        sample = np.searchsorted(time, times, side="right") - 1
+        recorded = sample >= 0
+        recorded[recorded] = times[recorded] < time[sample[recorded]] + sample_period
+        np.add.at(counts[:, unit], sample[recorded], 1)
+    return counts
+
+
 def prepare_recording() -> Recording:
     """Everything on the LFP's timestamps, as Recording.from_arrays expects."""
     time, raw_lfp = load_lfp()
@@ -97,11 +115,7 @@ def prepare_recording() -> Recording:
     # Spike counts, not rates: one integer count per unit per LFP sample. A
     # spike belongs to the sample at or before it; finer spike timing than the
     # LFP's sampling is not kept.
-    spike_times = load_spike_times()
-    counts = np.zeros((len(time), len(spike_times)), dtype=np.uint8)
-    for unit, times in enumerate(spike_times):
-        sample = np.searchsorted(time, times, side="right") - 1
-        np.add.at(counts[:, unit], sample[sample >= 0], 1)
+    counts = spike_counts(time, load_spike_times())
 
     # Speed on the LFP timestamps, NaN where the camera saw nothing: unknown
     # speed never passes a speed rule, and without speed at all, methods with
@@ -114,7 +128,7 @@ def prepare_recording() -> Recording:
     # "pyramidal" excludes putative interneurons. Methods name which they use.
     unit_rates = counts.sum(axis=0) / DURATION
     pyramidal = unit_rates < 2.0  # stand-in for your cell classification
-    place_cells = pyramidal & (np.arange(len(spike_times)) < 25)  # stand-in
+    place_cells = pyramidal & (np.arange(counts.shape[1]) < 25)  # stand-in
 
     # 3. Curated intervals, sorted [start, end] pairs in seconds on the same clock.
     # baseline_intervals: the epoch a method normalizes over when it asks for a
