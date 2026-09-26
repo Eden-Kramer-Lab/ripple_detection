@@ -314,7 +314,8 @@ unchanged by adding these implementations.
 ## Per-paper entry points
 
 This table is navigation, not a second parameter table. Use `list_methods()` for
-the executable inventory and function docstrings for required inputs/options.
+the executable inventory and each method's required inputs and options, and the
+function docstrings for its rule and interpretation.
 The linked note contains the source evidence and qualifications for each paper.
 
 | Paper | Available entry points |
