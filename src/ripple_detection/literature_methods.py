@@ -178,7 +178,7 @@ class Recording:
         self.templates = tuple(_cell_mask(template, n_units) for template in self.templates)
         self.sleep_intervals = _interval_array(self.sleep_intervals)
         self.baseline_intervals = _interval_array(self.baseline_intervals)
-        self.example_ripples = _interval_array(self.example_ripples)
+        self.example_ripples = _example_array(self.example_ripples)
         self.external_ripples = _external_ripple_array(self.external_ripples)
         if self.reference_lfp is not None and np.shape(self.reference_lfp) != (n_time,):
             msg = f"reference_lfp must have one value per timestamp ({n_time})."
@@ -231,6 +231,8 @@ class Recording:
             Per-template cell masks or indices, with no fixed ensemble size.
         example_ripples : array_like, optional
             Manually selected start/end intervals for Carey's spectral template.
+            Unlike the other intervals they may overlap: each is kept as its
+            own template example.
         external_ripples : array_like, optional
             Independently detected ripple intervals. For peak containment use
             three columns: start, end, peak; two columns imply midpoint peaks.
@@ -343,7 +345,7 @@ class Recording:
             _interval_array(baseline_intervals),
             reference if reference_lfp is not None else None,
             tuple(cells(x) for x in templates),
-            _interval_array(example_ripples),
+            _example_array(example_ripples),
             external,
         )
 
@@ -951,6 +953,26 @@ def _interval_array(value: ArrayLike | None) -> FloatArray | None:
         msg = "Intervals must be finite, sorted, disjoint start/end pairs."
         raise ValueError(msg)
     return intervals
+
+
+def _example_array(value: ArrayLike | None) -> FloatArray | None:
+    """Finite start/end pairs that, unlike other intervals, may overlap: each
+    example is its own stretch of the spectral template, so merging two would
+    change it (the released Carey templates have overlapping pairs)."""
+    if value is None:
+        return None
+    examples = np.asarray(value, dtype=float).copy()
+    if examples.size == 0:
+        return examples.reshape(0, 2)
+    if (
+        examples.ndim != 2
+        or examples.shape[1] != 2
+        or not np.isfinite(examples).all()
+        or np.any(examples[:, 1] < examples[:, 0])
+    ):
+        msg = "example_ripples must be finite start/end pairs."
+        raise ValueError(msg)
+    return examples
 
 
 def _baseline(rec: Recording, *, required: bool = False) -> BoolArray:

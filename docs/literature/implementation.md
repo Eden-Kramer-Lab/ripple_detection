@@ -95,7 +95,8 @@ uint8 units, 83 MB of input, retain 518 MB and peak at 527 MB). NaN speed remain
 result depends on speed raise instead. Missing cell selections are empty;
 methods needing those cells raise. Measured data never acquire synthetic sleep
 labels or synthetic templates. Pass actual `templates` for Ólafsdóttir 2015,
-`example_ripples` for Carey, `external_ripples` for Yang/Grosmark's unresolved
+`example_ripples` for Carey (the lab's DataLad release stores them per session as
+`metadata.SWRtimes`; unlike other intervals they may overlap), `external_ripples` for Yang/Grosmark's unresolved
 historical ripple gate, and `reference_lfp` for reference-subtracted methods.
 For external ripples, three columns give start/end/peak; two columns explicitly
 use the midpoint as the peak. Supply true peaks when the rule requires them.

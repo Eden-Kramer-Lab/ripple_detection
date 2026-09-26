@@ -1615,7 +1615,7 @@ def _signals(n_time=100, n_units=3):
         ({"templates": (np.ones(4, dtype=bool),)}, "Cell masks"),
         ({"sleep_intervals": np.array([[0.05, 0.01]])}, "Intervals"),
         ({"baseline_intervals": np.array([0.0, 0.01])}, "Intervals"),
-        ({"example_ripples": np.array([[0.02, 0.03], [0.025, 0.04]])}, "Intervals"),
+        ({"example_ripples": np.array([[0.03, 0.02]])}, "finite start/end pairs"),
         ({"external_ripples": np.array([[0.01, 0.02, 0.05]])}, "peaks"),
         ({"reference_lfp": np.zeros(5)}, "reference_lfp"),
     ],
@@ -1803,6 +1803,29 @@ def test_carey_builds_its_template_from_the_supplied_example_ripples(monkeypatch
     np.testing.assert_array_equal(captured[0], inputs["example_ripples"])
     assert len(events)
     assert rd.require_overlap(lm.bounds(events), inputs["example_ripples"]).size
+
+
+def test_carey_keeps_overlapping_example_ripples_as_separate_examples(monkeypatch):
+    """The released R050-2014-03-29 SWRtimes overlap: two 80 ms examples
+    starting 76.613 ms apart. Both reach the template unmerged."""
+    inputs, _ = _method_inputs("carey_2019")
+    start = inputs["example_ripples"][0, 0]
+    released = np.array([[6276.75628104, 6276.83628104], [6276.83289395, 6276.91289395]])
+    overlapping = released - released[0, 0] + start
+    inputs["example_ripples"] = np.vstack([overlapping, inputs["example_ripples"][1:]])
+    captured = []
+    original = lm.rd.carey_spectral_ripple_score
+
+    def capture(time, lfp, fs, examples, **kwargs):
+        captured.append(np.asarray(examples))
+        return original(time, lfp, fs, examples, **kwargs)
+
+    monkeypatch.setattr(lm.rd, "carey_spectral_ripple_score", capture)
+    recording = lm.Recording.from_arrays(**inputs)
+    np.testing.assert_array_equal(recording.example_ripples, inputs["example_ripples"])
+    lm.carey_2019(recording)
+    np.testing.assert_array_equal(captured[0], inputs["example_ripples"])
+    assert captured[0][1, 0] < captured[0][0, 1]  # still overlapping
 
 
 CANDIDATES = np.array([[1.0, 1.2], [2.0, 2.2], [3.0, 3.2]])
