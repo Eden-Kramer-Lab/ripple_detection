@@ -4,6 +4,8 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 7  # let a new action release age a week before proposing it
     groups:
       actions:
         patterns: ["*"]
