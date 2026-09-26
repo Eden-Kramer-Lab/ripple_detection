@@ -442,16 +442,67 @@ These checks inspected metadata, not recordings or new event arrays.
 
 The initial browsing-tool requests for DANDI 000552 and 000978 failed. Direct
 public-API requests on September 26 subsequently returned their metadata:
-[000552](https://api.dandiarchive.org/api/dandisets/000552/versions/draft/)
-identifies the Huszar study, and
-[000978](https://api.dandiarchive.org/api/dandisets/000978/versions/draft/)
-identifies Single Day W-Track Learning and describes position, spike times
-and LFP. This verifies deposit metadata, not the complete file inventory or
-event annotations. The Yang/Shin paper notes establish the catalog's paper
-associations; the 000978 API does not list a related publication.
+[000552 version 0.230630.2304](https://api.dandiarchive.org/api/dandisets/000552/versions/0.230630.2304/)
+names Huszár et al. 2022 (10.1038/s41593-022-01138-x) in `relatedResource` and
+lists `LFP`, `Units` and `Position` among its measured variables, and
+[000978 version 0.240511.0307](https://api.dandiarchive.org/api/dandisets/000978/versions/0.240511.0307/)
+identifies Single Day W-Track Learning, lists the same three variables, and
+has eight subject folders (ER1, JS14, JS15, JS17, JS21, JS34, KL8, ZT2). This
+verifies deposit metadata, not the complete file inventory or event
+annotations. The Yang/Shin paper notes establish the catalog's paper
+associations; the 000978 metadata does not list a related publication.
 
-All 18 distinct `dataset_url` values were also tested with direct HTTP GETs
-on September 26. Seventeen returned 200; the Bhattarai DOI redirected to the
+A second pass on September 26 looked for deposits of surveyed papers not yet
+in the table, confirming each paper association from a DataCite record, a
+landing page or the paper's own text:
+
+- [Denovellis 2021 Dryad](https://doi.org/10.7272/Q61N7ZC3), version 5:
+  DataCite `IsCitedBy` links Denovellis 2021, Karlsson 2009 and Carr 2012, and
+  `IsSupplementedBy` links hc-6 (10.6080/K0NK3BZJ). The Dryad API's methods
+  text describes ten W-track rats, nine from earlier studies, and credits
+  Bond, Frank, Conley and Dudley to Karlsson and Coriander to Carr. Its usage
+  notes describe `{animal}ripples{day}.mat` and the final
+  `{animal}candripples{day}.mat` ripple tables. [Zenodo
+  5587779](https://zenodo.org/records/5587779) carries the same DOI and the ten
+  animal archives. No archive was opened.
+- [Tirole 2022 Dryad](https://doi.org/10.5061/dryad.ksn02v76h), version 13:
+  DataCite `IsCitedBy` links the eLife paper. The file list and `README.txt` of
+  the [Zenodo 7114733](https://zenodo.org/records/7114733) mirror describe
+  per-session `extracted_CSC.mat` (four downsampled, unfiltered channels),
+  `extracted_clusters.mat` and `extracted_position.mat`, and no event file.
+  The list is uneven across sessions (see the catalog row).
+- [CRCNS hc-18](https://crcns.org/data-sets/hc/hc-18/about-hc-18): names Drieu,
+  Todorova & Zugaro 2018 and lists spikes, LFP at 1250 Hz and positions in
+  NeuroSuite format; it does not say whether `.evt` files are included.
+- [CRCNS hc-28](https://crcns.org/data-sets/hc/hc-28/about-hc-28): names Jadhav
+  et al. 2016 and Tang et al. 2017. Its [data
+  description](https://crcns.org/files/data/hc-28/crcns_hc-28_data_description.pdf)
+  lists animals HPa, HPb and HPc and the file types (position, spikes, task,
+  tetrode and cell information, and `eeg` filtered 1-400 Hz), none of them
+  ripple files.
+- CRCNS hc-3 for Diba 2007: the hc-3 data paper, [Mizuseki et al. 2014,
+  F1000Research](https://doi.org/10.12688/f1000research.3895.1), says rats
+  gor01, pin01 and vvp01 ran a linear track, citing Diba & Buzsáki 2007. The
+  [Maboudi note](papers/31_Maboudi_2018.md) identifies its linear-track data as
+  those recordings.
+- [DataLad MotivationalT](https://datasets.datalad.org/labs/mvdm/MotivationalT/):
+  the `README.txt` names van der Meer, Carey & Tanaka 2017, the dataset the
+  [Carey note](papers/28_Carey_2019.md) says the paper uses, and lists 4 rats
+  with 6 sessions of `.ncs`, `.t`, `.nvt` and metadata files. The top-level and
+  R050 listings were read; no session folder was opened.
+- Berners-Lee 2022: the Key Resources Table's deposited data lists Grosmark et
+  al., CRCNS 10.6080/K0862DC5 (hc-11), for the interneuron analysis.
+- [Zenodo 16916108](https://zenodo.org/records/16916108): the Widloski 2025
+  Data availability statement calls it the processed data of that study, and
+  its Results reanalyze "a previously published data set" (ref. 23, Widloski
+  & Foster 2022), 37 sessions from 3 rats. The record lists three
+  `replayEvents_*.mat` files, which were not opened. See
+  [widloski-archives](#widloski-archives) for the code deposits.
+
+All 23 distinct `dataset_url` values were also tested with direct HTTP GETs
+on September 26, after the second pass. Twenty-two returned 200 (Zenodo
+answers 403 to a bare `Mozilla/5.0` user agent and 200 to curl's default);
+the Bhattarai DOI redirected to the
 expected Figshare article with an empty 202 AWS WAF challenge response
 (confirmed by its `x-amzn-waf-action` header; see [access check](#bhattarai-data)). The
 [Figshare version-2 API](https://api.figshare.com/v2/articles/10032866/versions/2)
@@ -462,7 +513,7 @@ generic application page as proof of a dataset. This checks link resolution
 and record identity, not access to every data file. The earlier file/header
 inspections above were not repeated.
 
-All 14 distinct `source_note` URLs returned 404 on GitHub `master` at this
+All 13 distinct `source_note` URLs returned 404 on GitHub `master` at this
 check: these notes have not yet been merged there. Their paths and anchors
 were verified in this branch. They need publication on `master` to work for
 installed-package users; this is separate from external dataset availability.

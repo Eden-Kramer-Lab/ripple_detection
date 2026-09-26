@@ -781,8 +781,8 @@ ripples = Kay_ripple_detector(
 ### Public datasets for the surveyed papers
 
 `load_literature_datasets()` loads a separate packaged catalog of public
-recordings and released event files, with DANDI, CRCNS, Zenodo, Figshare,
-Mendeley, OSF and data-bearing repository links. It records original versus
+recordings and released event files, with DANDI, CRCNS, Dryad, Zenodo,
+Figshare, Mendeley, OSF, DataLad and data-bearing repository links. It records original versus
 reused data, available inputs, event annotations and verification scope.
 
 ```python

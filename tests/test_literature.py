@@ -143,6 +143,12 @@ def test_dataset_catalog_keeps_reused_recordings_and_trial_events_distinct(
     # A code-only release must not be mistaken for Widloski's data deposit.
     widloski = linked.loc[(linked["First Author"] == "Widloski") & (linked.Year == 2025)]
     assert set(widloski.dataset_url) == {"https://zenodo.org/records/16916108"}
+    # Widloski 2025 reanalyzes the 2022 recordings: one deposit, two relationships.
+    shared = linked.loc[linked.dataset_url == "https://zenodo.org/records/16916108"]
+    assert dict(zip(shared.Year, shared.relationship, strict=True)) == {
+        2025: "reused",
+        2022: "original",
+    }
 
 
 def test_dataset_loader_returns_independent_tables(datasets):
