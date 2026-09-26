@@ -2756,3 +2756,11 @@ def test_named_methods_take_the_recording_first_and_options_by_keyword(measured)
 def test_json_ready_attrs_convert_numpy_scalars_and_non_finite_numbers():
     values = {"count": np.int64(3), "rate": np.float64(np.inf), "nested": (np.nan, 1.5)}
     assert lm._jsonable(values, n_time=10) == {"count": 3, "rate": None, "nested": [None, 1.5]}
+
+
+def test_finite_rows_match_the_elementwise_check():
+    values = np.random.default_rng(1).normal(size=(500, 7))
+    values[np.random.default_rng(2).random(values.shape) < 0.01] = np.nan
+    values[3, 2], values[40, 0], values[41, :] = np.inf, -np.inf, np.nan
+    values[60, :2] = np.inf, -np.inf
+    np.testing.assert_array_equal(lm._finite_rows(values), np.isfinite(values).all(axis=1))

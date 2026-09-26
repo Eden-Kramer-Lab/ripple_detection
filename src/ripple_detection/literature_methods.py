@@ -5573,6 +5573,14 @@ def load_events(path: str | os.PathLike[str]) -> pd.DataFrame:
     return events
 
 
+def _finite_rows(values: FloatArray) -> BoolArray:
+    """Rows finite in every column. A row sum is NaN or infinite exactly when a
+    value is (signals and counts are far from overflowing), so this needs one
+    value per row rather than a boolean copy of the whole array."""
+    with np.errstate(invalid="ignore", over="ignore"):  # inf - inf is NaN: not finite
+        return np.asarray(np.isfinite(values.sum(axis=1)), dtype=bool)
+
+
 def _diagnostics(
     rec: Recording,
     behavior_intervals: FloatArray | None,
@@ -5586,14 +5594,14 @@ def _diagnostics(
     signals: dict[str, Any] = {}
     lfps = getattr(session, "lfps", None)
     if lfps is not None and np.shape(lfps)[1]:
-        signals["lfps"] = np.isfinite(lfps).all(axis=1)
+        signals["lfps"] = _finite_rows(lfps)
     sharp = getattr(session, "sharp_wave_lfp", None)
     if sharp is not None and np.isfinite(sharp).any():
         signals["sharp_wave_lfp"] = np.isfinite(sharp)
     if rec.reference_lfp is not None:
         signals["reference_lfp"] = np.isfinite(rec.reference_lfp)
     if rec.multiunit.shape[1]:
-        signals["multiunit"] = np.isfinite(rec.multiunit).all(axis=1)
+        signals["multiunit"] = _finite_rows(rec.multiunit)
     speed = getattr(session, "speed", None)
     if speed is not None:
         signals["speed"] = np.isfinite(speed)
