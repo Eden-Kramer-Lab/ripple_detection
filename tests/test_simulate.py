@@ -1652,7 +1652,7 @@ class TestSimulateNetworkSession:
         _, session = drawn
         rates = session.baseline_rates
         assert rates.shape == (60,)
-        ranges = {"place": (0.1, 0.5), "pyramidal": (0.5, 1.5), "interneuron": (2.0, 5.0)}
+        ranges = {"place": (0.1, 0.5), "pyramidal": (0.5, 1.5), "interneuron": (8.0, 15.0)}
         for unit_type, (low, high) in ranges.items():
             of_type = rates[session.unit_types == unit_type]
             assert ((of_type >= low) & (of_type <= high)).all(), unit_type
@@ -1667,7 +1667,7 @@ class TestSimulateNetworkSession:
         )
         assert session.unit_types.tolist() == ["place", "place"] + ["interneuron"] * 3
         np.testing.assert_array_equal(session.baseline_rates[:2], [1.0, 1.0])
-        assert ((session.baseline_rates[2:] >= 2) & (session.baseline_rates[2:] <= 5)).all()
+        assert ((session.baseline_rates[2:] >= 8) & (session.baseline_rates[2:] <= 15)).all()
 
     def test_an_empty_table_renders_noise_only(self):
         session = self._render(_empty_table())

@@ -23,6 +23,14 @@ validation simulations are examined. An unsupported quantity stays labeled assum
 be cited as evidence that the reference reproduces physiology. Missing measurement definitions
 or unresolved required source checks block the validation report.
 
+The committed table gives each target's applicable conditions in `conditions`: the reference
+and those of the six model alternatives whose design leaves that measurement's inputs unchanged.
+The one-factor and crossed grid levels are stress levels whose measurements are reported, not
+gated. Targets from a state other than the reference's (awake immobility) have `conditions`
+"none" and are reported beside it. `lower` and `upper` already include the allowance for
+sampling and figure-reading error stated in each `rationale`; a check passes when its statistic,
+pooled over the validation replicates, lies within them.
+
 Use the source's measurement convention. The plan's nominal duration is `3 * (rise_sigma +
 decay_sigma)`: at envelope power 2, its half-maximum duration is only about 0.392 times that
 value (90 ms nominal gives about 35 ms at half maximum). Report nominal, half-maximum and

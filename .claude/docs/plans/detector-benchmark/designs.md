@@ -27,10 +27,12 @@ schemas are in [shared-contracts.md](shared-contracts.md); this file does not re
 
 The reference value of every simulator parameter, fixed **before any detector is run on network
 sessions** (overview risk 1). Ranges are `(low, high)` drawn uniformly per event, the package's
-convention (`_draw_per_ripple`, `simulate.py:221`). "Assumed" means no source; "verify" means the
-planner recalls a source but did not check it. Phase 1a replaces each "verify" with a citation
-and page, or changes it to "assumed", before merging, and records the table in the
-`draw_network_events` docstring's Notes. The rendered-measurement targets, source conventions,
+convention (`_draw_per_ripple`, `simulate.py:221`). "Assumed" means no source. Phase 1a checked
+every row the planner had marked "verify" against the source (2026-09-26), recorded citation and
+location, and put the table in the `draw_network_events` docstring's Notes. Two reference values
+changed with the maintainer's agreement: the event rate (0.5 to 0.3 per second, awake rest) and
+the interneuron baseline (2-5 to 8-15 Hz). "Read from figure" values are approximate. The
+rendered-measurement targets, source conventions,
 six alternative model conditions and validation report are specified in
 [simulator-validation.md](simulator-validation.md); those checks precede benchmark detector runs.
 
@@ -40,22 +42,22 @@ six alternative model conditions and validation report are specified in
 | Session | 600 s; running bouts 10-20 s separated by 20-40 s of rest | Assumed. |
 | LFP | 4 channels + radiatum, pink noise, `noise_amplitude=1.3`, `shared_noise_fraction=0.5` | `simulate_session` defaults. |
 | Theta / delta | amplitude 4 each (8 Hz running, 2 Hz rest) | `examples/literature_recipes.py:70-71` (the recipes' session). |
-| Units | 60: 40 place (baseline 0.1-0.5 Hz), 10 other pyramidal (0.5-1.5 Hz), 10 interneurons (2-5 Hz) | `literature_recipes.py:56-58`. |
-| Event rate | 0.5 per second of rest | Verify: awake and sleep SWR rates of roughly 0.1-1 Hz (Buzsáki 2015, Hippocampus 25:1073). |
+| Units | 60: 40 place (baseline 0.1-0.5 Hz), 10 other pyramidal (0.5-1.5 Hz), 10 interneurons (8-15 Hz) | Counts and pyramidal rates `literature_recipes.py:56-58`; CA1 pyramidal rates lognormal over 0.001-10 Hz (Mizuseki & Buzsáki 2013, doi:10.1016/j.celrep.2013.07.039, Results), non-theta mean 1.4 Hz (Csicsvari et al. 1999, doi:10.1523/JNEUROSCI.19-01-00274.1999, p. 278). Interneurons: non-theta means 8.3 and 14.3 Hz for two groups (Csicsvari et al. 1999, p. 278). |
+| Event rate | 0.3 per second of rest (awake immobility) | Awake immobility 0.13-0.22 ripples/s (Buzsáki 2015, doi:10.1002/hipo.22488, Fig. 3C, read from figure); 0.32-0.40 multiunit candidate events/s during stops (Davidson, Kloosterman & Wilson 2009, doi:10.1016/j.neuron.2009.07.027, Results). Sleep 0.3-0.5/s (Nguyen et al. 2009, doi:10.3389/neuro.07.011.2009, Results). Threshold-dependent. |
 | Type mix | swr 0.55, weak_ripple 0.15, burst_only 0.10, ripple_doublet 0.10, sharp_wave_only 0.10 | Assumed. |
 | Minimum separation | 0.05 s between events' ±3-sigma spans | Assumed. |
-| Ripple span (±3 sigma) | (0.03, 0.15) s | Verify: 30-100 ms typical with a tail (Buzsáki 2015). |
+| Ripple span (±3 sigma) | (0.03, 0.15) s | Ripples 30-150 ms, skewed (Buzsáki 2015, "Definition of Pathological Events"), convention unstated; a nominal span, not a threshold-crossing duration. |
 | Ripple skew | fraction of the span after the peak (0.5, 0.7) | Assumed (decay slower than rise). |
-| Ripple frequency at onset | (160, 220) Hz | Verify: 140-220 Hz in rat CA1 (Buzsáki 2015). |
-| Ripple chirp | decline over the span (0, 30) Hz | Verify: within-event frequency decline (Sullivan et al. 2011, J Neurosci 31:8605; Nguyen et al. 2009). |
+| Ripple frequency at onset | (160, 220) Hz | Ripples 140-220 Hz (Sullivan et al. 2011, doi:10.1523/JNEUROSCI.0294-11.2011, abstract); modal per-event spectral peaks 167/177/187 Hz in sleep/quiet waking/maze immobility (Buzsáki 2015, Fig. 4C caption). "Onset" is the model's convention. |
+| Ripple chirp | decline over the span (0, 30) Hz | Median decline of about 15-20 Hz from shortly before the envelope peak (Nguyen et al. 2009, Results and Fig. 2C, read from figure); about 25% of ripples rise instead (Discussion), which the model omits (assumed). |
 | Ripple SNR | swr and doublet (2.5, 6.0); weak_ripple (1.2, 2.2) | Assumed; `simulate_session`'s 4.0 lies inside. |
 | Sharp wave | span (0.04, 0.12) s, symmetric; amplitude (3, 8) signal units; centre lag N(0, 0.01 s) from the ripple | Amplitude after `literature_recipes.py:68` (6, above delta); span `simulate_session`'s 0.08 inside; lag assumed. |
-| Burst | span = ripple span × (1.0, 1.5); centre lag N(0, 0.01 s); place-cell gain 40; participation swr/doublet (0.2, 0.6), weak_ripple (0.02, 0.1), burst_only (0.2, 0.6) with span (0.05, 0.3) s | Gain `literature_recipes.py:65`; participation verify: 10-30% of CA1 pyramidal cells per SWR (Csicsvari et al. 2000; Ylinen et al. 1995); rest assumed. |
+| Burst | span = ripple span × (1.0, 1.5); centre lag N(0, 0.01 s); place-cell gain 40; participation swr/doublet (0.2, 0.6), weak_ripple (0.02, 0.1), burst_only (0.2, 0.6) with span (0.05, 0.3) s | Gain `literature_recipes.py:65`. Participation is a latent probability, assumed; observed: about 10% of CA1 pyramidal cells fire in a 50 ms window, 0-40% by event (Ylinen et al. 1995, doi:10.1523/JNEUROSCI.15-01-00030.1995, p. 35), about 30% in the largest events (Csicsvari et al. 2000, doi:10.1016/S0896-6273(00)00135-5, Fig. 3C, read from figure). Rest assumed. |
 | Other pyramidal units | participate with half the place cells' probability, gain 40 | Assumed. |
-| Interneurons | all take part in events with a ripple, gain 3, on the ripple's envelope | Verify: interneurons strongly recruited during ripples (Klausberger et al. 2003). |
-| Doublet | 2 ripples (p 0.7) or 3 (p 0.3), centre-to-centre (0.06, 0.12) s, one burst over all | Verify: ripple doublets and triplets (Davidson, Kloosterman & Wilson 2009). |
+| Interneurons | all take part in events with a ripple, gain 3, on the ripple's envelope | Gain: about threefold at the sharp-wave peak (Csicsvari et al. 1999, p. 279, behaving rats). All taking part is assumed: responses differ by type, O-LM cells falling silent (Klausberger et al. 2003, doi:10.1038/nature01374, p. 846, anaesthetized). |
+| Doublet | 2 ripples (p 0.7) or 3 (p 0.3), centre-to-centre (0.06, 0.12) s, one burst over all | Spacing around the 8.8-11.8 ripples/s within long replay events (Davidson et al. 2009, Results); the 2/3 proportions are assumed. |
 | Non-event rates (per minute) | spike_leakage 2 (rest), emg 1 (any), fast_gamma 2 (any), theta_burst 6 (running) | Assumed. |
-| Spike leakage | 1-3 pyramidal units, 3-8 spikes each at ISI (3, 6) ms, waveform peak 2.0 on one channel | Verify: complex-spike bursts with 3-6 ms ISIs (Ranck 1973); amplitude assumed. |
+| Spike leakage | 1-3 pyramidal units, 3-8 spikes each at ISI (3, 6) ms, waveform peak 2.0 on one channel | Intraburst ISIs peak at 2-6 ms, CA1 mode 5.04 ± 1.00 ms (Mizuseki et al. 2012, doi:10.1002/hipo.22002, Results, Figs. 2A-B; Ranck 1973 not accessed); amplitude assumed. |
 | EMG | span (0.05, 0.5) s, white noise high-passed at 100 Hz, peak SD 1.5, all channels | Assumed. |
 | Fast gamma | Reference 60-100 Hz; nearby condition 90-140 Hz; span (0.05, 0.15) s, SNR (1.5, 4) against the corresponding band noise | 60-100 Hz is an assumed control; Sullivan et al. 2011 reports 90-140 Hz ([abstract and Fig. 1](https://pubmed.ncbi.nlm.nih.gov/21653864/)). Non-event status is a benchmark assumption. |
 | Theta burst | 5-15 place units, gain 10, span (0.1, 0.3) s, running only | Assumed. |
@@ -83,7 +85,7 @@ public function there:
 def draw_network_events(
     time: ArrayLike,
     *,
-    event_rate: float = 0.5,
+    event_rate: float = 0.3,
     type_probabilities: Mapping[str, float] | None = None,  # None: the reference mix
     running_intervals: ArrayLike | None = None,
     ripple_duration: tuple[float, float] = (0.03, 0.15),
@@ -541,7 +543,7 @@ One factor at a time (reference level in bold):
 | `n_channels` | `render.n_channels`, `non_events.n_channels` | 1, **4**, 16 |
 | `shared_noise_fraction` | `render.shared_noise_fraction` | 0.2, **0.5**, 0.8 |
 | `noise_type` | `render.noise_type` | **pink**, brown |
-| `event_rate` | `events.event_rate` | 0.2, **0.5**, 1.0 |
+| `event_rate` | `events.event_rate` | 0.15, **0.3**, 0.6 |
 | `type_mix` | `events.type_probabilities` | **reference**, swr_only: {swr 1.0}, hard: {swr 0.25, weak_ripple 0.3, burst_only 0.15, ripple_doublet 0.15, sharp_wave_only 0.15} |
 | `burst_lag` | `events.burst_lag` | 0.0, **0.01**, 0.03 |
 | `ripple_chirp` | `events.ripple_chirp` | none: (0, 0), **(0, 30)** |

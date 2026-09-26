@@ -1565,7 +1565,7 @@ def _poisson_times(
 def draw_network_events(
     time: ArrayLike,
     *,
-    event_rate: float = 0.5,
+    event_rate: float = 0.3,
     type_probabilities: Mapping[str, float] | None = None,
     running_intervals: ArrayLike | None = None,
     ripple_duration: tuple[float, float] = (0.03, 0.15),
@@ -1618,7 +1618,7 @@ def draw_network_events(
         Sample timestamps in seconds, increasing.
     event_rate : float, optional
         Events per second of rest, before events too close to the previous
-        one are dropped. Default 0.5.
+        one are dropped. Default 0.3, awake immobility (see Notes).
     type_probabilities : mapping of str to float, optional
         Relative frequency of each event type; a type left out never occurs,
         and the values are normalized. Default None: swr 0.55, weak_ripple
@@ -1752,6 +1752,68 @@ def draw_network_events(
     its span, skew, chirp and the interval from the previous ripple; per
     sharp-wave slot its span; the burst's duration ratio and its
     ``burst_only`` span.
+
+    Reference values, here and in ``simulate_network_session``, and their
+    sources. The reference is rat dorsal CA1 at awake rest between running
+    bouts. "Assumed" marks a value no source checked supports; values read
+    from a figure are approximate. The measured targets the simulator is
+    validated against are in the repository's
+    ``examples/benchmark/simulator_targets.csv``.
+
+    - Event rate, 0.3 per second of rest: between awake-immobility ripple
+      rates of about 0.13-0.22/s (Buzsáki 2015, doi:10.1002/hipo.22488,
+      Fig. 3C, read from the figure) and 0.32-0.40 multiunit candidate
+      events/s during stops (Davidson, Kloosterman & Wilson 2009,
+      doi:10.1016/j.neuron.2009.07.027, Results). Sleep rates are higher,
+      0.3-0.5/s (Nguyen et al. 2009, doi:10.3389/neuro.07.011.2009,
+      Results). All depend on the detection threshold.
+    - Ripple span, 0.03-0.15 s: ripples last 30-150 ms, skewed toward long
+      (Buzsáki 2015, "Definition of Pathological Events"), convention
+      unstated. The span is nominal, not a threshold-crossing duration: its
+      width at half maximum is about 0.39 times it.
+    - Onset frequency, 160-220 Hz: ripples of 140-220 Hz (Sullivan et al.
+      2011, doi:10.1523/JNEUROSCI.0294-11.2011, abstract); modal per-event
+      spectral peaks of 167, 177 and 187 Hz in sleep, quiet waking and
+      immobility on a maze (Buzsáki 2015, Fig. 4C caption). "Onset" is
+      this model's convention.
+    - Chirp, a 0-30 Hz decline: the frequency falls from shortly before the
+      envelope's peak, by about 15-20 Hz in the median (Nguyen et al. 2009,
+      Results and Fig. 2C, read from the figure). About a quarter of ripples
+      rise instead (Nguyen et al. 2009, Discussion); the model omits them.
+    - Sharp-wave span, 0.04-0.12 s: sharp waves of 40-100 ms (Buzsáki 2015,
+      Introduction), convention unstated.
+    - Participation, 0.2-0.6 for place units and half that for other
+      pyramidal units: a latent probability, assumed. The observed fraction
+      of CA1 pyramidal cells that fire is about 10% in a 50 ms window,
+      0-40% by event (Ylinen et al. 1995,
+      doi:10.1523/JNEUROSCI.15-01-00030.1995, p. 35), and about 30% in the
+      largest events (Csicsvari et al. 2000,
+      doi:10.1016/S0896-6273(00)00135-5, Fig. 3C, read from the figure).
+    - Doublets: centre-to-centre 0.06-0.12 s, around the 8.8-11.8 ripples/s
+      within long replay events (Davidson et al. 2009, Results); two
+      ripples or, with probability 0.3, three: assumed.
+    - Strength correlation, 0: an assumed, independent control. Sharp-wave
+      magnitude correlates with ripple power, r = 0.47 (0.30-0.55 by
+      animal; Sullivan et al. 2011, Results), which the coupled setting
+      (0.6, an assumed stress value) stands in for.
+    - Units, 40 place (0.1-0.5 Hz) and 10 other pyramidal (0.5-1.5 Hz):
+      within CA1 pyramidal rates, lognormal over 0.001-10 Hz (Mizuseki &
+      Buzsáki 2013, doi:10.1016/j.celrep.2013.07.039, Results), with a
+      non-theta mean of 1.4 Hz (Csicsvari et al. 1999,
+      doi:10.1523/JNEUROSCI.19-01-00274.1999, p. 278).
+    - Interneurons, 10 at 8-15 Hz: non-theta means of 8.3 and 14.3 Hz for
+      two groups (Csicsvari et al. 1999, p. 278). Their gain of 3 on the
+      ripple: interneurons fire about three times their rate outside sharp
+      waves at its peak (p. 279). That every interneuron takes part is
+      assumed: interneuron types differ, some falling silent (Klausberger et
+      al. 2003, doi:10.1038/nature01374, p. 846, under anaesthesia).
+    - Assumed: the type mix, the 0.05 s separation, ripple skew, the ripple
+      and weak-ripple SNR ranges, sharp-wave amplitudes (3-8, above the
+      delta of ``examples/literature_recipes.py``) and lags, the burst gain
+      of 40 (``examples/literature_recipes.py``), span ratio and lag, the
+      ``burst_only`` span, the weak-ripple values, and the renderer's noise,
+      leaks, channel count and theta and delta amplitudes
+      (``simulate_session``'s and ``examples/literature_recipes.py``'s).
 
     Examples
     --------
@@ -1985,7 +2047,7 @@ _REFERENCE_UNIT_COUNTS = {"place": 40, "pyramidal": 10, "interneuron": 10}
 _REFERENCE_BASELINE_RATES = {
     "place": (0.1, 0.5),
     "pyramidal": (0.5, 1.5),
-    "interneuron": (2.0, 5.0),
+    "interneuron": (8.0, 15.0),
 }
 SPATIAL_PROFILES = ("global", "local")
 SPIKE_MODELS = ("poisson", "refractory")
@@ -2331,7 +2393,8 @@ def simulate_network_session(
     baseline_rate : mapping of str to (float, float), optional
         Range, in spikes/s, of each type's baseline intensity, drawn per unit;
         a type left out keeps its default. Default None: place (0.1, 0.5),
-        pyramidal (0.5, 1.5), interneuron (2, 5).
+        pyramidal (0.5, 1.5), interneuron (8, 15); see ``draw_network_events``'
+        Notes for their sources.
     channel_gains : sequence of float, shape (n_channels,), optional
         Each channel's ripple gain, as in ``simulate_multichannel_LFP``.
         Default None: 1 on every channel.
