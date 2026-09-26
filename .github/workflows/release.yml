@@ -157,23 +157,47 @@ jobs:
         if: matrix.package == 'sdist'
         run: pip install dist/*.tar.gz
       - name: Smoke-test the installed package
-        # exercises the two data files the wheel force-includes (the filter
-        # kernel and the literature survey) and one detector end to end
+        # exercises the packaged data files (the filter kernel, the literature
+        # survey and the dataset catalog), one detector and one literature
+        # method end to end, and an events file round trip
         run: |
           python - <<'EOF'
+          import tempfile
+          from pathlib import Path
+
           import numpy as np
+          import pandas as pd
           import ripple_detection as rd
+          from ripple_detection import literature_methods as lm
           print("Version:", rd.__version__)
           fs = 1500
           time = np.arange(0, 20, 1 / fs)
           lfp = np.column_stack([rd.simulate_LFP(time, [3.0, 9.0], rng=s) for s in (1, 2)])
           filtered = rd.filter_ripple_band(lfp, fs)  # loads ripplefilter.mat
-          events = rd.Kay_ripple_detector(time, filtered, np.full(len(time), 2.0), fs)
+          speed = np.full(len(time), 2.0)
+          events = rd.Kay_ripple_detector(time, filtered, speed, fs)
           assert len(events) == 2, len(events)
-          assert rd.load_literature_parameters().shape == (57, 35)
+          parameters = rd.load_literature_parameters()
+          assert parameters.shape == (57, 35)
+          datasets = rd.load_literature_datasets()
+          linked = datasets.merge(
+              parameters, left_on="paper_doi", right_on="DOI", validate="many_to_one"
+          )
+          assert len(datasets) > 0 and len(linked) == len(datasets)
           spec = rd.get_detector("Kay_ripple_detector")
           spec.check_inputs(filtered)
           spec.check_parameters(spec.parameters)
+          recording = lm.Recording.from_arrays(time, fs, lfps=lfp, speed=speed)
+          assert lm.check_method("gillespie_2021", recording) == []
+          found = lm.run_method("gillespie_2021", recording)
+          assert len(found) > 0
+          with tempfile.TemporaryDirectory() as directory:
+              path = Path(directory) / "events.csv"
+              lm.save_events(found, path)
+              loaded = lm.load_events(path)
+          pd.testing.assert_frame_equal(loaded, found, check_exact=True)
+          assert loaded.attrs["method"] == found.attrs["method"] == "gillespie_2021"
+          assert loaded.attrs["ripple_detection_version"] == rd.__version__
           print("smoke test passed")
           EOF
 
