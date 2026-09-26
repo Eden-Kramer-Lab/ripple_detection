@@ -5291,7 +5291,9 @@ def run_method(
         method's own columns (channel, trigger, statistics).
 
         ``attrs`` holds, in JSON types (lists for arrays, so results
-        concatenate and ``save_events`` can write them), ``method``, ``doi``,
+        concatenate and ``save_events`` can write them), ``method``,
+        ``ripple_detection_version`` (the version that detected the events,
+        which ``save_events`` and ``load_events`` keep), ``doi``,
         ``output``, ``role``, ``inventory`` and ``interpretation`` (defined
         in ``list_methods``); ``options`` (every keyword option, defaults
         resolved; a per-sample trace such as Wikenheiser's ``theta_delta`` by
@@ -5371,6 +5373,7 @@ def run_method(
     result.attrs.update(
         {
             "method": name,
+            "ripple_detection_version": rd.__version__,
             "doi": rd.load_literature_parameters().loc[entry.row, "DOI"],
             "output": entry.trigger,
             "role": entry.role,
@@ -5454,10 +5457,13 @@ def save_events(events: pd.DataFrame, path: str | os.PathLike[str]) -> Path:
     Returns
     -------
     sidecar : pathlib.Path
-        The JSON file written: ``ripple_detection_version``, the table's
-        ``columns`` and their dtypes, and ``attrs`` (method, DOI, output, role,
-        inventory, interpretation, resolved options, behavior intervals, the
-        input selections, grid, clipping and diagnostics; see ``run_method``).
+        The JSON file written: ``saved_with_ripple_detection_version`` (the
+        version saving the file), the table's ``columns`` and their dtypes, and
+        ``attrs`` (method, the ``ripple_detection_version`` that detected the
+        events, DOI, output, role, inventory, interpretation, resolved options,
+        behavior intervals, the input selections, grid, clipping and
+        diagnostics; see ``run_method``). Loading and saving again keeps the
+        detecting version.
         Strict JSON: no NaN or Infinity.
 
     Raises
@@ -5475,7 +5481,9 @@ def save_events(events: pd.DataFrame, path: str | os.PathLike[str]) -> Path:
         raise ValueError(msg)
     sidecar = table.with_suffix(".json")
     provenance = {
-        "ripple_detection_version": rd.__version__,
+        # The version that detected the events is in attrs, set by run_method
+        # and kept through load_events; this is only the version that saved them.
+        "saved_with_ripple_detection_version": rd.__version__,
         "columns": {column: str(dtype) for column, dtype in events.dtypes.items()},
         "attrs": _jsonable(dict(events.attrs), -1),
     }
@@ -5500,7 +5508,11 @@ def load_events(path: str | os.PathLike[str]) -> pd.DataFrame:
     """
     table = Path(path)
     provenance = json.loads(table.with_suffix(".json").read_text())
-    events = pd.read_csv(table, index_col="event_number").astype(provenance["columns"])
+    # The C parser's default float conversion can be off by an ulp; a bound off
+    # by one can drop a spike on an event's last sample.
+    events = pd.read_csv(table, index_col="event_number", float_precision="round_trip").astype(
+        provenance["columns"]
+    )
     events.index = events.index.astype("int64")
     events.attrs = provenance["attrs"]
     return events

@@ -2637,14 +2637,47 @@ def test_save_and_load_events_keep_the_table_and_its_provenance(tmp_path, measur
     sidecar = lm.save_events(events, tmp_path / "events.csv")
     assert sidecar == tmp_path / "events.json"
     provenance = _strict_json(sidecar.read_text())
-    assert provenance["ripple_detection_version"] == rd.__version__
+    assert provenance["saved_with_ripple_detection_version"] == rd.__version__
+    assert provenance["attrs"]["ripple_detection_version"] == rd.__version__
     assert provenance["attrs"]["method"] == "chenani_2019_hfe"
     assert provenance["attrs"]["doi"].startswith("https://doi.org/")
     assert provenance["attrs"]["options"]["ar_coefficients"] == [[0.1, 0.1]] * 3
     assert provenance["attrs"]["grid"]["input_sampling_frequency"] == 1500
     loaded = lm.load_events(tmp_path / "events.csv")
-    pd.testing.assert_frame_equal(loaded, events)
+    pd.testing.assert_frame_equal(loaded, events, check_exact=True)
     assert loaded.attrs == events.attrs
+
+
+@pytest.mark.parametrize("origin", [0.0, 1_700_000_000.0])
+def test_saved_bounds_round_trip_exactly(tmp_path, origin):
+    """A bound off by one ulp can move a spike on the final sample out of the
+    event, so the table must come back bit for bit."""
+    rec = lm.Recording.from_arrays(**_measured_inputs(origin=origin))
+    events = lm.run_method("karlsson_2009", rec)
+    assert len(events)
+    lm.save_events(events, tmp_path / "events.csv")
+    loaded = lm.load_events(tmp_path / "events.csv")
+    pd.testing.assert_frame_equal(loaded, events, check_exact=True)
+    np.testing.assert_array_equal(
+        rd.count_spikes_in_events(loaded, rec.multiunit, rec.time),
+        rd.count_spikes_in_events(events, rec.multiunit, rec.time),
+    )
+
+
+def test_resaving_keeps_the_version_that_detected_the_events(tmp_path, measured, monkeypatch):
+    events = lm.run_method("karlsson_2009", measured)
+    assert events.attrs["ripple_detection_version"] == rd.__version__
+    lm.save_events(events, tmp_path / "first.csv")
+    monkeypatch.setattr(rd, "__version__", "99.0.0")  # an upgrade between runs
+    loaded = lm.load_events(tmp_path / "first.csv")
+    sidecar = lm.save_events(loaded, tmp_path / "second.csv")
+    provenance = _strict_json(sidecar.read_text())
+    assert (
+        provenance["attrs"]["ripple_detection_version"]
+        == events.attrs["ripple_detection_version"]
+    )
+    assert provenance["saved_with_ripple_detection_version"] == "99.0.0"
+
 
 
 def test_save_events_refuses_a_table_without_provenance(tmp_path):

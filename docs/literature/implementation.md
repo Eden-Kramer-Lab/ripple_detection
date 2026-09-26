@@ -148,8 +148,11 @@ export. `attrs["inputs"]` summarizes what the call ran on: channel and unit
 counts, which optional signals were supplied, the cell-selection and template
 unit indices and the curated intervals. CSV drops attrs:
 `save_events(events, "events.csv")` writes the table and an `events.json`
-sidecar with the package version, column dtypes and every attr, and
-`load_events("events.csv")` restores both.
+sidecar with the column dtypes and every attr, and `load_events("events.csv")`
+restores both exactly (bounds bit for bit). `attrs["ripple_detection_version"]`
+is the version that detected the events, set by `run_method` and kept through
+loading and saving again; the sidecar's `saved_with_ripple_detection_version`
+only records which version wrote the file.
 
 `attrs["grid"]` states the events' sample or bin grid: the input rate, the
 population `bin_width` (None for the input samples), and the duration
