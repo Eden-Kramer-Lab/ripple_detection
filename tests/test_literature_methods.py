@@ -1897,6 +1897,18 @@ def _slow_recording():
     }
 
 
+def _nan_every(step):
+    """LFP with a missing sample every ``step`` samples, so no block of finite
+    samples is longer than ``step - 1``."""
+
+    def change(inputs):
+        lfps = inputs["lfps"].copy()
+        lfps[::step] = np.nan
+        return lfps
+
+    return change
+
+
 def _silent_baseline(inputs):
     spikes = inputs["multiunit"].astype(float)
     spikes[inputs["time"] < 2] = 0
@@ -1909,6 +1921,12 @@ ERROR_PATHS = [
     ("bush_2022_ripples", _changed(fs=1500), {}, "sampled at 4800 Hz"),
     ("olafsdottir_2017_ripples", _changed(fs=1500), {}, "sampled at 1200 Hz"),
     ("tirole_2022", _changed(fs=1234.5678), {}, "Resample LFP to 1000 Hz"),
+    (
+        "tirole_2022",
+        _changed(fs=1000, lfps=_nan_every(50)),
+        {},
+        "No block of finite samples is as long as the 103 samples",
+    ),
     ("kaefer_2020", _slow_recording, {}, "too low for FFT windows"),
     ("stella_2019", _changed(), {"frequencies": [150, 800], "cycles": 7}, "Nyquist"),
     # Constant or empty baselines.

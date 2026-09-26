@@ -2073,17 +2073,10 @@ def _spiking_filter(rec: Recording, ripples: pd.DataFrame) -> pd.DataFrame:
     return ripples[keep]
 
 
-def _check_stage(stage: str) -> None:
-    if stage not in {"detection", "decoding_candidates"}:
-        msg = "stage must be 'detection' or 'decoding_candidates'."
-        raise ValueError(msg)
-
-
 def _harvey_stage(
     rec: Recording, events: pd.DataFrame | FloatArray, stage: Stage
 ) -> FloatArray:
     """Replay selection on complete 20 ms bins, before scoring and shuffling."""
-    _check_stage(stage)
     if stage == "detection":
         return bounds(events)
     candidates = within_duration(events, low=0.08)
@@ -2441,7 +2434,6 @@ def mou_2022(
     stage='decoding_candidates' adds >=4 active cells from one template
     supplied via place_cells.
     """
-    _check_stage(stage)
     if normalization not in {"minmax", "maximum"}:
         msg = "normalization must be minmax or maximum."
         raise ValueError(msg)
@@ -2508,9 +2500,6 @@ def denovellis_2021(rec: Recording) -> pd.DataFrame:
     """
     from scipy.signal import remez
 
-    if not np.isclose(rec.fs, 1500):
-        msg = "The historical Denovellis filter requires input sampled at 1500 Hz."
-        raise ValueError(msg)
     kernel = remez(101, [0, 125, 150, 250, 275, 750], [0, 1, 0], fs=1500)
 
     def historical_filter(x: FloatArray) -> FloatArray:
@@ -3094,7 +3083,6 @@ def shin_2019(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | F
     """The Karlsson rule at <= 4 cm/s; for the analyses, whole events >= 50 ms
     with >= 5 place cells are selected by stage='decoding_candidates'.
     The default returns the initial SWR inventory."""
-    _check_stage(stage)
     events = _karlsson_rule(rec, 4.0)
     if stage == "detection":
         return events
@@ -3214,7 +3202,6 @@ def drieu_2018(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | 
     place cells and elapsed duration >60 ms for trajectory analysis. Only a
     SimulatedSession may use the demonstration's shortened theta/delta proxy.
     """
-    _check_stage(stage)
     events = _drieu_events(rec)
     if stage == "detection":
         return events
@@ -3348,7 +3335,6 @@ def wu_2017(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | Flo
 
     stage='decoding_candidates' adds >=4 active template cells; supply one
     template via place_cells. Detection and session normalization are defaults."""
-    _check_stage(stage)
     events = _detect_population(
         rec,
         None,
@@ -3424,7 +3410,6 @@ def grosmark_2016(
     of supplied place cells. Measured data require NREM for normalization,
     eligible quiet-waking/NREM behavior_intervals, and external ripple peaks.
     """
-    _check_stage(stage)
     events = _population_with_ripple_peak(rec, rec.sleep(4.0, 1.0), behavior_intervals)
     if stage == "detection":
         return events
@@ -3473,7 +3458,6 @@ def jadhav_2016(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame |
     """The Karlsson rule at < 4 cm/s; SWRs within 1 s after the previous
     one's start dropped; stage='decoding_candidates' adds >=4 active CA1 cells (all supplied units).
     The default returns the initial SWR inventory."""
-    _check_stage(stage)
     events = rd.exclude_close_events(
         _karlsson_rule(rec, np.nextafter(4.0, -np.inf)), 1.0, measure_from="start"
     )
@@ -3736,7 +3720,6 @@ def pfeiffer_2013(rec: Recording) -> pd.DataFrame | FloatArray:
 def carr_2012(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame | FloatArray:
     """The Karlsson rule on CA1 at < 4 cm/s; stage='decoding_candidates'
     adds >=5 active place cells; the default returns the initial SWR inventory."""
-    _check_stage(stage)
     events = _karlsson_rule(rec, np.nextafter(4.0, -np.inf))
     if stage == "detection":
         return events
@@ -3855,7 +3838,6 @@ def ji_2007(
     stage='decoding_candidates' adds >=4 active cells from one template
     supplied via place_cells; detection returns all frames.
     """
-    _check_stage(stage)
     sleep = rec.sleep(4.0, 1.0)
     trace = population_trace(rec, bin_width=0.01, smoothing_sigma=0.03)
     counts = trace.data * 0.01
@@ -4247,9 +4229,6 @@ def bush_2022_ripples(rec: Recording, *, fir_window: str = "hamming") -> FloatAr
     filter has order 800 and the squared single-pass magnitude response.
     The population detector's duration, cell and median-speed rules follow.
     """
-    if not np.isclose(rec.fs, 4800):
-        msg = "Bush's 400th-order filter requires LFP sampled at 4800 Hz."
-        raise ValueError(msg)
     kernel = firwin(401, [150, 250], fs=rec.fs, pass_zero=False, window=fir_window)
 
     def filtered(x: FloatArray) -> FloatArray:
@@ -4318,7 +4297,7 @@ def _rms_ripples(
     rms_window: float,
     bound_threshold: float,
     reference_subtract: bool,
-    aggregation: str = "sum",
+    aggregation: Literal["sum", "mean", "first"] = "sum",
 ) -> pd.DataFrame:
     if not np.isfinite(rms_window) or rms_window <= 0:
         msg = "rms_window must be positive and finite."
@@ -4334,9 +4313,6 @@ def _rms_ripples(
         lfp = lfp - rec.reference_lfp[:, None]
     filtered = rd.filter_ripple_band(lfp, rec.fs, band=band, time=rec.time)
     rms = np.sqrt(np.maximum(0, rec.boxcar(filtered**2, rms_window)))
-    if aggregation not in {"sum", "mean", "first"}:
-        msg = "aggregation must be sum, mean or first."
-        raise ValueError(msg)
     trace = (
         rms.sum(axis=1)
         if aggregation == "sum"
@@ -4513,9 +4489,6 @@ def chenani_2019_hfe(rec: Recording, *, ar_coefficients: ArrayLike) -> pd.DataFr
         )
         events["channel"] = channel
         rows.append(events)
-    if not rows:
-        msg = "Select at least one LFP channel."
-        raise ValueError(msg)
     return pd.concat(rows, ignore_index=True)
 
 
@@ -4604,9 +4577,6 @@ def olafsdottir_2017_ripples(rec: Recording) -> FloatArray:
     Supply LFP already sampled at the reported 1200 Hz. One selected channel
     is used; the source does not establish a channel-combination rule.
     """
-    if not np.isclose(rec.fs, 1200):
-        msg = "Supply the selected LFP sampled at 1200 Hz."
-        raise ValueError(msg)
     power = rec.envelope((150.0, 250.0))[:, 0] ** 2
     events = _ripple_trace_events(
         rec, power, threshold=2.5, minimum_event_duration=0.04, maximum_duration=0.5

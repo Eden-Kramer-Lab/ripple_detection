@@ -171,6 +171,20 @@ class TestSpecConstruction:
         with pytest.raises(ValueError, match="sharp_wave_lfp has no default"):
             DetectorSpec(Long_sharp_wave_ripple_detector, (RAW_LFP,))
 
+    def test_a_detector_the_package_does_not_register_checks_only_names(self):
+        """No data-free value checks exist for a caller's own detector, so
+        check_parameters checks only that each name is a parameter."""
+
+        def my_detector(time, lfps, speed, sampling_frequency, *, threshold=3.0):
+            return Kay_ripple_detector(
+                time, lfps, speed, sampling_frequency, zscore_threshold=threshold
+            )
+
+        spec = DetectorSpec(my_detector, (RIPPLE_BAND_LFP,))
+        spec.check_parameters({"threshold": -1.0})
+        with pytest.raises(ValueError, match="my_detector does not take zscore_threshold"):
+            spec.check_parameters({"zscore_threshold": 3.0})
+
 
 class TestCheckInputs:
     """The spec checks what an array can show about a signal: count, shape, and
