@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Results and calls change: the same recording gives different events, so detect
 again rather than mixing events from 1.x and 2.0. [MIGRATING.md](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/MIGRATING.md)
-lists the calls to change, the changes that cannot raise, and why your events
+lists the calls to change, the changes without a hint, and why your events
 differ. Entries marked **Breaking** change the results or the calls; everything
 here is relative to 1.7.1.
 

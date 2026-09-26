@@ -74,7 +74,7 @@ resolves a stored name.
 Code written for 1.x needs changes, and results differ on the same recording;
 [MIGRATING.md](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/MIGRATING.md)
 is the full guide. Most 1.x calls fail with a message naming the replacement;
-these changes cannot raise: the column `max_thresh` is `max_sustained_zscore`,
+these changes give no hint: the column `max_thresh` is `max_sustained_zscore` (reading it raises pandas' KeyError),
 `simulate_LFP` draws pink noise by default where 1.x drew brown, the event
 helpers return an empty `(0, 2)` array where they returned `[]`, and a seed
 gives different noise, since every draw goes through `numpy.random.default_rng`.
