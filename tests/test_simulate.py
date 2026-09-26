@@ -1838,6 +1838,28 @@ class TestNetworkSessionVariants:
         if n_selected < n_channels:
             assert (session.ripple_channels.gain == 0).any()
 
+    def test_a_channel_without_the_ripple_has_no_delay(self):
+        """A zero recording-wide gain, or a zero gain range, leaves channels
+        without the ripple; they store delay 0, as unselected channels do."""
+        events = _ripple_only(
+            *(_one_event_table("swr", center_time=2.0 + i) for i in range(8))
+        )
+        for options in (
+            {"channel_gains": [1.0, 0.0, 1.0, 1.0]},
+            {"channel_gain_range": (0.0, 0.0)},
+        ):
+            session = self._render(
+                events, spatial_profile="local", channel_delay=0.002, **options
+            )
+            table = session.ripple_channels
+            assert (table.gain == 0).any()
+            assert (table.delay_s[table.gain == 0] == 0).all()
+
+    def test_a_large_noise_modulation_does_not_overflow(self):
+        session = self._render(_empty_table(), noise_log_amplitude=800.0)
+        assert np.isfinite(session.lfps).all()
+        assert np.isfinite(session.sharp_wave_lfp).all()
+
     def test_local_delays_stay_in_rest(self):
         """A ripple against a running bout is delayed only away from it."""
         events = _ripple_only(_one_event_table("swr", center_time=6.0 + 4 * 0.015 + 0.001))
@@ -2035,6 +2057,8 @@ class TestNetworkSessionVariants:
             ({"interneuron_gain": 0.5}, "interneuron_gain"),
             ({"n_channels": 0}, "n_channels"),
             ({"channel_gains": [1.0, 1.0]}, "channel_gains"),
+            ({"channel_gains": [np.nan, 1.0, 1.0, 1.0]}, "channel_gains"),
+            ({"channel_gains": [-1.0, 1.0, 1.0, 1.0]}, "channel_gains"),
             ({"unit_counts": {"granule": 3}}, "unit_counts"),
             ({"unit_counts": {"place": -1}}, "unit_counts"),
             ({"unit_counts": {"place": 1.5}}, "unit_counts"),
@@ -2064,6 +2088,23 @@ class TestNetworkSessionVariants:
             (_one_event_table("swr", ripple={"amplitude": 0.0}), "SNR"),
             (_one_event_table("swr", burst={"participation": 1.5}), "participation"),
             (_one_event_table("swr", burst={"amplitude": 0.5}), "participation"),
+            (_one_event_table("swr", center_time=11.99), "inside the recording"),
+            (_one_event_table("swr", center_time=0.01), "inside the recording"),
+            (
+                _one_event_table("swr", ripple={"rise_sigma": 1e-5, "decay_sigma": 1e-5}),
+                "at least one sample",
+            ),
+            (
+                pd.concat([_one_event_table("swr"), _one_event_table("swr", center_time=8.0)]),
+                "duplicate",
+            ),
+            (
+                pd.concat(
+                    [_one_event_table("burst_only"), _one_event_table("sharp_wave_only")]
+                ),
+                "one event_type",
+            ),
+            (_one_event_table("swr", event_id=0.5), "whole numbers"),
         ],
     )
     def test_event_table_validation(self, events, message):

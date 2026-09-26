@@ -1553,10 +1553,10 @@ def _poisson_times(
     ``intervals``, mapped back to recording time: the sorted times and the
     index of the interval each lies in. Draws the count, then the positions."""
     lengths = intervals[:, 1] - intervals[:, 0]
-    total = float(lengths.sum())
+    cumulative = np.concatenate([[0.0], np.cumsum(lengths)])
+    total = float(cumulative[-1])  # the edges' own sum, so every position maps inside
     n = int(rng.poisson(rate * total))
     positions = np.sort(rng.uniform(0.0, total, size=n))
-    cumulative = np.concatenate([[0.0], np.cumsum(lengths)])
     index = np.clip(np.searchsorted(cumulative, positions, side="right") - 1, 0, None)
     return intervals[index, 0] + positions - cumulative[index], index
 
@@ -1688,7 +1688,9 @@ def draw_network_events(
     envelope_power : {2, 4}, optional
         Shape of every envelope, ``exp(-ln 2 (|t| / (sqrt(2 ln 2) sigma))**p)``
         on each side: 2 is a Gaussian with SD sigma; 4 is flatter at the top
-        and steeper at the edges, with the same half-maximum width. Default 2.
+        and steeper at the edges, with the same half-maximum width. The spans
+        at three and four side scales keep their meaning as nominal extents,
+        though at power 4 the envelope is far smaller there. Default 2.
     rng : int or numpy.random.Generator, optional
         Seed, or a Generator to draw from. The draw order is in the Notes.
 
@@ -1776,12 +1778,17 @@ def draw_network_events(
       spectral peaks of 167, 177 and 187 Hz in sleep, quiet waking and
       immobility on a maze (Buzsáki 2015, Fig. 4C caption). "Onset" is
       this model's convention.
-    - Chirp, a 0-30 Hz decline: the frequency falls from shortly before the
-      envelope's peak, by about 15-20 Hz in the median (Nguyen et al. 2009,
-      Results and Fig. 2C, read from the figure). About a quarter of ripples
-      rise instead (Nguyen et al. 2009, Discussion); the model omits them.
+    - Chirp, a 0-30 Hz decline, linear over the whole span: recorded ripples
+      decelerate (Nguyen et al. 2009, Results; Sullivan et al. 2011,
+      Results), but faster and later than this model does. Their frequency
+      starts to fall shortly before the envelope's peak, by about 15-20 Hz
+      in the median over some 15 ms (Nguyen et al. 2009, Fig. 2C, read from
+      the figure), where the model falls about 2.5 Hz over the 15 ms around
+      the peak. About a quarter of ripples rise instead (Nguyen et al. 2009,
+      Discussion); the model omits them. Both are limitations.
     - Sharp-wave span, 0.04-0.12 s: sharp waves of 40-100 ms (Buzsáki 2015,
-      Introduction), convention unstated.
+      Introduction), convention unstated; the nominal span is wider than the
+      visible deflection, and the upper end, 0.12 s, is assumed.
     - Participation, 0.2-0.6 for place units and half that for other
       pyramidal units: a latent probability, assumed. The observed fraction
       of CA1 pyramidal cells that fire is about 10% in a 50 ms window,
@@ -2129,9 +2136,11 @@ def _render_ripple(
 def _noise_modulation(
     time: FloatArray, log_amplitude: float, period: float, phase: float
 ) -> FloatArray:
-    """``exp(a sin(2 pi (t - t_0) / T + phase))`` scaled to unit RMS; 1 for ``a = 0``."""
-    gain = np.exp(log_amplitude * np.sin(2 * np.pi * (time - time[0]) / period + phase))
-    return np.asarray(gain / np.sqrt(np.mean(gain**2)), dtype=float)
+    """``exp(a sin(2 pi (t - t_0) / T + phase))`` scaled to unit RMS; 1 for ``a = 0``.
+    Normalized in log space, so a large ``a`` does not overflow."""
+    log_gain = log_amplitude * np.sin(2 * np.pi * (time - time[0]) / period + phase)
+    log_rms = 0.5 * (special.logsumexp(2 * log_gain) - np.log(time.size))
+    return np.asarray(np.exp(log_gain - log_rms), dtype=float)
 
 
 def _rest_interval_of(
@@ -2185,14 +2194,20 @@ def _spatial_profile(
     event_gains[selected] = gain_range[0] + (gain_range[1] - gain_range[0]) * gain_u[selected]
     delays[selected] = low + (high - low) * delay_u[selected]
     event_gains[anchor], delays[anchor] = 1.0, 0.0
-    return event_gains * gains, delays
+    channel_gains = event_gains * gains
+    delays[channel_gains == 0] = 0.0  # a channel without the ripple has no delay
+    return channel_gains, delays
 
 
-def _check_event_table(events: pd.DataFrame, nyquist: float) -> pd.DataFrame:
+def _check_event_table(events: pd.DataFrame, time: FloatArray, rate: float) -> pd.DataFrame:
     """The latent event table with its columns cast and sorted, or ValueError."""
     missing = [name for name in _EVENT_COLUMNS if name not in events.columns]
     if missing:
         msg = f"events is missing the columns {missing}; build it with draw_network_events."
+        raise ValueError(msg)
+    keys = events[["event_id", "component"]].to_numpy(dtype=float)
+    if not np.all(np.isfinite(keys) & (keys == np.round(keys))):
+        msg = "events.event_id and events.component must be whole numbers."
         raise ValueError(msg)
     table = _sorted_events(
         _table(_EVENT_COLUMNS, {name: events[name] for name in _EVENT_COLUMNS})
@@ -2211,10 +2226,34 @@ def _check_event_table(events: pd.DataFrame, nyquist: float) -> pd.DataFrame:
     if not table.envelope_power.isin([2, 4]).all():
         msg = "events.envelope_power must be 2 or 4."
         raise ValueError(msg)
+    if table.duplicated(["event_id", "expression", "component"]).any():
+        msg = (
+            "events has duplicate (event_id, expression, component) rows; give each "
+            "latent event its own event_id (tables drawn separately both start at 0)."
+        )
+        raise ValueError(msg)
+    if table[["event_id", "event_type"]].drop_duplicates()["event_id"].duplicated().any():
+        msg = "Each event_id must have one event_type; events mixes types under one id."
+        raise ValueError(msg)
+    start = table.center_time - 4 * table.rise_sigma
+    end = table.center_time + 4 * table.decay_sigma
+    if not ((start >= time[0]) & (end <= time[-1])).all():
+        msg = (
+            "Every component's span at four side scales must lie inside the recording, "
+            f"[{time[0]}, {time[-1]}] s; draw the events on the time you render them on."
+        )
+        raise ValueError(msg)
+    nyquist = rate / 2
     ripples = table[table.expression == "ripple"]
     frequencies = ripples[["frequency_start", "frequency_end"]].to_numpy()
     if not np.all((frequencies > 0) & (frequencies < nyquist)):
         msg = f"Ripple frequencies must lie in (0, {nyquist:g}) Hz, the Nyquist range."
+        raise ValueError(msg)
+    if not (ripples[["rise_sigma", "decay_sigma"]] >= 1 / rate).all().all():
+        msg = (
+            f"A ripple's rise_sigma and decay_sigma must be at least one sample, {1 / rate:g} "
+            "s; a narrower ripple has no samples to size its SNR from."
+        )
         raise ValueError(msg)
     if not (ripples.amplitude > 0).all():
         msg = "A ripple's amplitude, its SNR, must be positive."
@@ -2384,7 +2423,8 @@ def simulate_network_session(
         Sample timestamps in seconds, increasing.
     events : pandas.DataFrame
         A latent event table, as ``draw_network_events`` returns; rendered in
-        its sorted order whatever the order given.
+        its sorted order whatever the order given. Columns beyond the table's
+        are not kept.
     n_channels : int, optional
         Pyramidal-layer channels; the radiatum channel is separate. Default 4.
     unit_counts : mapping of str to int, optional
@@ -2457,7 +2497,10 @@ def simulate_network_session(
         model or spatial profile does not change anything drawn from another
         stream.
     sampling_frequency : float, optional
-        As in ``simulate_LFP``. Recorded in the result.
+        As in ``simulate_LFP``. Recorded in the result. Give it when the
+        timestamps lie far from zero (a Unix time): there they round, the
+        median step no longer gives the rate exactly, and the ripples are
+        sized with a filter designed for the rate inferred.
 
     Returns
     -------
@@ -2477,13 +2520,17 @@ def simulate_network_session(
     ------
     ValueError
         If ``time`` is not 1-D with two or more samples; ``events`` lacks a
-        column, has an unknown type or expression, a non-finite time or
-        amplitude, a side scale that is not positive, an envelope power other
-        than 2 or 4, a ripple frequency outside (0, Nyquist), a non-positive
-        ripple SNR, or a burst with participation outside [0, 1] or a gain
-        below 1; there are ripples and ``noise_amplitude`` is 0 (an SNR
-        needs a background); ``n_channels`` is below 1, ``channel_gains`` has
-        the wrong length, ``unit_counts`` names an unknown type or a count
+        column, has an ``event_id`` or ``component`` that is not a whole
+        number, a duplicate (``event_id``, ``expression``, ``component``) row,
+        an ``event_id`` of two types, an unknown type or expression, a
+        non-finite time or amplitude, a side scale that is not positive, a
+        component whose span at four side scales leaves the recording, an
+        envelope power other than 2 or 4, a ripple frequency outside (0,
+        Nyquist), a ripple side scale under one sample, a non-positive ripple
+        SNR, or a burst with participation outside [0, 1] or a gain below 1;
+        there are ripples and ``noise_amplitude`` is 0 (an SNR needs a
+        background); ``n_channels`` is below 1, ``channel_gains`` has the
+        wrong length or an entry that is negative or not finite, ``unit_counts`` names an unknown type or a count
         that is not a non-negative integer, or gives no unit;
         ``baseline_rate`` names an unknown type or a range that is not
         non-negative; ``spatial_profile`` or ``spike_model`` is unknown;
@@ -2527,11 +2574,14 @@ def simulate_network_session(
         msg = f"time must be 1-D with at least two samples, got shape {time.shape}."
         raise ValueError(msg)
     rate = _sampling_rate(time, sampling_frequency)
-    table = _check_event_table(events, nyquist=rate / 2)
+    table = _check_event_table(events, time, rate)
     if n_channels < 1:
         msg = f"n_channels must be at least 1, got {n_channels}."
         raise ValueError(msg)
     gains = _channel_gains(channel_gains, n_channels)
+    if not np.all(np.isfinite(gains) & (gains >= 0)):
+        msg = f"channel_gains must be finite and non-negative, got {gains}."
+        raise ValueError(msg)
     unit_types, rate_ranges = _unit_layout(unit_counts, baseline_rate)
     _check_choice("spatial_profile", spatial_profile, SPATIAL_PROFILES)
     _check_choice("spike_model", spike_model, SPIKE_MODELS)
