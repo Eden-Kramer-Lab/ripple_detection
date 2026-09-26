@@ -1453,6 +1453,20 @@ Stage = Literal["detection", "decoding_candidates"]
 Inventory = Literal["default", "additional"]
 """Whether the demonstration runs a method by default or it is an addition."""
 
+Precondition = Literal["rest"]
+"""A stated condition on the recording that a method cannot enforce itself but
+``run_method`` can check: "rest" for a rest-session recording."""
+
+# A rest recording: speed above 5 cm/s in at most a tenth of the known samples.
+_REST_SPEED = 5.0
+_REST_MOVING_FRACTION = 0.1
+_PRECONDITIONS: dict[str, str] = {
+    "rest": (
+        f"rest recording: speed above {_REST_SPEED:g} cm/s in at most "
+        f"{_REST_MOVING_FRACTION:.0%} of the samples with known speed"
+    )
+}
+
 RequirementKind = Literal["signal", "cells", "intervals", "external", "option"]
 """What a requirement is: a recorded signal, a cell selection, curated
 intervals, an external inventory, or a method option."""
@@ -1689,6 +1703,8 @@ class Recipe:
         ``list_methods``' ``sampling_frequency``.
     bin_width : float or None
         ``list_methods``' ``bin_width``.
+    precondition : {"rest"} or None
+        ``list_methods``' ``precondition``.
     """
 
     row: int
@@ -1701,6 +1717,7 @@ class Recipe:
     requirements: tuple[Requirement, ...] = ()
     sampling_frequency: float | None = None
     bin_width: float | None = None
+    precondition: Precondition | None = None
 
 
 RECIPES: list[Recipe] = []
@@ -1725,6 +1742,7 @@ def _register(
     needs: Sequence[str | Requirement] = (),
     sampling_frequency: float | None = None,
     bin_width: float | None = None,
+    precondition: Precondition | None = None,
 ) -> Callable[[Callable[P, pd.DataFrame | FloatArray]], Callable[..., pd.DataFrame]]:
     inventory: Inventory = "default" if registry is RECIPES else "additional"
     requirements = tuple(
@@ -1776,6 +1794,7 @@ def _register(
             requirements,
             sampling_frequency,
             bin_width,
+            precondition,
         )
         registry.append(entry)
         _ENTRIES[name] = entry
@@ -3460,11 +3479,19 @@ def jadhav_2016(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame |
     return rd.require_active_units(events, rec.multiunit, rec.time, minimum_active_units=4)
 
 
-@_recipe(39, "Ólafsdóttir 2016", "MUA", needs=("multiunit", "place_cells"), bin_width=0.001)
+@_recipe(
+    39,
+    "Ólafsdóttir 2016",
+    "MUA",
+    needs=("multiunit", "place_cells"),
+    bin_width=0.001,
+    precondition="rest",
+)
 def olafsdottir_2016(rec: Recording) -> pd.DataFrame | FloatArray:
     """Place cells, 5 ms Gaussian, > 3 SD, bounds at the mean, >= 40 ms,
     >=15% of the place cells; no speed rule. Supply a rest recording;
-    detection and statistics span the full supplied recording."""
+    detection and statistics span the full supplied recording. With speed
+    supplied, run_method warns when it shows substantial running."""
     events = _detect_population(
         rec, rec.place_cells, 0.005,
         threshold=3.0, minimum_duration=0.0, minimum_event_duration=0.04,
@@ -5050,6 +5077,11 @@ def list_methods() -> pd.DataFrame:
             FFT stride, Krause's per-SWR 3 ms bins). On a population grid the
             detection's duration limits count bins while ``duration`` is the
             elapsed time between the closed bounds (see ``run_method``).
+        precondition
+            A stated condition on the recording the method does not enforce,
+            which ``run_method`` checks and warns about when violated (a rest
+            recording: speed above 5 cm/s in at most 10% of the samples with
+            known speed); empty when none.
         interpretation
             The method's docstring: its rule, interpretation and assumptions.
     """
@@ -5088,6 +5120,7 @@ def list_methods() -> pd.DataFrame:
                 if "stage" in parameters
                 else ("detection",),
                 "bin_width": entry.bin_width,
+                "precondition": _PRECONDITIONS.get(entry.precondition or "", ""),
                 "interpretation": entry.note,
             }
         )
@@ -5125,6 +5158,22 @@ def _unknown_method(name: str) -> str:
     close = difflib.get_close_matches(name, list(_ENTRIES), n=3, cutoff=0.6)
     hint = f" Did you mean {' or '.join(close)}?" if close else ""
     return f"Unknown literature method {name!r}.{hint} See list_methods() for every name."
+
+
+def _warn_unmet_precondition(entry: Recipe, rec: Recording) -> None:
+    """Warn once per call when the recording visibly violates the method's
+    stated precondition; without the data to check it, stay silent."""
+    speed = getattr(rec.session, "speed", None)
+    if entry.precondition != "rest" or speed is None:
+        return
+    known = speed[np.isfinite(speed)]
+    moving = float(np.mean(known > _REST_SPEED)) if len(known) else 0.0
+    if moving > _REST_MOVING_FRACTION:
+        rd.core._warn_at_caller(
+            f"{entry.run.__name__} expects a rest recording, but speed exceeds "
+            f"{_REST_SPEED:g} cm/s in {moving:.0%} of the samples with known speed. "
+            "The method has no speed rule of its own: pass the rest session alone."
+        )
 
 
 def _option_problems(name: str, options: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
@@ -5323,6 +5372,7 @@ def run_method(
         )
         raise TypeError(msg) if option_problems else ValueError(msg)
     entry = _ENTRIES[name]
+    _warn_unmet_precondition(entry, recording)
     implementation = _IMPLEMENTATIONS[name]
     call = inspect.signature(implementation).bind(recording, **resolved)
     if "behavior_intervals" in inspect.signature(implementation).parameters:
@@ -5488,6 +5538,7 @@ __all__ = [
     "VARIANTS",
     "Inventory",
     "PopulationTrace",
+    "Precondition",
     "Recipe",
     "RecordedSignals",
     "Recording",

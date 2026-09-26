@@ -141,6 +141,13 @@ example, spikes filling 10.000–10.049 s at 1000 Hz fill five 10 ms bins; the
 event is reported at the first and last counted samples, 10.000 and 10.049 s,
 so `duration` is 0.049 s, while a 50 ms minimum duration (five bins) keeps it.
 
+A method whose docstring states a condition on the recording that it cannot
+enforce itself declares it (`Recipe.precondition`, the catalog's
+`precondition` column), and `run_method` warns when the recording visibly
+violates it: Ólafsdóttir 2016 applies no speed rule to its rest session, so a
+recording with speed above 5 cm/s in more than 10% of the samples with known
+speed draws a warning. Without speed there is nothing to check and no warning.
+
 `attrs["diagnostics"]` is the place to look when a result is empty or
 surprising, before changing any setting: the time each supplied signal is valid
 (finite in every channel or unit; known speed), the time the sleep, baseline and
@@ -160,7 +167,9 @@ historical settings or a controlled method comparison. Its state fallbacks are e
 shortened for demonstration. Its results CSV records `method`, `configuration`, DOI,
 role, resolved `options` and `supplied_baseline_intervals` beside each result. The
 last two fields are JSON; a supplied baseline does not imply that the method uses
-it instead of its own normalization epoch.
+it instead of its own normalization epoch. Its `warnings` column records any
+warning a configuration raised: Ólafsdóttir 2016 expects a rest recording, and
+the simulated session includes running.
 
 The demo produces 59 configurations: the 57 default inventories and two additional
 Ólafsdóttir analysis settings. The 2015 `bayesian_candidates` row selects

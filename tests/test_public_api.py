@@ -105,6 +105,7 @@ LITERATURE_HELPERS = [
     "VARIANTS",
     "Inventory",
     "PopulationTrace",
+    "Precondition",
     "Recipe",
     "RecordedSignals",
     "Recording",

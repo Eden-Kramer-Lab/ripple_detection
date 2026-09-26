@@ -72,6 +72,12 @@ def test_every_recipe_runs(recipes, results):
     assert (results.n_events >= 0).all()
 
 
+def test_the_demonstration_records_warnings_instead_of_hiding_them(results):
+    warned = results.loc[results.warnings.fillna("") != "", ["method", "warnings"]]
+    assert list(warned.method) == ["olafsdottir_2016"]
+    assert "expects a rest recording" in warned.warnings.iloc[0]
+
+
 @pytest.mark.parametrize(
     ("name", "configuration", "options", "baseline"),
     [
@@ -110,6 +116,7 @@ def test_demo_retains_both_broad_and_filtered_inventories(results, name):
     assert 0 < filtered.n_events < broad.n_events
 
 
+@pytest.mark.filterwarnings("ignore:olafsdottir_2016 expects a rest recording")
 def test_every_recipe_returns_events_inside_the_recording(recipes, recording):
     for entry in recipes.RECIPES:
         events = recipes.bounds(entry.run(recording))

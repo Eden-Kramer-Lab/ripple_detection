@@ -5,6 +5,7 @@ Simulation overlap measures exercise the code, not agreement with historical eve
 """
 
 import json
+import warnings
 from dataclasses import replace
 from pathlib import Path
 
@@ -120,7 +121,11 @@ def run_all(rec: methods.Recording) -> pd.DataFrame:
         if entry.run.__name__ in ADDITIONAL_CONFIGURATIONS:
             configurations.append(ADDITIONAL_CONFIGURATIONS[entry.run.__name__])
         for configuration, options in configurations:
-            events = entry.run(method_rec, **options)
+            # Recorded, not hidden: Ólafsdóttir 2016 expects a rest recording
+            # and this session includes running.
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                events = entry.run(method_rec, **options)
             rows.append(
                 {
                     "row": entry.row,
@@ -142,6 +147,7 @@ def run_all(rec: methods.Recording) -> pd.DataFrame:
                         allow_nan=False,
                     ),
                     **score(events, rec.session.ripple_windows),
+                    "warnings": "; ".join(str(warning.message) for warning in caught),
                 }
             )
     return pd.DataFrame(rows)
