@@ -1202,7 +1202,10 @@ def _assert_schema(table, columns):
     assert list(table.columns) == list(columns)
     for name, dtype in columns.items():
         if dtype == "str":
-            assert pd.api.types.is_string_dtype(table[name]), name
+            column = table[name]
+            # pandas 2 reports an empty object column as not a string dtype
+            assert column.dtype == object or pd.api.types.is_string_dtype(column), name
+            assert all(isinstance(value, str) for value in column), name
         else:
             assert table[name].dtype == np.dtype(dtype), name
 
