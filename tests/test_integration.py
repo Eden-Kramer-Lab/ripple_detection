@@ -689,6 +689,49 @@ class TestTimeOrigin:
         atol = np.abs(np.gradient(at_zero, time)).max() * 8 * np.spacing(origin)
         np.testing.assert_allclose(shifted, at_zero, rtol=0, atol=atol)
 
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_simulated_network_events(self, origin):
+        """Latent events follow the running bouts, not the clock: the table
+        and its truth windows move by the origin, and the rendered session
+        agrees to its slope times the timestamps' rounding (theta and delta
+        are whole cycles at these origins); the spikes are the same."""
+        time = simulate_time(int(30 * FS), FS)
+        running = np.asarray(RUNNING)
+        at_zero = rd.draw_network_events(
+            time, event_rate=1.0, running_intervals=running, rng=0
+        )
+        shifted = rd.draw_network_events(
+            time + origin, event_rate=1.0, running_intervals=running + origin, rng=0
+        )
+        assert len(at_zero) > 0
+        assert_times_shifted(shifted.center_time, at_zero.center_time, origin)
+        pd.testing.assert_frame_equal(
+            shifted.drop(columns="center_time"), at_zero.drop(columns="center_time")
+        )
+        for expression in (None, "network"):
+            windows = rd.truth_windows(at_zero, 0.25, expression=expression)
+            moved = rd.truth_windows(shifted, 0.25, expression=expression)
+            for column in ("start_time", "end_time", "peak_time"):
+                assert_times_shifted(moved[column], windows[column], origin)
+            labels = [c for c in windows if not c.endswith("_time")]
+            pd.testing.assert_frame_equal(moved[labels], windows[labels])
+
+        # the rate is given: far from zero the median timestamp step no longer
+        # gives 1500 Hz exactly, and the SNR sizing filters at the rate
+        session = rd.simulate_network_session(
+            time, at_zero, running_intervals=running, rng=1, sampling_frequency=FS
+        )
+        moved_session = rd.simulate_network_session(
+            time + origin, shifted, running_intervals=running + origin, rng=1,
+            sampling_frequency=FS,
+        )  # fmt: skip
+        for name in ("lfps", "sharp_wave_lfp", "speed"):
+            signal = getattr(session, name)
+            atol = np.abs(np.gradient(signal, time, axis=0)).max() * 8 * np.spacing(origin)
+            np.testing.assert_allclose(getattr(moved_session, name), signal, rtol=0, atol=atol)
+        np.testing.assert_array_equal(moved_session.multiunit, session.multiunit)
+        pd.testing.assert_frame_equal(moved_session.ripple_channels, session.ripple_channels)
+
 
 class TestRecordingEdges:
     def test_a_ripple_cut_by_the_recording_end_is_flagged(self):
