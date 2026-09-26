@@ -673,6 +673,44 @@ than `ripple_snr` by a factor that depends on its smoothing and consensus rule; 
 the detector you use rather than assuming a mapping. The
 [simulation study](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/simulation_study.ipynb) runs every detector on these sessions.
 
+### Simulating sessions with known event types
+
+`simulate_session` gives every ripple a sharp wave and a population burst. To see which kinds
+of event a detector finds and which it misses, draw latent network events of five types
+(`EVENT_TYPES`): a sharp-wave ripple with its burst (`swr`), a weak ripple that recruits few
+cells, a burst with no ripple, a ripple doublet or triplet under one long burst, and a sharp
+wave with no ripple. Edit the table if you like, render it, and take the truth at any fraction
+of each envelope's peak:
+
+```python
+from ripple_detection import (
+    draw_network_events,
+    simulate_network_session,
+    simulate_time,
+    truth_windows,
+)
+
+time = simulate_time(60 * 1500, 1500)
+running = [(20.0, 35.0)]
+events = draw_network_events(time, running_intervals=running, rng=0)  # one row per component
+events.loc[events.expression == "ripple", "amplitude"] *= 0.5  # e.g. halve every ripple's SNR
+session = simulate_network_session(time, events, running_intervals=running, rng=1)
+
+ripples = truth_windows(session.events, fraction=0.1, expression="ripple")
+cores = truth_windows(session.events, fraction=0.5, expression="ripple")  # same rows, narrower
+network = truth_windows(session.events, expression="network")  # one row per latent event
+print(list(network.columns))  # ['id', 'type', 'start_time', 'end_time', 'peak_time']
+```
+
+The session holds the detectors' inputs as `simulate_session`'s does, plus `session.events`
+(with the number of cells each burst recruited), `session.unit_types` (place, other pyramidal,
+interneuron), `session.baseline_rates` and, per ripple and channel, `session.ripple_channels`.
+Windows at two fractions pair up by row. `draw_network_events`' Notes give each reference
+value and its source; the options cover alternatives to the reference model: coupled event
+strengths (`strength_correlation`), a flatter envelope (`envelope_power=4`), ripples on only
+some channels with delays (`spatial_profile="local"`), slowly varying background noise
+(`noise_log_amplitude`) and refractory spiking (`spike_model="refractory"`).
+
 See the [examples](https://github.com/Eden-Kramer-Lab/ripple_detection/tree/master/examples/) directory for Jupyter notebooks demonstrating:
 
 - [Tutorial](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/ripple_detection_tutorial.ipynb) - A walk through detection on simulated data

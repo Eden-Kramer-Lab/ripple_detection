@@ -115,6 +115,17 @@ here is relative to 1.7.1.
   truth. `simulate_speed` and `simulate_theta_delta`, and `running_intervals`,
   `theta_amplitude` and `delta_amplitude` on `simulate_session`, give a session
   running bouts with theta and rest with delta.
+- Simulated sessions with known event types: `draw_network_events` draws latent
+  network events (sharp-wave ripples, weak ripples, bursts without a ripple,
+  ripple doublets, sharp waves without a ripple; `EVENT_TYPES`) as a table of
+  their ripple, sharp-wave and burst components; `simulate_network_session`
+  renders it into every detector input, with options for coupled event strengths,
+  a second envelope shape, local ripples, varying background noise and refractory
+  spiking; `truth_windows` gives each component's or event's window at any
+  fraction of its envelope's peak. `SimulatedSession` gains `events`,
+  `non_events`, `unit_types`, `baseline_rates`, `running_intervals` and
+  `ripple_channels`, empty or defaulted for `simulate_session`, whose signals
+  are unchanged.
 - `load_literature_parameters`, the detection parameters of 57 replay papers,
   and a simulation study comparing every detector (`examples/simulation_study.py`).
 - `load_literature_datasets`, a separate packaged catalog of public recording
