@@ -45,6 +45,7 @@ HELPERS = [
     "get_Kay_ripple_consensus_trace",
     "get_Yu_ripple_consensus_trace",
     "get_multiunit_population_firing_rate",
+    "load_literature_datasets",
     "load_literature_parameters",
     "exclude_close_events",
     "exclude_overlap",

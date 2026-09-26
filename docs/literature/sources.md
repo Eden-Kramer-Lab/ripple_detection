@@ -1,6 +1,6 @@
 # Literature sources
 
-This catalog records primary papers, source versions, inspection scope and selected artifact fingerprints. Field-level citations and statuses are in [evidence.csv](evidence.csv); methods and limitations are in the linked paper notes. Sources were inspected through September 25, 2026.
+This catalog records primary papers, source versions, inspection scope and selected artifact fingerprints. Field-level citations and statuses are in [evidence.csv](evidence.csv); methods and limitations are in the linked paper notes. The original audit covers sources inspected through September 25, 2026; the bounded dataset landing-page checks below are dated September 26. Dataset links and availability summaries are maintained in the separate [packaged dataset catalog](datasets.md).
 
 Reading a repository is not a replication of its pipeline. Complete inventories support missing-file statements; selected function reads do not verify an entire analysis. Downloaded analysis code was not executed. MAT files were read as data, and the serialized nelpy artifact was parsed without executing its globals. PDFs and large/private data remain outside the repository; the local Zotero/Dropbox libraries were not modified.
 
@@ -332,6 +332,16 @@ Title, authors and DOI match. Read Methods pp. 2–7 and inspected Table S1 imag
 
 Full ZIP directory plus ReadMe/MetaData.docx: beh.mat, events.mat, lfp.mat, spikes.mat, VT.mat and MetaData.docx. Metadata defines events.mat as trial/delay/reward timing and LFP as one tetrode trace. No deposited detector code or documented SWR/replay event table.
 
+Access check, September 26: automated GETs to both the DOI's destination and
+the API's canonical article URL return an empty 202 with
+`x-amzn-waf-action: challenge` (AWS WAF). This is a website request challenge,
+not an invalid DOI or evidence of unavailable data. For programmatic access,
+use the [version-2 public API](https://api.figshare.com/v2/articles/10032866/versions/2)
+and each file's `download_url`. Those links returned 206 for byte-range requests:
+the first 1,024 bytes of `DataSet.zip` (658,989,513 bytes) and `MetaData.docx`,
+and the complete 152-byte `ReadMe.txt`. This establishes file accessibility;
+the recording arrays were not re-downloaded or re-audited.
+
 ### grosmark-data
 
 [CRCNShc-11](https://crcns.org/data-sets/hc/hc-11/about-hc-11) and [DANDI 000044 v0.250624.0426](https://dandiarchive.org/dandiset/000044/0.250624.0426)
@@ -397,6 +407,65 @@ These links are retained from the paper notes for provenance. Their role and ins
 | https://www.nature.com/articles/s41467-026-72252-8 | [01_Widloski_2025](papers/01_Widloski_2025.md) |
 | https://zenodo.org/record/5140706 | [14_Gillespie_2021](papers/14_Gillespie_2021.md) |
 | https://zenodo.org/record/5566548 | [07_Bush_2022](papers/07_Bush_2022.md) |
+
+## Dataset catalog checks
+
+On September 26, 2026, the following primary landing pages were read while
+transcribing already documented data references into the packaged dataset CSV.
+These checks inspected metadata, not recordings or new event arrays.
+
+- [Gillespie DANDI 000115](https://dandiarchive.org/dandiset/000115/0.210914.1732):
+  the published version identifies Gillespie 2021 and lists CA1 tetrode
+  electrophysiology, behavioral triggers and position. It does not establish
+  the LFP, sorted-unit or ripple-table contents at file level.
+- [Igata Mendeley version 1](https://data.mendeley.com/datasets/4xk5w69yr5/1):
+  identifies original data from all rats in Igata et al. and directs readers
+  to `readme.txt`. No signal or event files were opened.
+- [CRCNS hc-3](https://crcns.org/data-sets/hc/hc-3/about-hc-3) and
+  [pfc-2](https://crcns.org/data-sets/pfc/pfc-2/about-pfc-2): descriptions list
+  LFP, sorted spikes and behavior; availability can differ between sessions.
+  The [Harvey note](papers/04_Harvey_2023.md) establishes their reuse along
+  with hc-11 and hc-14. No exact paper/session mapping was performed.
+- [CRCNS hc-14](https://crcns.org/data-sets/hc/hc-14/about-hc-14): description
+  explicitly lists ripple `.evt` files as well as LFP, spikes and tracking.
+  This supports `reported_present`, not inspected annotations or identity
+  with Harvey's replay candidates.
+- [CRCNS hc-6](https://crcns.org/data-sets/hc/hc-6): its
+  [About page](https://crcns.org/data-sets/hc/hc-6/about-hc-5) (the unusual
+  `about-hc-5` suffix is the site's actual link) identifies Karlsson 2009 and
+  Carr 2012 and lists LFP, clustered spikes, position and task metadata.
+  Its file-type list does not name ripple files; MAT variables were not read.
+- [Wilson lab archive](https://github.com/wilsonlab/CRCNS_Shared_Data): the
+  repository listing confirms `JiWilson_dataset.zip` alongside other data.
+  The earlier [Ji note](papers/52_Ji_2007.md) records track-running spikes
+  only; this is not evidence for available sleep frames or ripple labels.
+
+The initial browsing-tool requests for DANDI 000552 and 000978 failed. Direct
+public-API requests on September 26 subsequently returned their metadata:
+[000552](https://api.dandiarchive.org/api/dandisets/000552/versions/draft/)
+identifies the Huszar study, and
+[000978](https://api.dandiarchive.org/api/dandisets/000978/versions/draft/)
+identifies Single Day W-Track Learning and describes position, spike times
+and LFP. This verifies deposit metadata, not the complete file inventory or
+event annotations. The Yang/Shin paper notes establish the catalog's paper
+associations; the 000978 API does not list a related publication.
+
+All 18 distinct `dataset_url` values were also tested with direct HTTP GETs
+on September 26. Seventeen returned 200; the Bhattarai DOI redirected to the
+expected Figshare article with an empty 202 AWS WAF challenge response
+(confirmed by its `x-amzn-waf-action` header; see [access check](#bhattarai-data)). The
+[Figshare version-2 API](https://api.figshare.com/v2/articles/10032866/versions/2)
+returned 200 and confirmed the DOI, title and three deposited files. Public
+APIs also confirmed all four DANDI identifiers/versions and the
+[OSF project](https://api.osf.io/v2/nodes/smzby/), rather than treating a
+generic application page as proof of a dataset. This checks link resolution
+and record identity, not access to every data file. The earlier file/header
+inspections above were not repeated.
+
+All 14 distinct `source_note` URLs returned 404 on GitHub `master` at this
+check: these notes have not yet been merged there. Their paths and anchors
+were verified in this branch. They need publication on `master` to work for
+installed-package users; this is separate from external dataset availability.
 
 ## Artifact fingerprints
 

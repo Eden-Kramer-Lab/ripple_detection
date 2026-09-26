@@ -62,7 +62,7 @@ from ripple_detection.detectors import (
     theta_delta_ratio,
     trim_events_to_spike_windows,
 )
-from ripple_detection.literature import load_literature_parameters
+from ripple_detection.literature import load_literature_datasets, load_literature_parameters
 from ripple_detection.registry import (
     DETECTORS,
     MULTIUNIT,
@@ -132,6 +132,7 @@ __all__ = [
     "histogram_minimum_threshold",
     "intersect_intervals",
     "intervals_to_mask",
+    "load_literature_datasets",
     "load_literature_parameters",
     "merge_close_events",
     "minimum_sample_count",

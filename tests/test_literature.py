@@ -8,7 +8,7 @@ from urllib.parse import unquote, urlsplit
 import pandas as pd
 import pytest
 
-from ripple_detection import load_literature_parameters
+from ripple_detection import load_literature_datasets, load_literature_parameters
 
 README = Path(__file__).resolve().parents[1] / "README.md"
 LITERATURE = README.parent / "docs" / "literature"
@@ -43,6 +43,112 @@ def test_two_papers_share_an_author_and_year(parameters):
     duplicated = parameters.duplicated(subset=["First Author", "Year"], keep=False)
 
     assert parameters.loc[duplicated, "Journal"].nunique() == 2
+
+
+@pytest.fixture(scope="module")
+def datasets():
+    return load_literature_datasets()
+
+
+def test_dataset_catalog_has_unique_relationships_to_surveyed_papers(datasets, parameters):
+    assert isinstance(datasets, pd.DataFrame)
+    assert not datasets.empty
+    assert list(datasets) == [
+        "paper_doi",
+        "dataset_name",
+        "dataset_url",
+        "relationship",
+        "available_inputs",
+        "event_annotations",
+        "verification_status",
+        "source_note",
+        "notes",
+    ]
+    assert not datasets.duplicated(["paper_doi", "dataset_url"]).any()
+    joined = datasets.merge(
+        parameters, left_on="paper_doi", right_on="DOI", validate="many_to_one"
+    )
+    assert len(joined) == len(datasets), "Every dataset must link to a surveyed DOI."
+    assert datasets.paper_doi.duplicated().any(), "One paper can use multiple deposits."
+    assert datasets.dataset_url.duplicated().any(), "Several papers can share a deposit."
+    for column in datasets:
+        assert (
+            datasets[column]
+            .map(lambda value: isinstance(value, str) and bool(value.strip()))
+            .all()
+        )
+    for column in ("dataset_url", "source_note"):
+        for url in datasets[column]:
+            parsed = urlsplit(url)
+            assert parsed.scheme == "https", url
+            assert parsed.netloc, url
+            assert not re.search(r"\s", url), url
+
+
+def test_dataset_catalog_distinguishes_unverified_from_scoped_inspection(datasets):
+    assert set(datasets.relationship) <= {"original", "reused", "not_verified"}
+    assert set(datasets.verification_status) <= {
+        "reported",
+        "metadata_inspected",
+        "files_inspected",
+    }
+    assert set(datasets.event_annotations) <= {
+        "present",
+        "reported_present",
+        "not_found_in_inspected_scope",
+        "not_verified",
+    }
+    for inputs in datasets.available_inputs:
+        kinds = inputs.split(";")
+        assert set(kinds) <= {"lfp", "spikes", "behavior", "electrophysiology", "not_verified"}
+        assert len(kinds) == len(set(kinds))
+        assert "not_verified" not in kinds or len(kinds) == 1
+    inspected = datasets.event_annotations == "present"
+    assert inspected.any()
+    assert (datasets.loc[inspected, "verification_status"] == "files_inspected").all()
+    scoped_absence = datasets.event_annotations == "not_found_in_inspected_scope"
+    assert not (datasets.loc[scoped_absence, "verification_status"] == "reported").any()
+
+
+def test_dataset_evidence_links_resolve_in_the_repository(datasets):
+    prefix = "https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/"
+    for entry in datasets.itertuples(index=False):
+        assert entry.source_note.startswith(prefix)
+        link = urlsplit(entry.source_note.removeprefix(prefix))
+        path = README.parent / unquote(link.path)
+        assert path.is_file(), entry.source_note
+        text = path.read_text()
+        if path.parent.name == "papers":
+            assert f"[Paper]({entry.paper_doi})" in text
+        if link.fragment:
+            headings = re.findall(r"^#+ (.+)$", text, re.MULTILINE)
+            anchors = {
+                re.sub(r"[^\w\- ]", "", heading.lower()).replace(" ", "-")
+                for heading in headings
+            }
+            assert unquote(link.fragment) in anchors, entry.source_note
+
+
+def test_dataset_catalog_keeps_reused_recordings_and_trial_events_distinct(
+    datasets, parameters
+):
+    linked = datasets.merge(parameters, left_on="paper_doi", right_on="DOI")
+    bush = linked.loc[(linked["First Author"] == "Bush") & (linked.Year == 2022)].iloc[0]
+    original = linked.loc[linked.dataset_url == bush.dataset_url]
+    assert bush.relationship == "reused"
+    assert ((original.Year == 2016) & (original.relationship == "original")).any()
+    bhattarai = linked.loc[linked["First Author"] == "Bhattarai"].iloc[0]
+    assert bhattarai.event_annotations == "not_found_in_inspected_scope"
+    assert "trial/delay/reward" in bhattarai.notes
+    # A code-only release must not be mistaken for Widloski's data deposit.
+    widloski = linked.loc[(linked["First Author"] == "Widloski") & (linked.Year == 2025)]
+    assert set(widloski.dataset_url) == {"https://zenodo.org/records/16916108"}
+
+
+def test_dataset_loader_returns_independent_tables(datasets):
+    other = load_literature_datasets()
+    other.loc[0, "notes"] = "caller annotation"
+    pd.testing.assert_frame_equal(load_literature_datasets(), datasets)
 
 
 def _readme_parameter_table():

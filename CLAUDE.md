@@ -95,10 +95,11 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
    - `spec.describe()`: JSON-ready inputs, tunables (default, unit, meaning) and output columns, from [_descriptions.py](src/ripple_detection/_descriptions.py); `tests/test_registry.py::TestDescribe` fails when a new or renamed parameter or column has no entry there
    - For pipelines that store a detector's name rather than importing it
 
-5. **[src/ripple_detection/literature.py](src/ripple_detection/literature.py)** - `load_literature_parameters`
+5. **[src/ripple_detection/literature.py](src/ripple_detection/literature.py)** - `load_literature_parameters` and `load_literature_datasets`
    - The survey of detection parameters from 57 replay papers, shipped as `data/literature_detection_parameters.csv`
    - The README's "Published parameter values" table is computed from it
    - [docs/literature/README.md](docs/literature/README.md) defines the current survey conventions: the packaged CSV owns values, `evidence.csv` owns field statuses/citations, `sources.md` owns source versions/fingerprints, and one note per paper explains methods and uncertainties. Git preserves correction history.
+   - The separate packaged `data/literature_datasets.csv` owns public data links, reuse relationships and scoped availability summaries, joined by paper DOI. It is a partial catalog; [datasets.md](docs/literature/datasets.md) defines its schema and distinguishes unverified annotations from annotations not found in an inspected scope.
 
 6. **[src/ripple_detection/literature_methods.py](src/ripple_detection/literature_methods.py)** - Packaged paper/protocol methods
    - `Recording.from_arrays`, native population grids, `list_methods`, `check_method`, `run_method`, `save_events` and `load_events`

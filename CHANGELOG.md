@@ -117,6 +117,9 @@ here is relative to 1.7.1.
   running bouts with theta and rest with delta.
 - `load_literature_parameters`, the detection parameters of 57 replay papers,
   and a simulation study comparing every detector (`examples/simulation_study.py`).
+- `load_literature_datasets`, a separate packaged catalog of public recording
+  and event-data links, joined to papers by DOI, with reuse relationships,
+  input availability and scoped annotation-verification statuses.
 - The package root exports the helpers the detectors are built from, such as
   `minimum_sample_count` and `sample_count_within`; `__all__` is the public API.
 - Help for people and language models writing calls: a 1.x call fails with the

@@ -778,6 +778,29 @@ ripples = Kay_ripple_detector(
 | `minimum_active_units` | 0 on `multiunit_HSE_detector` (no criterion), 5 on `Carey_candidate_detector` | Units with at least one spike inside the event; every event reports `n_active_units` | Published criteria are most often around five units |
 | `band`, `transition_width` on `filter_ripple_band` | `None`, meaning 150-250 Hz, and `None`, meaning 25 Hz for a designed filter | Passband of the designed filter. `sampling_frequency` is always required; the shipped kernel (10 Hz transitions) is used only at 1500 Hz with the default band, whether `None` or `(150, 250)`, and no `transition_width`. Any other band, rate or width designs a filter | Published bands run from about 80-180 Hz at the lower edge to 200-300 Hz at the upper |
 
+### Public datasets for the surveyed papers
+
+`load_literature_datasets()` loads a separate packaged catalog of public
+recordings and released event files, with DANDI, CRCNS, Zenodo, Figshare,
+Mendeley, OSF and data-bearing repository links. It records original versus
+reused data, available inputs, event annotations and verification scope.
+
+```python
+from ripple_detection import load_literature_datasets, load_literature_parameters
+
+datasets = load_literature_datasets()
+papers = load_literature_parameters()[["DOI", "First Author", "Year"]]
+linked = datasets.merge(papers, left_on="paper_doi", right_on="DOI", validate="many_to_one")
+linked.loc[linked.event_annotations == "present", ["First Author", "dataset_url", "notes"]]
+```
+
+This is a partial catalog: a missing paper does not mean its data are
+unavailable. `not_verified` differs from `not_found_in_inspected_scope`, and
+published candidates are not automatically ground-truth replay labels.
+Mirrors and reused recordings mean rows are not independent datasets. See
+the [dataset guide](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/docs/literature/datasets.md)
+for the schema and inspection limits.
+
 ### Published parameter values
 
 Where the package's defaults sit relative to the literature. Compiled from 57

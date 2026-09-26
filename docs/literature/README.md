@@ -5,6 +5,10 @@ is the authoritative parameter table for the 57 surveyed papers. Load it with
 `ripple_detection.load_literature_parameters()`. It retains the existing 35-column
 schema and paper order.
 
+- [Public dataset catalog](datasets.md) defines the separate packaged
+  `literature_datasets.csv`: links, paper/dataset relationships, available
+  inputs and event-annotation inspection status. Load it with
+  `ripple_detection.load_literature_datasets()` and join by paper DOI.
 - [evidence.csv](evidence.csv) records one status and source location for every
   `(doi, column)` pair. It contains no duplicate parameter values.
 - [sources.md](sources.md) catalogs primary sources, pinned code versions, archive
@@ -108,6 +112,9 @@ Edit parameter values only in the packaged CSV. Review the corresponding DOI/col
 citations in `evidence.csv`, update the paper note's interpretation or uncertainties,
 and update `sources.md` when source versions or inspection scope change. Keep recipe
 assumptions distinct from reported parameters. Historical changes belong in Git.
+Dataset links and availability summaries belong in the separate dataset CSV;
+its [maintenance rules](datasets.md#maintenance) distinguish unverified contents
+from a scoped finding that event annotations were not found.
 
 Run the literature and recipe checks after changes:
 

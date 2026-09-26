@@ -109,6 +109,7 @@ gives different noise, since every draw goes through `numpy.random.default_rng`.
 - [README](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/README.md): usage, output columns, parameter guide
 - [Choosing a detector](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/README.md#choosing-a-detector): how the detectors' conventions differ
 - [Published parameter values](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/README.md#published-parameter-values): the literature survey, also `load_literature_parameters()`
+- [Public dataset catalog](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/docs/literature/datasets.md): `load_literature_datasets()` loads partial data links and verification scope; join `paper_doi` to the parameter table's `DOI`. A missing row means not cataloged, not unavailable.
 - [MIGRATING.md](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/MIGRATING.md): upgrading from 1.x
 - [CHANGELOG](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/CHANGELOG.md): every 2.0 change
 
