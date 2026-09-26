@@ -2604,3 +2604,117 @@ def simulate_network_session(
         running_intervals=bouts,
         ripple_channels=ripple_channels,
     )
+
+
+_PEAK_PRIORITY = {"ripple": 0, "burst": 1, "sharp_wave": 2}
+
+
+@explain_call_errors
+def truth_windows(
+    table: pd.DataFrame,
+    fraction: float = 0.1,
+    expression: str | None = None,
+) -> pd.DataFrame:
+    """Where each simulated event, component or non-event is at or above a
+    fraction of its envelope's peak.
+
+    A component's window is ``[center_time - k rise_sigma, center_time + k
+    decay_sigma]``, where its latent envelope crosses ``fraction`` of its
+    peak: ``k = sqrt(2 ln 2) (ln(1 / fraction) / ln 2) ** (1 / p)`` for
+    envelope power ``p``, ``sqrt(-2 ln fraction)`` for a Gaussian. These are
+    the latent bounds, anchored to the component's centre; a ripple on a
+    delayed channel (``SimulatedSession.ripple_channels``) is moved by its
+    delay, and a sampled Hilbert envelope can cross a little elsewhere.
+
+    Parameters
+    ----------
+    table : pandas.DataFrame
+        ``SimulatedSession.events`` (the latent event table) or
+        ``SimulatedSession.non_events``.
+    fraction : float, optional
+        Fraction of the peak, in (0, 1). Default 0.1; higher fractions give
+        narrower windows, and at 0.5 each is the width at half maximum.
+    expression : {None, 'ripple', 'sharp_wave', 'burst', 'network'}, optional
+        For the event table: one row per component of that expression, or,
+        for ``'network'``, one row per latent event spanning the union of its
+        components' windows. Default None: one row per component of any
+        expression. Must be None for the non-event table.
+
+    Returns
+    -------
+    windows : pandas.DataFrame
+        Columns ``id`` (``event_id`` or ``non_event_id``), ``type``
+        (``event_type`` or ``non_event_type``), ``start_time``,
+        ``end_time`` and ``peak_time`` (the envelope's peak; for a network
+        event its ripple's, the first for a doublet, else its burst's, else
+        its sharp wave's), and, per component of the event table,
+        ``expression`` and ``component``. Rows are in the table's order, or
+        by ``id`` for ``'network'``, and in the same order at every
+        ``fraction``, so windows at two fractions pair up by position.
+
+    Raises
+    ------
+    ValueError
+        If ``fraction`` is not in (0, 1), ``expression`` is not one of the
+        choices, or is given for a non-event table, or ``table`` is neither
+        table.
+
+    Examples
+    --------
+    >>> time = simulate_time(60 * 1500, 1500)
+    >>> events = draw_network_events(time, rng=0)
+    >>> ripples = truth_windows(events, 0.1, expression="ripple")
+    >>> list(ripples.columns)
+    ['id', 'type', 'start_time', 'end_time', 'peak_time', 'expression', 'component']
+    >>> half = truth_windows(events, 0.5, expression="ripple")
+    >>> bool(((half.end_time - half.start_time) < (ripples.end_time - ripples.start_time)).all())
+    True
+    >>> list(truth_windows(events, expression="network").columns)
+    ['id', 'type', 'start_time', 'end_time', 'peak_time']
+
+    """
+    if not 0 < fraction < 1:
+        msg = f"fraction must lie in (0, 1), got {fraction}."
+        raise ValueError(msg)
+    if "event_id" in table.columns:
+        id_column, type_column = "event_id", "event_type"
+    elif "non_event_id" in table.columns:
+        id_column, type_column = "non_event_id", "non_event_type"
+    else:
+        msg = "table must be a simulated event or non-event table (event_id or non_event_id)."
+        raise ValueError(msg)
+    events = id_column == "event_id"
+    if not events and expression is not None:
+        msg = "A non-event table has no expressions; leave expression as None."
+        raise ValueError(msg)
+    rows = table
+    if expression is not None:
+        _check_choice("expression", expression, (*EXPRESSIONS, "network"))
+        if expression != "network":
+            rows = table[table["expression"] == expression]
+    power = rows["envelope_power"].to_numpy(dtype=float)
+    k = np.sqrt(2 * np.log(2)) * (np.log(1 / fraction) / np.log(2)) ** (1 / power)
+    center = rows["center_time"].to_numpy(dtype=float)
+    windows = pd.DataFrame(
+        {
+            "id": rows[id_column].to_numpy(dtype=np.int64),
+            "type": rows[type_column].to_numpy(),
+            "start_time": center - k * rows["rise_sigma"].to_numpy(dtype=float),
+            "end_time": center + k * rows["decay_sigma"].to_numpy(dtype=float),
+            "peak_time": center,
+        }
+    )
+    if events and expression != "network":
+        windows["expression"] = rows["expression"].to_numpy()
+        windows["component"] = rows["component"].to_numpy(dtype=np.int64)
+    if expression == "network":
+        priority = rows["expression"].map(_PEAK_PRIORITY).to_numpy()
+        order = np.lexsort((rows["component"].to_numpy(), priority, windows["id"].to_numpy()))
+        first = windows.iloc[order].groupby("id", sort=True).first()
+        span = windows.groupby("id", sort=True).agg(
+            start_time=("start_time", "min"), end_time=("end_time", "max")
+        )
+        windows = span.assign(type=first["type"], peak_time=first["peak_time"]).reset_index()
+        windows = windows[["id", "type", "start_time", "end_time", "peak_time"]]
+    labels = {name: str for name in ("type", "expression") if name in windows.columns}
+    return windows.astype({"id": "int64", **labels}).reset_index(drop=True)

@@ -2,6 +2,7 @@
 
 import dataclasses
 import hashlib
+import itertools
 
 import numpy as np
 import pandas as pd
@@ -15,6 +16,7 @@ from ripple_detection.simulate import (
     NOISE_FUNCTION,
     SimulatedSession,
     _draw_per_ripple,
+    _event_envelope,
     _render_ripple,
     brown,
     draw_network_events,
@@ -30,6 +32,7 @@ from ripple_detection.simulate import (
     simulate_speed,
     simulate_theta_delta,
     simulate_time,
+    truth_windows,
     white,
 )
 
@@ -1507,6 +1510,18 @@ class TestDrawNetworkEvents:
         with pytest.raises(ValueError, match="time must be 1-D"):
             draw_network_events(np.zeros((10, 2)))
 
+    def test_bouts_at_the_recording_edges(self):
+        """A bout over the first second, or past the end, leaves rest only
+        between them."""
+        time = simulate_time(self.FS * 60, self.FS)
+        events = draw_network_events(
+            time, event_rate=2.0, running_intervals=[(0.0, 10.0), (50.0, 70.0)], rng=2
+        )
+        start, end = _spans(events, 4)
+        assert len(events) > 0
+        assert (start >= 10.0).all()
+        assert (end <= 50.0).all()
+
 
 def _one_event_table(event_type, *, event_id=0, center_time=5.0, **overrides):
     """One latent event built by hand, its components centred on
@@ -1834,6 +1849,26 @@ class TestNetworkSessionVariants:
         assert delays.min() >= -0.001 - 1e-12
         assert delays.max() > 0.01
 
+    def test_a_local_ripple_outside_rest_is_not_delayed(self):
+        """A ripple edited into a running bout has no stretch of rest to stay
+        in, so no delay qualifies but zero."""
+        events = _ripple_only(_one_event_table("swr", center_time=5.0))
+        session = self._render(
+            events, spatial_profile="local", channel_delay=0.01, running_intervals=[(4.0, 6.0)]
+        )
+        assert (session.ripple_channels.delay_s == 0).all()
+
+    def test_an_envelope_narrower_than_a_step_lands_on_one_sample(self):
+        events = _one_event_table(
+            "sharp_wave_only", sharp_wave={"rise_sigma": 1e-6, "decay_sigma": 1e-6}
+        )
+        session = self._render(events, noise_amplitude=0.0)
+        assert np.count_nonzero(session.sharp_wave_lfp) == 1
+        between = 5.0 + 0.3 / self.FS  # no sample within 8 side scales
+        window, envelope = _event_envelope(self.TIME, between, 1e-6, 1e-6, 2)
+        assert window.stop - window.start == envelope.size == 1
+        assert self.TIME[window.start] == pytest.approx(5.0 + 1 / self.FS)  # the next
+
     def test_spatial_profile_changes_only_its_own_draws(self):
         events = _one_event_table("swr")
         local = self._render(events, spatial_profile="local", channel_occupancy=0.5)
@@ -2035,3 +2070,151 @@ class TestNetworkSessionVariants:
     def test_time_must_be_a_sampled_axis(self):
         with pytest.raises(ValueError, match="time must be 1-D"):
             simulate_network_session(np.zeros(1), _empty_table())
+
+
+def _crossing_distance(fraction, power):
+    """Side scales from the centre at which the envelope of ``power`` is at
+    ``fraction`` of its peak."""
+    return np.sqrt(2 * np.log(2)) * (np.log(1 / fraction) / np.log(2)) ** (1 / power)
+
+
+class TestTruthWindows:
+    FS = 1500
+    FRACTIONS = (0.1, 0.25, 0.5)
+
+    @staticmethod
+    @pytest.fixture(scope="class")
+    def events():
+        time = simulate_time(1500 * 120, 1500)
+        return draw_network_events(time, event_rate=1.0, rng=4)
+
+    @pytest.mark.parametrize("power", [2, 4])
+    @pytest.mark.parametrize("fraction", FRACTIONS)
+    def test_fraction_formula(self, fraction, power):
+        events = _one_event_table(
+            "swr", envelope_power=power, ripple={"rise_sigma": 0.01, "decay_sigma": 0.02}
+        )
+        (window,) = truth_windows(events, fraction, expression="ripple").itertuples()
+        k = _crossing_distance(fraction, power)
+        if power == 2:
+            assert k == pytest.approx(np.sqrt(-2 * np.log(fraction)))
+        assert window.start_time == pytest.approx(5.0 - k * 0.01)
+        assert window.end_time == pytest.approx(5.0 + k * 0.02)
+        assert window.peak_time == 5.0
+
+    def test_equal_half_maximum_widths_and_narrower_with_fraction(self, events):
+        widths = {}
+        for power in (2, 4):
+            table = events.assign(envelope_power=power)
+            windows = [truth_windows(table, f) for f in self.FRACTIONS]
+            widths[power] = [(w.end_time - w.start_time).to_numpy() for w in windows]
+            for wider, narrower in itertools.pairwise(widths[power]):
+                assert (narrower < wider).all()
+        np.testing.assert_allclose(widths[2][2], widths[4][2])
+        assert (widths[4][0] < widths[2][0]).all()
+
+    @pytest.mark.parametrize("expression", [None, "ripple", "sharp_wave", "burst", "network"])
+    def test_row_order_is_the_same_for_every_fraction(self, events, expression):
+        windows = [truth_windows(events, f, expression=expression) for f in self.FRACTIONS]
+        labels = ["id", "type"] + (
+            ["expression", "component"] if expression != "network" else []
+        )
+        for other in windows[1:]:
+            pd.testing.assert_frame_equal(other[labels], windows[0][labels])
+            np.testing.assert_array_equal(other.peak_time, windows[0].peak_time)
+        assert len(windows[0]) > 0
+
+    def test_component_rows_follow_the_table(self, events):
+        windows = truth_windows(events)
+        assert list(windows.columns) == [
+            "id", "type", "start_time", "end_time", "peak_time", "expression", "component",
+        ]  # fmt: skip
+        assert len(windows) == len(events)
+        np.testing.assert_array_equal(windows.id, events.event_id)
+        np.testing.assert_array_equal(windows.expression, events.expression)
+        np.testing.assert_array_equal(windows.peak_time, events.center_time)
+        ripples = truth_windows(events, expression="ripple")
+        assert (ripples.expression == "ripple").all()
+        assert len(ripples) == (events.expression == "ripple").sum()
+
+    @pytest.mark.parametrize("power", [2, 4])
+    def test_measured_on_the_rendered_envelope(self, power):
+        """Noise-free, a sharp wave is its envelope times -amplitude on the
+        radiatum channel: the first and last samples at or above each fraction
+        of the peak lie within one sample of the analytic bounds."""
+        time = simulate_time(self.FS * 10, self.FS)
+        events = _one_event_table(
+            "sharp_wave_only",
+            envelope_power=power,
+            sharp_wave={"rise_sigma": 0.011, "decay_sigma": 0.023, "amplitude": 2.0},
+        )
+        session = simulate_network_session(time, events, noise_amplitude=0.0, rng=0, **QUIET)
+        envelope = -session.sharp_wave_lfp / 2.0
+        assert envelope.max() == pytest.approx(1.0)
+        for fraction in self.FRACTIONS:
+            (window,) = truth_windows(session.events, fraction).itertuples()
+            above = time[envelope >= fraction]
+            assert abs(above[0] - window.start_time) <= 1 / self.FS
+            assert abs(above[-1] - window.end_time) <= 1 / self.FS
+
+    def test_network_union_and_peak(self):
+        swr = _one_event_table(
+            "swr",
+            center_time=2.0,
+            sharp_wave={"center_time": 2.01},
+            burst={"center_time": 1.99, "rise_sigma": 0.05, "decay_sigma": 0.05},
+        )
+        doublet = _one_event_table("ripple_doublet", center_time=4.0)
+        burst_only = _one_event_table("burst_only", center_time=6.0)
+        sharp_only = _one_event_table("sharp_wave_only", center_time=8.0)
+        no_ripple = _one_event_table("swr", center_time=10.0, burst={"center_time": 10.02})
+        no_ripple = no_ripple[no_ripple.expression != "ripple"]
+        events = _event_tables(swr, doublet, burst_only, sharp_only, no_ripple)
+        network = truth_windows(events, 0.1, expression="network")
+        components = truth_windows(events, 0.1)
+        assert network.id.tolist() == [0, 1, 2, 3, 4]
+        assert network.type.tolist() == [
+            "swr", "ripple_doublet", "burst_only", "sharp_wave_only", "swr",
+        ]  # fmt: skip
+        by_id = components.groupby("id")
+        np.testing.assert_array_equal(network.start_time, by_id.start_time.min())
+        np.testing.assert_array_equal(network.end_time, by_id.end_time.max())
+        np.testing.assert_array_equal(network.peak_time, [2.0, 4.0, 6.0, 8.0, 10.02])
+        # the burst is the widest component here, so the union is not the ripple
+        assert network.start_time[0] < components.start_time[0]
+
+    def test_non_event_table(self):
+        non_events = pd.DataFrame(
+            {
+                "non_event_id": [0, 1], "non_event_type": ["emg", "fast_gamma"],
+                "center_time": [2.0, 3.0], "rise_sigma": [0.02, 0.01],
+                "decay_sigma": [0.02, 0.03], "envelope_power": [2, 2],
+            }
+        )  # fmt: skip
+        windows = truth_windows(non_events, 0.25)
+        assert list(windows.columns) == ["id", "type", "start_time", "end_time", "peak_time"]
+        k = _crossing_distance(0.25, 2)
+        np.testing.assert_allclose(windows.start_time, [2.0 - 0.02 * k, 3.0 - 0.01 * k])
+        np.testing.assert_allclose(windows.end_time, [2.0 + 0.02 * k, 3.0 + 0.03 * k])
+        assert windows.type.tolist() == ["emg", "fast_gamma"]
+        with pytest.raises(ValueError, match="non-event table has no expressions"):
+            truth_windows(non_events, expression="ripple")
+
+    def test_empty_tables(self):
+        for expression in (None, "ripple", "network"):
+            windows = truth_windows(_empty_table(), expression=expression)
+            assert windows.empty
+            assert windows.id.dtype == np.int64
+        session = simulate_session(simulate_time(3000, self.FS), [1.0], rng=0)
+        assert truth_windows(session.non_events).empty
+
+    @pytest.mark.parametrize("fraction", [0.0, 1.0, -0.5, np.nan])
+    def test_fraction_must_lie_between_0_and_1(self, events, fraction):
+        with pytest.raises(ValueError, match="fraction must lie in"):
+            truth_windows(events, fraction)
+
+    def test_validation(self, events):
+        with pytest.raises(ValueError, match="expression must be one of"):
+            truth_windows(events, expression="spindle")
+        with pytest.raises(ValueError, match="event or non-event table"):
+            truth_windows(pd.DataFrame({"start_time": [1.0]}))
