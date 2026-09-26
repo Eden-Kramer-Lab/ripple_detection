@@ -2305,6 +2305,7 @@ def _draw_units(
     interneuron_gain: float,
     spike_model: str,
     refractory_period: float,
+    step: float,
     streams: Mapping[str, np.random.Generator],
 ) -> tuple[FloatArray, FloatArray, IntArray]:
     """Baseline rates, spike counts ``(n_time, n_units)`` and the place and
@@ -2315,13 +2316,14 @@ def _draw_units(
     half of it. A participant's intensity gains ``(amplitude - 1)`` times the
     burst's envelope; every interneuron gains ``(interneuron_gain - 1)`` times
     the envelope of each event's ripples (their maximum, for a doublet).
-    Spikes, unit by unit: Poisson counts of the intensity times the step, or,
+    Spikes, unit by unit: Poisson counts of the intensity times ``step``, the
+    sampling interval of the resolved rate (not the timestamps' spacing, which
+    rounds far from zero), or,
     for ``"refractory"``, at most one per sample, emitted with probability
     ``1 - exp(-intensity step)`` once ``refractory_period`` has passed since
     the unit's last spike.
     """
     n_time, n_units = time.size, unit_types.size
-    step = float(np.median(np.diff(time)))
     rates = np.empty(n_units)
     for unit_type in UNIT_TYPES:
         is_type = unit_types == unit_type
@@ -2686,7 +2688,7 @@ def simulate_network_session(
     baseline_rates, multiunit, n_participants = _draw_units(
         time, table, unit_types, rate_ranges,
         interneuron_gain=interneuron_gain, spike_model=spike_model,
-        refractory_period=refractory_period, streams=streams,
+        refractory_period=refractory_period, step=1 / rate, streams=streams,
     )  # fmt: skip
     table.loc[table.expression == "burst", "n_participants"] = n_participants
     ripple_channels = (

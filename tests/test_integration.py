@@ -732,6 +732,22 @@ class TestTimeOrigin:
         np.testing.assert_array_equal(moved_session.multiunit, session.multiunit)
         pd.testing.assert_frame_equal(moved_session.ripple_channels, session.ripple_channels)
 
+    @pytest.mark.parametrize("origin", ORIGINS)
+    @pytest.mark.parametrize("spike_model", ["poisson", "refractory"])
+    def test_simulated_network_spikes_at_a_given_rate(self, origin, spike_model):
+        """With the rate given, spikes come from it, not from the timestamps'
+        spacing, which rounds far from zero: the same counts at any origin."""
+        time = simulate_time(int(60 * FS), FS)
+        events = rd.draw_network_events(time, event_rate=0.0)
+        options = {
+            "unit_counts": {"interneuron": 10}, "spike_model": spike_model, "rng": 1,
+            "sampling_frequency": FS,
+        }  # fmt: skip
+        at_zero = rd.simulate_network_session(time, events, **options)
+        shifted = rd.simulate_network_session(time + origin, events, **options)
+        assert at_zero.multiunit.sum() > 0
+        np.testing.assert_array_equal(shifted.multiunit, at_zero.multiunit)
+
 
 class TestRecordingEdges:
     def test_a_ripple_cut_by_the_recording_end_is_flagged(self):
