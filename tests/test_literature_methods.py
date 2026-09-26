@@ -1,6 +1,7 @@
 """Behavioral checks for packaged literature methods, beyond simulation coverage."""
 
 import inspect
+import re
 
 import numpy as np
 import pandas as pd
@@ -2102,3 +2103,19 @@ def test_ji_frames_stay_inside_unaligned_sleep_intervals(origin, monkeypatch):
     assert len(found)
     assert (found[:, 0] >= sleep[0][0]).all()
     assert (found[:, 1] <= sleep[0][1]).all()
+
+
+@pytest.mark.parametrize("entry", [*lm.RECIPES, *lm.VARIANTS], ids=lambda e: e.run.__name__)
+def test_public_help_is_self_contained(entry):
+    """help() and list_methods show the interpretation itself, never a pointer
+    to a private helper the reader cannot see."""
+    assert not re.search(r"\b_[a-z]", entry.note), entry.note
+    assert len(entry.note) > 60, entry.note
+
+
+def test_tirole_and_pfeiffer_help_state_their_rules_and_channels():
+    catalog = lm.list_methods().set_index("name").interpretation
+    assert "first selected LFP channel" in catalog["tirole_2022"]
+    assert "41-point" in catalog["tirole_2022"]
+    assert "every selected channel" in catalog["pfeiffer_2015"]
+    assert "12.5 ms Gaussian" in catalog["pfeiffer_2015"]

@@ -1646,19 +1646,7 @@ def yang_2024(rec: Recording) -> pd.DataFrame | FloatArray:
 
 
 def _tirole(rec: Recording) -> pd.DataFrame:
-    """Released Tirole finite kernels and candidate order, with supplied cells.
-
-    Native 1 ms counts, 41-point gausswin(alpha=2), forward/backward filtering,
-    sample-SD z scores, 10 ms-separated threshold anchors, inclusive below-zero
-    crossings with 0.25/0.5 fallbacks within 300 ms; >=100 ms before <50 ms
-    merging. Speed is sampled every 10 ms; place-cell and ripple gates follow.
-    Bin origin is the recording start; counts retain the input timestamp precision.
-    The duration, merge, speed, cell and ripple rules use bin centers, as the
-    release's onset-offset differences do; the reported bounds are the first
-    and last recorded samples of the outer bins, as for other native grids.
-    LFP resampling uses scipy's polyphase anti-alias filter, whose edge behavior
-    can differ from the original acquisition/downsampling pipeline.
-    """
+    """Tirole 2022's candidate rule, shared with Huelin Gorriz 2023."""
     trace = population_trace(rec, bin_width=0.001)
     kernel = np.exp(-0.5 * (np.arange(-20, 21) / 10) ** 2)
     kernel /= kernel.sum()
@@ -1879,7 +1867,24 @@ def liu_2023(rec: Recording) -> pd.DataFrame | FloatArray:
 
 @_recipe(6, "Tirole 2022", "SWR+MUA")
 def tirole_2022(rec: Recording) -> pd.DataFrame | FloatArray:
-    """See _tirole."""
+    """Released Tirole finite kernels and candidate order, with supplied cells.
+
+    Native 1 ms counts of every supplied unit, 41-point gausswin(alpha=2),
+    forward/backward filtering, sample-SD z scores, 10 ms-separated threshold
+    anchors (z >= 3), inclusive below-zero crossings with 0.25/0.5 fallbacks
+    within 300 ms; >=100 ms before <50 ms merging. Speed is sampled every
+    10 ms and its median must be <=5 cm/s; >=5 active place cells follow.
+    The ripple gate needs a z-scored ripple amplitude >=3 SD inside the event:
+    the first selected LFP channel resampled to 1000 Hz, a 35-tap 125-300 Hz
+    Hamming FIR applied forward and backward, Hilbert amplitude and a 15 ms
+    moving average. Bin origin is the recording start; counts retain the input
+    timestamp precision. The duration, merge, speed, cell and ripple rules use
+    bin centers, as the release's onset-offset differences do; the reported
+    bounds are the first and last recorded samples of the outer bins, as for
+    other native grids. LFP resampling uses scipy's polyphase anti-alias
+    filter, whose edge behavior can differ from the original
+    acquisition/downsampling pipeline.
+    """
     return _tirole(rec)
 
 
@@ -1941,10 +1946,8 @@ def _pfeiffer_2015_swrs(
     channels: int | None = None,
     maximum_duration: float = 2.0,
 ) -> pd.DataFrame:
-    """Mean over tetrodes of the 150-250 Hz envelope, 12.5 ms Gaussian, above
-    ``threshold`` SD with statistics over speed < 5 (one reading of
-    "excluding periods of movement"), speed <= 5 at both ends, bounds at the
-    mean, 50 ms to ``maximum_duration``."""
+    """Pfeiffer & Foster 2015's SWR rule at ``threshold`` SD, over the first
+    ``channels`` selected channels (all by default), 50 ms to ``maximum_duration``."""
     return rd.detect_events_from_trace(
         rec.time, rec.mean_envelope((150.0, 250.0), channels), rec.speed, rec.fs,
         threshold=threshold, smoothing_sigma=0.0125, normalization_mask=rec.speed < 5,
@@ -2097,7 +2100,9 @@ def denovellis_2021(rec: Recording) -> pd.DataFrame:
 
 @_recipe(14, "Gillespie 2021", "SWR")
 def gillespie_2021(rec: Recording) -> pd.DataFrame | FloatArray:
-    """Kay consensus trace, 2 SD for 15 ms, speed < 4 at both ends."""
+    """Kay consensus trace over every selected channel (square root of the
+    summed squared 150-250 Hz envelopes, 4 ms Gaussian), 2 SD for >= 15 ms,
+    bounds at the mean, speed < 4 cm/s at both ends."""
     return rd.Kay_ripple_detector(
         rec.time,
         rec.filtered((150.0, 250.0)),
@@ -2932,7 +2937,10 @@ def olafsdottir_2015(rec: Recording, *, minimum_active_units: int = 0) -> FloatA
 
 @_recipe(42, "Pfeiffer 2015", "SWR")
 def pfeiffer_2015(rec: Recording) -> pd.DataFrame | FloatArray:
-    """See _pfeiffer_2015_swrs."""
+    """Mean 150-250 Hz Hilbert envelope over every selected channel (one per
+    tetrode; select them before calling), 12.5 ms Gaussian, above 3 SD with
+    statistics over speed < 5 cm/s (one reading of "excluding periods of
+    movement"), speed <= 5 cm/s at both ends, bounds at the mean, 50 ms-2 s."""
     return _pfeiffer_2015_swrs(rec)
 
 
@@ -3098,7 +3106,10 @@ def gupta_2010(rec: Recording, *, log_amplitude: bool = True) -> pd.DataFrame | 
 
 @_recipe(49, "Karlsson 2009", "SWR")
 def karlsson_2009(rec: Recording) -> pd.DataFrame | FloatArray:
-    """The Karlsson rule at < 2 cm/s (CA1 and CA3 tetrodes)."""
+    """The Karlsson rule: each selected channel's 150-250 Hz envelope, 4 ms
+    Gaussian, 3 SD for >= 15 ms on any channel, bounds at the mean,
+    overlapping events combined, speed < 2 cm/s at both ends. The paper used
+    CA1 and CA3 tetrodes; select one channel per tetrode before calling."""
     return _karlsson_rule(rec, np.nextafter(2.0, -np.inf))
 
 
@@ -4022,7 +4033,9 @@ def liu_2019_awake(rec: Recording) -> pd.DataFrame:
 
 @_variant(26, "Liu 2019", "ripple-associated sleep frames")
 def liu_2019_ripple_frames(rec: Recording, *, smoothing_sigma: float) -> FloatArray:
-    """Sleep frames containing a >3 SD ripple-power local peak."""
+    """liu_2019's silence-bounded SWS frames that contain a >3 SD local peak
+    of liu_2019_ripples' power (first selected channel, caller-selected
+    smoothing_sigma, baseline_intervals for its statistics)."""
     peaks: pd.DataFrame = _IMPLEMENTATIONS["liu_2019_ripples"](
         rec, smoothing_sigma=smoothing_sigma, window=0.0
     )
