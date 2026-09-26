@@ -2679,6 +2679,29 @@ def test_resaving_keeps_the_version_that_detected_the_events(tmp_path, measured,
     assert provenance["saved_with_ripple_detection_version"] == "99.0.0"
 
 
+def test_windowed_and_per_event_grids_are_reported():
+    catalog = lm.list_methods().set_index("name")
+    assert catalog.loc["kaefer_2020", "grid"] == "sliding windows"
+    assert catalog.loc["kaefer_2020", "grid_step"] == pytest.approx(0.02)
+    assert catalog.loc["krause_2022", "grid"] == "per-event bins"
+    assert catalog.loc["krause_2022", "grid_step"] == pytest.approx(0.003)
+    assert catalog.loc["xu_2019", "grid"] == "population bins"
+    assert catalog.loc["xu_2019", "grid_step"] == pytest.approx(0.001)
+    assert catalog.loc["karlsson_2009", "grid"] == "input samples"
+    assert np.isnan(catalog.loc["karlsson_2009", "grid_step"])
+    grid = lm._grid(lm._ENTRIES["kaefer_2020"], 1500.0)
+    assert grid["kind"] == "sliding windows"
+    assert grid["window_width"] == pytest.approx(0.24)
+    assert grid["window_step"] == pytest.approx(0.02)
+    assert grid["native_sampling_frequency"] == pytest.approx(50.0)
+    grid = lm._grid(lm._ENTRIES["krause_2022"], 1500.0)
+    assert grid["kind"] == "per-event bins"
+    assert grid["event_bin_width"] == pytest.approx(0.003)
+    assert grid["native_sampling_frequency"] is None
+    assert (
+        lm._grid(lm._ENTRIES["karlsson_2009"], 1500.0)["native_sampling_frequency"] == 1500.0
+    )
+
 
 def test_save_events_refuses_a_table_without_provenance(tmp_path):
     with pytest.raises(ValueError, match="run_method"):

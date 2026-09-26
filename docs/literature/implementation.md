@@ -154,9 +154,11 @@ is the version that detected the events, set by `run_method` and kept through
 loading and saving again; the sidecar's `saved_with_ripple_detection_version`
 only records which version wrote the file.
 
-`attrs["grid"]` states the events' sample or bin grid: the input rate, the
-population `bin_width` (None for the input samples), and the duration
-convention. Bounds are closed and `duration` is `end_time - start_time`. On a
+`attrs["grid"]` states what the events are found on (`kind`: input samples,
+population bins, Kaefer's sliding 240 ms windows every 20 ms, or Krause's 3 ms
+bins anchored at each SWR), that grid's rate (`native_sampling_frequency`: 50 Hz
+for Kaefer's windows, None for per-event bins), the population `bin_width`, and
+the duration convention. Bounds are closed and `duration` is `end_time - start_time`. On a
 population grid the detection's duration limits count bins instead. For
 example, spikes filling 10.000–10.049 s at 1000 Hz fill five 10 ms bins; the
 event is reported at the first and last counted samples, 10.000 and 10.049 s,

@@ -1697,6 +1697,12 @@ class Recipe:
         ``list_methods``' ``sampling_frequency``.
     bin_width : float or None
         ``list_methods``' ``bin_width``.
+    window : tuple of float or None
+        Width and step in seconds of the sliding windows a method detects on
+        (Kaefer's FFT chunks), or None.
+    event_bin_width : float or None
+        Width in seconds of bins anchored at each candidate event (Krause), or
+        None.
     """
 
     row: int
@@ -1709,6 +1715,8 @@ class Recipe:
     requirements: tuple[Requirement, ...] = ()
     sampling_frequency: float | None = None
     bin_width: float | None = None
+    window: tuple[float, float] | None = None
+    event_bin_width: float | None = None
 
 
 RECIPES: list[Recipe] = []
@@ -1733,6 +1741,8 @@ def _register(
     needs: Sequence[str | Requirement] = (),
     sampling_frequency: float | None = None,
     bin_width: float | None = None,
+    window: tuple[float, float] | None = None,
+    event_bin_width: float | None = None,
 ) -> Callable[[Callable[P, pd.DataFrame | FloatArray]], Callable[..., pd.DataFrame]]:
     inventory: Inventory = "default" if registry is RECIPES else "additional"
     requirements = tuple(
@@ -1784,6 +1794,8 @@ def _register(
             requirements,
             sampling_frequency,
             bin_width,
+            window,
+            event_bin_width,
         )
         registry.append(entry)
         _ENTRIES[name] = entry
@@ -2348,6 +2360,7 @@ def _pfeiffer_2015_swrs(
         ),
         Requirement("speed", unless="external_ripples"),
     ),
+    event_bin_width=0.003,
 )
 def krause_2022(rec: Recording) -> FloatArray:
     """Supplied or Pfeiffer-style SWRs trimmed using per-SWR 3 ms place-cell bins.
@@ -2760,6 +2773,7 @@ def gridchyn_2020(
             "baseline_intervals", "the normalization epoch (unspecified in the paper)"
         ),
     ),
+    window=(0.24, 0.02),
 )
 def kaefer_2020(rec: Recording) -> pd.DataFrame:
     """Secondary SWR label: reference-subtracted 240 ms FFT chunks every 20 ms.
@@ -5063,11 +5077,18 @@ def list_methods() -> pd.DataFrame:
             ``"decoding_candidates"`` for methods with a decoding-candidate stage.
         bin_width
             The bin width in seconds of the population grid the events are
-            found on (``population_trace``), or NaN when they come from the
-            input samples or a grid the docstring describes (Kaefer's 20 ms
-            FFT stride, Krause's per-SWR 3 ms bins). On a population grid the
-            detection's duration limits count bins while ``duration`` is the
-            elapsed time between the closed bounds (see ``run_method``).
+            found on (``population_trace``), or NaN for any other grid. On a
+            population grid the detection's duration limits count bins while
+            ``duration`` is the elapsed time between the closed bounds (see
+            ``run_method``).
+        grid
+            What the events are found on: ``"input samples"``,
+            ``"population bins"``, ``"sliding windows"`` (Kaefer's 240 ms FFT
+            chunks) or ``"per-event bins"`` (Krause's 3 ms bins anchored at each
+            SWR).
+        grid_step
+            That grid's spacing in seconds (bin width, window step or per-event
+            bin width), NaN for the input samples.
         interpretation
             The method's docstring: its rule, interpretation and assumptions.
     """
@@ -5106,6 +5127,8 @@ def list_methods() -> pd.DataFrame:
                 if "stage" in parameters
                 else ("detection",),
                 "bin_width": entry.bin_width,
+                "grid": _grid_kind(entry),
+                "grid_step": _grid_step(entry),
                 "interpretation": entry.note,
             }
         )
@@ -5320,9 +5343,13 @@ def run_method(
         count; cell, overlap, state and stage filters after); and the counts
         ``events_before_behavior_intervals`` and ``events``.
 
-        ``grid`` holds ``input_sampling_frequency`` (Hz), ``bin_width``
-        (seconds of the population grid, or None for the input samples),
-        ``native_sampling_frequency`` (its reciprocal, or the input rate),
+        ``grid`` holds ``kind`` (as ``list_methods``' ``grid``),
+        ``input_sampling_frequency`` (Hz), ``bin_width`` (seconds of a
+        population grid, else None), ``native_sampling_frequency`` (the rate
+        of the grid the events are found on: the input rate, the reciprocal of
+        the bin width or window step, or None for per-event bins), with
+        ``window_width`` and ``window_step`` for sliding windows and
+        ``event_bin_width`` for per-event bins,
         ``duration`` (the convention above) and, on a population grid,
         ``bin_limits``. On a grid, duration limits count bins while
         ``duration`` is elapsed time between the first and last samples the
@@ -5621,25 +5648,58 @@ def _output_core(events: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def _grid_kind(entry: Recipe) -> str:
+    """What a method's events are found on: see ``list_methods``' ``grid``."""
+    if entry.window is not None:
+        return "sliding windows"
+    if entry.event_bin_width is not None:
+        return "per-event bins"
+    if entry.bin_width is not None:
+        return "population bins"
+    return "input samples"
+
+
+def _grid_step(entry: Recipe) -> float | None:
+    """The spacing in seconds of that grid, None for the input samples."""
+    if entry.window is not None:
+        return entry.window[1]
+    return entry.event_bin_width if entry.event_bin_width is not None else entry.bin_width
+
+
 def _grid(entry: Recipe, sampling_frequency: float) -> dict[str, Any]:
-    """The sample or bin grid of a method's events and its duration convention."""
+    """The sample, bin or window grid of a method's events and its duration
+    convention."""
+    kind = _grid_kind(entry)
     grid: dict[str, Any] = {
+        "kind": kind,
         "input_sampling_frequency": sampling_frequency,
         "bin_width": entry.bin_width,
-        "native_sampling_frequency": (
-            sampling_frequency if entry.bin_width is None else 1 / entry.bin_width
-        ),
+        "native_sampling_frequency": sampling_frequency,
         "duration": (
             "end_time - start_time: elapsed seconds between the closed bounds, one "
             "sample period less than the samples they hold span"
         ),
     }
-    if entry.bin_width is not None:
+    if kind == "population bins":
+        assert entry.bin_width is not None
+        grid["native_sampling_frequency"] = 1 / entry.bin_width
         grid["bin_limits"] = (
             "the population detection's duration limits count bins: n bins last n * "
             "bin_width, so an event of n whole bins has a duration near n * bin_width "
             "- 1 / input_sampling_frequency"
         )
+    elif kind == "sliding windows":
+        assert entry.window is not None
+        width, step = entry.window
+        # the windows are whole samples: their step is rounded to the input rate
+        step_samples = max(round(step * sampling_frequency), 1)
+        grid["window_width"] = width
+        grid["window_step"] = step
+        grid["native_sampling_frequency"] = sampling_frequency / step_samples
+    elif kind == "per-event bins":
+        # bins anchored at each candidate, not a grid across the recording
+        grid["event_bin_width"] = entry.event_bin_width
+        grid["native_sampling_frequency"] = None
     return grid
 
 
