@@ -121,8 +121,7 @@ def run_all(rec: methods.Recording) -> pd.DataFrame:
         if entry.run.__name__ in ADDITIONAL_CONFIGURATIONS:
             configurations.append(ADDITIONAL_CONFIGURATIONS[entry.run.__name__])
         for configuration, options in configurations:
-            # Recorded, not hidden: Ólafsdóttir 2016 expects a rest recording
-            # and this session includes running.
+            # Any warning a method raises is recorded in the results, not hidden.
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always")
                 events = entry.run(method_rec, **options)

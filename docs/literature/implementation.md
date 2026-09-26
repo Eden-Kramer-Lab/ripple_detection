@@ -159,12 +159,11 @@ example, spikes filling 10.000–10.049 s at 1000 Hz fill five 10 ms bins; the
 event is reported at the first and last counted samples, 10.000 and 10.049 s,
 so `duration` is 0.049 s, while a 50 ms minimum duration (five bins) keeps it.
 
-A method whose docstring states a condition on the recording that it cannot
-enforce itself declares it (`Recipe.precondition`, the catalog's
-`precondition` column), and `run_method` warns when the recording visibly
-violates it: Ólafsdóttir 2016 applies no speed rule to its rest session, so a
-recording with speed above 5 cm/s in more than 10% of the samples with known
-speed draws a warning. Without speed there is nothing to check and no warning.
+A condition a paper places on the recording that the package cannot check is
+documented rather than guessed. Ólafsdóttir 2016 detects "from the rest
+session" and states no speed, immobility or sleep criterion, so the caller
+passes the rest-session recording alone; no speed threshold is invented to
+test it.
 
 `attrs["diagnostics"]` is the place to look when a result is empty or
 surprising, before changing any setting: the time each supplied signal is valid

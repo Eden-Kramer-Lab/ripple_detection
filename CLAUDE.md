@@ -103,7 +103,7 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
 6. **[src/ripple_detection/literature_methods.py](src/ripple_detection/literature_methods.py)** - Packaged paper/protocol methods
    - `Recording.from_arrays`, native population grids, `list_methods`, `check_method`, `run_method`, `save_events` and `load_events`
    - Primary recipes and separate ripple/HFE/MUA/protocol inventories, identified by function name, DOI and output role
-   - Each method declares its requirements (`Requirement`, `Precondition`) once, in its registration; `list_methods` reports them and `check_method`/`run_method` check them, and a test runs every method with exactly its declared inputs and with each removed. `behavior_intervals` are a per-call argument, not a `Recording` field
+   - Each method declares its requirements (`Requirement`) once, in its registration; `list_methods` reports them and `check_method`/`run_method` check them, and a test runs every method with exactly its declared inputs and with each removed. `behavior_intervals` are a per-call argument, not a `Recording` field
    - Every result starts with the same six columns, and its `attrs` (method, options, grid, inputs, diagnostics) are plain JSON types
    - The simulation script only supplies demonstration inputs; [implementation.md](docs/literature/implementation.md) owns usage and current implementation limits
 

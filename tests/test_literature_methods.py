@@ -3,7 +3,6 @@
 import inspect
 import json
 import re
-import warnings
 
 import numpy as np
 import pandas as pd
@@ -297,10 +296,7 @@ def test_methods_without_speed_raise_or_do_not_use_it(name):
         return events.drop(columns=[c for c in events if "speed" in c])
 
     still = run(lm.Recording.from_arrays(**{**inputs, "speed": np.zeros(n_time)}))
-    with warnings.catch_warnings():
-        # A rest-only method warns on a running recording, by design.
-        warnings.filterwarnings("ignore", message=".*expects a rest recording")
-        moving = run(lm.Recording.from_arrays(**{**inputs, "speed": np.full(n_time, 100.0)}))
+    moving = run(lm.Recording.from_arrays(**{**inputs, "speed": np.full(n_time, 100.0)}))
     assert isinstance(still, pd.DataFrame), still
     del inputs["speed"]
     without = run(lm.Recording.from_arrays(**inputs))
@@ -2583,39 +2579,6 @@ def test_detection_counts_belong_to_the_call_that_ran_them(measured):
     lm.run_method("karlsson_2009", measured)
     assert lm._DETECTIONS.get() is None
     assert lm._mallory_candidates(np.arange(10) / 10, np.zeros(10)).empty  # no call: no record
-
-
-def test_a_rest_method_warns_once_on_a_recording_with_running():
-    inputs = _measured_inputs()
-    rest = lm.run_method("olafsdottir_2016", lm.Recording.from_arrays(**inputs))
-    assert len(rest)
-    speed = np.zeros(len(inputs["time"]))
-    speed[inputs["time"] < 8] = 20.0  # 40% of the recording running
-    speed[inputs["time"] > 19] = np.nan  # unknown speed is not counted
-    rec = lm.Recording.from_arrays(**{**inputs, "speed": speed})
-    with pytest.warns(
-        UserWarning, match=r"olafsdottir_2016 expects a rest recording"
-    ) as record:
-        events = lm.olafsdottir_2016(rec)
-    assert len(record) == 1
-    assert "speed exceeds 5 cm/s in 42% of the samples with known speed" in str(
-        record[0].message
-    )
-    assert record[0].filename == __file__  # attributed to the caller
-    # A warning, not a different rule: the same events.
-    np.testing.assert_array_equal(lm.bounds(events), lm.bounds(rest))
-    catalog = lm.list_methods().set_index("name").precondition
-    assert catalog["olafsdottir_2016"].startswith("rest recording")
-    assert catalog["karlsson_2009"] == ""
-
-
-def test_a_little_running_or_no_speed_raises_no_precondition_warning():
-    inputs = _measured_inputs()
-    speed = np.zeros(len(inputs["time"]))
-    speed[inputs["time"] < 1.5] = 20.0  # 7.5% of the recording
-    lm.run_method("olafsdottir_2016", lm.Recording.from_arrays(**{**inputs, "speed": speed}))
-    del inputs["speed"]
-    lm.run_method("olafsdottir_2016", lm.Recording.from_arrays(**inputs))
 
 
 def _strict_json(text):

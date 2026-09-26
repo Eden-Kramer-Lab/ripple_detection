@@ -39,7 +39,7 @@ row,paper,method,configuration,doi,trigger,role,options,supplied_baseline_interv
 36,Grosmark 2016,grosmark_2016,default,https://doi.org/10.1126/science.aad1935,SWR+MUA,candidate_detection,"{""stage"": ""detection""}","[[0.0, 12.0]]",7,0.4375,0,
 37,Ambrose 2016,ambrose_2016,default,https://doi.org/10.1016/j.neuron.2016.07.047,SWR,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0,
 38,Jadhav 2016,jadhav_2016,default,https://doi.org/10.1016/j.neuron.2016.02.010,SWR,candidate_detection,"{""stage"": ""detection""}","[[0.0, 12.0]]",16,1.0,0,
-39,Ólafsdóttir 2016,olafsdottir_2016,default,https://doi.org/10.1038/nn.4291,MUA,candidate_detection,{},"[[0.0, 12.0]]",16,0.9375,1,"olafsdottir_2016 expects a rest recording, but speed exceeds 5 cm/s in 28% of the samples with known speed. The method has no speed rule of its own: pass the rest session alone."
+39,Ólafsdóttir 2016,olafsdottir_2016,default,https://doi.org/10.1038/nn.4291,MUA,candidate_detection,{},"[[0.0, 12.0]]",16,0.9375,1,
 40,Silva 2015,silva_2015,default,https://doi.org/10.1038/nn.4151,MUA,candidate_detection,{},"[[0.0, 12.0]]",16,1.0,0,
 41,Ólafsdóttir 2015,olafsdottir_2015,default,https://doi.org/10.7554/eLife.06063,MUA,candidate_detection,"{""minimum_active_units"": 0}","[[0.0, 12.0]]",82,1.0,53,
 41,Ólafsdóttir 2015,olafsdottir_2015,bayesian_candidates,https://doi.org/10.7554/eLife.06063,MUA,candidate_detection,"{""minimum_active_units"": 7}","[[0.0, 12.0]]",16,0.8125,1,
