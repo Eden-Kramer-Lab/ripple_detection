@@ -11,7 +11,7 @@ can be attributed to its cause.
 
 - Phase 1a's merged code in `src/ripple_detection/simulate.py`: `draw_network_events`,
   `simulate_network_session`, `_render_ripple`, `_scale_to_snr`, `_half_gaussians`, `truth_windows`.
-- [src/ripple_detection/simulate.py:587-599](../../../../src/ripple_detection/simulate.py) — `_add_common_mode_artifacts`, the pattern EMG generalizes (asymmetric envelope, high-passed noise).
+- [src/ripple_detection/simulate.py:589-601](../../../../src/ripple_detection/simulate.py) — `_add_common_mode_artifacts`, the pattern EMG generalizes (asymmetric envelope, high-passed noise).
 - [src/ripple_detection/core.py](../../../../src/ripple_detection/core.py) — `filter_ripple_band(..., band=(60, 100))` designs a FIR for a non-default band; used to size fast gamma.
 
 **Contracts referenced:**

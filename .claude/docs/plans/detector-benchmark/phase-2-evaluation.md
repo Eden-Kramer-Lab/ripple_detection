@@ -10,11 +10,11 @@ event, and labelling of events by what they overlap. Users can run it on their o
 
 **Inputs to read first:**
 
-- [src/ripple_detection/core.py:663-700](../../../../src/ripple_detection/core.py) — `_event_bounds`, the input contract every function reads through.
-- [src/ripple_detection/core.py:1813-1851](../../../../src/ripple_detection/core.py) — `_overlaps`: the finite/ordered bounds check at 1827-1836 to extract, and the "touching is not overlap" rule.
+- [src/ripple_detection/core.py:797-834](../../../../src/ripple_detection/core.py) — `_event_bounds`, the input contract every function reads through.
+- [src/ripple_detection/core.py:2107-2171](../../../../src/ripple_detection/core.py) — `_overlaps`: the finite/ordered bounds check at 1827-1836 to extract, and the "touching is not overlap" rule.
 - [src/ripple_detection/_call_hints.py:143](../../../../src/ripple_detection/_call_hints.py) — `explain_call_errors`.
 - [examples/simulation_study.py:79-105](../../../../examples/simulation_study.py) — `score`, replaced here; `main` and the notebook `examples/simulation_study.ipynb` that read its CSV.
-- [examples/literature_recipes.py:1185-1194](../../../../examples/literature_recipes.py) — the recipes' `score`, also any-overlap, replaced here.
+- [examples/literature_recipes.py:87-96](../../../../examples/literature_recipes.py) — the recipes' `score`, also any-overlap, replaced here.
 - [README.md:245-302](../../../../README.md) — "How the detectors compare on simulated data", whose table and text change with the scoring.
 - Phase 1a's `truth_windows` and `simulate_network_session` (for the integration test only).
 
@@ -28,7 +28,7 @@ event, and labelling of events by what they overlap. Users can run it on their o
 
 ## Tasks
 
-- **Behavior-preserving extraction:** move the bounds check at `core.py:1827-1836` into
+- **Behavior-preserving extraction:** move the bounds check at `core.py:2129-2138` into
   `core._check_bounds(name: str, bounds: FloatArray) -> None` and call it from `_overlaps`. Suite
   green before and after; separate commit.
 - Create `src/ripple_detection/evaluate.py` with `EventInventory = ArrayLike | pd.DataFrame`,
@@ -46,7 +46,7 @@ event, and labelling of events by what they overlap. Users can run it on their o
   `uv run python examples/simulation_study.py` (about two minutes), commit the new
   `simulation_study_results.csv`, re-execute `examples/simulation_study.ipynb` in place, and read
   its narrative for claims the new numbers contradict.
-- **Replace `examples/literature_recipes.py:1185-1194` `score`** the same way (`recall` one-to-one,
+- **Replace `examples/literature_recipes.py:87-96` `score`** the same way (`recall` one-to-one,
   `false_positives` = unmatched detected); rerun the script and commit the new results CSV. One
   scoring rule across the examples.
 - **Docs:**

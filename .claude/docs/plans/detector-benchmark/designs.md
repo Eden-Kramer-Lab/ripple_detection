@@ -36,8 +36,8 @@ and page, or changes it to "assumed", before merging, and records the table in t
 | Sampling rate | 1500 Hz | The shipped filter's rate (`ripplefilter.mat`). |
 | Session | 600 s; running bouts 10-20 s separated by 20-40 s of rest | Assumed. |
 | LFP | 4 channels + radiatum, pink noise, `noise_amplitude=1.3`, `shared_noise_fraction=0.5` | `simulate_session` defaults. |
-| Theta / delta | amplitude 4 each (8 Hz running, 2 Hz rest) | `examples/literature_recipes.py:173-174` (the recipes' session). |
-| Units | 60: 40 place (baseline 0.1-0.5 Hz), 10 other pyramidal (0.5-1.5 Hz), 10 interneurons (2-5 Hz) | `literature_recipes.py:160-162`. |
+| Theta / delta | amplitude 4 each (8 Hz running, 2 Hz rest) | `examples/literature_recipes.py:70-71` (the recipes' session). |
+| Units | 60: 40 place (baseline 0.1-0.5 Hz), 10 other pyramidal (0.5-1.5 Hz), 10 interneurons (2-5 Hz) | `literature_recipes.py:56-58`. |
 | Event rate | 0.5 per second of rest | Verify: awake and sleep SWR rates of roughly 0.1-1 Hz (Buzsáki 2015, Hippocampus 25:1073). |
 | Type mix | swr 0.55, weak_ripple 0.15, burst_only 0.10, ripple_doublet 0.10, sharp_wave_only 0.10 | Assumed. |
 | Minimum separation | 0.05 s between events' ±3-sigma spans | Assumed. |
@@ -46,8 +46,8 @@ and page, or changes it to "assumed", before merging, and records the table in t
 | Ripple frequency at onset | (160, 220) Hz | Verify: 140-220 Hz in rat CA1 (Buzsáki 2015). |
 | Ripple chirp | decline over the span (0, 30) Hz | Verify: within-event frequency decline (Sullivan et al. 2011, J Neurosci 31:8605; Nguyen et al. 2009). |
 | Ripple SNR | swr and doublet (2.5, 6.0); weak_ripple (1.2, 2.2) | Assumed; `simulate_session`'s 4.0 lies inside. |
-| Sharp wave | span (0.04, 0.12) s, symmetric; amplitude (3, 8) signal units; centre lag N(0, 0.01 s) from the ripple | Amplitude after `literature_recipes.py:171` (6, above delta); span `simulate_session`'s 0.08 inside; lag assumed. |
-| Burst | span = ripple span × (1.0, 1.5); centre lag N(0, 0.01 s); place-cell gain 40; participation swr/doublet (0.2, 0.6), weak_ripple (0.02, 0.1), burst_only (0.2, 0.6) with span (0.05, 0.3) s | Gain `literature_recipes.py:169`; participation verify: 10-30% of CA1 pyramidal cells per SWR (Csicsvari et al. 2000; Ylinen et al. 1995); rest assumed. |
+| Sharp wave | span (0.04, 0.12) s, symmetric; amplitude (3, 8) signal units; centre lag N(0, 0.01 s) from the ripple | Amplitude after `literature_recipes.py:68` (6, above delta); span `simulate_session`'s 0.08 inside; lag assumed. |
+| Burst | span = ripple span × (1.0, 1.5); centre lag N(0, 0.01 s); place-cell gain 40; participation swr/doublet (0.2, 0.6), weak_ripple (0.02, 0.1), burst_only (0.2, 0.6) with span (0.05, 0.3) s | Gain `literature_recipes.py:65`; participation verify: 10-30% of CA1 pyramidal cells per SWR (Csicsvari et al. 2000; Ylinen et al. 1995); rest assumed. |
 | Other pyramidal units | participate with half the place cells' probability, gain 40 | Assumed. |
 | Interneurons | all take part in events with a ripple, gain 3, on the ripple's envelope | Verify: interneurons strongly recruited during ripples (Klausberger et al. 2003). |
 | Doublet | 2 ripples (p 0.7) or 3 (p 0.3), centre-to-centre (0.06, 0.12) s, one burst over all | Verify: ripple doublets and triplets (Davidson, Kloosterman & Wilson 2009). |
@@ -170,7 +170,7 @@ def simulate_network_session(
 ```
 
 Order of random draws (documented in the docstring): noise (`_correlated_noise`,
-`simulate.py:563`, `n_channels + 1` channels, the radiatum last), ripple initial phases, unit
+`simulate.py:565`, `n_channels + 1` channels, the radiatum last), ripple initial phases, unit
 baseline rates, burst participants, non-event randomness (phase 1b), spike counts.
 
 Steps:
@@ -197,16 +197,16 @@ Steps:
    ```
 
    scaled with `_scale_to_snr(burst, snr, sd, rate, band=None)`, **extracted** from
-   `_add_ripple_bursts` (`simulate.py:548-557`, the padded filter-peak scaling) so both paths
+   `_add_ripple_bursts` (`simulate.py:550-559`, the padded filter-peak scaling) so both paths
    share it. `band=None` calls `filter_ripple_band(padded, sampling_frequency=rate)` exactly as
    today (the shipped kernel at 1500 Hz); a band calls it with `band=band` (fast gamma, phase 1b). The scaled burst is added to channel `c` times `channel_gains[c]` and to the
    radiatum times `ripple_leak`.
 3. **Sharp waves.** Asymmetric Gaussian of peak `-amplitude` on the radiatum and
    `+sharp_wave_leak * amplitude` on channel 0 (`_add_sharp_wave_pair`'s convention,
-   `simulate.py:739-751`, generalized to rise/decay sigmas by a helper `_half_gaussians`).
-4. **Slow field and speed.** `simulate_theta_delta` (`simulate.py:996`) added to every channel
-   and the radiatum; `simulate_speed` (`simulate.py:939`), exactly as `simulate_session` does
-   (`simulate.py:1276-1291`).
+   `simulate.py:741-753`, generalized to rise/decay sigmas by a helper `_half_gaussians`).
+4. **Slow field and speed.** `simulate_theta_delta` (`simulate.py:998`) added to every channel
+   and the radiatum; `simulate_speed` (`simulate.py:941`), exactly as `simulate_session` does
+   (`simulate.py:1280-1295`).
 5. **Units.** `unit_types` = `"place"` × 40, `"pyramidal"` × 10, `"interneuron"` × 10 by default
    (in that order). Baseline rates per type drawn uniformly from `baseline_rate[type]`.
    Modulation starts at 1 per unit and sample. Per burst component: participants are place units
@@ -216,7 +216,7 @@ Steps:
    asymmetric Gaussian. Per event with a ripple: every interneuron gains
    `(interneuron_gain - 1) * envelope` on the ripple's envelope (the union for a doublet: the
    elementwise max). Spikes: `rng.poisson(rates * step * modulation)`, as `simulate_multiunit`
-   (`simulate.py:916-917`).
+   (`simulate.py:918-919`).
 6. **Session.** `SimulatedSession` with `raw_lfp = lfps[:, 0].copy()`, `sharp_wave_lfp` the
    radiatum, the events table (with `n_participants`), `unit_types`, `running_intervals`, and the
    ripple arrays derived as in [SimulatedSession additions](shared-contracts.md#simulatedsession-additions).
@@ -310,7 +310,7 @@ def truth_windows(table, fraction=0.1, expression=None):
 Checked during planning on a toy table (an `swr`, a doublet, a `burst_only`): network spans are the
 unions, the doublet's peak is its first ripple, the `burst_only` peak its burst.
 
-`_check_choice` is the existing helper in `core.py` (added on `literature-methods`).
+`_check_choice` is the existing helper in `core.py`.
 
 ## Matching
 
@@ -363,7 +363,7 @@ def match_events(reference, detected, *, minimum_iou=0.0):
 ```
 
 - `_checked` wraps `core._event_bounds` plus the finite/ordered check of `_overlaps`
-  (`core.py:1827-1836`); factor that check into a shared `core._check_bounds(name, bounds)` used by
+  (`core.py:2129-2138`); factor that check into a shared `core._check_bounds(name, bounds)` used by
   both, a behavior-preserving extraction.
 - `_peaks` returns the `peak_time` column as floats, or NaNs.
 - Return early (no pairs, zero overlap counts) when either input is empty, before building the
@@ -425,10 +425,16 @@ condensed `1 - jaccard` matrix with `method="average"`; no new dependency.
 `examples/benchmark/recipe_configs.py` is a thin adapter to the installed API:
 
 ```python
-from ripple_detection.literature_methods import Recording, bounds, list_methods, run_method
+from ripple_detection.literature_methods import (
+    Recording, bounds, check_method, list_methods, run_method,
+)
 
-def run_recipe(config: RecipeConfig, rec: Recording) -> pd.DataFrame:
-    return run_method(config.method, rec, **dict(config.options))
+def run_recipe(
+    config: RecipeConfig, rec: Recording, behavior_intervals: FloatArray | None = None
+) -> pd.DataFrame:
+    return run_method(
+        config.method, rec, behavior_intervals=behavior_intervals, **dict(config.options)
+    )
 ```
 
 Use the [configuration contract](shared-contracts.md#recipe-config). Build recordings

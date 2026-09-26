@@ -7,17 +7,20 @@ implementations and supports users' measured recordings. This phase adds benchma
 configurations that call that API. It does not move, copy or replace detector bodies.
 The runner needs uniform method calls; component attribution remains phase 6.
 
-**Prerequisite:** integrate the `literature-methods` implementation from commit
-`885ac4f` (or a descendant) before starting. It adds `Recording`, `list_methods`,
-`run_method` and named methods in `src/`; these changes are not yet integrated on
-the comparison branch. Use the integrated catalog, not old line numbers or a
-frozen count of 57 functions, as the inventory.
+**Prerequisite (met):** the `literature-methods` implementation is on `master`
+(PR #25): `Recording`, `list_methods`, `check_method`, `run_method`,
+`save_events`/`load_events` and the named methods. Use the catalog `list_methods()`
+returns, not old line numbers or a frozen count of functions, as the inventory.
 
 ## Inputs and contracts
 
 - `src/ripple_detection/literature_methods.py`: the public recording constructor,
-  method catalog, named calls and dispatcher. Read method docstrings for conditional
-  data requirements; `required_options` lists signature requirements only.
+  method catalog, named calls and dispatcher. Each method declares its requirements
+  once: `list_methods()` reports them (`signals`, `cells`, `intervals`,
+  `external_inputs`, `measured_options`, `sampling_frequency`, `grid`) and
+  `check_method(name, recording, behavior_intervals=..., **options)` lists every
+  one a call lacks, without running. `NOT_REPRODUCED` names the papers with no
+  packaged method and why.
 - `docs/literature/implementation.md` and the paper notes: output roles, stages,
   source choices and limits. CSV values are not executable configurations.
 - `examples/literature_recipes.py`: demonstration input assembly and calls into the
@@ -32,9 +35,11 @@ frozen count of 57 functions, as the inventory.
 
 1. Add `examples/benchmark/recipe_configs.py` with the small `RecipeConfig` contract,
    `RECIPES`, `EXCLUSIONS`, `make_recording(session, config)` and
-   `run_recipe(config, recording)`. Import `Recording`, `bounds`, `list_methods`
-   and `run_method` from the installed package. `run_recipe` forwards the configured
-   method and options to `run_method` and preserves its DataFrame and attrs.
+   `run_recipe(config, recording, behavior_intervals)`. Import `Recording`, `bounds`,
+   `list_methods`, `check_method` and `run_method` from the installed package.
+   `run_recipe` forwards the configured method, options and the session's
+   `behavior_intervals` (a per-call argument, not a `Recording` field) to
+   `run_method` and preserves its DataFrame and attrs.
 2. Configure each chosen method by its stable function name and explicit options.
    Resolve defaults from its public signature at execution and save the resolved
    values. Use `stage="detection"` where supported. Keep protocol variants distinct;
@@ -42,8 +47,10 @@ frozen count of 57 functions, as the inventory.
    Derive DOI, paper, role and interpretation from the package catalog/results.
    `primary_expression` is an explicit benchmark decision reviewed per method.
 3. Build package `Recording` objects from simulated observations, with explicit
-   selections for channels, pyramidal/place cells, reference signals, normalization
-   and behavioral intervals, templates and any external inventory. The benchmark
+   selections for channels, pyramidal/place cells, reference signals, sleep and
+   normalization intervals, templates and any external inventory, at the rate
+   the method's `sampling_frequency` requires; behavioral intervals go to each
+   call instead. The benchmark
    input policy and assumptions are serialized. Prefer `Recording.from_arrays`
    so benchmark calls exercise the measured-data path. Do not infer missing method
    settings from truth windows or silently use simulation-only fallbacks. Unit-type
@@ -52,7 +59,8 @@ frozen count of 57 functions, as the inventory.
    never the simulator's event truth. Exclude unsupported methods with reasons.
 4. Add an inventory coverage check: every name in the integrated `list_methods()`
    catalog has a runnable configuration or an explicit exclusion explaining the
-   missing input or unresolved setting. A partial implementation's role stays
+   missing input or unresolved setting; `check_method`'s messages give the
+   missing inputs. A partial implementation's role stays
    visible. Missing requirements are exclusions/failures, never zero detections.
 5. Record configurations and resolved result metadata in `methods.csv` as specified
    by the output contract. Separate literature-specified values from benchmark
@@ -78,8 +86,9 @@ frozen count of 57 functions, as the inventory.
   lack of synthetic stand-ins when inputs are absent. Externally supplied detector
   outputs retain their own provenance. Discarded recordings must be collectable.
 - The standalone demo still imports only package APIs and runs; adapter creation alone
-  must not change its results. Behavior corrections belong on `literature-methods`
-  with source evidence and regression tests, not in benchmark-specific overrides.
+  must not change its results. Behavior corrections belong in the package, in their
+  own PR with source evidence and regression tests, not in benchmark-specific
+  overrides.
 - Run relevant tests and CI, including dependency floors. Lint/format benchmark
   examples explicitly. A stored snapshot can guard integration drift but cannot
   replace direct comparison or establish agreement with authors' original outputs.

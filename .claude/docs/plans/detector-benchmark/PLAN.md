@@ -9,8 +9,8 @@ events overlap, and how accurately (signed) each places onsets and offsets again
 against each other; plus operating curves, robustness, which rule components explain their
 disagreement, and the effect on event rates and cell participation. The simulator and the
 evaluation functions ship in the package for users; the benchmark runner and analyses live in
-`examples/benchmark/`. Work happens on branch `detector-benchmark`, stacked on
-`literature-methods`.
+`examples/benchmark/`. Work happens on branch `detector-benchmark` (PR #26), based on `master`, which
+has the `literature-methods` work (PR #25).
 
 ## Reading order
 

@@ -50,8 +50,9 @@ parallelism, paired bootstrap and permutation tests in place of mixed models).
 
 ## Current codebase integration points
 
-Integrate the completed `literature-methods` changes before implementing phase 3.
-Earlier integration line numbers and example-owned detector functions are obsolete.
+The `literature-methods` changes are on `master` (PR #25), under this branch.
+Example-owned detector functions are obsolete; line numbers cited in these files
+were checked against `master` on 2026-09-26.
 
 - `simulate_session` defaults and signals remain unchanged. Phase 1 extends simulation
   additively with the fields in [shared contracts](shared-contracts.md#simulatedsession-additions).
@@ -134,8 +135,7 @@ Every phase must pass CI's dependency-floors job (Python 3.10, NumPy 1.24, SciPy
 2.0, no matplotlib, `.github/workflows/release.yml:94-111`), which runs the whole test suite,
 benchmark tests included: plotting code imports matplotlib inside the plotting functions, and no
 test calls them.
-Each phase is one PR onto `detector-benchmark` (itself on `literature-methods`); rebase the stack
-when `literature-methods` merges to `master`.
+Each phase is one PR onto `detector-benchmark` (itself on `master`).
 
 Additive only. New public functions (`draw_network_events`, `simulate_network_session`,
 `draw_non_events`, `truth_windows`, and the `evaluate` module) ship with docs and CHANGELOG entries

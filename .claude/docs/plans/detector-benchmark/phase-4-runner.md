@@ -12,7 +12,7 @@ the smoke test, the extrapolation, and the full run.
 - Phase 1a/1b: `draw_network_events`, `draw_non_events`, `simulate_network_session`, `truth_windows`.
 - Phase 2: `ripple_detection.evaluate` (`match_events`, `EventMatching.boundary_errors`).
 - Phase 3: `examples/benchmark/recipe_configs.py` (`make_recording`, `RECIPES`, `EXCLUSIONS`, `run_recipe`).
-- [src/ripple_detection/registry.py:408-424](../../../../src/ripple_detection/registry.py) — `DETECTORS`; detectors are resolved by name.
+- [src/ripple_detection/registry.py:462-478](../../../../src/ripple_detection/registry.py) — `DETECTORS`; detectors are resolved by name.
 - [examples/simulation_study.py:108-141](../../../../examples/simulation_study.py) — `call` and `detector_calls`: the error-recording call and the per-detector input wiring to mirror.
 - [src/ripple_detection/detectors/_units.py:34](../../../../src/ripple_detection/detectors/_units.py) — `count_spikes_in_events`, for `n_active_units`.
 

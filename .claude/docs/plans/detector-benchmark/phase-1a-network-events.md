@@ -8,12 +8,12 @@ at any envelope fraction. Public, because users can test a detector on it.
 
 **Inputs to read first:**
 
-- [src/ripple_detection/simulate.py:1075-1147](../../../../src/ripple_detection/simulate.py) — `SimulatedSession`; the fields and invariants being extended.
-- [src/ripple_detection/simulate.py:1150-1316](../../../../src/ripple_detection/simulate.py) — `simulate_session`: the order of draws and the slow-field/speed steps the new renderer mirrors; its output must not change.
+- [src/ripple_detection/simulate.py:1077-1149](../../../../src/ripple_detection/simulate.py) — `SimulatedSession`; the fields and invariants being extended.
+- [src/ripple_detection/simulate.py:1154-1320](../../../../src/ripple_detection/simulate.py) — `simulate_session`: the order of draws and the slow-field/speed steps the new renderer mirrors; its output must not change.
 - [src/ripple_detection/simulate.py:407-600](../../../../src/ripple_detection/simulate.py) — `_ripple_waveform`, `_gaussian_window`, `_add_ripple_bursts` (the SNR scaling to extract at 548-557), `_correlated_noise`.
-- [src/ripple_detection/simulate.py:726-1072](../../../../src/ripple_detection/simulate.py) — sharp-wave helpers, `simulate_multiunit`, `simulate_speed`, `simulate_theta_delta`.
+- [src/ripple_detection/simulate.py:728-1074](../../../../src/ripple_detection/simulate.py) — sharp-wave helpers, `simulate_multiunit`, `simulate_speed`, `simulate_theta_delta`.
 - [src/ripple_detection/_call_hints.py:143](../../../../src/ripple_detection/_call_hints.py) — `explain_call_errors`; every new public function is wrapped.
-- [tests/test_simulate.py:897-1128](../../../../tests/test_simulate.py) — `TestSimulateSession`, `TestSessionStates` (including `test_the_defaults_are_unchanged` at 1092): the style new tests follow and the guards that must pass untouched.
+- [tests/test_simulate.py:915-1146](../../../../tests/test_simulate.py) — `TestSimulateSession`, `TestSessionStates` (including `test_the_defaults_are_unchanged` at 1110): the style new tests follow and the guards that must pass untouched.
 - [src/ripple_detection/__init__.py:72-85,146-153](../../../../src/ripple_detection/__init__.py) and `tests/test_public_api.py` — exports and the pinned `__all__`.
 
 **Contracts referenced:**
@@ -37,16 +37,16 @@ at any envelope fraction. Public, because users can test a detector on it.
   is run on network sessions before this is committed (overview risk 1); running the simulator to
   check its own truth is fine.
 - **Behavior-preserving extraction:** move the padded filter-peak scaling at
-  `simulate.py:548-557` into `_scale_to_snr(burst, snr, band_noise_sd, rate, band=None) -> float`
+  `simulate.py:550-559` into `_scale_to_snr(burst, snr, band_noise_sd, rate, band=None) -> float`
   (`band=None` filters exactly as today; see [designs.md#rendering-a-network-session](designs.md#rendering-a-network-session)) and call it
   from `_add_ripple_bursts`. Run the full suite before and after; `test_snapshots.py` and
   `test_simulate.py` must pass without snapshot updates. Separate commit.
 - Add the vocabularies to `simulate.py` and `StrArray = NDArray[np.str_]` to `core.py`'s alias
-  block (`core.py:25-31`, beside `FloatArray`).
-- Extend `SimulatedSession` (`simulate.py:1075`) with `events`, `non_events`, `unit_types`,
+  block (`core.py:26-32`, beside `FloatArray`).
+- Extend `SimulatedSession` (`simulate.py:1077`) with `events`, `non_events`, `unit_types`,
   `running_intervals` per the contract: `field(default_factory=...)` defaults, an
   `_empty_events()` / `_empty_non_events()` pair building the typed empty frames, the `unit_types`
-  length check in `__post_init__` (`simulate.py:1120`), and docstring entries. In the same edit,
+  length check in `__post_init__` (`simulate.py:1124`), and docstring entries. In the same edit,
   correct the `speed` attribute's docstring ("Zeros: an immobile animal", now wrong since
   `running_intervals` was added) to "Zeros unless `running_intervals` was given".
 - `simulate_session` passes `running_intervals` (empty `(0, 2)` for None) into the result. Nothing

@@ -77,7 +77,7 @@ Same ordering, span and empty-table invariants as the event table.
 
 ## SimulatedSession additions
 
-`src/ripple_detection/simulate.py:1075` gains four fields **after** `sampling_frequency`, each
+`src/ripple_detection/simulate.py:1077` gains four fields **after** `sampling_frequency`, each
 with a default so every existing constructor call keeps working:
 
 ```python
@@ -98,7 +98,7 @@ running_intervals: FloatArray = field(default_factory=lambda: np.empty((0, 2))) 
   `ripple_durations = 3 (rise_sigma + decay_sigma)`, `ripple_frequencies = frequency_start`, so
   the existing `ripple_windows` property gives each ripple's ±3-sigma span.
 
-`StrArray = NDArray[np.str_]` is added to `core.py` beside `FloatArray` (`core.py:25-31`).
+`StrArray = NDArray[np.str_]` is added to `core.py` beside `FloatArray` (`core.py:26-32`).
 
 ## Truth windows
 
@@ -129,11 +129,11 @@ The benchmark's fractions are `TRUTH_FRACTIONS = (0.1, 0.25, 0.5)`; matching use
 ## Event inventory input
 
 Every function in `ripple_detection.evaluate` takes events as anything `core._event_bounds`
-accepts (`src/ripple_detection/core.py:663`): an `(n, 2)` array of `[start_time, end_time]` or a
+accepts (`src/ripple_detection/core.py:797`): an `(n, 2)` array of `[start_time, end_time]` or a
 DataFrame with those columns. A DataFrame with a `peak_time` column also supplies peaks; otherwise
 peak errors are NaN. Rows need not be sorted; returned indices refer to the input's row positions.
 Bounds must be finite with start ≤ end, else `ValueError` (the check `_overlaps` makes,
-`core.py:1827-1836`).
+`core.py:2129-2138`).
 
 ## Matching and pair metrics
 
@@ -160,7 +160,7 @@ class EventMatching:
 ```
 
 - **Overlap** is intersection of positive length; touching endpoints do not overlap (matches
-  `require_overlap`'s default, `core.py:1884-1886`).
+  `require_overlap`'s default, `core.py:2201-2203`).
 - **Matching is one-to-one**, maximizing the summed IoU of pairs whose IoU exceeds
   `minimum_iou`, solved exactly per connected component of the overlap graph (algorithm in
   [designs.md#matching](designs.md#matching)). Do not weaken to greedy: split and merge counts and
@@ -250,8 +250,9 @@ class RecipeConfig:
   catalog, not paper-row counts: a paper can supply several inventories or only a label.
 - `make_recording(session, config) -> Recording` uses the installed constructor and
   explicit input policies. Do not copy `Recording` or silently use simulation fallbacks.
-- `run_recipe(config, recording) -> pd.DataFrame` calls `run_method` with the configured
-  name/options and preserves all diagnostics and attrs. The package owns defaults;
+- `run_recipe(config, recording, behavior_intervals=None) -> pd.DataFrame` calls
+  `run_method` with the configured name/options and the session's behavior intervals
+  (per call, not on `Recording`) and preserves all diagnostics and attrs. The package owns defaults;
   persist the resolved options, not just overrides.
 - `bounds` is imported from the package. Event comparison accepts the public output
   contract; no conversion discards metadata before it is saved.
