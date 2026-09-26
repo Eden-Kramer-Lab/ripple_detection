@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import ripple_detection as rd
 from ripple_detection import (
     DETECTORS,
     MULTIUNIT,
@@ -99,7 +100,7 @@ BASE_COLUMNS = [
     "start_time", "end_time", "duration", "n_samples", "max_sustained_zscore",
     "mean_zscore", "median_zscore", "max_zscore", "min_zscore", "area", "total_energy",
     "speed_at_start", "speed_at_end", "max_speed", "min_speed", "median_speed",
-    "mean_speed", "clipped_start", "clipped_end",
+    "mean_speed", "clipped_start", "clipped_end", "peak_time",
 ]  # fmt: skip
 
 
@@ -335,6 +336,8 @@ class TestOutputContract:
                 assert events[column].dtype == np.float64, column
         assert events.start_time.is_monotonic_increasing
         assert (events.end_time >= events.start_time).all()
+        assert events.start_time.le(events.peak_time).all()
+        assert events.peak_time.le(events.end_time).all()
 
     @pytest.mark.parametrize("name", ALL_DETECTORS)
     def test_an_empty_result_has_the_same_schema(self, name, session, filtered):
@@ -347,17 +350,6 @@ class TestOutputContract:
 
 
 class TestInvariances:
-    @pytest.mark.parametrize("name", LFP_DETECTORS)
-    def test_a_time_offset_shifts_the_events_and_nothing_else(self, name, session, filtered):
-        base = run(name, session, filtered)
-        offset = 12345.678
-        shifted = get_detector(name).detector(
-            session.time + offset, filtered, session.speed, FS
-        )
-        np.testing.assert_allclose(shifted.start_time - offset, base.start_time, atol=1e-6)
-        np.testing.assert_allclose(shifted.end_time - offset, base.end_time, atol=1e-6)
-        np.testing.assert_allclose(shifted.max_zscore, base.max_zscore)
-
     @pytest.mark.parametrize("name", LFP_DETECTORS)
     def test_scaling_the_signal_changes_nothing(self, name, session, filtered):
         base = run(name, session, filtered)
@@ -384,6 +376,318 @@ class TestInvariances:
         assert len(high) <= len(low)
         for _, event in high.iterrows():
             assert overlaps(low, (event.start_time, event.end_time)).any()
+
+
+ORIGINS = [86_400.0, 1.7e9]  # a day into a recording; a Unix time
+RUNNING = [(2.0, 4.0), (13.5, 14.5), (26.0, 28.0)]  # the second covers a ripple
+
+
+def assert_times_shifted(shifted, base, origin):
+    """Times computed on timestamps moved by `origin` are `base` moved by it,
+    to within the timestamps' own rounding (a few ulps of `origin`, under a
+    thousandth of a sample): the same samples, not merely nearby ones."""
+    shifted, base = np.asarray(shifted, dtype=float), np.asarray(base, dtype=float)
+    assert shifted.shape == base.shape
+    np.testing.assert_allclose(shifted - origin, base, rtol=0, atol=8 * np.spacing(origin))
+
+
+# integrals over the timestamps, which carry each step's rounding
+TIME_INTEGRALS = {"area", "total_energy"}
+
+
+def assert_frame_shifted(shifted, base, origin):
+    """A detector's DataFrame moved by `origin`: its ``*_time`` columns as in
+    `assert_times_shifted`, its durations to the same rounding, integrals over
+    time to the relative rounding of one step, and every other column as
+    computed at 0."""
+    assert list(shifted.columns) == list(base.columns)
+    assert len(shifted) == len(base)
+    for column in base:
+        if column.endswith("_time"):
+            assert_times_shifted(shifted[column], base[column], origin)
+        elif column == "duration":
+            np.testing.assert_allclose(
+                shifted[column], base[column], rtol=0, atol=8 * np.spacing(origin)
+            )
+        elif base[column].dtype == object:  # Shvartsman's participant channels
+            assert shifted[column].tolist() == base[column].tolist(), column
+        elif column in TIME_INTEGRALS:
+            np.testing.assert_allclose(
+                shifted[column], base[column], rtol=np.spacing(origin) * FS, err_msg=column
+            )
+        else:
+            np.testing.assert_allclose(
+                shifted[column], base[column], rtol=1e-9, err_msg=column
+            )
+
+
+@pytest.fixture(scope="module")
+def moving_session():
+    """The session's ripples with running bouts, theta and delta, so speed and
+    state rules have something to decide."""
+    time = simulate_time(int(30 * FS), FS)
+    return simulate_session(
+        time,
+        RIPPLES,
+        n_channels=4,
+        n_units=100,
+        ripple_snr=6.0,
+        running_intervals=RUNNING,
+        theta_amplitude=1.0,
+        delta_amplitude=1.0,
+        rng=0,
+    )
+
+
+@pytest.fixture(scope="module")
+def base(moving_session):
+    """The moving session's ripple-band LFP, Kay events and their bounds."""
+    filtered = filter_ripple_band(moving_session.lfps, sampling_frequency=FS)
+    kay = Kay_ripple_detector(moving_session.time, filtered, moving_session.speed, FS)
+    events = kay[["start_time", "end_time"]].to_numpy()
+    assert len(events) >= 4
+    return filtered, kay, events
+
+
+class TestTimeOrigin:
+    """Every public function that reads timestamps gives, on a clock that
+    starts a day or a Unix time in, what it gives from 0, moved by the
+    origin. Far from zero a timestamp rounds to a few ulps of its magnitude
+    (2.4e-7 s at 1.7e9), so a tolerance relative to a time is too wide there
+    and an absolute one too narrow; thresholds below are measured from the
+    data, so the comparisons land exactly on their boundaries."""
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    @pytest.mark.parametrize("name", ALL_DETECTORS)
+    def test_detectors(self, name, origin, moving_session, base):
+        filtered, _, _ = base
+        spec = get_detector(name)
+        signals = signals_for(name, moving_session, filtered)
+        keywords = keyword_signals_for(name, moving_session)
+        at_zero = spec.detector(
+            moving_session.time, *signals, moving_session.speed, FS, **keywords
+        )
+        shifted = spec.detector(
+            moving_session.time + origin, *signals, moving_session.speed, FS, **keywords
+        )
+        assert len(at_zero) > 0
+        assert_frame_shifted(shifted, at_zero, origin)
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_event_rules_on_measured_boundaries(self, origin, moving_session, base):
+        _, kay, events = base
+        time, shifted = moving_session.time, moving_session.time + origin
+        moved = events + origin
+
+        gaps = events[1:, 0] - events[:-1, 1]
+        gap = float(gaps.min())
+        for kwargs in ({}, {"inclusive": True}):
+            assert_times_shifted(
+                rd.merge_close_events(moved, gap, **kwargs),
+                rd.merge_close_events(events, gap, **kwargs),
+                origin,
+            )
+        assert_times_shifted(
+            rd.require_isolation(moved, gap), rd.require_isolation(events, gap), origin
+        )
+
+        peaks = kay.peak_time.to_numpy()
+        peak_gap = float(np.diff(peaks).min())
+        moved_frame = kay.assign(
+            start_time=kay.start_time + origin,
+            end_time=kay.end_time + origin,
+            peak_time=kay.peak_time + origin,
+        )
+        assert_times_shifted(
+            rd.merge_close_events(moved_frame, peak_gap, measure="peak"),
+            rd.merge_close_events(kay, peak_gap, measure="peak"),
+            origin,
+        )
+
+        # references three samples later: each event overlaps its own by its
+        # length less three samples, which is the minimum asked of the first
+        index = np.searchsorted(time, events)
+        reference = time[np.minimum(index + 3, len(time) - 1)]
+        overlap = float(events[0, 1] - reference[0, 0])
+        for rule in (rd.require_overlap, rd.exclude_overlap):
+            assert_times_shifted(
+                rule(moved, reference + origin, overlap),
+                rule(events, reference, overlap),
+                origin,
+            )
+        assert_times_shifted(
+            rd.require_times_inside(moved, peaks + origin),
+            rd.require_times_inside(events, peaks),
+            origin,
+        )
+
+        # every other event as an interval, read off each clock's own samples,
+        # which round apart from the moved events by a few ulps
+        own = index[::2]
+        kept = rd.require_inside(events, time[own])
+        assert len(kept) == len(own)
+        assert_times_shifted(rd.require_inside(moved, shifted[own]), kept, origin)
+        np.testing.assert_array_equal(
+            rd.intervals_to_mask(shifted, shifted[own]), rd.intervals_to_mask(time, time[own])
+        )
+        later = np.minimum(index + 3, len(time) - 1)[::2]
+        assert_times_shifted(
+            rd.intersect_intervals(shifted[own], shifted[later]),
+            rd.intersect_intervals(time[own], time[later]),
+            origin,
+        )
+
+        speed = moving_session.speed
+        for rule in ("endpoints", "all", "mean", "median"):
+            assert_times_shifted(
+                rd.exclude_movement(moved, speed, shifted, 4.0, rule),
+                rd.exclude_movement(events, speed, time, 4.0, rule),
+                origin,
+            )
+        assert_times_shifted(
+            rd.exclude_movement_by_majority(moved, speed, shifted),
+            rd.exclude_movement_by_majority(events, speed, time),
+            origin,
+        )
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_spike_and_trace_rules(self, origin, moving_session, base):
+        filtered, _, events = base
+        time, shifted = moving_session.time, moving_session.time + origin
+        moved = events + origin
+        multiunit = moving_session.multiunit
+        np.testing.assert_array_equal(
+            rd.count_spikes_in_events(moved, multiunit, shifted),
+            rd.count_spikes_in_events(events, multiunit, time),
+        )
+        assert_times_shifted(
+            rd.require_active_units(moved, multiunit, shifted, minimum_active_units=10),
+            rd.require_active_units(events, multiunit, time, minimum_active_units=10),
+            origin,
+        )
+        assert_times_shifted(
+            rd.trim_events_to_spike_windows(moved, multiunit, shifted),
+            rd.trim_events_to_spike_windows(events, multiunit, time),
+            origin,
+        )
+
+        trace = rd.get_Kay_ripple_consensus_trace(filtered, FS, time=time)
+        np.testing.assert_allclose(
+            rd.get_Kay_ripple_consensus_trace(filtered, FS, time=shifted), trace, rtol=1e-12
+        )
+        np.testing.assert_allclose(
+            rd.get_Yu_ripple_consensus_trace(filtered, FS, time=shifted),
+            rd.get_Yu_ripple_consensus_trace(filtered, FS, time=time),
+            rtol=1e-12,
+        )
+        level = float(np.median(trace))
+        for sides in ("both", "start", "end"):
+            assert_times_shifted(
+                rd.trim_events_to_trace(moved, trace, shifted, level, sides=sides),
+                rd.trim_events_to_trace(events, trace, time, level, sides=sides),
+                origin,
+            )
+        assert_times_shifted(
+            rd.require_trace_peak(moved, trace, shifted, 3 * level),
+            rd.require_trace_peak(events, trace, time, 3 * level),
+            origin,
+        )
+        zscored = (trace - trace.mean()) / trace.std()
+        assert_times_shifted(
+            rd.threshold_by_zscore(zscored, shifted),
+            rd.threshold_by_zscore(zscored, time),
+            origin,
+        )
+        assert_frame_shifted(
+            rd.detect_events_from_trace(shifted, trace, moving_session.speed, FS),
+            rd.detect_events_from_trace(time, trace, moving_session.speed, FS),
+            origin,
+        )
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_spiking_state_and_score(self, origin, moving_session, base):
+        _, _, events = base
+        time, shifted = moving_session.time, moving_session.time + origin
+        few_units = {"units": np.arange(5)}
+        for kwargs in ({"minimum_silence": 0.1}, {"minimum_silence": 0.1, "window": 0.2}):
+            at_zero = rd.detect_silence_bounded_events(
+                time, moving_session.multiunit, FS, **kwargs, **few_units
+            )
+            assert len(at_zero) > 0
+            assert_frame_shifted(
+                rd.detect_silence_bounded_events(
+                    shifted, moving_session.multiunit, FS, **kwargs, **few_units
+                ),
+                at_zero,
+                origin,
+            )
+
+        ratio = rd.theta_delta_ratio(moving_session.raw_lfp, FS, time=time)
+        np.testing.assert_allclose(
+            rd.theta_delta_ratio(moving_session.raw_lfp, FS, time=shifted), ratio, rtol=1e-12
+        )
+        still = rd.state_intervals(moving_session.speed, time, 1.0)
+        assert len(still) >= 3
+        length = float(np.diff(still, axis=1).min())
+        gap = float((still[1:, 0] - still[:-1, 1]).min())
+        for kwargs in ({"minimum_duration": length}, {"merge_gap": gap}):
+            assert_times_shifted(
+                rd.state_intervals(moving_session.speed, shifted, 1.0, **kwargs),
+                rd.state_intervals(moving_session.speed, time, 1.0, **kwargs),
+                origin,
+            )
+
+        examples = events[:3]
+        np.testing.assert_allclose(
+            rd.carey_spectral_ripple_score(
+                shifted, moving_session.raw_lfp, FS, examples + origin
+            ),
+            rd.carey_spectral_ripple_score(time, moving_session.raw_lfp, FS, examples),
+            rtol=1e-12,
+        )
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_sample_counts(self, origin, moving_session):
+        time = moving_session.time
+        for duration in (0.015, 0.1, 1 / 3):
+            assert rd.minimum_sample_count(time + origin, duration) == rd.minimum_sample_count(
+                time, duration
+            )
+        n_samples = np.arange(40)
+        np.testing.assert_array_equal(
+            rd.sample_count_within(n_samples, time + origin, 0.01, 0.02),
+            rd.sample_count_within(n_samples, time, 0.01, 0.02),
+        )
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_simulated_speed_state_and_spikes(self, origin):
+        """Speed follows the running bouts and spikes the ripples, not the
+        clock; each agrees to its slope times the timestamps' rounding. Theta
+        and delta are rhythms on the clock, so they agree at origins that are
+        whole cycles of both, as these are."""
+        time = simulate_time(int(30 * FS), FS)
+        running, ripples = np.asarray(RUNNING), np.asarray(RIPPLES)
+        for simulate in (rd.simulate_speed, rd.simulate_theta_delta):
+            at_zero = simulate(time, running)
+            atol = np.abs(np.gradient(at_zero, time)).max() * 8 * np.spacing(origin)
+            np.testing.assert_allclose(
+                simulate(time + origin, running + origin), at_zero, rtol=0, atol=atol
+            )
+        np.testing.assert_array_equal(
+            rd.simulate_multiunit(time + origin, ripples + origin, 100, rng=0),
+            rd.simulate_multiunit(time, ripples, 100, rng=0),
+        )
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_simulated_ripples(self, origin):
+        time = simulate_time(int(30 * FS), FS)
+        ripples = np.asarray(RIPPLES)
+        at_zero = rd.simulate_LFP(time, ripples, ripple_frequency=(150.0, 250.0), rng=0)
+        shifted = rd.simulate_LFP(
+            time + origin, ripples + origin, ripple_frequency=(150.0, 250.0), rng=0
+        )
+        atol = np.abs(np.gradient(at_zero, time)).max() * 8 * np.spacing(origin)
+        np.testing.assert_allclose(shifted, at_zero, rtol=0, atol=atol)
 
 
 class TestRecordingEdges:

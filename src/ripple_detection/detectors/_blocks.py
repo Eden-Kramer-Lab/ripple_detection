@@ -1,8 +1,6 @@
 """The one missing-sample policy: valid samples, their contiguous blocks, and the
 transforms and threshold tests that run within a block."""
 
-from itertools import pairwise
-
 import numpy as np
 from numpy.typing import ArrayLike
 
@@ -16,6 +14,7 @@ from ripple_detection.core import (
     minimum_sample_count,
     threshold_by_zscore,
 )
+from ripple_detection.core import _contiguous_valid_blocks as _contiguous_valid_blocks
 
 
 def _valid_blocks(
@@ -195,42 +194,6 @@ def _threshold_blocks(
             )
         )
     return events
-
-
-def _contiguous_valid_blocks(
-    is_valid: BoolArray, time: FloatArray | None
-) -> list[tuple[int, int]]:
-    """Split rows into maximal contiguous valid blocks.
-
-    A block ends at an invalid row or, when ``time`` is given, wherever the
-    timestamp step exceeds 1.5 times the median step (a recording gap or the
-    join between disjoint intervals). The median step is measured from
-    ``time`` rather than taken from the nominal sampling rate, so an
-    overstated rate cannot turn every sample into its own block.
-
-    Parameters
-    ----------
-    is_valid : ndarray of bool, shape (n_time,)
-        True for rows with finite data in every channel.
-    time : ndarray, shape (n_time,), optional
-        Sample timestamps in seconds. None declares a regular sample grid.
-
-    Returns
-    -------
-    blocks : list of (start, stop)
-        Half-open row ranges, in order.
-
-    """
-    n_time = len(is_valid)
-    boundary = np.zeros(n_time + 1, dtype=bool)
-    boundary[0] = boundary[-1] = True
-    # a block boundary sits between rows i-1 and i where validity changes
-    boundary[1:-1] |= is_valid[1:] != is_valid[:-1]
-    if time is not None and n_time > 1:
-        steps = np.diff(time)
-        boundary[1:-1] |= steps > 1.5 * np.median(steps)
-    edges = np.flatnonzero(boundary)
-    return [(int(start), int(stop)) for start, stop in pairwise(edges) if is_valid[start]]
 
 
 def _smoothed_envelope(

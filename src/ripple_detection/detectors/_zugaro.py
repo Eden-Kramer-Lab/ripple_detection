@@ -9,6 +9,7 @@ from ripple_detection.core import (
     BoolArray,
     FloatArray,
     _boolean_run_bounds,
+    _check_non_negative,
     _is_immobile_at_endpoints,
     normalize_signal,
     sample_count_within,
@@ -28,6 +29,7 @@ from ripple_detection.detectors._validation import (
     _check_thresholds,
     _validate_detector_inputs,
     _validate_duration_limits,
+    _warn_if_not_ripple_band,
 )
 
 ZUGARO_SMOOTHING_WINDOW = 11 / 1250
@@ -141,6 +143,26 @@ def _two_threshold_events(
     return np.column_stack([time[events[:, 0]], time[events[:, 1]]]), time[peaks], clipped
 
 
+def _check_zugaro_parameters(
+    *,
+    speed_threshold: float,
+    low_threshold: float,
+    high_threshold: float,
+    minimum_inter_ripple_interval: float,
+    minimum_duration: float,
+    maximum_duration: float | None,
+    smoothing_window: float,
+) -> None:
+    """The checks on ``Zugaro_ripple_detector``'s tunables that need no data
+    (a window shorter than a sample needs the rate).
+    ``DetectorSpec.check_parameters`` runs them too."""
+    _check_non_negative(speed_threshold=speed_threshold)
+    _validate_duration_limits(minimum_duration, maximum_duration)
+    _check_thresholds("low_threshold", low_threshold, "high_threshold", high_threshold)
+    _check_gap(minimum_inter_ripple_interval=minimum_inter_ripple_interval)
+    _check_smoothing_sigma(smoothing_window=smoothing_window)
+
+
 @explain_call_errors
 def Zugaro_ripple_detector(
     time: ArrayLike,
@@ -211,7 +233,8 @@ def Zugaro_ripple_detector(
         documents 100-200 Hz input, buzcode filters 130-200 Hz, neurocode
         80-250 Hz; this package's ``filter_ripple_band`` gives 150-250 Hz.
         Channels are squared and summed, as the original does. NaN marks
-        missing samples.
+        missing samples. Input with most of its power below 100 Hz, as raw
+        LFP and ADC counts have, warns.
     speed : array_like, shape (n_time,)
         Animal's running speed in cm/s.
     sampling_frequency : float
@@ -250,7 +273,7 @@ def Zugaro_ripple_detector(
     -------
     ripple_times : pd.DataFrame
         One row per event, indexed by ``event_number``, with the columns of
-        the other detectors plus ``peak_time``, the time of the maximum
+        the other detectors; ``peak_time`` is the time of the maximum
         normalized power within the event.
 
     References
@@ -282,10 +305,15 @@ def Zugaro_ripple_detector(
     (True, True)
 
     """
-    _validate_duration_limits(minimum_duration, maximum_duration)
-    _check_thresholds("low_threshold", low_threshold, "high_threshold", high_threshold)
-    _check_gap(minimum_inter_ripple_interval=minimum_inter_ripple_interval)
-    _check_smoothing_sigma(smoothing_window=smoothing_window)
+    _check_zugaro_parameters(
+        speed_threshold=speed_threshold,
+        low_threshold=low_threshold,
+        high_threshold=high_threshold,
+        minimum_inter_ripple_interval=minimum_inter_ripple_interval,
+        minimum_duration=minimum_duration,
+        maximum_duration=maximum_duration,
+        smoothing_window=smoothing_window,
+    )
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
@@ -299,6 +327,7 @@ def Zugaro_ripple_detector(
     window = _zugaro_smoothing_samples(smoothing_window, sampling_frequency)
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
     _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
+    _warn_if_not_ripple_band(filtered_lfps, sampling_frequency)
     blocks = _drop_short_blocks(blocks, is_valid, window, "the smoothing window")
 
     kernel = np.ones(window) / window

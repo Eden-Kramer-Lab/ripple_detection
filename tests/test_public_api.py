@@ -27,6 +27,11 @@ REGISTRY = [
 ]
 HELPERS = [
     "DEFAULT_RIPPLE_BAND",
+    "detect_events_from_trace",
+    "carey_spectral_ripple_score",
+    "detect_silence_bounded_events",
+    "count_spikes_in_events",
+    "require_active_units",
     "DEFAULT_TRANSITION_WIDTH",
     "filter_ripple_band",
     "ripple_bandpass_filter",
@@ -40,13 +45,27 @@ HELPERS = [
     "get_Kay_ripple_consensus_trace",
     "get_Yu_ripple_consensus_trace",
     "get_multiunit_population_firing_rate",
+    "load_literature_datasets",
     "load_literature_parameters",
     "exclude_close_events",
     "exclude_overlap",
     "exclude_movement",
     "exclude_movement_by_majority",
     "merge_close_events",
+    "require_isolation",
     "require_overlap",
+    "require_times_inside",
+    "require_inside",
+    "require_trace_peak",
+    "windows_around_times",
+    "intervals_to_mask",
+    "intersect_intervals",
+    "theta_delta_ratio",
+    "state_intervals",
+    "two_cluster_threshold",
+    "histogram_minimum_threshold",
+    "trim_events_to_trace",
+    "trim_events_to_spike_windows",
     "segment_boolean_series",
     "threshold_by_zscore",
     "minimum_sample_count",
@@ -56,6 +75,8 @@ HELPERS = [
     "simulate_sharp_wave_ripple_pair",
     "simulate_multiunit",
     "simulate_session",
+    "simulate_speed",
+    "simulate_theta_delta",
     "SimulatedSession",
     "simulate_time",
     "pink",
@@ -77,6 +98,46 @@ def test_every_name_in_all_is_importable():
 
 def test_all_has_no_duplicates():
     assert len(ripple_detection.__all__) == len(set(ripple_detection.__all__))
+
+
+LITERATURE_HELPERS = [
+    "NOT_REPRODUCED",
+    "RECIPES",
+    "VARIANTS",
+    "Inventory",
+    "PopulationTrace",
+    "Recipe",
+    "RecordedSignals",
+    "Recording",
+    "Requirement",
+    "RequirementKind",
+    "Role",
+    "Stage",
+    "bounds",
+    "check_method",
+    "list_methods",
+    "load_events",
+    "population_trace",
+    "run_method",
+    "save_events",
+    "within_duration",
+]
+
+
+def test_literature_methods_all_is_the_helpers_and_every_registered_method():
+    """The 57 default and 29 additional inventories, each by its function
+    name, and the helpers; nothing else, nothing twice."""
+    from ripple_detection import literature_methods
+
+    methods = [
+        entry.run.__name__
+        for entry in (*literature_methods.RECIPES, *literature_methods.VARIANTS)
+    ]
+    assert (len(literature_methods.RECIPES), len(literature_methods.VARIANTS)) == (57, 29)
+    assert sorted(literature_methods.__all__) == sorted(LITERATURE_HELPERS + methods)
+    assert len(literature_methods.__all__) == len(set(literature_methods.__all__))
+    for name in literature_methods.__all__:
+        assert hasattr(literature_methods, name), name
 
 
 class TestCallsWrittenFor1x:
@@ -128,6 +189,10 @@ class TestCallsWrittenFor1x:
 
     WRAPPED = (
         *(getattr(ripple_detection, name) for name in DETECTORS),
+        ripple_detection.detect_events_from_trace,
+        ripple_detection.detect_silence_bounded_events,
+        ripple_detection.carey_spectral_ripple_score,
+        ripple_detection.theta_delta_ratio,
         ripple_detection.filter_ripple_band,
         ripple_detection.normalize_signal,
         ripple_detection.simulate_LFP,
@@ -135,6 +200,8 @@ class TestCallsWrittenFor1x:
         ripple_detection.simulate_sharp_wave_ripple_pair,
         ripple_detection.simulate_multiunit,
         ripple_detection.simulate_session,
+        ripple_detection.simulate_speed,
+        ripple_detection.simulate_theta_delta,
     )
 
     @pytest.mark.parametrize("function", WRAPPED, ids=lambda function: function.__name__)
@@ -206,6 +273,20 @@ class TestCallsWrittenFor1x:
         assert (
             "takes time, filtered_lfps, multiunit, speed, sampling_frequency positionally"
             in str(raised.value)
+        )
+
+    def test_too_many_positional_arguments_name_the_positional_ones(self, inputs):
+        """The silence detector takes no speed; a call that passes one
+        shifts the rate out of its slot, and the message says what the
+        positions are."""
+        time, _, speed = inputs
+        with pytest.raises(TypeError) as raised:
+            ripple_detection.detect_silence_bounded_events(
+                time, np.zeros((len(time), 3)), speed, 1500
+            )
+        assert (
+            "detect_silence_bounded_events takes time, multiunit, sampling_frequency "
+            "positionally" in str(raised.value)
         )
 
     def test_normalize_signal_with_time(self, inputs):
@@ -431,6 +512,7 @@ def test_the_readme_quick_start_runs_and_finds_the_simulated_ripples(capsys):
     """Every block of the Quick Start, in order, in one namespace, as a reader
     copies them; the Basic Usage events include every simulated ripple (at
     2 SD on pink noise Kay also finds a few noise events, as it should)."""
+    import importlib.util
     import re
     from pathlib import Path
 
@@ -439,7 +521,10 @@ def test_the_readme_quick_start_runs_and_finds_the_simulated_ripples(capsys):
         text.index("## Quick Start") : text.index("\n## ", text.index("## Quick Start"))
     ]
     namespace: dict[str, object] = {}
+    has_matplotlib = importlib.util.find_spec("matplotlib") is not None
     for block in re.findall(r"```python\n(.*?)```", section, re.DOTALL):
+        if "import matplotlib" in block and not has_matplotlib:
+            continue  # a plot only; the dependency-floor job installs no plotting library
         exec(block, namespace)
     events, session = namespace["ripple_times"], namespace["session"]
     for low, high in session.ripple_windows:

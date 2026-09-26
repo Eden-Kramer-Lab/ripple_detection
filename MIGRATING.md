@@ -6,6 +6,11 @@ events stored from 1.x follow the 1.x rules. Pin `ripple-detection>=2,<3`, and
 record the version with the events you detect. Everything here is relative to
 1.7.1; [CHANGELOG.md](CHANGELOG.md) lists every change.
 
+A pipeline that stores parameters, such as a database table keyed by a parameter
+set, gets different events from the same stored parameters. Put the package
+version in the parameter set's name or key, so events detected under 1.x and 2.0
+are never stored as the same result.
+
 ## Calls to change
 
 Each of these fails in 2.0 with a message that names its replacement, so code
@@ -27,12 +32,15 @@ already passes every tunable by keyword and filters with an explicit rate needs
 no code change, unless its inputs now raise: 2.0 rejects inputs that 1.x turned
 into a wrong or empty result (see [Inputs that now raise](#inputs-that-now-raise)).
 
-## Changes that cannot raise
+## Changes without a hint
 
 Look for these yourself:
 
 - The result column `max_thresh` is `max_sustained_zscore`: the same quantity,
-  computed exactly (see below).
+  computed exactly (see below). Code that reads `max_thresh` fails with pandas'
+  own `KeyError` or `AttributeError`, which does not name the new column, and
+  `events.get("max_thresh")` returns `None`. Selecting columns by position also
+  shifts: the fourth column is now `n_samples`.
 - `simulate_LFP` draws pink noise by default, where 1.x drew brown. Pass
   `noise_type="brown"` for the old signal. Brown noise has almost no ripple-band
   power, so a ripple of any size dominated the band and every detector found
@@ -96,6 +104,14 @@ the fourth column, so code that reads columns by position shifts.
 ## Why your events differ
 
 The changes that move results on the same recording, in rough order of how much.
+
+**Checking that the difference is expected.** On a recording without gaps, most
+of the difference is the minimum duration's sample count. Pass a minimum one
+sample longer, `minimum_duration=(round(0.015 * sampling_frequency) + 1) /
+sampling_frequency` for 1.x's 15 ms, and every other argument as before: 1.x's
+events come back. On 300 s of simulated data at 1500 Hz this reproduced the 1.x
+events of Kay, Karlsson and the HSE detector exactly. Remaining differences come
+from gaps, NaN, speed or the filter rate, described below.
 
 **The minimum duration counts samples.** A run qualifies when it holds at least
 `round(minimum_duration * rate)` samples, rounded half up from the median
@@ -179,3 +195,12 @@ timestamps by more than 10 % raises, and one that disagrees by more than 2 %
 warns, where 1.x warned from 20 %. The rate sets the smoothing widths and the
 timestamps set the sample counts, so a 20 % mismatch changed Kay's event count
 by a fifth without a word.
+
+## Private names
+
+Names beginning with an underscore were never part of the API, and several were
+removed or changed in 2.0, among them `ripple_detection.core._validate_normalization_params`
+and `ripple_detection.detectors._get_event_stats`. `ripple_detection.__all__` is the
+public API. Code that rebuilt the HSE detector from private helpers to handle missing
+samples can call `multiunit_HSE_detector` directly: it now splits the recording at NaN
+samples and timestamp gaps, and `normalization_mask` restricts its statistics.

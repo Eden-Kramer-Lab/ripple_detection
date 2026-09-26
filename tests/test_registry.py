@@ -171,6 +171,20 @@ class TestSpecConstruction:
         with pytest.raises(ValueError, match="sharp_wave_lfp has no default"):
             DetectorSpec(Long_sharp_wave_ripple_detector, (RAW_LFP,))
 
+    def test_a_detector_the_package_does_not_register_checks_only_names(self):
+        """No data-free value checks exist for a caller's own detector, so
+        check_parameters checks only that each name is a parameter."""
+
+        def my_detector(time, lfps, speed, sampling_frequency, *, threshold=3.0):
+            return Kay_ripple_detector(
+                time, lfps, speed, sampling_frequency, zscore_threshold=threshold
+            )
+
+        spec = DetectorSpec(my_detector, (RIPPLE_BAND_LFP,))
+        spec.check_parameters({"threshold": -1.0})
+        with pytest.raises(ValueError, match="my_detector does not take zscore_threshold"):
+            spec.check_parameters({"zscore_threshold": 3.0})
+
 
 class TestCheckInputs:
     """The spec checks what an array can show about a signal: count, shape, and
@@ -271,6 +285,74 @@ class TestParameters:
     def test_check_parameters_names_the_unknown_key(self):
         with pytest.raises(ValueError, match="does not take z_score_threshold"):
             get_detector("Kay_ripple_detector").check_parameters({"z_score_threshold": 3.0})
+
+    def test_every_detector_has_parameter_checks_named_as_its_parameters(self):
+        """A checker is passed the parameters it names, so a name that drifted
+        from the detector's would be checked against nothing: every one it
+        requires must be the detector's."""
+        from ripple_detection.registry import _PARAMETER_CHECKS
+
+        for spec in DETECTORS.values():
+            check = _PARAMETER_CHECKS[spec.detector]
+            required = {
+                name
+                for name, parameter in inspect.signature(check).parameters.items()
+                if parameter.default is inspect.Parameter.empty
+            }
+            assert required <= set(spec.parameters), (
+                spec.name,
+                required - set(spec.parameters),
+            )
+
+    def test_check_parameters_suggests_the_parameter_meant(self):
+        with pytest.raises(ValueError, match="did you mean zscore_threshold"):
+            get_detector("Kay_ripple_detector").check_parameters({"z_score_threshold": 3.0})
+
+    def test_check_parameters_explains_an_argument_removed_in_2(self):
+        with pytest.raises(ValueError, match=r"removed in 2\.0[\s\S]*normalization_mask"):
+            get_detector("Kay_ripple_detector").check_parameters(
+                {"normalization_time_range": (0.0, 10.0)}
+            )
+
+    @pytest.mark.parametrize(
+        "name",
+        [name for name, spec in DETECTORS.items() if "minimum_duration" in spec.parameters],
+    )
+    def test_check_parameters_catches_milliseconds_given_as_seconds(self, name):
+        with pytest.raises(ValueError, match=r"For 15 ms pass 0\.015"):
+            get_detector(name).check_parameters({"minimum_duration": 15})
+
+    @pytest.mark.parametrize(
+        ("name", "parameters"),
+        [
+            ("Kay_ripple_detector", {"zscore_threshold": "2"}),
+            ("Zugaro_ripple_detector", {"high_threshold": "5"}),
+            ("Yu_ripple_detector", {"smoothing_sigma": None}),
+            ("Long_sharp_wave_ripple_detector", {"minimum_separation": "0.05"}),
+            ("Carey_candidate_detector", {"spike_cap": "2"}),
+            ("multiunit_HSE_detector", {"close_event_threshold": "0"}),
+        ],
+    )
+    def test_check_parameters_catches_a_value_that_is_no_number(self, name, parameters):
+        with pytest.raises(TypeError, match="must be a number"):
+            get_detector(name).check_parameters(parameters)
+
+    @pytest.mark.parametrize(
+        ("name", "parameters", "match"),
+        [
+            ("Kay_ripple_detector", {"speed_threshold": -1.0}, "speed_threshold"),
+            ("Karlsson_ripple_detector", {"maximum_duration": 0.01}, "below minimum"),
+            ("Roumis_ripple_detector", {"close_ripple_threshold": 50.0}, "50.0 ms"),
+            ("Shvartsman_ripple_detector", {"normalization_method": "manual"}, "needs"),
+            ("Zugaro_ripple_detector", {"low_threshold": 6.0}, "above high_threshold"),
+            ("Long_sharp_wave_ripple_detector", {"sharp_wave_percentile": 100.0}, "(0, 100)"),
+            ("Carey_candidate_detector", {"threshold_method": "median"}, "threshold_method"),
+            ("multiunit_HSE_detector", {"smoothing_sigma": 15.0}, "15.0 ms"),
+        ],
+    )
+    def test_check_parameters_runs_each_detector_s_range_checks(self, name, parameters, match):
+        with pytest.raises(ValueError, match=match):
+            get_detector(name).check_parameters(parameters)
 
 
 @pytest.fixture(scope="module")

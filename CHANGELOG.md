@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Results and calls change: the same recording gives different events, so detect
 again rather than mixing events from 1.x and 2.0. [MIGRATING.md](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/MIGRATING.md)
-lists the calls to change, the changes that cannot raise, and why your events
+lists the calls to change, the changes without a hint, and why your events
 differ. Entries marked **Breaking** change the results or the calls; everything
 here is relative to 1.7.1.
 
@@ -26,8 +26,11 @@ here is relative to 1.7.1.
   - `Long_sharp_wave_ripple_detector` (J. D. Long II's `DetectSWR`), which takes
     **raw** LFP from a pyramidal-layer channel and, as `sharp_wave_lfp=`, a
     stratum radiatum channel.
-  - `Carey_candidate_detector` (Carey, Tanaka & van der Meer 2019), a joint
-    ripple and multiunit score, optionally restricted to low theta.
+  - `Carey_candidate_detector`, the van der Meer lab's candidate-event code
+    (`GenCandidateEvents`, Hilbert option) for the data of Carey, Tanaka & van
+    der Meer 2019: a joint ripple and multiunit score, optionally restricted to
+    low theta. The paper's published candidates used the code's spectral score
+    and a single threshold instead, as the docstring describes.
   - `Shvartsman_ripple_detector`, a laboratory variant that keeps an event when
     `minimum_participating_channels` (or `minimum_participating_fraction`) of the
     channels detect it, and can take its statistics from elsewhere
@@ -35,8 +38,9 @@ here is relative to 1.7.1.
 - `maximum_duration` on every detector but Long, which limits the sharp wave
   instead (`maximum_sharp_wave_duration`), and `minimum_active_units` (with
   `n_active_units` in the result) on `multiunit_HSE_detector`.
-- `n_samples`, `clipped_start` and `clipped_end` in every result; `n_samples` is
-  the fourth column.
+- `n_samples`, `clipped_start`, `clipped_end` and `peak_time` in every result;
+  `n_samples` is the fourth column. `peak_time` was a Zugaro and Long column; Long's
+  is still the sharp-wave peak.
 - `band` and `transition_width` on `filter_ripple_band` and
   `ripple_bandpass_filter`, to design a filter for another band; the shipped
   kernel stays in use at 1500 Hz with the default 150-250 Hz band.
@@ -44,19 +48,78 @@ here is relative to 1.7.1.
   complement `exclude_overlap` (a veto: drop the events that coincide with
   intervals marked elsewhere, such as artifacts), `merge_close_events` and
   `exclude_movement_by_majority`.
+- `detect_events_from_trace`, the detectors' thresholding on a trace the caller
+  builds, with `bound_threshold` (where events end), `normalization_method="none"`,
+  `minimum_event_duration` (on the whole event), `speed_rule` (including
+  `"restrict"`, detection on slow samples only), `close_event_rule="merge"`, a
+  per-sample `threshold` array, and `bound_search_window` with fallback
+  `bound_threshold` levels. `speed=None` is accepted with the speed rule off.
+- `carey_spectral_ripple_score`, the van der Meer lab's spectral ripple score
+  (`SWRfreak` and `amSWR`), and `ripple_score` and `threshold_method="mean"` on
+  `Carey_candidate_detector`, which together reproduce the rule behind the
+  candidates released with Carey, Tanaka & van der Meer 2019.
+- `detect_silence_bounded_events`: events as spiking from chosen units set off by
+  silence, either the groups between silences or the window after each (ending at
+  its last spike, or kept whole with `window_end_rule="fixed"`), with bursts
+  optionally collapsed to their first spike.
+- `theta_delta_ratio` and `state_intervals`, for detection restricted to a brain
+  or behavioural state, and two data-driven thresholds: `two_cluster_threshold`
+  (one-dimensional k-means, warning if it stops before converging) and
+  `histogram_minimum_threshold` (the first trough after a distribution's peak).
+- `ripple_detection.literature_methods`: each surveyed paper's candidate-event
+  rule, and its secondary ripple, HFE and MUA inventories, on measured data.
+  `Recording.from_arrays` takes the selected signals, cells and curated
+  intervals; `list_methods()` gives each method's DOI, role, stages, grid and
+  requirements (signals, cell selections, curated intervals, external inputs,
+  options needed on measured data, a fixed sampling rate); `check_method` lists
+  everything a call lacks without running it; `run_method(name, recording,
+  behavior_intervals=..., **options)` returns events with a common set of columns
+  whose `attrs` record the method, resolved options, grid, inputs and diagnostics
+  as plain JSON types, and `save_events` / `load_events` keep that provenance with
+  the table. Choices a paper leaves open are explicit options, a method that needs
+  an input it was not given raises and names every missing input rather than
+  substituting one, and the
+  [implementation guide](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/docs/literature/implementation.md)
+  sets out what remains unverified. `examples/measured_walkthrough.py` works
+  through a measured recording end to end, and `examples/literature_recipes.py`
+  runs the default methods on a simulated session.
+- `trim_events_to_trace` and `trim_events_to_spike_windows`, which narrow events
+  to where a trace stays high or to edge windows holding enough spikes.
+- `require_inside` (events wholly inside intervals), `intervals_to_mask` and
+  `intersect_intervals`, for restricting events or statistics to a state or to
+  curated epochs. Event helpers given a DataFrame return one.
+- `require_trace_peak` and `require_times_inside`, which confirm one signal's
+  events with another (a ripple z-score inside a burst, a ripple peak inside it),
+  and `windows_around_times`, fixed windows around peaks or crossings.
+- `require_active_units` (a count, a fraction, or a spike total of chosen units,
+  such as place cells) and `count_spikes_in_events`, for participation criteria
+  on any event inventory. They, and `trim_events_to_spike_windows`, warn when an
+  event holds missing multiunit samples, which count as no spikes.
+- Close-event variants: `inclusive` and `measure="peak"` on `merge_close_events`,
+  `measure_from="start"` on `exclude_close_events`, and `require_isolation`, which
+  drops every event of a close pair.
+- `rule` on `exclude_movement`: besides the endpoint rule, every sample (`'all'`),
+  the mean (`'mean'`) or the median (`'median'`) speed at or below the threshold.
 - A detector registry for pipelines that store a detector by name:
   `get_detector(name)` returns a `DetectorSpec` whose `spec.inputs` and
   `spec.keyword_inputs` name the signals (`RIPPLE_BAND_LFP`, `RAW_LFP`,
   `MULTIUNIT`), whose `spec.parameters`, `spec.check_parameters(mapping)` and
   `spec.check_inputs(*signals, **keyword_signals)` check a call, and whose
-  `spec.describe()` gives it all as JSON-ready data.
+  `spec.describe()` gives it all as JSON-ready data. `check_parameters` runs the
+  detector's own range, type and unit checks and names removed or misspelled
+  parameters, so a stored parameter set can be checked before any data is loaded.
 - Simulation: `ripple_snr`, `rng` and `(low, high)` ranges for
   `ripple_frequency` and `ripple_duration` on `simulate_LFP`, and `simulate_multichannel_LFP`,
   `simulate_sharp_wave_ripple_pair`, `simulate_multiunit` and
   `simulate_session`, which share one set of ripples and return the ground
-  truth.
+  truth. `simulate_speed` and `simulate_theta_delta`, and `running_intervals`,
+  `theta_amplitude` and `delta_amplitude` on `simulate_session`, give a session
+  running bouts with theta and rest with delta.
 - `load_literature_parameters`, the detection parameters of 57 replay papers,
   and a simulation study comparing every detector (`examples/simulation_study.py`).
+- `load_literature_datasets`, a separate packaged catalog of public recording
+  and event-data links, joined to papers by DOI, with reuse relationships,
+  input availability and scoped annotation-verification statuses.
 - The package root exports the helpers the detectors are built from, such as
   `minimum_sample_count` and `sample_count_within`; `__all__` is the public API.
 - Help for people and language models writing calls: a 1.x call fails with the
@@ -64,10 +127,18 @@ here is relative to 1.7.1.
   uses for the same role names this one's, a duration given in milliseconds raises
   with the value to pass, every detector's docstring has a runnable example,
   and `llms.txt` maps the package.
+- `time=` on `filter_ripple_band` and `get_envelope`: split the transform at
+  gaps in the timestamps as well as at missing samples.
+- String options are `Literal` types, so a type checker catches a misspelled
+  choice.
 - `py.typed` and `CITATION.cff`.
 
 ### Changed
 
+- `get_envelope` and `filter_ripple_band` work within contiguous blocks of valid
+  samples: a NaN or infinity in any channel marks that sample missing in every
+  channel, and the data around it stay valid rather than one missing sample
+  making a channel's whole envelope NaN. A channel with no finite sample raises.
 - **Breaking.** The minimum duration counts samples, rounded half up, instead of
   comparing timestamps: about 20 % more events at 1500 Hz.
 - **Breaking.** One missing-sample policy: NaN or infinity in any signal, or a
@@ -95,6 +166,10 @@ here is relative to 1.7.1.
 - **Breaking.** The sampling-rate check raises beyond a 10 % mismatch and warns
   from 2 %, where 1.7 warned from 20 %.
 - **Breaking.** `simulate_LFP` defaults to pink (1/f) noise instead of brown.
+- **Breaking.** A simulated ripple's carrier is a cosine from the ripple's
+  centre, `cos(2 pi f (t - ripple_time))`, where it was `sin(2 pi f t)` on the
+  clock: the same ripple now looks the same at any time origin, and its peak is
+  at its centre. Every simulated recording with ripples changes.
 - Faster: `filter_ripple_band` convolves by FFT (equal to `filtfilt` to 1e-15;
   3x faster at 1500 Hz, 12x at 30 kHz, where an hour of 32 channels took 17
   min), Karlsson's thresholding is no longer quadratic in the recording (4.2 s
@@ -122,7 +197,15 @@ here is relative to 1.7.1.
   and event arrays, rates passed as spike counts, and tunables that are NaN,
   negative, reversed or given in milliseconds; [MIGRATING.md](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/MIGRATING.md#inputs-that-now-raise)
   lists them.
-- `speed_threshold=np.inf` no longer warns that speed "appears very small".
+- `speed_threshold=np.inf` no longer warns that speed "appears very small", and a
+  session in cm/s that is mostly at rest no longer triggers it.
+- Mistakes the checks can see get a message that names the fix: ripple-band
+  detectors warn when their input does not look filtered; timestamps in samples,
+  in milliseconds, or disagreeing with `sampling_frequency` get distinct errors
+  (`filter_ripple_band(time=)` checks the rate too); a transposed signal, float32
+  timestamps at large values, speed on its own clock, a non-numeric rate, 2-D
+  times passed to `require_times_inside`, and a 0/1 integer array passed as
+  `units` each get their own message.
 - `get_Kay_ripple_consensus_trace` says to reshape a 1-D input instead of raising
   NumPy's `AxisError`, and splits at gaps in `time`.
 - `filter_ripple_band`'s length check was one sample too permissive, so a signal

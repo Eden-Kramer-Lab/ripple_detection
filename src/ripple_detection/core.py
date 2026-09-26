@@ -8,8 +8,9 @@ import sys
 import warnings
 from collections.abc import Generator, Iterable
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args
 
 import numpy as np
 import pandas as pd
@@ -165,6 +166,113 @@ def _warn_at_caller(message: str) -> None:
         frame = frame.f_back
         stacklevel += 1
     warnings.warn(message, UserWarning, stacklevel=stacklevel)
+
+
+def _check_number(**values: object) -> None:
+    """Raise ``TypeError`` for a value that is not a real number: ``None``
+    left where a rate or a width belongs would otherwise fail inside a
+    comparison, with a message that names neither."""
+    for name, value in values.items():
+        array = np.asarray(value)
+        if array.ndim != 0 or array.dtype.kind not in "iuf":
+            msg = f"{name} must be a number, got {value!r}."
+            raise TypeError(msg)
+
+
+def _repeated_timestamps_hint(time: ArrayLike) -> str:
+    """Advice to append when most timestamps repeat, if they may have lost
+    their precision to float32: held as float32 (``time``'s own dtype), or
+    large enough (from 1e4 s, a session clock or Unix time) that float32
+    resolves no better than a millisecond; a detector casts before it can
+    see the dtype. Empty otherwise."""
+    values = np.asarray(time)
+    finite = np.abs(values[np.isfinite(values)]) if values.dtype.kind == "f" else values
+    largest = float(np.max(finite)) if np.size(finite) else 0.0
+    if values.dtype not in (np.float32, np.float16) and largest < 1e4:
+        return ""
+    resolution = float(np.spacing(np.float32(largest)))
+    return (
+        f" If time was ever held as float32, timestamps near {largest:.6g} s are resolved "
+        f"only to {resolution:.3g} s there, so neighbouring samples share one. Keep time "
+        "as float64 from the source, or subtract the first timestamp (relative time) "
+        "before any conversion to float32."
+    )
+
+
+def _check_sampling_interval(median_step: float, sampling_frequency: float) -> None:
+    """Raise, or warn, when the timestamps' median step and the stated rate
+    describe different recordings.
+
+    The nominal rate sets filter designs, smoothing widths and windows, and
+    the timestamps set the sample counts. Beyond 10 % the two describe
+    different recordings (a stated 300 Hz on 1500 Hz data changed the event
+    count by a quarter), so this raises, naming the likely slip: time in
+    samples (a step of 1), time in milliseconds (a step of ``1000 /
+    sampling_frequency``), or a rate the timestamps contradict. From 2 % it
+    warns, since a nominal rate can differ from an acquisition system's true
+    one by a few percent while clocks drift by far less.
+
+    Parameters
+    ----------
+    median_step : float
+        Median step between timestamps, positive.
+    sampling_frequency : float
+        The stated rate, in Hz.
+
+    Raises
+    ------
+    ValueError
+        If ``median_step`` is more than 10 % from ``1 / sampling_frequency``.
+
+    Warns
+    -----
+    UserWarning
+        If it is more than 2 % and at most 10 % from it.
+
+    """
+    expected = 1.0 / sampling_frequency
+    if np.isclose(median_step, expected, rtol=0.02):
+        return
+    if np.isclose(median_step, expected, rtol=0.10):
+        _warn_at_caller(
+            f"Time array step ({median_step:.6f} s) differs from expected sampling interval "
+            f"({expected:.6f} s at {sampling_frequency} Hz).\n"
+            f"Verify that:\n"
+            f"  1. time is in seconds (not milliseconds or samples)\n"
+            f"  2. sampling_frequency ({sampling_frequency} Hz) is correct",
+        )
+        return
+    in_samples = bool(np.isclose(median_step, 1.0, rtol=0.10))
+    in_milliseconds = bool(np.isclose(median_step, 1000 * expected, rtol=0.10))
+    measured = (
+        f"Median time step: {median_step:.6g} (expected ~{expected:.6g} s for "
+        f"{sampling_frequency:g} Hz)."
+    )
+    if in_samples and in_milliseconds:
+        msg = (
+            f"time appears to be in samples or in milliseconds, not seconds.\n{measured}\n"
+            "Convert it to seconds: time = sample_index / "
+            f"{sampling_frequency:g}, or time = time_ms / 1000."
+        )
+    elif in_samples:
+        msg = (
+            f"time appears to be in samples, not seconds.\n{measured}\n"
+            f"Convert sample indices to seconds: time = sample_index / {sampling_frequency:g}."
+        )
+    elif in_milliseconds:
+        msg = (
+            f"time appears to be in milliseconds, not seconds.\n{measured}\n"
+            "Convert it to seconds: time = time / 1000."
+        )
+    else:
+        msg = (
+            f"The median time step ({median_step:.6g} s) is "
+            f"{median_step / expected:.3g} times the interval sampling_frequency "
+            f"implies ({expected:.6g} s at {sampling_frequency:g} Hz); the timestamps "
+            f"imply {1 / median_step:.6g} Hz. Pass the rate the timestamps were recorded "
+            "at, and time in seconds."
+        )
+    raise ValueError(msg)
 
 
 def _generator(seed: int | np.random.Generator | None) -> np.random.Generator:
@@ -337,6 +445,8 @@ def filter_ripple_band(
     sampling_frequency: float,
     band: tuple[float, float] | None = None,
     transition_width: float | None = None,
+    *,
+    time: ArrayLike | None = None,
 ) -> FloatArray:
     """Bandpass filter signal(s) to the ripple band, 150-250 Hz by default.
 
@@ -372,6 +482,11 @@ def filter_ripple_band(
         ``transition_width=25.0`` at 1500 Hz is a different filter from the
         default (155 taps and 48 dB against the kernel's 318 taps and 40 dB;
         their outputs differ by up to 0.8 SD).
+    time : array_like, shape (n_time,), optional
+        Increasing sample timestamps in seconds. When supplied, filtering also
+        splits wherever a timestamp step exceeds 1.5 times the median step,
+        and ``sampling_frequency`` is checked against the median step.
+        Default None assumes a regular sample grid.
 
     Returns
     -------
@@ -385,13 +500,21 @@ def filter_ripple_band(
         If the sampling rate cannot represent the band, that is, the upper
         edge plus the transition band reaches the Nyquist frequency (from
         ``ripple_bandpass_filter``), or if no run of present rows is long
-        enough to filter.
+        enough to filter. Also if ``time`` does not have one entry per row,
+        holds a nonfinite or decreasing timestamp, has a median step of
+        zero, or has a median step more than 10 percent from ``1 /
+        sampling_frequency`` (the message names time in samples, time in
+        milliseconds, or the rate the timestamps imply). A 2-D ``data``
+        too short down its rows but not across them is named as transposed.
+    TypeError
+        If ``sampling_frequency`` is not a number, such as None.
 
     Warns
     -----
     UserWarning
         If some run of present rows is too short to filter and is returned as
-        NaN.
+        NaN, or the median step of ``time`` is 2 to 10 percent from ``1 /
+        sampling_frequency``.
 
     See Also
     --------
@@ -407,6 +530,7 @@ def filter_ripple_band(
     """
     SHIPPED_KERNEL_SAMPLING_FREQUENCY = 1500.0
 
+    _check_number(sampling_frequency=sampling_frequency)
     default_band = band is None or tuple(float(edge) for edge in band) == DEFAULT_RIPPLE_BAND
     if (
         default_band
@@ -434,7 +558,12 @@ def filter_ripple_band(
     # needs only as many samples as the kernel.
     padlen = len(filter_numerator) - 1
     min_required_length = len(filter_numerator)
-    runs = _boolean_run_bounds(is_present)
+    runs = np.asarray(_contiguous_valid_blocks(is_present, time), dtype=int).reshape(-1, 2)
+    if time is not None and len(data_array) > 1:
+        # the filter is designed for the stated rate, so the timestamps must agree
+        _check_sampling_interval(
+            float(np.median(np.diff(np.asarray(time, dtype=float)))), sampling_frequency
+        )
     long_enough = (runs[:, 1] - runs[:, 0]) >= min_required_length
     if not np.any(long_enough):
         longest = int((runs[:, 1] - runs[:, 0]).max()) if len(runs) else 0
@@ -443,6 +572,11 @@ def filter_ripple_band(
             f"{longest}, but at least {min_required_length} are needed (the filter's tap "
             "count)."
         )
+        if data_array.ndim == 2 and data_array.shape[1] >= min_required_length:
+            msg += (
+                f" data has shape {data_array.shape}, which looks transposed: signals "
+                "are (n_time, n_channels), time down the rows. Pass data.T."
+            )
         raise ValueError(msg)
     if not np.all(long_enough):
         short = runs[~long_enough]
@@ -699,6 +833,13 @@ def _event_bounds(events: ArrayLike | pd.DataFrame) -> FloatArray:
     return bounds
 
 
+def _bounds_frame(bounds: FloatArray, index: pd.Index) -> pd.DataFrame:
+    """``start_time`` and ``end_time`` columns over ``index``: what a helper
+    that changes event bounds returns for a DataFrame, whose other columns
+    no longer describe the events."""
+    return pd.DataFrame({"start_time": bounds[:, 0], "end_time": bounds[:, 1]}, index=index)
+
+
 def _is_immobile(speed: ArrayLike, speed_threshold: float) -> BoolArray:
     """Samples known to be at or below ``speed_threshold``.
 
@@ -726,18 +867,89 @@ def _is_immobile_at_endpoints(
     return np.asarray(at_start & at_end, dtype=bool)
 
 
+SpeedRule = Literal["endpoints", "all", "mean", "median"]
+"""The ways :func:`exclude_movement` can test an event's speed."""
+
+SPEED_RULES: tuple[SpeedRule, ...] = get_args(SpeedRule)
+"""The ways :func:`exclude_movement` can test an event's speed."""
+
+
+_NO_SPEED_SAMPLES = (
+    "No speed samples fall within event [{start}, {end}]; "
+    "speed and time do not cover the candidate event."
+)
+_NO_TIME_SAMPLES = "No sample of time falls within event [{start}, {end}]."
+
+
+def _samples_within(
+    events: FloatArray, time: ArrayLike, message: str = _NO_SPEED_SAMPLES
+) -> tuple[IntArray, IntArray]:
+    """Half-open sample ranges ``[first, last)`` of the samples with
+    ``start_time <= time <= end_time``, found by bisection. ``message`` is
+    the error for an empty event, formatted with its ``start`` and ``end``.
+
+    Raises
+    ------
+    ValueError
+        If no sample of ``time`` falls within an event.
+
+    """
+    time = np.asarray(time, dtype=float)
+    first = np.searchsorted(time, events[:, 0], side="left")
+    last = np.searchsorted(time, events[:, 1], side="right")
+    if np.any(last == first):
+        start_time, end_time = events[np.flatnonzero(last == first)[0]]
+        raise ValueError(message.format(start=start_time, end=end_time))
+    return first, last
+
+
+def _is_immobile_by_rule(
+    events: FloatArray,
+    speed: ArrayLike,
+    time: ArrayLike,
+    speed_threshold: float,
+    rule: SpeedRule,
+) -> BoolArray:
+    """Whether each event passes the speed test ``rule`` (see
+    :func:`exclude_movement`); a bool mask over events."""
+    _check_choice("rule", rule, SPEED_RULES)
+    if rule == "endpoints":
+        return _is_immobile_at_endpoints(events, speed, time, speed_threshold)
+    if len(events) == 0:
+        return np.zeros(0, dtype=bool)
+    speed = np.asarray(speed, dtype=float)
+    if speed.shape != np.shape(time):
+        msg = f"speed has shape {speed.shape} and time {np.shape(time)}; they must match."
+        raise ValueError(msg)
+    first, last = _samples_within(events, time)
+    if np.isposinf(speed_threshold):
+        return np.ones(len(events), dtype=bool)
+    if rule == "all":
+        # a NaN is not known to be at or below the threshold, so it fails too
+        not_immobile = np.concatenate([[0], np.cumsum(~_is_immobile(speed, speed_threshold))])
+        return np.asarray(not_immobile[last] - not_immobile[first] == 0)
+    summarize = np.mean if rule == "mean" else np.median
+    keep = np.zeros(len(events), dtype=bool)
+    for event, (a, b) in enumerate(zip(first, last, strict=True)):
+        known = speed[a:b][np.isfinite(speed[a:b])]
+        keep[event] = known.size > 0 and bool(summarize(known) <= speed_threshold)
+    return keep
+
+
 def exclude_movement(
     candidate_ripple_times: ArrayLike | pd.DataFrame,
     speed: ArrayLike,
     time: ArrayLike,
     speed_threshold: float = 4.0,
+    rule: SpeedRule = "endpoints",
 ) -> FloatArray | pd.DataFrame:
     """Filter out candidate ripples that occur during animal movement.
 
-    Removes events where the animal's speed at either the start or end of the
-    event exceeds the specified threshold. Speed inside the event is not
-    tested. A NaN speed at either end is unknown, so that event is removed
-    too, unless ``speed_threshold`` is ``np.inf``, which keeps every event.
+    By default removes events where the animal's speed at either the start or
+    end of the event exceeds the specified threshold; speed inside the event
+    is not tested. A NaN speed at either end is unknown, so that event is
+    removed too, unless ``speed_threshold`` is ``np.inf``, which keeps every
+    event. ``rule`` selects one of the other tests published papers use.
 
     Parameters
     ----------
@@ -750,18 +962,52 @@ def exclude_movement(
         Time values corresponding to speed measurements.
     speed_threshold : float, optional
         Maximum speed (in same units as `speed`) for event to be retained.
-        Events with speed > threshold at start or end are excluded.
         Default is 4.0 (cm/s).
+    rule : {'endpoints', 'all', 'mean', 'median'}, optional
+        Which speeds must be at or below `speed_threshold`, over the samples
+        with ``start_time <= time <= end_time``:
+
+        - ``'endpoints'`` (default): the speeds at the samples nearest the
+          start and end times, the rule every detector here applies. A
+          detector's bounds are samples; for other bounds the nearest sample
+          can lie just outside the event. A NaN at either end fails.
+        - ``'all'``: every sample's, as in "no speed above 3 cm/s during the
+          event". A NaN anywhere fails.
+        - ``'mean'``: the mean of the finite speeds (NaN and infinity are
+          left out).
+        - ``'median'``: the median of the finite speeds, as in "median speed
+          below 10 cm/s". :func:`exclude_movement_by_majority` with its
+          default of one half is the same test but for how it breaks a tie
+          on an even number of samples.
+
+        With ``'mean'`` or ``'median'`` an event with no finite speed fails.
 
     Returns
     -------
     ripple_times : ndarray, shape (n_stationary_ripples, 2), or pd.DataFrame
-        Events where animal speed is at or below the threshold at both ends,
-        in the input's type. Shape ``(0, 2)`` when none remain.
+        The events that pass, in the input's type. Shape ``(0, 2)`` when none
+        remain.
+
+    Raises
+    ------
+    ValueError
+        If `rule` is not one of the four, or, for a rule other than
+        ``'endpoints'``, no sample of `time` falls within an event.
+
+    Examples
+    --------
+    >>> time = np.arange(0, 1, 0.1)
+    >>> speed = np.array([1, 1, 9, 1, 1, 1, 1, 1, 1, 1.0])
+    >>> events = np.array([(0.0, 0.4), (0.5, 0.9)])
+    >>> exclude_movement(events, speed, time, rule="endpoints")
+    array([[0. , 0.4],
+           [0.5, 0.9]])
+    >>> exclude_movement(events, speed, time, rule="all")
+    array([[0.5, 0.9]])
 
     """
     events = _event_bounds(candidate_ripple_times)
-    keep = _is_immobile_at_endpoints(events, speed, time, speed_threshold)
+    keep = _is_immobile_by_rule(events, speed, time, speed_threshold, rule)
     if isinstance(candidate_ripple_times, pd.DataFrame):
         return candidate_ripple_times.iloc[np.flatnonzero(keep)].copy()
     return events[keep]
@@ -777,20 +1023,10 @@ def _is_immobile_by_majority(
     """Whether at least ``majority_threshold`` of each event's samples with a
     known speed are at or below ``speed_threshold``; see
     :func:`exclude_movement_by_majority`."""
-    time = np.asarray(time, dtype=float)
     speed = np.asarray(speed, dtype=float)
-    # samples with start_time <= time <= end_time, by bisection; the count of
-    # immobile ones is a difference of the cumulative sum at those bounds
-    first = np.searchsorted(time, events[:, 0], side="left")
-    last = np.searchsorted(time, events[:, 1], side="right")
-    n_total = last - first
-    if np.any(n_total == 0):
-        start_time, end_time = events[np.flatnonzero(n_total == 0)[0]]
-        msg = (
-            f"No speed samples fall within event [{start_time}, {end_time}]; "
-            "speed and time do not cover the candidate event."
-        )
-        raise ValueError(msg)
+    # the count of immobile samples is a difference of the cumulative sum at
+    # each event's sample bounds
+    first, last = _samples_within(events, time)
     is_immobile = _is_immobile(speed, speed_threshold)
     # with the criterion off (an infinite threshold) every sample counts as known
     immobile = np.concatenate([[0], np.cumsum(is_immobile)])
@@ -854,11 +1090,52 @@ def exclude_movement_by_majority(
     return events[keep]
 
 
-def get_envelope(data: ArrayLike, axis: int = 0) -> FloatArray:
+def _contiguous_valid_blocks(
+    is_valid: BoolArray, time: ArrayLike | None
+) -> list[tuple[int, int]]:
+    """Half-open valid row ranges, split at missing rows and timestamp gaps.
+
+    A block ends at an invalid row or wherever the timestamp step exceeds 1.5
+    times the median step (a recording gap or the join between disjoint
+    intervals). The median step is measured from ``time`` rather than taken
+    from the nominal sampling rate, so an overstated rate cannot turn every
+    sample into its own block.
+    """
+    n_time = len(is_valid)
+    boundary = np.zeros(n_time + 1, dtype=bool)
+    boundary[0] = boundary[-1] = True
+    boundary[1:-1] |= is_valid[1:] != is_valid[:-1]
+    if time is not None:
+        timestamps = np.asarray(time, dtype=float)
+        if timestamps.shape != (n_time,):
+            msg = f"time must have shape ({n_time},), got {timestamps.shape}."
+            raise ValueError(msg)
+        steps = np.diff(timestamps)
+        if not np.all(np.isfinite(timestamps)) or np.any(steps < 0):
+            msg = "time must contain finite, nondecreasing timestamps."
+            raise ValueError(msg)
+        if n_time > 1:
+            median_step = np.median(steps)
+            if median_step <= 0:
+                msg = "time must have a positive median timestamp step." + (
+                    _repeated_timestamps_hint(time)
+                )
+                raise ValueError(msg)
+            boundary[1:-1] |= steps > 1.5 * median_step
+    edges = np.flatnonzero(boundary)
+    return [(int(start), int(stop)) for start, stop in pairwise(edges) if is_valid[start]]
+
+
+def get_envelope(
+    data: ArrayLike, axis: int = 0, *, time: ArrayLike | None = None
+) -> FloatArray:
     """Extract the instantaneous amplitude (envelope) using Hilbert transform.
 
     Computes the analytic signal via Hilbert transform and returns its
     magnitude, representing the instantaneous amplitude envelope.
+    A nonfinite value in any channel marks that sample missing in every channel.
+    Each contiguous valid block is transformed independently, preserving NaNs at
+    missing samples instead of propagating them through the entire recording.
 
     Parameters
     ----------
@@ -866,17 +1143,46 @@ def get_envelope(data: ArrayLike, axis: int = 0) -> FloatArray:
         Input signal. Can be multi-dimensional.
     axis : int, optional
         Axis along which to compute the envelope. Default is 0.
+    time : array_like, optional
+        Increasing timestamps, one per sample along ``axis``. Splits blocks at
+        steps exceeding 1.5 times the median step. Default None assumes regular
+        sampling and splits only at nonfinite samples.
 
     Returns
     -------
     envelope : ndarray
         Instantaneous amplitude (envelope) of the signal, same shape as input.
 
+    Raises
+    ------
+    ValueError
+        If no sample is finite in every channel (an empty input included);
+        the message names any channel with no finite sample at all. Also if
+        ``time`` does not have one entry per sample along ``axis``, holds a
+        nonfinite or decreasing timestamp, or has a median step of zero.
+
     """
     data = np.asarray(data, dtype=float)
-    n_samples = data.shape[axis]
-    instantaneous_amplitude = np.abs(hilbert(data, N=next_fast_len(n_samples), axis=axis))
-    return np.take(instantaneous_amplitude, np.arange(n_samples), axis=axis)
+    values = np.moveaxis(data, axis, 0)
+    finite = np.all(np.isfinite(values), axis=tuple(range(1, values.ndim)))
+    if not np.any(finite):
+        no_finite = np.argwhere(~np.isfinite(values).any(axis=0))
+        channels = no_finite[:, 0].tolist() if values.ndim == 2 else no_finite.tolist()
+        cause = (
+            f"; channel(s) {channels} hold no finite sample. Drop them first"
+            if values.ndim > 1 and len(values) and len(channels)
+            else ""
+        )
+        msg = (
+            "No sample is finite in every channel, so there is nothing to take the "
+            f"envelope of{cause}."
+        )
+        raise ValueError(msg)
+    envelope = np.full_like(values, np.nan)
+    for start, stop in _contiguous_valid_blocks(finite, time):
+        analytic = hilbert(values[start:stop], N=next_fast_len(stop - start), axis=0)
+        envelope[start:stop] = np.abs(analytic[: stop - start])
+    return np.moveaxis(envelope, 0, axis)
 
 
 def gaussian_smooth(
@@ -934,6 +1240,13 @@ def gaussian_smooth(
     return np.asarray(smoothed, dtype=float)
 
 
+NormalizationMethod = Literal["zscore", "median_mad"]
+"""How :func:`normalize_signal` centers and scales a signal."""
+
+NORMALIZATION_METHODS: tuple[NormalizationMethod, ...] = get_args(NormalizationMethod)
+"""How :func:`normalize_signal` centers and scales a signal."""
+
+
 def _get_normalization_mask(
     data_shape: tuple[int, ...], normalization_mask: ArrayLike | None
 ) -> BoolArray | None:
@@ -987,7 +1300,7 @@ def _get_normalization_mask(
 
 
 def _normalization_statistics(
-    data: FloatArray, mask: BoolArray | None, method: str
+    data: FloatArray, mask: BoolArray | None, method: NormalizationMethod
 ) -> tuple[FloatArray, FloatArray]:
     """The center and scale :func:`_normalize` divides by, from ``data[mask]``.
 
@@ -1042,7 +1355,9 @@ def _normalization_statistics(
     return np.asarray(center, dtype=float), np.asarray(scale, dtype=float)
 
 
-def _normalize(data: FloatArray, mask: BoolArray | None, method: str) -> FloatArray:
+def _normalize(
+    data: FloatArray, mask: BoolArray | None, method: NormalizationMethod
+) -> FloatArray:
     """Center and scale ``data`` with :func:`_normalization_statistics` from
     ``data[mask]``; raises as it does for a zero or undefined scale."""
     center, scale = _normalization_statistics(data, mask, method)
@@ -1052,7 +1367,7 @@ def _normalize(data: FloatArray, mask: BoolArray | None, method: str) -> FloatAr
 @explain_call_errors
 def normalize_signal(
     data: ArrayLike,
-    method: str = "zscore",
+    method: NormalizationMethod = "zscore",
     normalization_mask: ArrayLike | None = None,
 ) -> FloatArray:
     """Normalize signal using mean/std (z-score) or median/MAD.
@@ -1164,7 +1479,7 @@ def normalize_signal(
             f"{NORMALIZE_SIGNAL_WITHOUT_TIME}"
         )
         raise TypeError(msg)
-    if method not in ("zscore", "median_mad"):
+    if method not in NORMALIZATION_METHODS:
         msg = (
             f"Invalid normalization method: '{method}'. "
             "Must be either 'zscore' or 'median_mad'."
@@ -1415,45 +1730,72 @@ def _is_gap_below(
     is_below : ndarray of bool, shape (n_gaps,), or bool
 
     """
-    tolerance = min(
+    return np.less(gap, close_event_threshold - _gap_tolerance(close_event_threshold, scale))
+
+
+def _gap_tolerance(close_event_threshold: float, scale: float) -> float:
+    """How far a gap may round from the threshold and still count as equal to
+    it, as :func:`_is_gap_below` sets it out."""
+    return min(
         max(_GAP_TOLERANCE * close_event_threshold, 4 * float(np.spacing(scale))),
         close_event_threshold,
     )
-    return np.less(gap, close_event_threshold - tolerance)
 
 
 def _check_non_negative(**values: float) -> None:
     """Raise for a value that is NaN or negative. Infinity passes: it is how a
     caller turns the speed criterion off. A gap or ceiling must be finite, which
-    ``_check_gap`` and ``_validate_duration_limits`` enforce."""
+    ``_check_gap`` and ``_validate_duration_limits`` enforce. ``TypeError``
+    for a value that is no number."""
+    _check_number(**values)
     for name, value in values.items():
         if not value >= 0:
             msg = f"{name} must be non-negative, got {value}."
             raise ValueError(msg)
 
 
-def _is_clear_of_close_events(events: FloatArray, close_event_threshold: float) -> BoolArray:
+CloseEventReference = Literal["end", "start"]
+"""What :func:`exclude_close_events` measures a gap from, in the last kept event."""
+
+CLOSE_EVENT_REFERENCES: tuple[CloseEventReference, ...] = get_args(CloseEventReference)
+"""What :func:`exclude_close_events` measures a gap from, in the last kept event."""
+
+
+def _check_choice(name: str, value: str, choices: tuple[str, ...]) -> None:
+    """Raise unless ``value`` is one of ``choices``, naming them."""
+    if value not in choices:
+        msg = f"{name} must be one of {', '.join(map(repr, choices))}; got {value!r}."
+        raise ValueError(msg)
+
+
+def _is_clear_of_close_events(
+    events: FloatArray, close_event_threshold: float, measure_from: CloseEventReference = "end"
+) -> BoolArray:
     """Which of the sorted ``(n_events, 2)`` events to keep: each is compared
     with the last *retained* event, so a cluster is reduced to its first
     event. Comparing with the immediately preceding candidate instead would
     let a dropped event go on excluding its successors, removing more than
-    the first-of-each-cluster rule."""
+    the first-of-each-cluster rule. The gap runs to each event's start from
+    the retained event's end, or from its start with ``measure_from='start'``."""
+    _check_choice("measure_from", measure_from, CLOSE_EVENT_REFERENCES)
+    column = 1 if measure_from == "end" else 0
     keep = np.zeros(len(events), dtype=bool)
     if len(events):
         keep[0] = True
-        last_retained_end = events[0, 1]
+        reference = events[0, column]
         scale = float(np.abs(events).max())
         for event in range(1, len(events)):
-            gap = events[event, 0] - last_retained_end
+            gap = events[event, 0] - reference
             if not _is_gap_below(gap, close_event_threshold, scale):
                 keep[event] = True
-                last_retained_end = events[event, 1]
+                reference = events[event, column]
     return keep
 
 
 def exclude_close_events(
     candidate_event_times: ArrayLike | pd.DataFrame,
     close_event_threshold: float = 1.0,
+    measure_from: CloseEventReference = "end",
 ) -> FloatArray | pd.DataFrame:
     """Remove events that occur too close together in time.
 
@@ -1476,6 +1818,11 @@ def exclude_close_events(
         Minimum time between events. Events starting within this time after
         a previous event ends are excluded. Non-negative. Default is 1.0
         (seconds).
+    measure_from : {'end', 'start'}, optional
+        Where in the last retained event the gap starts: its end (default),
+        or its start, for rules such as "SWRs within 1 s after another SWR
+        were excluded" that time the interval from detection. Either way the
+        gap ends at the next event's start.
 
     Returns
     -------
@@ -1483,25 +1830,121 @@ def exclude_close_events(
         The retained events, in the input's type; shape ``(0, 2)`` when none
         remain.
 
+    Raises
+    ------
+    ValueError
+        If `close_event_threshold` is negative or `measure_from` is not one of
+        the two.
+
+    See Also
+    --------
+    require_isolation : drops every event of a close pair, not just the later.
+
     Notes
     -----
     This function assumes events are sorted by start time. If the input
     is not sorted, results may be incorrect.
 
+    Examples
+    --------
+    >>> events = np.array([(0.0, 0.1), (0.5, 0.6), (1.05, 1.1)])
+    >>> exclude_close_events(events, 1.0)
+    array([[0. , 0.1]])
+    >>> exclude_close_events(events, 1.0, measure_from="start")
+    array([[0.  , 0.1 ],
+           [1.05, 1.1 ]])
+
     """
     _check_non_negative(close_event_threshold=close_event_threshold)
     events = _event_bounds(candidate_event_times)
-    keep = _is_clear_of_close_events(events, close_event_threshold)
+    keep = _is_clear_of_close_events(events, close_event_threshold, measure_from)
     if isinstance(candidate_event_times, pd.DataFrame):
         return candidate_event_times.iloc[np.flatnonzero(keep)].copy()
     return events[keep]
+
+
+def require_isolation(
+    event_times: ArrayLike | pd.DataFrame,
+    minimum_separation: float,
+) -> FloatArray | pd.DataFrame:
+    """Keep the events with no other event within a separation on either side.
+
+    Rules such as "only SWRs separated from others by at least 500 ms" drop
+    every event of a close pair, where :func:`exclude_close_events` keeps the
+    first. An event is kept when the gap from the latest end among the events
+    before it, and the gap to the next event's start, are both at least
+    `minimum_separation`, within floating-point tolerance.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2), or pd.DataFrame
+        ``[start_time, end_time]`` per event, sorted by start time, or a
+        detector's DataFrame, which is returned filtered with every column
+        and its index.
+    minimum_separation : float
+        Least gap, in the units of the event times, to the nearest other
+        event on each side. Non-negative; 0 keeps every event that overlaps
+        no other.
+
+    Returns
+    -------
+    isolated_events : ndarray, shape (n_kept, 2), or pd.DataFrame
+        The isolated events, in the input's type and order.
+
+    Raises
+    ------
+    ValueError
+        If `minimum_separation` is negative or the events are not sorted by
+        start time.
+
+    Examples
+    --------
+    >>> events = np.array([(0.0, 0.1), (0.3, 0.4), (2.0, 2.1)])
+    >>> require_isolation(events, 0.5)
+    array([[2. , 2.1]])
+
+    """
+    _check_non_negative(minimum_separation=minimum_separation)
+    events = _event_bounds(event_times)
+    if np.any(np.diff(events[:, 0]) < 0):
+        msg = (
+            "event_times must be sorted by start time. Sort the events first: "
+            "event_times[np.argsort(event_times[:, 0])]."
+        )
+        raise ValueError(msg)
+    keep = np.ones(len(events), dtype=bool)
+    if len(events) > 1:
+        latest_end_before = np.maximum.accumulate(events[:-1, 1])
+        gap_before = events[1:, 0] - latest_end_before
+        # at a separation of 0 this is gap_before < 0: only overlaps are close
+        scale = float(np.abs(events).max())
+        too_close = np.asarray(
+            _is_gap_below(gap_before, minimum_separation, scale), dtype=bool
+        )
+        # a close pair loses its second member through the gap before it and
+        # its first through the same gap, read as the gap after
+        keep[1:] &= ~too_close
+        keep[:-1] &= ~too_close
+    if isinstance(event_times, pd.DataFrame):
+        return event_times.iloc[np.flatnonzero(keep)].copy()
+    return events[keep]
+
+
+MergeMeasure = Literal["gap", "peak"]
+"""What :func:`merge_close_events` compares with its threshold."""
+
+MERGE_MEASURES: tuple[MergeMeasure, ...] = get_args(MergeMeasure)
+"""What :func:`merge_close_events` compares with its threshold."""
 
 
 def merge_close_events(
     event_times: ArrayLike | pd.DataFrame,
     close_event_threshold: float = 0.0,
     maximum_duration: float | None = None,
-) -> FloatArray:
+    *,
+    inclusive: bool = False,
+    measure: MergeMeasure = "gap",
+) -> FloatArray | pd.DataFrame:
     """Join events separated by less than a gap into one longer event.
 
     The other convention for closely spaced events is
@@ -1511,68 +1954,135 @@ def merge_close_events(
     literature; the Frank lab ``extractevents`` routine merges.
 
     Merging is repeated until nothing more can be joined, so a chain of events
-    each close to the next becomes one event. Events that overlap or nest have
-    a gap at or below zero, so they merge whenever the threshold alone decides
-    it. With `maximum_duration` set, a merge that would exceed the ceiling does
-    not happen, and the result can still hold overlapping events.
+    each close to the next becomes one event. With the default
+    ``measure='gap'``, events that overlap or nest have a gap at or below
+    zero, so they merge whenever the threshold alone decides it. With
+    ``measure='peak'`` or `maximum_duration` set, they may not merge, and the
+    result can still hold overlapping events.
 
     Parameters
     ----------
     event_times : array_like, shape (n_events, 2), or pd.DataFrame
         ``[start_time, end_time]`` per event, sorted by start time, or a
         detector's DataFrame, whose ``start_time`` and ``end_time`` are read.
-        Merging changes the bounds, so the result is always an array; the
-        other columns of a merged event have no single value.
     close_event_threshold : float, optional
         Events separated by strictly less than this gap are merged. A gap equal
-        to the threshold does not merge, within floating-point tolerance.
-        Default is 0.0, which merges only events that touch or overlap.
+        to the threshold does not merge, within floating-point tolerance,
+        unless `inclusive`. Default is 0.0, which merges only events that touch
+        or overlap (``measure='gap'``) or whose peaks coincide
+        (``measure='peak'``).
     maximum_duration : float, optional
         Ceiling on the merged span. A merge that would produce an event longer
         than this does not happen and both events are kept as they are.
         Default is None (no ceiling).
+    inclusive : bool, optional
+        Also merge events separated by exactly the threshold, for rules
+        written "merged if 40 ms or less apart". Default False.
+    measure : {'gap', 'peak'}, optional
+        What is compared with the threshold: the gap from one event's end to
+        the next one's start (default), or the time between their peaks,
+        read from the DataFrame's ``peak_time`` column, for rules such as
+        "events whose peaks were less than 70 ms apart were merged". A chain
+        is followed peak to peak: after a merge, the next event is measured
+        from the peak of the last event merged in. A peak lies inside its
+        event, so this merges no more than the gap would at the same
+        threshold; overlapping events merge only when their peaks are within
+        the threshold, so the result can hold overlapping events.
 
     Returns
     -------
-    merged_event_times : ndarray, shape (n_merged_events, 2)
+    merged_event_times : ndarray, shape (n_merged_events, 2), or pd.DataFrame
         Merged events, sorted by start time. Shape ``(0, 2)`` when there is
-        no input.
+        no input. For a DataFrame, a DataFrame of ``start_time`` and
+        ``end_time`` indexed by ``event_number`` from 1: the other columns
+        of a merged event, its peak among them, have no single value.
 
     Raises
     ------
     ValueError
-        If `close_event_threshold` is negative, or the events are not sorted
-        by start time.
+        If `close_event_threshold` is negative, the events are not sorted
+        by start time, `measure` is not one of the two, or ``measure='peak'``
+        is asked of anything but a DataFrame with a ``peak_time`` column.
 
     Examples
     --------
     >>> events = np.array([(0.0, 0.1), (0.13, 0.2)])
     >>> merge_close_events(events, 0.05)
     array([[0. , 0.2]])
+    >>> merge_close_events(np.array([(0.0, 0.1), (0.14, 0.2)]), 0.04, inclusive=True)
+    array([[0. , 0.2]])
 
     """
     _check_non_negative(close_event_threshold=close_event_threshold)
-    events = _event_bounds(event_times).copy()
-    if events.size == 0:
-        return np.empty((0, 2))
+    _check_choice("measure", measure, MERGE_MEASURES)
+    if measure == "peak" and not (
+        isinstance(event_times, pd.DataFrame) and "peak_time" in event_times
+    ):
+        msg = (
+            "measure='peak' reads each event's peak from a peak_time column, so pass a "
+            "detector's DataFrame, which has one."
+        )
+        raise ValueError(msg)
+    events = _event_bounds(event_times)
     if np.any(np.diff(events[:, 0]) < 0):
         msg = (
             "event_times must be sorted by start time. Sort the events before merging: "
             "event_times[np.argsort(event_times[:, 0])]."
         )
         raise ValueError(msg)
+    peaks = (
+        event_times["peak_time"].to_numpy(dtype=float)
+        if measure == "peak" and isinstance(event_times, pd.DataFrame)
+        else None
+    )
+    merged = _merged_bounds(
+        events, close_event_threshold, maximum_duration, inclusive=inclusive, peaks=peaks
+    )
+    if isinstance(event_times, pd.DataFrame):
+        return _bounds_frame(merged, pd.RangeIndex(1, len(merged) + 1, name="event_number"))
+    return merged
 
-    # merging reuses the input bounds, so their largest magnitude holds throughout
+
+def _merged_bounds(
+    events: FloatArray,
+    close_event_threshold: float = 0.0,
+    maximum_duration: float | None = None,
+    *,
+    inclusive: bool = False,
+    peaks: FloatArray | None = None,
+) -> FloatArray:
+    """:func:`merge_close_events` on bounds sorted by start, as an array;
+    with ``peaks``, one per event, the gap is measured peak to peak. The
+    default merges only events that touch or overlap, their union."""
+    events = np.array(events, dtype=float).reshape(-1, 2)
+    if events.size == 0:
+        return np.empty((0, 2))
+    measure = "gap" if peaks is None else "peak"
+    if peaks is not None:
+        first_peak = np.array(peaks, dtype=float)
+        last_peak = first_peak.copy()
+
+    # merging reuses the input bounds, so their largest magnitude holds
+    # throughout; a peak lies inside its event, so it is no larger
     scale = float(np.abs(events).max())
     while len(events) > 1:
-        gap = events[1:, 0] - events[:-1, 1]
+        if measure == "peak":
+            # events sorted by start need not have their peaks in order when
+            # they overlap, and peaks far apart in either order are not close
+            gap = np.abs(first_peak[1:] - last_peak[:-1])
+        else:
+            gap = events[1:, 0] - events[:-1, 1]
         # events that touch merge at every threshold, which _is_gap_below
         # alone would not decide for a threshold within its tolerance of zero
         to_merge = gap <= 0
         if close_event_threshold > 0:
-            to_merge |= np.asarray(
-                _is_gap_below(gap, close_event_threshold, scale), dtype=bool
-            )
+            if inclusive:
+                tolerance = _gap_tolerance(close_event_threshold, scale)
+                to_merge |= gap <= close_event_threshold + tolerance
+            else:
+                to_merge |= np.asarray(
+                    _is_gap_below(gap, close_event_threshold, scale), dtype=bool
+                )
         if maximum_duration is not None:
             merged_span = np.maximum(events[1:, 1], events[:-1, 1]) - events[:-1, 0]
             to_merge &= (merged_span <= maximum_duration) | np.isclose(
@@ -1586,6 +2096,10 @@ def merge_close_events(
         run_starts = np.flatnonzero(~padded[:-1] & padded[1:])
         events[run_starts, 1] = np.maximum(events[run_starts, 1], events[run_starts + 1, 1])
         events = np.delete(events, run_starts + 1, axis=0)
+        if measure == "peak":
+            last_peak[run_starts] = last_peak[run_starts + 1]
+            first_peak = np.delete(first_peak, run_starts + 1)
+            last_peak = np.delete(last_peak, run_starts + 1)
 
     return events
 
@@ -1628,7 +2142,7 @@ def _overlaps(
     if not len(reference):
         return events, np.zeros(len(events), dtype=bool)
     reference = reference[np.argsort(reference[:, 0], kind="stable")]
-    reference = merge_close_events(reference)
+    reference = _merged_bounds(reference)
     starts, ends = events[:, 0], events[:, 1]
     ref_start, ref_end = reference[:, 0], reference[:, 1]
     # the reference is disjoint and sorted, so the intervals that can meet
@@ -1774,6 +2288,534 @@ def exclude_overlap(
     if isinstance(event_times, pd.DataFrame):
         return event_times.iloc[np.flatnonzero(keep)].copy()
     return events[keep]
+
+
+def require_trace_peak(
+    event_times: ArrayLike | pd.DataFrame,
+    trace: ArrayLike,
+    time: ArrayLike,
+    threshold: float,
+) -> FloatArray | pd.DataFrame:
+    """Keep the events in which a trace reaches a threshold.
+
+    For rules that confirm one signal's events with another, such as "a
+    multiunit burst with a ripple-band z-score of at least 3 inside it".
+    Pass the trace already normalized the way the rule states, for example
+    ``normalize_signal(get_Kay_ripple_consensus_trace(lfps, fs))``.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2), or pd.DataFrame
+        ``[start_time, end_time]`` per event, or a detector's DataFrame,
+        returned filtered with every column and its index. An event holds
+        the samples with ``start_time <= time <= end_time``.
+    trace : array_like, shape (n_time,)
+        The confirming trace. NaN samples are skipped; an event whose samples
+        are all NaN is dropped.
+    time : array_like, shape (n_time,)
+        Sample timestamps, increasing.
+    threshold : float
+        Level the trace must reach, at or above, somewhere in the event.
+
+    Returns
+    -------
+    kept_events : ndarray, shape (n_kept, 2), or pd.DataFrame
+        The events in which the trace reaches `threshold`, in the input's
+        type and order.
+
+    Raises
+    ------
+    ValueError
+        If `trace` and `time` differ in shape, `threshold` is not finite, or
+        no sample falls within an event.
+
+    Examples
+    --------
+    >>> time = np.arange(10) / 10
+    >>> ripple_z = np.array([0, 1, 4, 1, 0, 0, 1, 2, 1, 0.0])
+    >>> bursts = np.array([(0.0, 0.3), (0.5, 0.9)])
+    >>> require_trace_peak(bursts, ripple_z, time, 3.0)
+    array([[0. , 0.3]])
+
+    """
+    values = np.asarray(trace, dtype=float)
+    time = np.asarray(time, dtype=float)
+    if values.shape != time.shape:
+        msg = f"trace has shape {values.shape} and time {time.shape}; they must match."
+        raise ValueError(msg)
+    if not np.isfinite(threshold):
+        msg = f"threshold must be finite, got {threshold}."
+        raise ValueError(msg)
+    events = _event_bounds(event_times)
+    first, last = _samples_within(events, time, _NO_TIME_SAMPLES)
+    keep = np.zeros(len(events), dtype=bool)
+    for event, (a, b) in enumerate(zip(first, last, strict=True)):
+        inside = values[a:b]
+        keep[event] = bool(np.any(inside[np.isfinite(inside)] >= threshold))
+    if isinstance(event_times, pd.DataFrame):
+        return event_times.iloc[np.flatnonzero(keep)].copy()
+    return events[keep]
+
+
+TrimSide = Literal["both", "start", "end"]
+"""Which bounds :func:`trim_events_to_trace` moves."""
+
+TRIM_SIDES: tuple[TrimSide, ...] = get_args(TrimSide)
+"""Which bounds :func:`trim_events_to_trace` moves."""
+
+
+def trim_events_to_trace(
+    event_times: ArrayLike | pd.DataFrame,
+    trace: ArrayLike,
+    time: ArrayLike,
+    threshold: float,
+    *,
+    sides: TrimSide = "both",
+    minimum_duration: float = 0.0,
+) -> FloatArray | pd.DataFrame:
+    """Move each event's bounds inward to where a trace is at or above a threshold.
+
+    For rules that narrow a detected event to its core: "the period from the
+    first upward crossing to the last downward crossing of 2 spikes/s per
+    neuron within the SWR" (pass that rate as the trace), or "onset moved to
+    the time of the first spike" (the pooled spike count, threshold 1,
+    ``sides='start'``). Each bound moves to the first (start) or last (end)
+    sample in the event at or above `threshold`; an event with none is
+    dropped.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2), or pd.DataFrame
+        ``[start_time, end_time]`` per event, or a detector's DataFrame. An
+        event holds the samples with ``start_time <= time <= end_time``.
+    trace : array_like, shape (n_time,)
+        The trace that sets the new bounds. NaN is never at or above the
+        threshold.
+    time : array_like, shape (n_time,)
+        Sample timestamps, increasing.
+    threshold : float
+        Level at or above which a sample stays in the event.
+    sides : {'both', 'start', 'end'}, optional
+        Which bounds move; the other keeps its value. Default both.
+    minimum_duration : float, optional
+        Trimmed events holding fewer samples than this spans
+        (``sample_count_within``) are dropped. Default 0.0, none.
+
+    Returns
+    -------
+    trimmed_events : ndarray, shape (n_kept, 2), or pd.DataFrame
+        The trimmed bounds, in input order. For a DataFrame, a DataFrame of
+        ``start_time`` and ``end_time`` under the kept events' index: its
+        other columns describe the untrimmed event, so they are left out,
+        and ``trimmed.join(events.drop(columns=["start_time", "end_time"]))``
+        brings back any that still apply.
+
+    Raises
+    ------
+    ValueError
+        If `trace` and `time` differ in shape, `threshold` is not finite,
+        `sides` is not one of the three, `minimum_duration` is negative, or
+        no sample falls within an event.
+
+    Examples
+    --------
+    >>> time = np.arange(10) / 10
+    >>> rate = np.array([0, 1, 3, 4, 1, 3, 0, 0, 0, 0.0])
+    >>> trim_events_to_trace(np.array([(0.0, 0.9)]), rate, time, 2.0)
+    array([[0.2, 0.5]])
+    >>> trim_events_to_trace(np.array([(0.0, 0.9)]), rate, time, 2.0, sides="start")
+    array([[0.2, 0.9]])
+
+    """
+    values = np.asarray(trace, dtype=float)
+    time = np.asarray(time, dtype=float)
+    if values.shape != time.shape:
+        msg = f"trace has shape {values.shape} and time {time.shape}; they must match."
+        raise ValueError(msg)
+    if not np.isfinite(threshold):
+        msg = f"threshold must be finite, got {threshold}."
+        raise ValueError(msg)
+    _check_choice("sides", sides, TRIM_SIDES)
+    _check_non_negative(minimum_duration=minimum_duration)
+    events = _event_bounds(event_times)
+    first, last = _samples_within(events, time, _NO_TIME_SAMPLES)
+    trimmed, kept = [], []
+    for row, ((start_time, end_time), a, b) in enumerate(
+        zip(events, first, last, strict=True)
+    ):
+        with np.errstate(invalid="ignore"):
+            above = np.flatnonzero(values[a:b] >= threshold)
+        if above.size == 0:
+            continue
+        start = a + above[0] if sides in ("both", "start") else a
+        stop = a + above[-1] if sides in ("both", "end") else b - 1
+        if sample_count_within(stop - start + 1, time, minimum_duration):
+            # a bound that does not move keeps its value, which need not be
+            # a sample's time
+            trimmed.append(
+                (
+                    time[start] if sides in ("both", "start") else start_time,
+                    time[stop] if sides in ("both", "end") else end_time,
+                )
+            )
+            kept.append(row)
+    bounds = np.asarray(trimmed, dtype=float).reshape(-1, 2)
+    if isinstance(event_times, pd.DataFrame):
+        return _bounds_frame(bounds, event_times.index[kept])
+    return bounds
+
+
+def require_times_inside(
+    event_times: ArrayLike | pd.DataFrame,
+    times: ArrayLike,
+) -> FloatArray | pd.DataFrame:
+    """Keep the events that contain at least one of the given times.
+
+    For rules such as "population bursts that contain the peak of at least
+    one ripple": ``require_times_inside(bursts, ripples.peak_time)``. A point
+    has no duration, so :func:`require_overlap` cannot ask this; here an
+    event ``[start, end]`` contains a time ``t`` when ``start <= t <= end``.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2), or pd.DataFrame
+        ``[start_time, end_time]`` per event, or a detector's DataFrame,
+        returned filtered with every column and its index.
+    times : array_like, shape (n_times,)
+        The times to look for, in any order.
+
+    Returns
+    -------
+    kept_events : ndarray, shape (n_kept, 2), or pd.DataFrame
+        The events containing a time, in the input's type and order. The
+        rest are ``events.drop(kept.index)`` for a DataFrame.
+
+    Raises
+    ------
+    ValueError
+        If `times` holds NaN or infinity, which no event could contain, or
+        is not 1-D, such as ``(n, 2)`` intervals: those are asked with
+        :func:`require_overlap` or :func:`require_inside`.
+
+    Examples
+    --------
+    >>> bursts = np.array([(0.0, 0.3), (0.5, 0.9)])
+    >>> require_times_inside(bursts, [0.7, 2.0])
+    array([[0.5, 0.9]])
+
+    """
+    values = np.asarray(times, dtype=float)
+    if any(length != 1 for length in values.shape[1:]):  # a column is one time per row
+        msg = (
+            f"times must be 1-D, one time per entry; got shape {values.shape}. For "
+            "intervals, keep the events that overlap one with require_overlap(event_times, "
+            "intervals), or that lie wholly inside one with require_inside(event_times, "
+            "intervals)."
+        )
+        raise ValueError(msg)
+    points = np.sort(values.ravel())
+    if not np.all(np.isfinite(points)):
+        msg = (
+            "times holds NaN or infinity; drop those before asking which events contain them."
+        )
+        raise ValueError(msg)
+    events = _event_bounds(event_times)
+    if len(points) == 0:
+        keep = np.zeros(len(events), dtype=bool)
+    else:
+        first_after_start = np.searchsorted(points, events[:, 0], side="left")
+        candidate = points[np.clip(first_after_start, 0, len(points) - 1)]
+        keep = (first_after_start < len(points)) & (candidate <= events[:, 1])
+    if isinstance(event_times, pd.DataFrame):
+        return event_times.iloc[np.flatnonzero(keep)].copy()
+    return events[keep]
+
+
+def _bound_tolerance(*arrays: FloatArray) -> float:
+    """How far a bound may round from a timestamp and still count as equal to
+    it: a few ulps of the largest finite magnitude among ``arrays`` (2.4e-7 s
+    at a Unix time), and at least 1e-9 s."""
+    largest = max(
+        (float(np.max(np.abs(array[np.isfinite(array)]), initial=0.0)) for array in arrays),
+        default=0.0,
+    )
+    return max(1e-9, 4 * float(np.spacing(largest)))
+
+
+def _checked_intervals(intervals: ArrayLike | pd.DataFrame, name: str) -> FloatArray:
+    """``[start, end]`` rows that are finite, each start no later than its
+    end, sorted by start and disjoint: each start after the previous end."""
+    bounds = _event_bounds(intervals)
+    bad = ~np.isfinite(bounds).all(axis=1) | (bounds[:, 1] < bounds[:, 0])
+    if bad.any():
+        row = int(np.flatnonzero(bad)[0])
+        msg = (
+            f"{name} row {row} is {bounds[row].tolist()}: every start and end must be "
+            "finite, with the start no later than the end."
+        )
+        raise ValueError(msg)
+    if np.any(np.diff(bounds[:, 0]) < 0):
+        msg = f"{name} must be sorted by start time: {name}[np.argsort({name}[:, 0])]."
+        raise ValueError(msg)
+    clash = np.flatnonzero(bounds[1:, 0] <= bounds[:-1, 1])
+    if clash.size:
+        row = int(clash[0])
+        msg = (
+            f"{name} rows {row} and {row + 1} overlap or touch "
+            f"({bounds[row].tolist()}, {bounds[row + 1].tolist()}); the intervals must be "
+            f"disjoint. Take their union first: merge_close_events({name})."
+        )
+        raise ValueError(msg)
+    return bounds
+
+
+def intervals_to_mask(time: ArrayLike, intervals: ArrayLike | pd.DataFrame) -> BoolArray:
+    """Which samples lie inside any of a set of intervals, bounds included.
+
+    For a detector's ``normalization_mask`` or any per-sample selection from
+    intervals such as :func:`state_intervals`' output: "normalize over the
+    sleep epochs" is ``normalization_mask=intervals_to_mask(time, sleep)``.
+
+    Parameters
+    ----------
+    time : array_like, shape (n_time,)
+        Sample timestamps, in any order. NaN is in no interval.
+    intervals : array_like, shape (n_intervals, 2), or pd.DataFrame
+        ``[start, end]`` per interval, sorted by start and disjoint, or a
+        DataFrame with ``start_time`` and ``end_time`` columns. A sample
+        within a few ulps of the largest timestamp of a bound counts as on
+        it, so a bound that rounded off its sample still holds it.
+
+    Returns
+    -------
+    mask : ndarray of bool, shape (n_time,)
+        True where ``start <= time <= end`` for some interval.
+
+    Raises
+    ------
+    ValueError
+        If `time` is not 1-D, or `intervals` is not ``(n_intervals, 2)``,
+        holds a bound that is not finite or an interval that ends before it
+        starts, or is not sorted and disjoint (``merge_close_events`` gives
+        the union of overlapping intervals).
+
+    See Also
+    --------
+    intersect_intervals : Intervals in both of two sets.
+    require_inside : Events wholly inside one interval.
+
+    Examples
+    --------
+    >>> time = np.arange(10.0)
+    >>> intervals_to_mask(time, [(1.0, 3.0), (7.0, 8.0)]).astype(int)
+    array([0, 1, 1, 1, 0, 0, 0, 1, 1, 0])
+
+    """
+    time = np.asarray(time, dtype=float)
+    if time.ndim != 1:
+        msg = f"time must be 1-D, one timestamp per sample; got shape {time.shape}."
+        raise ValueError(msg)
+    bounds = _checked_intervals(intervals, "intervals")
+    if not len(bounds):
+        return np.zeros(time.shape, dtype=bool)
+    tolerance = _bound_tolerance(time, bounds)
+    which = np.searchsorted(bounds[:, 0], time + tolerance, side="right") - 1
+    inside = (which >= 0) & (time <= bounds[np.clip(which, 0, None), 1] + tolerance)
+    return np.asarray(inside, dtype=bool)
+
+
+def require_inside(
+    event_times: ArrayLike | pd.DataFrame,
+    intervals: ArrayLike | pd.DataFrame,
+) -> FloatArray | pd.DataFrame:
+    """Keep the events that lie wholly inside one interval, bounds included.
+
+    For state rules such as "ripples during immobility periods" or "events
+    within sleep epochs": ``require_inside(ripples, state_intervals(speed,
+    time, 4.0))``. :func:`require_overlap` keeps events that merely touch an
+    interval's inside; this keeps only those that start and end in the same
+    interval.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2), or pd.DataFrame
+        ``[start_time, end_time]`` per event, or a detector's DataFrame,
+        returned filtered with every column and its index.
+    intervals : array_like, shape (n_intervals, 2), or pd.DataFrame
+        ``[start, end]`` per interval, sorted by start and disjoint. A bound
+        within a few ulps of the largest timestamp of an interval's edge
+        counts as on it, so bounds on a Unix clock that rounded apart still
+        match.
+
+    Returns
+    -------
+    kept_events : ndarray, shape (n_kept, 2), or pd.DataFrame
+        The events inside an interval, in the input's type and order.
+
+    Raises
+    ------
+    ValueError
+        If an event or an interval holds a bound that is not finite or ends
+        before it starts, or the intervals are not sorted and disjoint.
+
+    See Also
+    --------
+    intervals_to_mask : The samples inside the intervals.
+
+    Examples
+    --------
+    >>> events = np.array([(1.0, 2.0), (2.5, 3.5), (6.0, 7.0)])
+    >>> still = np.array([(0.0, 3.0), (5.0, 8.0)])
+    >>> require_inside(events, still)
+    array([[1., 2.],
+           [6., 7.]])
+
+    """
+    events = _checked_bounds(event_times, "event_times")
+    keep = _inside_mask(events, _checked_intervals(intervals, "intervals"))
+    if isinstance(event_times, pd.DataFrame):
+        return event_times.iloc[np.flatnonzero(keep)].copy()
+    return events[keep]
+
+
+def _inside_mask(events: FloatArray, intervals: FloatArray) -> BoolArray:
+    """Which ``(start, end)`` rows lie wholly inside one checked interval,
+    allowing the rounding error of the clock's magnitude at either bound."""
+    if not (len(events) and len(intervals)):
+        return np.zeros(len(events), dtype=bool)
+    tolerance = _bound_tolerance(events, intervals)
+    which = np.searchsorted(intervals[:, 0], events[:, 0] + tolerance, side="right") - 1
+    inside = (which >= 0) & (events[:, 1] <= intervals[np.clip(which, 0, None), 1] + tolerance)
+    return np.asarray(inside, dtype=bool)
+
+
+def _checked_bounds(event_times: ArrayLike | pd.DataFrame, name: str) -> FloatArray:
+    """Event bounds that are finite, each start no later than its end."""
+    events = _event_bounds(event_times)
+    bad = ~np.isfinite(events).all(axis=1) | (events[:, 1] < events[:, 0])
+    if bad.any():
+        row = int(np.flatnonzero(bad)[0])
+        msg = (
+            f"{name} row {row} is {events[row].tolist()}: every start and end must be "
+            "finite, with the start no later than the end."
+        )
+        raise ValueError(msg)
+    return events
+
+
+def intersect_intervals(
+    intervals: ArrayLike | pd.DataFrame, other_intervals: ArrayLike | pd.DataFrame
+) -> FloatArray:
+    """The intervals in both of two sets, for a conjunction of states.
+
+    "Low theta and still" is ``intersect_intervals(state_intervals(ratio,
+    time, 2.0), state_intervals(speed, time, 4.0))``. Bounds are inclusive,
+    so ``intervals_to_mask`` of the result equals the ``&`` of the two masks,
+    and intervals that share only an endpoint give a zero-length interval at
+    it.
+
+    Parameters
+    ----------
+    intervals, other_intervals : array_like, shape (n, 2), or pd.DataFrame
+        ``[start, end]`` per interval, each set sorted by start and disjoint.
+
+    Returns
+    -------
+    intersection : ndarray, shape (n_intersections, 2)
+        ``[max(starts), min(ends)]`` for every pair that meets, sorted by
+        start. Shape ``(0, 2)`` when none do.
+
+    Raises
+    ------
+    ValueError
+        If either set holds a bound that is not finite or an interval that
+        ends before it starts, or is not sorted and disjoint.
+
+    Examples
+    --------
+    >>> low_theta = np.array([(0.0, 5.0), (10.0, 15.0)])
+    >>> still = np.array([(3.0, 12.0)])
+    >>> intersect_intervals(low_theta, still)
+    array([[ 3.,  5.],
+           [10., 12.]])
+
+    """
+    first_set = _checked_intervals(intervals, "intervals")
+    second_set = _checked_intervals(other_intervals, "other_intervals")
+    if not (len(first_set) and len(second_set)):
+        return np.empty((0, 2))
+    # both sets are sorted and disjoint, so their ends are sorted too, and
+    # the intervals of the second meeting one of the first form a run
+    first = np.searchsorted(second_set[:, 1], first_set[:, 0], side="left")
+    last = np.searchsorted(second_set[:, 0], first_set[:, 1], side="right")
+    counts = np.maximum(last - first, 0)
+    run_offsets = np.cumsum(counts) - counts
+    which_first = np.repeat(np.arange(len(first_set)), counts)
+    which_second = np.repeat(first - run_offsets, counts) + np.arange(counts.sum())
+    starts = np.maximum(first_set[which_first, 0], second_set[which_second, 0])
+    ends = np.minimum(first_set[which_first, 1], second_set[which_second, 1])
+    return np.column_stack([starts, ends]).reshape(-1, 2)
+
+
+def windows_around_times(
+    times: ArrayLike,
+    before: float,
+    after: float | None = None,
+    *,
+    merge_overlapping: bool = True,
+) -> FloatArray:
+    """Fixed windows around times, such as each event's peak.
+
+    For rules that define an event as a fixed window rather than by where a
+    trace falls back: "a 100 ms window centered on the peak" is
+    ``windows_around_times(events.peak_time, 0.05)``, and "150 ms windows
+    centered on every sample above threshold, overlapping windows joined" is
+    ``windows_around_times(time[trace >= threshold], 0.075)``.
+
+    Parameters
+    ----------
+    times : array_like, shape (n_times,)
+        Window centers, in any order.
+    before : float
+        Extent of each window before its time, in the units of `times`.
+    after : float, optional
+        Extent after it. Default None, the same as `before`.
+    merge_overlapping : bool, optional
+        Join windows that overlap or touch into one (default). With False,
+        one window per time, sorted.
+
+    Returns
+    -------
+    windows : ndarray, shape (n_windows, 2)
+        ``[start, end]`` per window, sorted by start. Windows are not clipped
+        to the recording or to its missing samples.
+
+    Raises
+    ------
+    ValueError
+        If `before` or `after` is negative or not finite, or `times` holds NaN
+        or infinity.
+
+    Examples
+    --------
+    >>> windows_around_times([1.0, 1.05, 3.0], 0.05)
+    array([[0.95, 1.1 ],
+           [2.95, 3.05]])
+
+    """
+    after = before if after is None else after
+    for name, value in (("before", before), ("after", after)):
+        if not 0 <= value < np.inf:
+            msg = f"{name} must be finite and non-negative, got {value}."
+            raise ValueError(msg)
+    centers = np.sort(np.asarray(times, dtype=float).ravel())
+    if not np.all(np.isfinite(centers)):
+        msg = "times holds NaN or infinity, which has no window."
+        raise ValueError(msg)
+    windows = np.column_stack([centers - before, centers + after]).reshape(-1, 2)
+    if merge_overlapping:
+        return _merged_bounds(windows)
+    return windows
 
 
 YU_HISTOGRAM_EDGES = np.round(np.arange(-10.0, 50.0 + 0.005, 0.01), 6)
@@ -2075,6 +3117,146 @@ def noise_threshold_diagnostics(
         n_values=len(values),
         n_in_grid=int(in_grid.sum()),
     )
+
+
+def two_cluster_threshold(values: ArrayLike, maximum_iterations: int = 100) -> float:
+    """The boundary that splits values into two clusters by one-dimensional k-means.
+
+    For state rules that split a signal into two states by clustering rather
+    than at a fixed level, such as slow-wave sleep found by k-means on a
+    theta/delta ratio. Lloyd's algorithm with two clusters, started from the
+    smallest and largest values so the result is deterministic: the boundary
+    is the midpoint of the two cluster means, and it is updated until the
+    assignment no longer changes.
+
+    Parameters
+    ----------
+    values : array_like
+        The values to split; NaN and infinity are ignored. Any shape; it is
+        flattened.
+    maximum_iterations : int, optional
+        Cap on the updates. Default 100; the split usually settles in a few.
+        Reaching it warns.
+
+    Returns
+    -------
+    threshold : float
+        Midpoint of the two cluster means. The lower cluster is the values at
+        or below it.
+
+    Raises
+    ------
+    ValueError
+        If fewer than two distinct finite values are given.
+
+    Warns
+    -----
+    UserWarning
+        If the assignment still changes after `maximum_iterations` updates;
+        the last boundary is returned.
+
+    Examples
+    --------
+    >>> ratio = np.array([0.5, 0.6, 0.7, 2.0, 2.2, 2.4])
+    >>> round(two_cluster_threshold(ratio), 3)
+    1.4
+
+    """
+    finite = np.asarray(values, dtype=float).ravel()
+    finite = finite[np.isfinite(finite)]
+    if np.unique(finite).size < 2:
+        msg = "two_cluster_threshold needs at least two distinct finite values to split."
+        raise ValueError(msg)
+    threshold = (finite.min() + finite.max()) / 2
+    for _ in range(maximum_iterations):
+        lower = finite <= threshold
+        updated = (finite[lower].mean() + finite[~lower].mean()) / 2
+        if np.array_equal(finite <= updated, lower):
+            return float(updated)
+        threshold = updated
+    _warn_at_caller(
+        f"two_cluster_threshold did not settle within {maximum_iterations} iteration(s); "
+        "the last boundary is returned. Raise maximum_iterations for the converged split."
+    )
+    return float(threshold)
+
+
+def histogram_minimum_threshold(
+    values: ArrayLike,
+    bins: int | ArrayLike = 100,
+    smoothing_window: int = 1,
+) -> float:
+    """The first minimum of a histogram after its mode.
+
+    For thresholds read off a distribution rather than set in standard
+    deviations, such as a population spike count's: most samples are near
+    silence, and the first trough after that peak separates them from
+    bursts (Ji & Wilson 2007 [1]_ took their frame threshold there).
+
+    Parameters
+    ----------
+    values : array_like
+        The values; NaN and infinity are ignored. Flattened.
+    bins : int or array_like, optional
+        Passed to ``numpy.histogram``: a number of equal bins over the range
+        (default 100), or the bin edges.
+    smoothing_window : int, optional
+        Width in bins of a centered moving average applied to the counts
+        before the trough is sought, to step over sampling noise. Odd.
+        Default 1, no smoothing.
+
+    Returns
+    -------
+    threshold : float
+        Center of the first bin after the mode whose count is below both
+        neighbours' (a flat trough counts from its first bin).
+
+    Raises
+    ------
+    ValueError
+        If there are no finite values, `smoothing_window` is not a positive
+        odd whole number, or the counts have no trough after the mode.
+
+    References
+    ----------
+    .. [1] Ji, D., & Wilson, M. A. (2007). Coordinated memory replay in the
+       visual cortex and hippocampus during sleep. Nature Neuroscience,
+       10(1), 100-107. doi:10.1038/nn1825
+
+    Examples
+    --------
+    >>> rng = np.random.default_rng(0)
+    >>> counts = np.concatenate([rng.normal(0.2, 0.1, 5000), rng.normal(1.5, 0.3, 1000)])
+    >>> 0.4 < histogram_minimum_threshold(counts, bins=50, smoothing_window=3) < 1.1
+    True
+
+    """
+    finite = np.asarray(values, dtype=float).ravel()
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        msg = "histogram_minimum_threshold needs finite values."
+        raise ValueError(msg)
+    if not (smoothing_window >= 1 and smoothing_window == int(smoothing_window)) or (
+        smoothing_window % 2 == 0
+    ):
+        msg = f"smoothing_window must be a positive odd whole number, got {smoothing_window}."
+        raise ValueError(msg)
+    counts, edges = np.histogram(finite, bins=bins)
+    counts = counts.astype(float)
+    if smoothing_window > 1:
+        counts = np.convolve(counts, np.ones(smoothing_window) / smoothing_window, mode="same")
+    mode = int(np.argmax(counts))
+    for index in range(mode + 1, len(counts) - 1):
+        if counts[index] < counts[index - 1]:
+            following = counts[index + 1 :]
+            rises = following > counts[index]
+            level = following == counts[index]
+            # a trough ends at the first rise, and a flat stretch before it
+            # belongs to the trough
+            if rises.any() and np.all(level[: int(np.argmax(rises))]):
+                return float((edges[index] + edges[index + 1]) / 2)
+    msg = "The histogram falls without a trough after its mode, so it has no first minimum."
+    raise ValueError(msg)
 
 
 def _unit_area_gaussian(sigma_samples: float, n_sd: float) -> FloatArray:

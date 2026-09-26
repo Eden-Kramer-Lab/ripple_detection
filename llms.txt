@@ -41,12 +41,49 @@ ripple-band LFP of shape (n_time, n_channels) unless stated.
 - `Yu_ripple_detector`: median of per-channel z-scored envelopes; the threshold is estimated per call from immobility noise (Yu et al. 2017). Needs immobile samples.
 - `Zugaro_ripple_detector`: FMAToolbox FindRipples two-threshold rule, bounds 2 SD, peak 5 SD; events of 20-100 ms by default.
 - `Long_sharp_wave_ripple_detector`: takes RAW, unfiltered LFP: the pyramidal-layer channel, shape (n_time,), and a stratum radiatum channel by name, `sharp_wave_lfp=`. Ripple-band input raises nothing and returns nonsense.
-- `Carey_candidate_detector`: takes ripple-band LFP and multiunit spike counts (n_time, n_units); joint ripple and multiunit score (Carey, Tanaka & van der Meer 2019).
+- `Carey_candidate_detector`: takes ripple-band LFP and multiunit spike counts (n_time, n_units); joint ripple and multiunit score (the van der Meer lab's code for Carey, Tanaka & van der Meer 2019). The paper's published candidates: `ripple_score=carey_spectral_ripple_score(...)`, `threshold_method="mean"`, thresholds 4.
 - `multiunit_HSE_detector`: takes multiunit spike counts (n_time, n_units), no LFP; z-scored population rate.
 
 `DETECTORS[name].describe()` returns any detector's inputs, tunables (default,
-unit, meaning) and output columns as JSON-ready data, and `get_detector(name)`
-resolves a stored name.
+unit, meaning) and output columns as JSON-ready data. To run a stored name, call
+the spec's detector: `spec = get_detector(name); spec.check_parameters(params);
+spec.detector(time, signal, speed, fs, **params)`.
+
+`minimum_duration` on Kay, Karlsson, Roumis, Shvartsman, Yu and HSE is the time
+above threshold, not the event's length; Zugaro and Carey apply it to the whole
+event. For a whole-event minimum on any trace use
+`detect_events_from_trace(..., minimum_event_duration=)`.
+
+## Building blocks for published variants
+
+Argument order: signal-first functions take `time` first; event-table helpers take
+the events first and `time` after the signal. Required positional arguments:
+
+- `get_multiunit_population_firing_rate(multiunit, sampling_frequency)`: the population rate (spikes/s) a multiunit rule thresholds.
+- `detect_events_from_trace(time, trace, speed, sampling_frequency, ...)`: the detectors' thresholding on a trace you build (mean envelope, RMS power, a rate of chosen cells), with `bound_threshold` (where events end; fallback levels with `bound_search_window`), a per-sample `threshold` array, `normalization_method="none"`, `minimum_event_duration`, `speed_rule` and `close_event_rule="merge"`.
+- `detect_silence_bounded_events(time, multiunit, sampling_frequency, minimum_silence=...)` (no speed): spiking set off by silence, as groups or as the `window` after each silence (`window_end_rule="fixed"` keeps the whole window instead of ending at its last spike).
+- On any event table (DataFrame or (n, 2) array; a DataFrame in gives a DataFrame out):
+  `require_active_units(events, multiunit, time, units=bool_mask, minimum_active_units=5)` / `count_spikes_in_events(events, multiunit, time)`,
+  `require_overlap(events, other_events)` / `exclude_overlap(events, other_events)` (any overlap),
+  `require_inside(events, intervals)` (wholly inside),
+  `require_times_inside(events, times)` (1-D times, e.g. a ripple's `peak_time`),
+  `require_trace_peak(events, trace, time, threshold)`, `trim_events_to_trace(events, trace, time, threshold)`,
+  `trim_events_to_spike_windows(events, multiunit, time)`, `require_isolation(events, separation)`,
+  `merge_close_events(events, close_event_threshold)` (`inclusive=`, `measure="peak"`), `exclude_close_events(events, close_event_threshold)` (default 1.0 s; `measure_from=`),
+  `exclude_movement(events, speed, time, speed_threshold=..., rule="all" | "mean" | "median")` (inclusive: speed at or below the threshold passes), `windows_around_times(times, before, after)`.
+- Unit selections (`units=`) are boolean masks or integer indices; an integer 0/1 array is rejected as ambiguous.
+- Intervals: `intervals_to_mask(time, intervals)`, `intersect_intervals(intervals, other_intervals)`; inclusive, sorted, disjoint `[start, end]` pairs.
+- State: `theta_delta_ratio(lfp, sampling_frequency, time=...)`, `state_intervals(values, time, threshold)`, `two_cluster_threshold(values)`, `histogram_minimum_threshold(values)`.
+- Every detector's result has `peak_time`, as does every `literature_methods` result.
+
+## Surveyed papers' methods
+
+- `ripple_detection.literature_methods`: each surveyed paper's candidate-event rule (and secondary ripple/MUA inventories) on measured data, as fixed published rules (no threshold tuning).
+- Build inputs once: `Recording.from_arrays(time, fs, lfps=raw_lfp, speed=speed_cm_s, multiunit=counts, place_cells=bool_mask, pyramidal=bool_mask, sleep_intervals=..., baseline_intervals=...)`. LFP is raw (not filtered); multiunit is whole-number counts per sample and unit.
+- `list_methods()`: per method the name, paper, DOI, role, stages, grid, and what it needs (`signals`, `cells`, `intervals`, `external_inputs`, `measured_options`, `sampling_frequency`). A paper name such as "Pfeiffer 2013" is not a method name; filter `list_methods()` by `paper`.
+- `check_method(name, recording, behavior_intervals=..., **options)` returns every missing input (empty if it can run); `run_method(name, recording, behavior_intervals=..., **options)` runs it. `behavior_intervals` are per call, not per recording.
+- Results start with `start_time, end_time, duration, peak_time, clipped_start, clipped_end`; `events.attrs` holds the method, DOI, resolved options, grid, inputs and `diagnostics`. `save_events(events, "x.csv")` writes the table and an `x.json` provenance sidecar; `load_events` restores both.
+- Candidate rules only: no replay decoding. `examples/measured_walkthrough.py` is a complete worked example.
 
 ## Rules that are easy to get wrong
 
@@ -62,7 +99,7 @@ resolves a stored name.
 Code written for 1.x needs changes, and results differ on the same recording;
 [MIGRATING.md](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/MIGRATING.md)
 is the full guide. Most 1.x calls fail with a message naming the replacement;
-these changes cannot raise: the column `max_thresh` is `max_sustained_zscore`,
+these changes give no hint: the column `max_thresh` is `max_sustained_zscore` (reading it raises pandas' KeyError),
 `simulate_LFP` draws pink noise by default where 1.x drew brown, the event
 helpers return an empty `(0, 2)` array where they returned `[]`, and a seed
 gives different noise, since every draw goes through `numpy.random.default_rng`.
@@ -72,6 +109,7 @@ gives different noise, since every draw goes through `numpy.random.default_rng`.
 - [README](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/README.md): usage, output columns, parameter guide
 - [Choosing a detector](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/README.md#choosing-a-detector): how the detectors' conventions differ
 - [Published parameter values](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/README.md#published-parameter-values): the literature survey, also `load_literature_parameters()`
+- [Public dataset catalog](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/docs/literature/datasets.md): `load_literature_datasets()` loads partial data links and verification scope; join `paper_doi` to the parameter table's `DOI`. A missing row means not cataloged, not unavailable.
 - [MIGRATING.md](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/MIGRATING.md): upgrading from 1.x
 - [CHANGELOG](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/CHANGELOG.md): every 2.0 change
 

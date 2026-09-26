@@ -6,6 +6,8 @@ from numpy.typing import ArrayLike
 
 from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import (
+    NormalizationMethod,
+    _check_non_negative,
     _is_immobile_at_endpoints,
     get_multiunit_population_firing_rate,
     nearest_sample_index,
@@ -24,10 +26,32 @@ from ripple_detection.detectors._validation import (
     _check_gap,
     _check_minimum_active_units,
     _check_smoothing_sigma,
+    _check_whole_number,
     _validate_detector_inputs,
     _validate_duration_limits,
     _validate_multiunit,
 )
+
+
+def _check_hse_parameters(
+    *,
+    speed_threshold: float,
+    minimum_duration: float,
+    maximum_duration: float | None,
+    zscore_threshold: float,
+    smoothing_sigma: float,
+    close_event_threshold: float,
+    minimum_active_units: int,
+) -> None:
+    """The checks on ``multiunit_HSE_detector``'s tunables that need no data
+    (``minimum_active_units`` against the number of units needs the spikes).
+    ``DetectorSpec.check_parameters`` runs them too."""
+    _check_non_negative(speed_threshold=speed_threshold)
+    _validate_duration_limits(minimum_duration, maximum_duration)
+    _check_finite_non_negative(zscore_threshold=zscore_threshold)
+    _check_gap(close_event_threshold=close_event_threshold)
+    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
+    _check_whole_number("minimum_active_units", minimum_active_units, 0)
 
 
 @explain_call_errors
@@ -42,7 +66,7 @@ def multiunit_HSE_detector(
     zscore_threshold: float = 2.0,
     smoothing_sigma: float = 0.015,
     close_event_threshold: float = 0.0,
-    normalization_method: str = "zscore",
+    normalization_method: NormalizationMethod = "zscore",
     normalization_mask: ArrayLike | None = None,
     maximum_duration: float | None = None,
     minimum_active_units: int = 0,
@@ -88,12 +112,15 @@ def multiunit_HSE_detector(
         by 100. To disable movement exclusion, pass ``np.inf``, which also
         keeps events whose speed is unknown (NaN).
     minimum_duration : float, optional
-        Minimum event duration in **seconds**. Default is 0.015 (15 milliseconds).
-        The firing rate must stay at or above ``zscore_threshold`` for at least
-        ``minimum_sample_count(time, minimum_duration)`` consecutive samples,
-        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms);
-        the event is then extended to the surrounding mean-crossings, so the reported
-        ``duration`` is typically longer.
+        Minimum time above threshold in **seconds**. Default is 0.015 (15
+        milliseconds). The firing rate must stay at or above ``zscore_threshold``
+        for at least ``minimum_sample_count(time, minimum_duration)`` consecutive
+        samples, rounded half up from the median timestamp step (23 at 1500 Hz
+        and 15 ms); the event is then extended to the surrounding mean-crossings,
+        so the reported ``duration`` is typically longer.
+        It is the time above threshold, not the whole event's duration; for a
+        minimum on the whole event, which most published minimums mean, see
+        ``detect_events_from_trace(minimum_event_duration=)``.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
     zscore_threshold : float, optional
@@ -180,10 +207,15 @@ def multiunit_HSE_detector(
     (True, True)
 
     """
-    _validate_duration_limits(minimum_duration, maximum_duration)
-    _check_finite_non_negative(zscore_threshold=zscore_threshold)
-    _check_gap(close_event_threshold=close_event_threshold)
-    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
+    _check_hse_parameters(
+        speed_threshold=speed_threshold,
+        minimum_duration=minimum_duration,
+        maximum_duration=maximum_duration,
+        zscore_threshold=zscore_threshold,
+        smoothing_sigma=smoothing_sigma,
+        close_event_threshold=close_event_threshold,
+        minimum_active_units=minimum_active_units,
+    )
     multiunit = np.asarray(multiunit, dtype=float)
     _validate_multiunit(multiunit)
     _check_minimum_active_units(minimum_active_units, multiunit.shape[1])

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import FloatArray, _generator, filter_ripple_band
@@ -354,7 +355,7 @@ def simulate_LFP(
     Examples
     --------
     >>> time = simulate_time(3000, 1000)  # 3 seconds at 1000 Hz
-    >>> lfp = simulate_LFP(time, [1.0, 2.0])
+    >>> lfp = simulate_LFP(time, [1.0, 2.0], rng=0)
 
     Ripples five times the ripple-band background, varying in frequency and
     duration, on a pink-noise background:
@@ -543,7 +544,9 @@ def _add_ripple_bursts(
         ripple_times, frequencies, durations, strict=True
     ):
         window, carrier = _gaussian_window(time, ripple_time, duration / 6, 8.0)
-        burst = np.sin(2 * np.pi * time[window] * frequency) * carrier  # unit peak
+        # phase from the ripple's centre, not the clock, so a ripple looks the
+        # same at any time origin; the cosine puts the unit peak at the centre
+        burst = np.cos(2 * np.pi * frequency * (time[window] - ripple_time)) * carrier
         if ripple_snr is not None:
             # scale so that this burst's peak *after the filter* is ripple_snr
             # background SDs; the filter's gain depends on frequency and duration.
@@ -916,6 +919,161 @@ def simulate_multiunit(
     return np.asarray(rng.poisson(rates * step * modulation), dtype=float)
 
 
+def _running_intervals(running_intervals: ArrayLike) -> FloatArray:
+    """``(n, 2)`` running bouts, each finite with its start before its end,
+    sorted and not overlapping."""
+    bouts = np.asarray(running_intervals, dtype=float)
+    if bouts.size == 0:
+        return np.empty((0, 2))
+    if bouts.ndim != 2 or bouts.shape[1] != 2:
+        msg = f"running_intervals must be (start, end) pairs, shape (n, 2); got {bouts.shape}."
+        raise ValueError(msg)
+    if not np.all(np.isfinite(bouts)) or np.any(bouts[:, 1] <= bouts[:, 0]):
+        msg = "Each running interval needs a finite start before its end."
+        raise ValueError(msg)
+    if np.any(bouts[1:, 0] < bouts[:-1, 1]):
+        msg = "running_intervals must be sorted and must not overlap."
+        raise ValueError(msg)
+    return bouts
+
+
+@explain_call_errors
+def simulate_speed(
+    time: FloatArray,
+    running_intervals: ArrayLike,
+    *,
+    peak_speed: float = 30.0,
+    still_speed: float = 0.0,
+) -> FloatArray:
+    """A speed trace of still periods and running bouts.
+
+    Speed is ``still_speed`` outside the bouts and rises and falls smoothly
+    within each, as ``sin(pi * phase) ** 2``, to ``peak_speed`` at its middle,
+    so each bout begins and ends slow, as a real one does: at the defaults
+    the first and last 12% of a bout are under 4 cm/s.
+
+    Parameters
+    ----------
+    time : ndarray, shape (n_time,)
+        Sample timestamps in seconds.
+    running_intervals : array_like, shape (n_bouts, 2)
+        Start and end of each bout in seconds, sorted, not overlapping.
+    peak_speed : float, optional
+        Speed at the middle of each bout, cm/s. Default 30.
+    still_speed : float, optional
+        Speed outside the bouts, cm/s. Default 0.
+
+    Returns
+    -------
+    speed : ndarray, shape (n_time,)
+
+    Raises
+    ------
+    ValueError
+        If a bout's start is not before its end, the bouts overlap or are
+        unsorted, or a speed is negative or not finite.
+
+    Examples
+    --------
+    >>> time = simulate_time(10000, 1000)
+    >>> speed = simulate_speed(time, [(2.0, 4.0)])
+    >>> float(speed[1000]), float(speed[3000])
+    (0.0, 30.0)
+
+    """
+    for name, value in (("peak_speed", peak_speed), ("still_speed", still_speed)):
+        if not 0 <= value < np.inf:
+            msg = f"{name} must be finite and non-negative, got {value}."
+            raise ValueError(msg)
+    time = np.asarray(time, dtype=float)
+    speed = np.full(time.size, float(still_speed))
+    for start, end in _running_intervals(running_intervals):
+        inside = (time >= start) & (time <= end)
+        phase = (time[inside] - start) / (end - start)
+        speed[inside] = still_speed + (peak_speed - still_speed) * np.sin(np.pi * phase) ** 2
+    return speed
+
+
+@explain_call_errors
+def simulate_theta_delta(
+    time: FloatArray,
+    running_intervals: ArrayLike,
+    *,
+    theta_amplitude: float = 1.0,
+    theta_frequency: float = 8.0,
+    delta_amplitude: float = 1.0,
+    delta_frequency: float = 2.0,
+    transition: float = 0.5,
+) -> FloatArray:
+    """A slow LFP component: theta while running, delta at rest.
+
+    A sine at ``theta_frequency`` inside the running bouts and one at
+    ``delta_frequency`` outside them, cross-faded with a raised cosine over
+    ``transition`` seconds at each bout's edges, inside the bout. Add it to a
+    simulated LFP to give ``theta_delta_ratio`` and the state rules
+    something to find; the ripple band is far above both.
+
+    Parameters
+    ----------
+    time : ndarray, shape (n_time,)
+        Sample timestamps in seconds.
+    running_intervals : array_like, shape (n_bouts, 2)
+        Start and end of each bout in seconds, sorted, not overlapping.
+    theta_amplitude, delta_amplitude : float, optional
+        Peak amplitude of each rhythm in signal units. Default 1.
+    theta_frequency, delta_frequency : float, optional
+        In Hz. Defaults 8 and 2.
+    transition : float, optional
+        Seconds over which the rhythms cross-fade at a bout's edges; the
+        bout's first and last ``transition`` seconds, or half the bout if it
+        is shorter. Default 0.5.
+
+    Returns
+    -------
+    signal : ndarray, shape (n_time,)
+
+    Raises
+    ------
+    ValueError
+        If an amplitude is negative, a frequency or ``transition`` is not
+        positive, or the intervals are not sorted, non-overlapping bouts.
+
+    Examples
+    --------
+    >>> time = simulate_time(20000, 1000)
+    >>> slow = simulate_theta_delta(time, [(5.0, 15.0)], theta_amplitude=3.0)
+    >>> round(float(np.abs(slow[9000:11000]).max()), 1)
+    3.0
+
+    """
+    for name, value in (
+        ("theta_amplitude", theta_amplitude),
+        ("delta_amplitude", delta_amplitude),
+    ):
+        if not 0 <= value < np.inf:
+            msg = f"{name} must be finite and non-negative, got {value}."
+            raise ValueError(msg)
+    for name, value in (
+        ("theta_frequency", theta_frequency),
+        ("delta_frequency", delta_frequency),
+        ("transition", transition),
+    ):
+        if not 0 < value < np.inf:
+            msg = f"{name} must be positive and finite, got {value}."
+            raise ValueError(msg)
+    time = np.asarray(time, dtype=float)
+    running = np.zeros(time.size)
+    for start, end in _running_intervals(running_intervals):
+        ramp = min(transition, (end - start) / 2)
+        inside = (time >= start) & (time <= end)
+        edge_distance = np.minimum(time[inside] - start, end - time[inside])
+        running[inside] = 0.5 - 0.5 * np.cos(np.pi * np.clip(edge_distance / ramp, 0.0, 1.0))
+    theta = theta_amplitude * np.sin(2 * np.pi * theta_frequency * time)
+    delta = delta_amplitude * np.sin(2 * np.pi * delta_frequency * time)
+    signal: FloatArray = running * theta + (1.0 - running) * delta
+    return signal
+
+
 @dataclass(frozen=True, eq=False)
 class SimulatedSession:
     """Every signal ``simulate_session`` produced, with the ground truth.
@@ -934,7 +1092,9 @@ class SimulatedSession:
     multiunit : ndarray, shape (n_time, n_units)
         Spike counts per sample.
     speed : ndarray, shape (n_time,)
-        Zeros: an immobile animal.
+        Speed in cm/s: 0 throughout (an immobile animal) unless
+        ``running_intervals`` was given, then ``simulate_speed``'s bouts,
+        rising to ``peak_speed``, and 0 between them.
     ripple_times, ripple_durations, ripple_frequencies : ndarray, shape (n_ripples,)
         Centre, duration (six standard deviations of the envelope) and
         frequency of each ripple, in the order the ripples were given.
@@ -1015,6 +1175,10 @@ def simulate_session(
     artifact_times: Sequence[float] | None = None,
     artifact_amplitude: float | None = None,
     artifact_duration: float = 0.100,
+    running_intervals: ArrayLike | None = None,
+    peak_speed: float = 30.0,
+    theta_amplitude: float = 0.0,
+    delta_amplitude: float = 0.0,
     rng: int | np.random.Generator | None = None,
     sampling_frequency: float | None = None,
 ) -> SimulatedSession:
@@ -1046,6 +1210,18 @@ def simulate_session(
         As in ``simulate_sharp_wave_ripple_pair``.
     baseline_rate, ripple_rate_gain, participation : optional
         As in ``simulate_multiunit``.
+    running_intervals : array_like, shape (n_bouts, 2), optional
+        Running bouts, start and end in seconds. The speed is
+        ``simulate_speed``'s, with ``peak_speed``. Default None: an immobile
+        animal, speed 0 throughout.
+    peak_speed : float, optional
+        Speed at the middle of each bout, cm/s. Default 30.
+    theta_amplitude, delta_amplitude : float, optional
+        Amplitudes of ``simulate_theta_delta``'s theta (8 Hz, while running)
+        and delta (2 Hz, at rest), added to every channel, the radiatum one
+        included, as a field shared across layers: the difference between the
+        pyramidal and radiatum channels is unchanged. Default 0, none; about 3
+        or more stands out from the default noise.
     rng : int or numpy.random.Generator, optional
         Per-ripple durations and frequencies are drawn first, then the LFP
         (``simulate_multichannel_LFP``'s order, with the radiatum channel
@@ -1101,6 +1277,22 @@ def simulate_session(
         sharp_wave_duration,
         sharp_wave_leak,
     )
+    if theta_amplitude > 0 or delta_amplitude > 0:
+        # a field shared by every layer, so the pyramidal-minus-radiatum
+        # difference, the sharp-wave feature, is unchanged
+        slow = simulate_theta_delta(
+            time,
+            np.empty((0, 2)) if running_intervals is None else running_intervals,
+            theta_amplitude=theta_amplitude,
+            delta_amplitude=delta_amplitude,
+        )
+        lfps = lfps + slow[:, np.newaxis]
+        radiatum = radiatum + slow
+    speed = (
+        np.zeros(time.size)
+        if running_intervals is None
+        else simulate_speed(time, running_intervals, peak_speed=peak_speed)
+    )
     multiunit = simulate_multiunit(
         time,
         centers,
@@ -1117,7 +1309,7 @@ def simulate_session(
         raw_lfp=lfps[:, 0].copy(),
         sharp_wave_lfp=radiatum,
         multiunit=multiunit,
-        speed=np.zeros(time.size),
+        speed=speed,
         ripple_times=centers,
         ripple_durations=durations,
         ripple_frequencies=frequencies,

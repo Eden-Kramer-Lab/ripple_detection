@@ -20,6 +20,9 @@ from ripple_detection.core import (
     gaussian_smooth,
     get_envelope,
     get_multiunit_population_firing_rate,
+    histogram_minimum_threshold,
+    intersect_intervals,
+    intervals_to_mask,
     merge_close_events,
     merge_overlapping_ranges,
     merge_overlapping_ranges_track_participation,
@@ -28,11 +31,18 @@ from ripple_detection.core import (
     noise_threshold_diagnostics,
     normalize_signal,
     normalize_signal_manually,
+    require_inside,
+    require_isolation,
     require_overlap,
+    require_times_inside,
+    require_trace_peak,
     ripple_bandpass_filter,
     sample_count_within,
     segment_boolean_series,
     threshold_by_zscore,
+    trim_events_to_trace,
+    two_cluster_threshold,
+    windows_around_times,
 )
 
 
@@ -249,8 +259,8 @@ class TestFilterRippleBand:
         time = simulate_time(n_samples, sampling_frequency)
 
         # Generate two channels with ripples
-        lfp1 = simulate_LFP(time, [1.1], noise_amplitude=1.2, ripple_amplitude=1.5)
-        lfp2 = simulate_LFP(time, [1.2], noise_amplitude=1.2, ripple_amplitude=1.5)
+        lfp1 = simulate_LFP(time, [1.1], noise_amplitude=1.2, ripple_amplitude=1.5, rng=1)
+        lfp2 = simulate_LFP(time, [1.2], noise_amplitude=1.2, ripple_amplitude=1.5, rng=2)
         multi_channel = np.column_stack([lfp1, lfp2])
 
         filtered = filter_ripple_band(multi_channel, 1500)
@@ -341,6 +351,62 @@ class TestFilterRippleBandSamplingRate:
 
 class TestGetEnvelope:
     """Test Hilbert transform envelope extraction."""
+
+    @pytest.mark.parametrize("missing", [np.nan, np.inf])
+    @pytest.mark.parametrize("axis", [0, 1])
+    def test_a_missing_sample_splits_the_transform_without_poisoning_other_blocks(
+        self, missing, axis
+    ):
+        from scipy.signal import hilbert
+
+        data = np.random.default_rng(6).normal(size=(200, 2))
+        data[100, 0] = missing
+        actual = get_envelope(data if axis == 0 else data.T, axis=axis)
+        actual = actual if axis == 0 else actual.T
+        np.testing.assert_allclose(actual[:100], np.abs(hilbert(data[:100], axis=0)))
+        # 99 samples are padded to next_fast_len (100), then cropped.
+        np.testing.assert_allclose(
+            actual[101:], np.abs(hilbert(data[101:], N=100, axis=0))[:99]
+        )
+        assert np.isnan(actual[100]).all()
+
+    def test_timestamp_gaps_split_filtering_and_envelope(self):
+        data = np.random.default_rng(12).normal(size=(6000, 2))
+        time = np.arange(len(data)) / 1500
+        time[3000:] += 1
+        expected = np.concatenate(
+            [filter_ripple_band(block, 1500) for block in np.split(data, 2)]
+        )
+        filtered = filter_ripple_band(data, 1500, time=time)
+        np.testing.assert_array_equal(filtered, expected)
+        expected_envelope = np.concatenate(
+            [get_envelope(block) for block in np.split(filtered, 2)]
+        )
+        np.testing.assert_array_equal(get_envelope(filtered, time=time), expected_envelope)
+
+    @pytest.mark.parametrize("bad_time", [np.arange(2), np.zeros(6000), np.full(6000, np.nan)])
+    def test_bad_preprocessing_timestamps_raise(self, bad_time):
+        data = np.ones(6000)
+        with pytest.raises(ValueError, match="time"):
+            get_envelope(data, time=bad_time)
+        with pytest.raises(ValueError, match="time"):
+            filter_ripple_band(data, 1500, time=bad_time)
+
+    @pytest.mark.parametrize("axis", [0, 1])
+    def test_a_channel_with_no_finite_sample_raises_naming_it(self, axis):
+        data = np.random.default_rng(7).normal(size=(200, 3))
+        data[:, 1] = np.nan
+        with pytest.raises(ValueError, match=r"channel\(s\) \[1\] hold no finite sample"):
+            get_envelope(data if axis == 0 else data.T, axis=axis)
+
+    def test_no_row_finite_in_every_channel_raises(self):
+        data = np.random.default_rng(8).normal(size=(200, 2))
+        data[::2, 0] = np.nan
+        data[1::2, 1] = np.nan
+        with pytest.raises(ValueError, match="nothing to take the envelope of"):
+            get_envelope(data)
+        with pytest.raises(ValueError, match="nothing to take the envelope of"):
+            get_envelope(np.full(10, np.nan))
 
     def test_constant_amplitude_sine(self):
         """Test envelope of constant amplitude sine wave."""
@@ -553,15 +619,9 @@ class TestCoreErrorHandling:
             filter_ripple_band(np.array([]), 1500)
 
     def test_get_envelope_empty_array(self):
-        """Test envelope extraction with empty array."""
-        # Empty array will raise ValueError in Hilbert transform
-        empty_array = np.array([])
-        try:
-            envelope = get_envelope(empty_array)
-            assert envelope.shape == empty_array.shape
-        except ValueError:
-            # Expected for empty input
-            pass
+        """An empty array has no finite sample to take the envelope of."""
+        with pytest.raises(ValueError, match="nothing to take the envelope of"):
+            get_envelope(np.array([]))
 
     def test_gaussian_smooth_single_sample(self):
         """Test smoothing with single sample."""
@@ -1129,6 +1189,89 @@ class TestExcludeMovementEventLookup:
         assert len(exclude_movement(np.empty((0, 2)), speed, time)) == 0
 
 
+class TestExcludeMovementRules:
+    """The speed tests published papers use besides the endpoint rule."""
+
+    TIME = np.arange(0, 1, 0.1)
+    EVENTS = np.array([(0.0, 0.4), (0.5, 0.9)])
+
+    def test_all_drops_an_event_with_one_fast_sample_inside(self):
+        speed = np.array([1, 1, 9, 1, 1, 1, 1, 1, 1, 1.0])
+        np.testing.assert_allclose(
+            exclude_movement(self.EVENTS, speed, self.TIME, rule="endpoints"), self.EVENTS
+        )
+        np.testing.assert_allclose(
+            exclude_movement(self.EVENTS, speed, self.TIME, rule="all"), self.EVENTS[1:]
+        )
+
+    def test_all_includes_both_endpoints(self):
+        speed = np.array([1, 1, 1, 1, 9, 1, 1, 1, 1, 1.0])
+        np.testing.assert_allclose(
+            exclude_movement(self.EVENTS, speed, self.TIME, rule="all"), self.EVENTS[1:]
+        )
+
+    @pytest.mark.parametrize(("fast", "kept"), [(16.0, True), (16.5, False)])
+    def test_mean_is_at_or_below_the_threshold(self, fast, kept):
+        """Mean of (1, 1, 1, 1, 16) is exactly 4."""
+        speed = np.array([1, 1, fast, 1, 1, 1, 1, 1, 1, 1.0])
+        result = exclude_movement(self.EVENTS, speed, self.TIME, rule="mean")
+        assert (0.0 in result[:, 0]) == kept
+
+    def test_median_ignores_a_minority_of_fast_samples(self):
+        speed = np.array([1, 9, 9, 1, 1, 9, 9, 9, 1, 1.0])
+        np.testing.assert_allclose(
+            exclude_movement(self.EVENTS, speed, self.TIME, rule="median"), self.EVENTS[:1]
+        )
+
+    def test_unknown_speed_fails_all_but_is_skipped_by_mean_and_median(self):
+        speed = np.array([1, np.nan, 1, 1, 1, 1, 1, 1, 1, 1.0])
+        assert len(exclude_movement(self.EVENTS[:1], speed, self.TIME, rule="all")) == 0
+        for rule in ("mean", "median"):
+            assert len(exclude_movement(self.EVENTS[:1], speed, self.TIME, rule=rule)) == 1
+
+    @pytest.mark.parametrize("rule", ["mean", "median"])
+    def test_an_event_with_no_known_speed_fails(self, rule):
+        speed = np.array([np.nan] * 5 + [1.0] * 5)
+        np.testing.assert_allclose(
+            exclude_movement(self.EVENTS, speed, self.TIME, rule=rule), self.EVENTS[1:]
+        )
+
+    @pytest.mark.parametrize("rule", ["all", "mean", "median"])
+    def test_an_infinite_threshold_keeps_every_event(self, rule):
+        speed = np.full(10, np.nan)
+        result = exclude_movement(self.EVENTS, speed, self.TIME, np.inf, rule=rule)
+        np.testing.assert_allclose(result, self.EVENTS)
+
+    @pytest.mark.parametrize("rule", ["all", "mean", "median"])
+    def test_no_events(self, rule):
+        result = exclude_movement(np.empty((0, 2)), np.ones(10), self.TIME, rule=rule)
+        assert result.shape == (0, 2)
+
+    def test_a_frame_keeps_its_columns_and_index(self):
+        frame = pd.DataFrame(
+            {"start_time": [0.0, 0.5], "end_time": [0.4, 0.9], "tag": ["a", "b"]},
+            index=pd.Index([7, 8], name="event_number"),
+        )
+        speed = np.array([1, 1, 9, 1, 1, 1, 1, 1, 1, 1.0])
+        result = exclude_movement(frame, speed, self.TIME, rule="all")
+        assert list(result.index) == [8]
+        assert list(result.tag) == ["b"]
+
+    def test_an_unknown_rule_raises(self):
+        with pytest.raises(ValueError, match="rule must be one of 'endpoints'"):
+            exclude_movement(self.EVENTS, np.ones(10), self.TIME, rule="majority")
+
+    @pytest.mark.parametrize("rule", ["all", "mean", "median"])
+    def test_speed_and_time_of_different_lengths_raise(self, rule):
+        with pytest.raises(ValueError, match="they must match"):
+            exclude_movement(self.EVENTS, np.ones(5), self.TIME, rule=rule)
+
+    @pytest.mark.parametrize("rule", ["all", "mean", "median"])
+    def test_an_event_with_no_sample_raises(self, rule):
+        with pytest.raises(ValueError, match="No speed samples fall within"):
+            exclude_movement(np.array([(5.0, 6.0)]), np.ones(10), self.TIME, rule=rule)
+
+
 class TestRippleBandpassFilterAcrossRates:
     """The designed filter must hold its specification at every sampling rate."""
 
@@ -1169,6 +1312,46 @@ class TestFilterRippleBandLengthGuard:
             filter_ripple_band(np.random.default_rng(0).normal(size=len(kernel) - 1), 1500)
 
 
+class TestFilterRippleBandChecksTheRate:
+    """With ``time``, the stated rate is checked against the timestamps, as
+    the detectors check it: the filter is designed for the stated rate."""
+
+    def test_a_rate_the_timestamps_contradict_raises(self):
+        time = np.arange(6000) / 1500
+        data = np.random.default_rng(0).normal(size=6000)
+        with pytest.raises(ValueError, match="times the interval sampling_frequency"):
+            filter_ripple_band(data, 30_000, time=time)
+
+    def test_time_in_milliseconds_raises_saying_so(self):
+        time = np.arange(6000) / 1500
+        data = np.random.default_rng(0).normal(size=6000)
+        with pytest.raises(ValueError, match="milliseconds"):
+            filter_ripple_band(data, 1500, time=time * 1000)
+
+    def test_matching_timestamps_filter_as_without_them(self):
+        time = 1.7e9 + np.arange(6000) / 1500
+        data = np.random.default_rng(0).normal(size=6000)
+        np.testing.assert_array_equal(
+            filter_ripple_band(data, 1500, time=time), filter_ripple_band(data, 1500)
+        )
+
+
+class TestFilterRippleBandInputHints:
+    def test_transposed_data_says_transpose(self):
+        data = np.random.default_rng(0).normal(size=(4, 6000))
+        with pytest.raises(ValueError, match=r"transpose[\s\S]*data\.T"):
+            filter_ripple_band(data, 1500)
+
+    def test_no_sampling_frequency_is_a_clear_error(self):
+        with pytest.raises(TypeError, match="sampling_frequency must be a number"):
+            filter_ripple_band(np.zeros(6000), None)
+
+    def test_float32_timestamps_at_a_unix_origin(self):
+        time = (1.7e9 + np.arange(6000) / 1500).astype(np.float32)
+        with pytest.raises(ValueError, match=r"float32[\s\S]*float64"):
+            filter_ripple_band(np.zeros(6000), 1500, time=time)
+
+
 class TestFilterRippleBandPadLength:
     def test_the_fir_pad_length_gives_filtfilt_s_default_output_exactly(self):
         """A run only needs as many samples as the kernel has taps because a
@@ -1201,15 +1384,579 @@ class TestExcludeCloseEventsChaining:
         np.testing.assert_allclose(exclude_close_events(events, 1.0), [[0.0, 0.1], [1.2, 1.3]])
 
     def test_it_returns_the_events_alone(self):
-        """Its signature is 1.x's; the detectors track indices privately."""
+        """Its signature starts as 1.x's, and anything since is optional; the
+        detectors track indices privately."""
         import inspect
 
-        assert list(inspect.signature(exclude_close_events).parameters) == [
-            "candidate_event_times",
-            "close_event_threshold",
-        ]
+        parameters = inspect.signature(exclude_close_events).parameters
+        assert list(parameters)[:2] == ["candidate_event_times", "close_event_threshold"]
+        assert all(
+            parameter.default is not inspect.Parameter.empty
+            for parameter in list(parameters.values())[2:]
+        )
         events = np.array([[0.0, 0.1], [0.5, 0.6], [1.2, 1.3]])
         assert isinstance(exclude_close_events(events, 1.0), np.ndarray)
+
+
+class TestCloseEventVariants:
+    """Published rules for close events that the defaults do not follow."""
+
+    def test_measure_from_start_times_the_gap_from_detection(self):
+        events = np.array([(0.0, 0.1), (0.5, 0.6), (1.05, 1.1)])
+        np.testing.assert_allclose(exclude_close_events(events, 1.0), events[:1])
+        np.testing.assert_allclose(
+            exclude_close_events(events, 1.0, measure_from="start"), events[[0, 2]]
+        )
+
+    def test_measure_from_start_counts_from_the_last_kept_event(self):
+        """The 0.5 event is dropped, so 1.2 is measured from 0.0, not 0.5."""
+        events = np.array([(0.0, 0.1), (0.5, 0.6), (1.2, 1.3)])
+        np.testing.assert_allclose(
+            exclude_close_events(events, 1.0, measure_from="start"), events[[0, 2]]
+        )
+
+    def test_an_unknown_reference_raises(self):
+        with pytest.raises(ValueError, match="measure_from must be one of 'end', 'start'"):
+            exclude_close_events(np.array([(0.0, 0.1), (0.5, 0.6)]), 1.0, measure_from="peak")
+
+    def test_inclusive_merges_a_gap_equal_to_the_threshold(self):
+        events = np.array([(0.0, 0.1), (0.14, 0.2)])
+        assert len(merge_close_events(events, 0.04)) == 2
+        np.testing.assert_allclose(
+            merge_close_events(events, 0.04, inclusive=True), [[0.0, 0.2]]
+        )
+
+    def test_inclusive_leaves_a_longer_gap_alone(self):
+        events = np.array([(0.0, 0.1), (0.1401, 0.2)])
+        assert len(merge_close_events(events, 0.04, inclusive=True)) == 2
+
+    @staticmethod
+    def _frame(bounds, peaks):
+        bounds = np.asarray(bounds, dtype=float)
+        return pd.DataFrame(
+            {"start_time": bounds[:, 0], "end_time": bounds[:, 1], "peak_time": peaks}
+        )
+
+    def test_peak_measure_merges_by_peak_separation(self):
+        """A peak lies inside its event, so peaks are never closer than the
+        gap: measured by peak, the first pair (gap 50 ms, peaks 180 ms
+        apart) stays apart, while the second (peaks 40 ms apart) merges."""
+        frame = self._frame(
+            [(0.0, 0.1), (0.15, 0.25), (0.40, 0.5), (0.52, 0.6)], [0.02, 0.2, 0.49, 0.53]
+        )
+        np.testing.assert_allclose(
+            merge_close_events(frame, 0.07, measure="peak"),
+            [[0.0, 0.1], [0.15, 0.25], [0.40, 0.6]],
+        )
+        np.testing.assert_allclose(merge_close_events(frame, 0.07), [[0.0, 0.25], [0.40, 0.6]])
+
+    def test_peak_measure_follows_a_chain_peak_to_peak(self):
+        """Peaks 60 ms apart in turn chain into one event although the first
+        and last are 120 ms apart."""
+        frame = self._frame([(0.0, 0.05), (0.06, 0.1), (0.12, 0.16)], [0.02, 0.08, 0.14])
+        np.testing.assert_allclose(
+            merge_close_events(frame, 0.07, measure="peak"), [[0.0, 0.16]]
+        )
+
+    def test_peak_measure_takes_the_distance_between_peaks_in_either_order(self):
+        """The second event starts inside the first but peaks before it: peaks
+        750 ms apart are not close, and 30 ms apart are, whichever comes first."""
+        far = self._frame([(0.0, 1.0), (0.1, 0.2)], [0.9, 0.15])
+        near = self._frame([(0.0, 1.0), (0.1, 0.2)], [0.18, 0.15])
+        np.testing.assert_allclose(
+            merge_close_events(far, 0.07, measure="peak"), [[0.0, 1.0], [0.1, 0.2]]
+        )
+        np.testing.assert_allclose(
+            merge_close_events(near, 0.07, measure="peak"), [[0.0, 1.0]]
+        )
+
+    def test_peak_measure_respects_the_ceiling(self):
+        frame = self._frame([(0.0, 0.1), (0.12, 0.3)], [0.09, 0.13])
+        assert len(merge_close_events(frame, 0.07, measure="peak", maximum_duration=0.2)) == 2
+
+    def test_peak_measure_needs_a_peak_column(self):
+        with pytest.raises(ValueError, match="peak_time column"):
+            merge_close_events(np.array([(0.0, 0.1), (0.15, 0.2)]), 0.07, measure="peak")
+
+    def test_an_unknown_measure_raises(self):
+        with pytest.raises(ValueError, match="measure must be one of 'gap', 'peak'"):
+            merge_close_events(np.array([(0.0, 0.1)]), 0.07, measure="center")
+
+
+class TestRequireIsolation:
+    """Every event of a close pair goes, not just the later one."""
+
+    def test_both_members_of_a_close_pair_are_dropped(self):
+        events = np.array([(0.0, 0.1), (0.3, 0.4), (2.0, 2.1)])
+        np.testing.assert_allclose(require_isolation(events, 0.5), [[2.0, 2.1]])
+
+    def test_a_gap_equal_to_the_separation_is_isolated(self):
+        events = np.array([(0.0, 0.1), (0.6, 0.7)])
+        np.testing.assert_allclose(require_isolation(events, 0.5), events)
+
+    def test_a_long_earlier_event_counts_by_its_end(self):
+        """The first event ends after the second starts; the third is close to
+        the first's end, though far from the second's."""
+        events = np.array([(0.0, 1.0), (0.2, 0.3), (1.2, 1.3), (3.0, 3.1)])
+        np.testing.assert_allclose(require_isolation(events, 0.5), [[3.0, 3.1]])
+
+    def test_zero_separation_drops_only_overlaps(self):
+        events = np.array([(0.0, 0.2), (0.1, 0.3), (0.3, 0.4), (1.0, 1.1)])
+        np.testing.assert_allclose(require_isolation(events, 0.0), [[0.3, 0.4], [1.0, 1.1]])
+
+    def test_a_single_or_no_event(self):
+        np.testing.assert_allclose(
+            require_isolation(np.array([(0.0, 0.1)]), 1.0), [[0.0, 0.1]]
+        )
+        assert require_isolation(np.empty((0, 2)), 1.0).shape == (0, 2)
+
+    def test_a_frame_keeps_its_columns_and_index(self):
+        frame = pd.DataFrame(
+            {"start_time": [0.0, 0.3, 2.0], "end_time": [0.1, 0.4, 2.1], "tag": list("abc")},
+            index=pd.Index([1, 2, 3], name="event_number"),
+        )
+        result = require_isolation(frame, 0.5)
+        assert list(result.index) == [3]
+        assert list(result.tag) == ["c"]
+
+    def test_unsorted_events_raise(self):
+        with pytest.raises(ValueError, match="sorted by start time"):
+            require_isolation(np.array([(1.0, 1.1), (0.0, 0.1)]), 0.5)
+
+    def test_a_negative_separation_raises(self):
+        with pytest.raises(ValueError, match="minimum_separation must be non-negative"):
+            require_isolation(np.array([(0.0, 0.1)]), -1.0)
+
+
+class TestRequireTracePeak:
+    TIME = np.arange(10) / 10
+    EVENTS = np.array([(0.0, 0.3), (0.5, 0.9)])
+
+    def test_keeps_the_events_where_the_trace_reaches_the_threshold(self):
+        trace = np.array([0, 1, 4, 1, 0, 0, 1, 2, 1, 0.0])
+        np.testing.assert_allclose(
+            require_trace_peak(self.EVENTS, trace, self.TIME, 3.0), self.EVENTS[:1]
+        )
+
+    def test_at_the_threshold_counts_and_endpoints_are_inside(self):
+        trace = np.array([0, 0, 0, 3, 0, 3, 0, 0, 0, 0.0])
+        np.testing.assert_allclose(
+            require_trace_peak(self.EVENTS, trace, self.TIME, 3.0), self.EVENTS
+        )
+
+    def test_nan_is_skipped_and_an_all_nan_event_is_dropped(self):
+        trace = np.array(
+            [np.nan, 4, np.nan, np.nan, 0, np.nan, np.nan, np.nan, np.nan, np.nan]
+        )
+        np.testing.assert_allclose(
+            require_trace_peak(self.EVENTS, trace, self.TIME, 3.0), self.EVENTS[:1]
+        )
+
+    def test_a_frame_keeps_its_columns_and_index(self):
+        frame = pd.DataFrame(
+            {"start_time": [0.0, 0.5], "end_time": [0.3, 0.9], "tag": list("ab")}, index=[3, 4]
+        )
+        trace = np.array([0, 0, 0, 0, 0, 0, 5, 0, 0, 0.0])
+        kept = require_trace_peak(frame, trace, self.TIME, 3.0)
+        assert list(kept.index) == [4]
+        assert list(kept.tag) == ["b"]
+
+    def test_bad_inputs_raise(self):
+        with pytest.raises(ValueError, match="must match"):
+            require_trace_peak(self.EVENTS, np.zeros(5), self.TIME, 3.0)
+        with pytest.raises(ValueError, match="threshold must be finite"):
+            require_trace_peak(self.EVENTS, np.zeros(10), self.TIME, np.nan)
+        with pytest.raises(ValueError, match="No sample of time falls within"):
+            require_trace_peak(np.array([(5.0, 6.0)]), np.zeros(10), self.TIME, 3.0)
+
+
+class TestRequireTimesInside:
+    EVENTS = np.array([(0.0, 0.3), (0.5, 0.9), (1.2, 1.4)])
+
+    def test_keeps_the_events_containing_a_time(self):
+        np.testing.assert_allclose(
+            require_times_inside(self.EVENTS, [0.7, 2.0]), self.EVENTS[[1]]
+        )
+
+    def test_the_bounds_are_inside(self):
+        np.testing.assert_allclose(
+            require_times_inside(self.EVENTS, [0.3, 1.2]), self.EVENTS[[0, 2]]
+        )
+
+    def test_times_in_any_order_and_several_per_event(self):
+        np.testing.assert_allclose(
+            require_times_inside(self.EVENTS, [1.3, 0.1, 0.2]), self.EVENTS[[0, 2]]
+        )
+
+    def test_a_series_of_peak_times(self):
+        ripples = pd.DataFrame({"peak_time": [0.6, 1.25]})
+        np.testing.assert_allclose(
+            require_times_inside(self.EVENTS, ripples.peak_time), self.EVENTS[1:]
+        )
+
+    def test_no_times_keeps_nothing_and_no_events_is_empty(self):
+        assert require_times_inside(self.EVENTS, []).shape == (0, 2)
+        assert require_times_inside(np.empty((0, 2)), [0.1]).shape == (0, 2)
+
+    def test_a_frame_complement_is_a_drop(self):
+        frame = pd.DataFrame({"start_time": self.EVENTS[:, 0], "end_time": self.EVENTS[:, 1]})
+        kept = require_times_inside(frame, [0.7])
+        assert list(frame.drop(kept.index).index) == [0, 2]
+
+    def test_nan_times_raise(self):
+        with pytest.raises(ValueError, match="NaN or infinity"):
+            require_times_inside(self.EVENTS, [0.1, np.nan])
+
+    def test_intervals_as_times_raise_naming_the_interval_rules(self):
+        """(n, 2) intervals were flattened into 2n points before, so events
+        between the bounds but containing neither were silently dropped."""
+        with pytest.raises(ValueError, match=r"require_overlap[\s\S]*require_inside"):
+            require_times_inside(self.EVENTS, np.array([(0.0, 2.0)]))
+
+    def test_a_column_of_times_is_one_time_per_row(self):
+        np.testing.assert_allclose(
+            require_times_inside(self.EVENTS, np.array([[0.7], [2.0]])), self.EVENTS[[1]]
+        )
+
+
+ORIGINS = [0.0, 1.7e9]  # a clock from zero; a Unix time
+
+
+def _random_intervals(rng, time, n_intervals):
+    """Sorted, disjoint intervals whose bounds are samples of ``time``."""
+    edges = np.sort(rng.choice(len(time), 2 * n_intervals, replace=False))
+    return time[edges.reshape(-1, 2)]
+
+
+class TestIntervalsToMask:
+    def test_inclusive_bounds(self):
+        time = np.arange(10.0)
+        mask = intervals_to_mask(time, [(1.0, 3.0), (5.0, 5.0), (7.0, 9.0)])
+        expected = np.array([0, 1, 1, 1, 0, 1, 0, 1, 1, 1], dtype=bool)
+        np.testing.assert_array_equal(mask, expected)
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_matches_the_union_of_per_interval_masks(self, origin):
+        rng = np.random.default_rng(0)
+        time = origin + np.arange(5000) / 1500
+        intervals = _random_intervals(rng, time, 20)
+        expected = np.zeros(len(time), dtype=bool)
+        for start, end in intervals:
+            expected |= (time >= start) & (time <= end)
+        np.testing.assert_array_equal(intervals_to_mask(time, intervals), expected)
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_a_bound_an_ulp_off_a_sample_still_holds_it(self, origin):
+        time = origin + np.arange(3000) / 1500
+        start = np.nextafter(time[100], np.inf)
+        end = np.nextafter(time[200], -np.inf)
+        mask = intervals_to_mask(time, [(start, end)])
+        assert np.flatnonzero(mask).tolist() == list(range(100, 201))
+
+    def test_a_detector_frame_and_no_intervals(self):
+        time = np.arange(10.0)
+        frame = pd.DataFrame({"start_time": [2.0], "end_time": [4.0]})
+        assert np.flatnonzero(intervals_to_mask(time, frame)).tolist() == [2, 3, 4]
+        assert not intervals_to_mask(time, np.empty((0, 2))).any()
+
+    @pytest.mark.parametrize(
+        ("intervals", "match"),
+        [
+            ([(5.0, 6.0), (1.0, 2.0)], "sorted"),
+            ([(1.0, 4.0), (3.0, 6.0)], "overlap"),
+            ([(1.0, 3.0), (3.0, 6.0)], "overlap"),
+            ([(2.0, 1.0)], "start no later than the end"),
+            ([(1.0, np.nan)], "finite"),
+            ([1.0, 2.0, 3.0], r"\(n_events, 2\)"),
+        ],
+    )
+    def test_invalid_intervals_raise(self, intervals, match):
+        with pytest.raises(ValueError, match=match):
+            intervals_to_mask(np.arange(10.0), intervals)
+
+    def test_time_that_is_not_1d_raises(self):
+        with pytest.raises(ValueError, match="1-D"):
+            intervals_to_mask(np.zeros((5, 2)), [(0.0, 1.0)])
+
+
+class TestRequireInside:
+    INTERVALS = np.array([(0.0, 3.0), (5.0, 8.0)])
+
+    def test_keeps_events_wholly_inside_one_interval(self):
+        events = np.array([(1.0, 2.0), (2.5, 3.5), (6.0, 7.0), (0.0, 3.0), (4.0, 4.5)])
+        np.testing.assert_array_equal(
+            require_inside(events, self.INTERVALS), events[[0, 2, 3]]
+        )
+
+    def test_an_event_across_two_intervals_is_in_neither(self):
+        intervals = np.array([(0.0, 1.0), (1.2, 2.0)])
+        events = np.array([(0.5, 1.5), (0.5, 1.0), (1.2, 1.5)])
+        np.testing.assert_array_equal(require_inside(events, intervals), events[1:])
+
+    def test_a_frame_keeps_its_columns_and_index(self):
+        frame = pd.DataFrame(
+            {"start_time": [1.0, 4.0, 6.0], "end_time": [2.0, 4.5, 7.0], "x": [1, 2, 3]},
+            index=pd.Index([1, 2, 3], name="event_number"),
+        )
+        kept = require_inside(frame, self.INTERVALS)
+        pd.testing.assert_frame_equal(kept, frame.loc[[1, 3]])
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_bounds_an_ulp_outside_are_inside(self, origin):
+        time = origin + np.arange(3000) / 1500
+        intervals = np.array([(time[100], time[200])])
+        events = np.array(
+            [
+                (np.nextafter(time[100], -np.inf), np.nextafter(time[200], np.inf)),
+                (time[99], time[150]),
+            ]
+        )
+        np.testing.assert_array_equal(require_inside(events, intervals), events[:1])
+
+    def test_no_events_or_no_intervals_keep_nothing(self):
+        assert require_inside(np.empty((0, 2)), self.INTERVALS).shape == (0, 2)
+        assert require_inside(np.array([(1.0, 2.0)]), np.empty((0, 2))).shape == (0, 2)
+
+    def test_an_event_ending_before_it_starts_raises(self):
+        with pytest.raises(ValueError, match="start no later than the end"):
+            require_inside(np.array([(2.0, 1.0)]), self.INTERVALS)
+
+
+class TestIntersectIntervals:
+    def test_pairwise_intersections(self):
+        low_theta = np.array([(0.0, 5.0), (10.0, 15.0), (20.0, 21.0)])
+        still = np.array([(3.0, 12.0), (14.0, 14.5)])
+        np.testing.assert_array_equal(
+            intersect_intervals(low_theta, still),
+            [(3.0, 5.0), (10.0, 12.0), (14.0, 14.5)],
+        )
+
+    def test_touching_intervals_share_their_one_point(self):
+        np.testing.assert_array_equal(
+            intersect_intervals([(0.0, 1.0)], [(1.0, 2.0)]), [(1.0, 1.0)]
+        )
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_its_mask_is_the_and_of_the_masks(self, origin):
+        rng = np.random.default_rng(1)
+        time = origin + np.arange(5000) / 1500
+        a = _random_intervals(rng, time, 15)
+        b = _random_intervals(rng, time, 25)
+        both = intersect_intervals(a, b)
+        np.testing.assert_array_equal(
+            intervals_to_mask(time, both),
+            intervals_to_mask(time, a) & intervals_to_mask(time, b),
+        )
+        assert np.all(np.diff(both[:, 0]) >= 0)
+
+    def test_either_empty_gives_none(self):
+        assert intersect_intervals(np.empty((0, 2)), [(0.0, 1.0)]).shape == (0, 2)
+        assert intersect_intervals([(0.0, 1.0)], []).shape == (0, 2)
+
+    def test_overlapping_input_raises(self):
+        with pytest.raises(ValueError, match="overlap"):
+            intersect_intervals([(0.0, 2.0), (1.0, 3.0)], [(0.0, 1.0)])
+
+
+class TestWindowsAroundTimes:
+    def test_symmetric_windows_merge_when_they_overlap(self):
+        np.testing.assert_allclose(
+            windows_around_times([1.0, 1.05, 3.0], 0.05), [[0.95, 1.1], [2.95, 3.05]]
+        )
+
+    def test_asymmetric_windows(self):
+        np.testing.assert_allclose(windows_around_times([1.0], 0.01, 0.1), [[0.99, 1.1]])
+
+    def test_without_merging_one_window_per_time_sorted(self):
+        np.testing.assert_allclose(
+            windows_around_times([3.0, 1.0, 1.05], 0.05, merge_overlapping=False),
+            [[0.95, 1.05], [1.0, 1.1], [2.95, 3.05]],
+        )
+
+    def test_touching_windows_merge(self):
+        np.testing.assert_allclose(windows_around_times([1.0, 1.1], 0.05), [[0.95, 1.15]])
+
+    def test_every_sample_above_threshold_as_centers(self):
+        """150 ms windows on each supra-threshold sample join into one run."""
+        time = np.arange(0, 2, 0.01)
+        trace = np.zeros(len(time))
+        trace[100:105] = 5.0
+        np.testing.assert_allclose(
+            windows_around_times(time[trace >= 3.0], 0.075), [[0.925, 1.115]]
+        )
+
+    def test_no_times(self):
+        assert windows_around_times([], 0.05).shape == (0, 2)
+
+    @pytest.mark.parametrize(
+        ("before", "after"), [(-0.1, None), (0.1, np.inf), (np.nan, None)]
+    )
+    def test_bad_extents_raise(self, before, after):
+        with pytest.raises(ValueError, match="must be finite and non-negative"):
+            windows_around_times([1.0], before, after)
+
+    def test_nan_times_raise(self):
+        with pytest.raises(ValueError, match="NaN or infinity"):
+            windows_around_times([1.0, np.nan], 0.05)
+
+
+class TestTwoClusterThreshold:
+    def test_splits_two_groups_at_the_midpoint_of_their_means(self):
+        values = np.array([0.5, 0.6, 0.7, 2.0, 2.2, 2.4])
+        assert two_cluster_threshold(values) == pytest.approx((0.6 + 2.2) / 2)
+
+    def test_unequal_groups_move_the_boundary_from_the_range_midpoint(self):
+        """The range midpoint is 5; the cluster means (1.1, 10) put it at 5.55."""
+        values = np.array([1.0] * 9 + [2.0] + [10.0])
+        assert two_cluster_threshold(values) == pytest.approx((1.1 + 10.0) / 2)
+
+    def test_nan_is_ignored_and_any_shape_is_flattened(self):
+        values = np.array([[0.5, np.nan], [2.0, 2.2]])
+        assert two_cluster_threshold(values) == pytest.approx((0.5 + 2.1) / 2)
+
+    def test_fewer_than_two_distinct_values_raise(self):
+        with pytest.raises(ValueError, match="two distinct finite values"):
+            two_cluster_threshold([1.0, 1.0, np.nan])
+
+    def test_the_iteration_cap_returns_the_last_boundary(self):
+        """From 4.8 the first update moves 4.6 to the upper cluster; the split
+        settles at the means of (0.4, 0.6) and (4.6, 5.3, 9.2)."""
+        values = np.array([0.4, 0.6, 4.6, 5.3, 9.2])
+        first = ((0.4 + 0.6 + 4.6) / 3 + (5.3 + 9.2) / 2) / 2
+        with pytest.warns(UserWarning, match="did not settle within 1 iteration"):
+            capped = two_cluster_threshold(values, maximum_iterations=1)
+        assert capped == pytest.approx(first)
+        assert two_cluster_threshold(values) == pytest.approx(
+            (0.5 + (4.6 + 5.3 + 9.2) / 3) / 2
+        )
+
+
+class TestHistogramMinimumThreshold:
+    def test_the_trough_between_silence_and_bursts(self):
+        rng = np.random.default_rng(0)
+        counts = np.concatenate([rng.normal(0.2, 0.1, 5000), rng.normal(1.5, 0.3, 1000)])
+        threshold = histogram_minimum_threshold(counts, bins=50, smoothing_window=3)
+        assert 0.4 < threshold < 1.1
+
+    def test_the_first_trough_after_the_mode(self):
+        edges = np.arange(8.0)
+        values = np.repeat(np.arange(7) + 0.5, [2, 9, 4, 1, 5, 0, 3])
+        assert histogram_minimum_threshold(values, bins=edges) == pytest.approx(3.5)
+
+    def test_a_flat_trough_counts_from_its_first_bin(self):
+        edges = np.arange(7.0)
+        values = np.repeat(np.arange(6) + 0.5, [9, 3, 1, 1, 4, 2])
+        assert histogram_minimum_threshold(values, bins=edges) == pytest.approx(2.5)
+
+    def test_a_level_step_that_falls_again_is_not_yet_the_trough(self):
+        """Counts 9, 5, 5, 3, 7: the level stretch at 5 falls further to 3."""
+        values = np.repeat(np.arange(5) + 0.5, [9, 5, 5, 3, 7])
+        assert histogram_minimum_threshold(values, bins=np.arange(6.0)) == pytest.approx(3.5)
+
+    def test_a_falling_histogram_has_no_trough(self):
+        values = np.repeat(np.arange(5) + 0.5, [9, 5, 3, 2, 1])
+        with pytest.raises(ValueError, match="no first minimum"):
+            histogram_minimum_threshold(values, bins=np.arange(6.0))
+
+    @pytest.mark.parametrize("window", [0, 2, 1.5])
+    def test_a_bad_smoothing_window_raises(self, window):
+        with pytest.raises(ValueError, match="positive odd whole number"):
+            histogram_minimum_threshold(np.arange(10.0), smoothing_window=window)
+
+    def test_no_finite_values_raise(self):
+        with pytest.raises(ValueError, match="needs finite values"):
+            histogram_minimum_threshold([np.nan])
+
+
+class TestTrimEventsToTrace:
+    TIME = np.arange(10) / 10
+    RATE = np.array([0, 1, 3, 4, 1, 3, 0, 0, 0, 0.0])
+    EVENT = np.array([(0.0, 0.9)])
+
+    def test_both_bounds_move_to_the_first_and_last_sample_at_or_above(self):
+        np.testing.assert_allclose(
+            trim_events_to_trace(self.EVENT, self.RATE, self.TIME, 3.0), [[0.2, 0.5]]
+        )
+
+    @pytest.mark.parametrize(
+        ("sides", "expected"), [("start", [[0.2, 0.9]]), ("end", [[0.0, 0.5]])]
+    )
+    def test_one_side_only(self, sides, expected):
+        np.testing.assert_allclose(
+            trim_events_to_trace(self.EVENT, self.RATE, self.TIME, 3.0, sides=sides), expected
+        )
+
+    @pytest.mark.parametrize(
+        ("sides", "expected"), [("start", [[0.2, 0.85]]), ("end", [[0.05, 0.5]])]
+    )
+    def test_the_bound_that_does_not_move_keeps_its_value(self, sides, expected):
+        """Bounds between samples: the one not trimmed is not snapped to the
+        last or first sample inside the event."""
+        np.testing.assert_allclose(
+            trim_events_to_trace(
+                np.array([(0.05, 0.85)]), self.RATE, self.TIME, 3.0, sides=sides
+            ),
+            expected,
+        )
+
+    def test_an_event_never_reaching_the_threshold_is_dropped(self):
+        events = np.array([(0.0, 0.4), (0.6, 0.9)])
+        np.testing.assert_allclose(
+            trim_events_to_trace(events, self.RATE, self.TIME, 3.0), [[0.2, 0.3]]
+        )
+
+    def test_nan_is_never_above(self):
+        rate = self.RATE.copy()
+        rate[5] = np.nan
+        np.testing.assert_allclose(
+            trim_events_to_trace(self.EVENT, rate, self.TIME, 3.0), [[0.2, 0.3]]
+        )
+
+    def test_the_minimum_is_an_inclusive_sample_count(self):
+        """Trimmed to 0.2-0.5, four samples: 0.4 s rounds to four at 10 Hz, 0.5 s to five."""
+        kept = trim_events_to_trace(
+            self.EVENT, self.RATE, self.TIME, 3.0, minimum_duration=0.4
+        )
+        dropped = trim_events_to_trace(
+            self.EVENT, self.RATE, self.TIME, 3.0, minimum_duration=0.5
+        )
+        assert len(kept) == 1
+        assert len(dropped) == 0
+
+    def test_a_frame_returns_the_trimmed_bounds_under_its_index(self):
+        """The other columns describe the untrimmed event, so they are left
+        out; the index joins the result back to them."""
+        frame = pd.DataFrame(
+            {"start_time": [0.0, 0.6], "end_time": [0.9, 0.9], "max_zscore": [9.0, 1.0]},
+            index=pd.Index([4, 7], name="event_number"),
+        )
+        result = trim_events_to_trace(frame, self.RATE, self.TIME, 3.0)
+        expected = pd.DataFrame(
+            {"start_time": [0.2], "end_time": [0.5]},
+            index=pd.Index([4], name="event_number"),
+        )
+        pd.testing.assert_frame_equal(result, expected)
+        empty = trim_events_to_trace(frame.iloc[:0], self.RATE, self.TIME, 3.0)
+        assert list(empty.columns) == ["start_time", "end_time"]
+        assert len(empty) == 0
+
+    def test_no_events(self):
+        assert trim_events_to_trace(np.empty((0, 2)), self.RATE, self.TIME, 3.0).shape == (
+            0,
+            2,
+        )
+
+    def test_bad_inputs_raise(self):
+        with pytest.raises(ValueError, match="must match"):
+            trim_events_to_trace(self.EVENT, self.RATE[:5], self.TIME, 3.0)
+        with pytest.raises(ValueError, match="threshold must be finite"):
+            trim_events_to_trace(self.EVENT, self.RATE, self.TIME, np.inf)
+        with pytest.raises(ValueError, match="sides must be one of"):
+            trim_events_to_trace(self.EVENT, self.RATE, self.TIME, 3.0, sides="middle")
+        with pytest.raises(ValueError, match="minimum_duration must be non-negative"):
+            trim_events_to_trace(self.EVENT, self.RATE, self.TIME, 3.0, minimum_duration=-1)
+        with pytest.raises(ValueError, match="No sample of time falls within"):
+            trim_events_to_trace(np.array([(5.0, 6.0)]), self.RATE, self.TIME, 3.0)
 
 
 class TestCoreInputConversion:
@@ -1328,6 +2075,26 @@ class TestMergeCloseEvents:
         merged = merge_close_events(events, 0.0)
 
         np.testing.assert_allclose(merged, events)
+
+    def test_a_frame_returns_a_frame_of_the_merged_bounds(self):
+        frame = pd.DataFrame(
+            {
+                "start_time": [0.0, 0.13, 0.5],
+                "end_time": [0.1, 0.2, 0.6],
+                "peak_time": [0.05, 0.15, 0.55],
+            },
+            index=pd.Index([1, 2, 3], name="event_number"),
+        )
+        for kwargs in ({}, {"measure": "peak"}):
+            result = merge_close_events(frame, 0.11, **kwargs)
+            expected = pd.DataFrame(
+                {"start_time": [0.0, 0.5], "end_time": [0.2, 0.6]},
+                index=pd.RangeIndex(1, 3, name="event_number"),
+            )
+            pd.testing.assert_frame_equal(result, expected)
+        empty = merge_close_events(frame.iloc[:0], 0.1)
+        assert list(empty.columns) == ["start_time", "end_time"]
+        assert len(empty) == 0
 
     def test_empty_input(self):
         """An empty event list stays empty and keeps its shape."""
@@ -1731,6 +2498,20 @@ class TestCloseEventBoundaryAgreement:
         events = 86_400.0 + np.array([(0.0, 0.1), (0.1, 0.2)])
 
         assert len(merge_close_events(events, 1e-12)) == 1
+
+    @pytest.mark.parametrize("origin", [86_400.0, 1e6, 1.7e9])
+    def test_the_other_close_event_rules_do_not_depend_on_the_time_origin(self, origin):
+        """Inclusive merging, gaps measured from the start, and isolation
+        decide a gap equal to the threshold the same way far from zero."""
+        equal = origin + np.array([(0.0, 0.01), (0.015, 0.02), (0.05, 0.06), (0.065, 0.07)])
+        wider = origin + np.array([(0.0, 0.01), (0.016, 0.02)])  # a millisecond apart
+
+        assert len(merge_close_events(equal, 0.005, inclusive=True)) == 2
+        assert len(merge_close_events(wider, 0.005, inclusive=True)) == 2
+        # measured from the start, the gaps are 0.015 s
+        assert len(exclude_close_events(equal, 0.015, measure_from="start")) == 4
+        assert len(require_isolation(equal, 0.005)) == 4
+        assert len(require_isolation(equal, 0.006)) == 0
 
 
 class TestHelperBoundaries:

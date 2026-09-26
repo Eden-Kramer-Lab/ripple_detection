@@ -3,7 +3,14 @@
 import numpy as np
 from numpy.typing import ArrayLike
 
-from ripple_detection.core import FloatArray, _check_non_negative, _warn_at_caller
+from ripple_detection.core import (
+    FloatArray,
+    _check_non_negative,
+    _check_number,
+    _check_sampling_interval,
+    _repeated_timestamps_hint,
+    _warn_at_caller,
+)
 
 
 def _validate_lfp_dimensions(filtered_lfps: FloatArray) -> None:
@@ -66,6 +73,16 @@ def _validate_array_lengths(
             f"  speed:        {n_speed_samples} samples\n"
             "Ensure your time, LFP, and speed arrays are aligned and have matching lengths."
         )
+        if n_lfp_samples != n_time_samples and filtered_lfps.shape[1] == n_time_samples:
+            msg += (
+                f"\nThe signal has shape {filtered_lfps.shape}, which looks transposed: "
+                "transpose it to (n_time, n_channels), time down the rows (pass .T)."
+            )
+        if n_speed_samples != n_time_samples and n_lfp_samples == n_time_samples:
+            msg += (
+                "\nIf speed was sampled on its own clock (position tracking at 30 Hz, say), "
+                "interpolate it onto time: speed = np.interp(time, speed_time, speed)."
+            )
         raise ValueError(msg)
 
 
@@ -83,9 +100,10 @@ def _validate_time_units(time: FloatArray, sampling_frequency: float) -> None:
     ------
     ValueError
         If time holds NaN or infinity, is not increasing, has a median step
-        that is not positive (most timestamps repeat), appears to be in
-        samples instead of seconds, or has a median step more than 10 percent
-        away from ``1 / sampling_frequency``.
+        that is not positive (most timestamps repeat), or has a median step
+        more than 10 percent away from ``1 / sampling_frequency``; the
+        message names time in samples, time in milliseconds, or the rate the
+        timestamps imply (``core._check_sampling_interval``).
 
     Warnings
     --------
@@ -108,47 +126,14 @@ def _validate_time_units(time: FloatArray, sampling_frequency: float) -> None:
                 "detecting: the event and speed lookups assume time order."
             )
             raise ValueError(msg)
-        median_dt = np.median(steps)
-        expected_dt = 1.0 / sampling_frequency
+        median_dt = float(np.median(steps))
         if not median_dt > 0:
             msg = (
                 f"The median time step is {median_dt}: most timestamps repeat, so no "
                 "duration can be measured in samples. Check the time array."
-            )
+            ) + _repeated_timestamps_hint(time)
             raise ValueError(msg)
-
-        # Check if time appears to be in samples instead of seconds
-        if median_dt > 10 * expected_dt:
-            msg = (
-                f"Time array appears to be in samples, not seconds.\n"
-                f"Median time step: {median_dt:.6f} (expected ~{expected_dt:.6f} for {sampling_frequency} Hz)\n"
-                f"\n"
-                f"Solution: Convert sample indices to seconds:\n"
-                f"  time_seconds = time_samples / {sampling_frequency}"
-            )
-            raise ValueError(msg)
-        # The nominal rate sets the smoothing widths and windows and the
-        # timestamps set the sample counts. Beyond 10 % the two describe
-        # different recordings (a stated 300 Hz on 1500 Hz data changed the
-        # event count by a quarter), so raise; from 2 % warn, since a nominal
-        # rate can differ from an acquisition system's true one by a few percent
-        # while clocks drift by far less.
-        if not np.isclose(median_dt, expected_dt, rtol=0.10):
-            msg = (
-                f"The median time step ({median_dt:.6g} s) is "
-                f"{median_dt / expected_dt:.3g} times the interval sampling_frequency "
-                f"implies ({expected_dt:.6g} s at {sampling_frequency} Hz). Pass the rate "
-                "the timestamps were recorded at, and time in seconds."
-            )
-            raise ValueError(msg)
-        if not np.isclose(median_dt, expected_dt, rtol=0.02):
-            _warn_at_caller(
-                f"Time array step ({median_dt:.6f} s) differs from expected sampling interval "
-                f"({expected_dt:.6f} s at {sampling_frequency} Hz).\n"
-                f"Verify that:\n"
-                f"  1. time is in seconds (not milliseconds or samples)\n"
-                f"  2. sampling_frequency ({sampling_frequency} Hz) is correct",
-            )
+        _check_sampling_interval(median_dt, sampling_frequency)
 
 
 def _validate_speed_units(speed: FloatArray, speed_threshold: float) -> None:
@@ -164,20 +149,127 @@ def _validate_speed_units(speed: FloatArray, speed_threshold: float) -> None:
     Warnings
     --------
     UserWarning
-        If speed values appear to be in m/s instead of cm/s.
+        If speed values appear to be in m/s instead of cm/s: the median of
+        the moving (positive) speeds is under 0.5 and the 99.9th percentile
+        of the finite speeds under ``_METRES_PER_SECOND_CEILING``. A rest or
+        sleep session in cm/s can have a median of a few tenths, but its
+        occasional runs reach well past 1 cm/s.
 
     """
     moving = speed[speed > 0]  # NaN compares False, so it drops out here
     if moving.size == 0 or speed_threshold <= 1.0 or np.isposinf(speed_threshold):
         return  # a threshold at or below 1 is not in cm/s; infinity ignores speed
     median_speed = np.median(moving)
-    # a median under 0.5 against a typical threshold (> 1 cm/s) is m/s
-    if median_speed < 0.5:
+    fastest = float(np.percentile(speed[np.isfinite(speed)], 99.9))
+    # a median under 0.5 against a typical threshold (> 1 cm/s) is m/s, unless
+    # the animal also moves faster than m/s would allow
+    if median_speed < 0.5 and fastest < _METRES_PER_SECOND_CEILING:
         _warn_at_caller(
-            f"Speed values appear very small (median non-zero: {median_speed:.4f}).\n"
+            f"Speed values appear very small (median non-zero: {median_speed:.4f}, "
+            f"99.9th percentile: {fastest:.4f}).\n"
             f"Speed should be in cm/s, not m/s.\n"
             f"If your speed is in m/s, multiply by 100:\n"
             "  speed_cms = speed_ms * 100",
+        )
+
+
+_METRES_PER_SECOND_CEILING = 1.0
+"""The 99.9th percentile of speed below which small speeds are taken for
+m/s: a rodent that runs at all passes 1 cm/s, and in m/s rarely reaches 1."""
+
+
+UNFILTERED_CUTOFF = 100.0
+"""Hz. A ripple-band signal, at any published lower edge (80 Hz and up),
+has little power below this; raw LFP has most of its power there."""
+
+_UNFILTERED_POWER_FRACTION = 0.8
+"""Share of power below ``UNFILTERED_CUTOFF`` above which a channel is taken
+for unfiltered, or too weakly filtered to detect ripples on.
+
+Measured per channel on recorded hippocampal LFP from seven DANDI dandisets
+(000044, 000115, 000165, 000233, 000447, 001371, 001695: Buzsaki, Frank,
+Huang, Jadhav, Singer and Vöröslakos labs; rats and mice; tetrodes, silicon
+probes, Neuropixels; stored LFP at 1-2 kHz and raw at 20-30 kHz; rest, sleep
+and running), 3-minute segments: 309 unfiltered channels held 0.855-1.000,
+and 3997 filtered ones at most 0.816. Every zero-phase or second-order
+150-250 Hz filter, and ``filter_ripple_band``, left under 0.003; a 51-tap FIR
+0.33; third-order 80-180 and 80-250 Hz bands 0.62 and 0.60. Only a one-pass
+first-order Butterworth crossed 0.8 (two channels, in stratum radiatum and
+lacunosum-moleculare), and on those channels Kay's events matched the
+properly filtered ones no better than on raw LFP (recall 0.69 and 0.68).
+A share this high means the input is raw or barely filtered; a lower share
+does not prove a good filter (the 80-180 Hz band also degraded detection)."""
+
+_SPECTRUM_BUDGET = 2**20
+"""Most samples, over every channel, the unfiltered-input check reads."""
+
+_SPECTRUM_SEGMENTS = 32
+"""Most stretches of the recording the unfiltered-input check reads."""
+
+
+def _warn_if_not_ripple_band(
+    filtered_lfps: FloatArray, sampling_frequency: float, name: str = "filtered_lfps"
+) -> None:
+    """Warn when a signal meant to be ripple-band LFP has most of its power
+    below ``UNFILTERED_CUTOFF``, as recorded raw LFP, ADC counts and barely
+    filtered LFP do; a ripple-band filter leaves almost none there.
+
+    Raw LFP passes every shape check and gives events that follow the slow
+    waves rather than the ripples. The spectrum is estimated on at most
+    ``_SPECTRUM_SEGMENTS`` stretches of finite rows, spread over the
+    recording, each about a quarter of a second long, so the check stays
+    cheap on hours of data. No DC is removed: an offset is low-frequency
+    power, and a filtered signal has none.
+
+    Parameters
+    ----------
+    filtered_lfps : ndarray, shape (n_time, n_channels)
+    sampling_frequency : float
+        In Hz. A rate whose Nyquist frequency is under twice the cutoff
+        cannot hold a ripple band, so it is not judged.
+    name : str, optional
+        The argument's name, for the message.
+
+    Warns
+    -----
+    UserWarning
+        If any channel has more than ``_UNFILTERED_POWER_FRACTION`` of its
+        power below ``UNFILTERED_CUTOFF``.
+
+    """
+    if sampling_frequency < 4 * UNFILTERED_CUTOFF:
+        return
+    n_time, n_channels = filtered_lfps.shape
+    # a power of two about a quarter second long resolves 4 Hz or finer
+    length = min(n_time, int(2 ** np.ceil(np.log2(sampling_frequency / 4))))
+    if length < 64 or n_channels == 0:
+        return
+    missing_before = np.concatenate(
+        [[0], np.cumsum(~np.all(np.isfinite(filtered_lfps), axis=1))]
+    )
+    starts = np.flatnonzero(missing_before[length:] == missing_before[:-length])
+    if not starts.size:
+        return
+    n_segments = int(np.clip(_SPECTRUM_BUDGET // (length * n_channels), 1, _SPECTRUM_SEGMENTS))
+    chosen = np.unique(starts[np.linspace(0, starts.size - 1, n_segments).round().astype(int)])
+    segments = filtered_lfps[chosen[:, np.newaxis] + np.arange(length)]
+    tapered = segments * np.hanning(length)[:, np.newaxis]
+    power = (np.abs(np.fft.rfft(tapered, axis=1)) ** 2).sum(axis=0)
+    frequencies = np.fft.rfftfreq(length, 1 / sampling_frequency)
+    total = power.sum(axis=0)
+    low = power[frequencies < UNFILTERED_CUTOFF].sum(axis=0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        share = low / total  # a silent channel is 0/0, NaN, and never flagged
+    flagged = np.flatnonzero(share > _UNFILTERED_POWER_FRACTION)
+    if flagged.size:
+        shown = ", ".join(str(int(channel)) for channel in flagged[:5])
+        _warn_at_caller(
+            f"{name} does not look filtered, or looks too weakly filtered, to the ripple band: "
+            f"{100 * np.max(share[flagged]):.0f}% of the power of channel(s) "
+            f"[{shown}{', ...' if flagged.size > 5 else ''}] lies below "
+            f"{UNFILTERED_CUTOFF:g} Hz, where a ripple-band signal has almost none. On raw "
+            "LFP or ADC counts the events follow the slow waves, not the ripples. Filter "
+            f"first: {name} = filter_ripple_band(lfps, sampling_frequency)."
         )
 
 
@@ -233,7 +325,9 @@ def _validate_detector_inputs(
 
 
 def _check_finite_non_negative(**values: float) -> None:
-    """Raise for a value that is NaN, infinite or negative."""
+    """Raise for a value that is NaN, infinite or negative, and ``TypeError``
+    for one that is no number."""
+    _check_number(**values)
     for name, value in values.items():
         if not 0 <= value < np.inf:
             msg = f"{name} must be finite and non-negative, got {value}."
@@ -241,7 +335,9 @@ def _check_finite_non_negative(**values: float) -> None:
 
 
 def _check_positive(**values: float) -> None:
-    """Raise for a value that is not a positive finite number."""
+    """Raise for a value that is not a positive finite number: ``TypeError``
+    for one that is no number at all, such as None."""
+    _check_number(**values)
     for name, value in values.items():
         if not 0 < value < np.inf:
             msg = f"{name} must be positive and finite, got {value}."
@@ -299,6 +395,7 @@ def _check_thresholds(
     """Two thresholds, each finite and at or above ``minimum``, the first not
     above the second (a bounds threshold above the peak threshold disables
     the peak test)."""
+    _check_number(**{low_name: low, high_name: high})
     for name, value in ((low_name, low), (high_name, high)):
         if not minimum <= value < np.inf:
             msg = f"{name} must be finite and at least {minimum}, got {value}."
@@ -310,6 +407,7 @@ def _check_thresholds(
 
 def _check_whole_number(name: str, value: float, minimum: int) -> None:
     """Raise unless ``value`` is a whole number at or above ``minimum``."""
+    _check_number(**{name: value})
     if not (np.isfinite(value) and value == int(value) and value >= minimum):
         msg = f"{name} must be a whole number of at least {minimum}, got {value}."
         raise ValueError(msg)
@@ -384,6 +482,7 @@ def _validate_duration_limits(
     )
     if maximum_duration is None:
         return
+    _check_number(**{maximum_name: maximum_duration})
     if not 0 < maximum_duration < np.inf:
         msg = (
             f"{maximum_name} must be positive and finite, or None for no ceiling; "

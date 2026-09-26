@@ -8,6 +8,30 @@
 
 A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki/Sharp_waves_and_ripples) events (150-250 Hz) from local field potentials (LFPs) in neuroscience research.
 
+## Where to start
+
+The package offers three ways to find events. They are different contracts and give
+different events on the same recording, so pick the one that matches your question:
+
+1. **A general detector** (`Kay_ripple_detector` and eight others): one algorithm with
+   tunable parameters. For multichannel LFP from in or near the CA1 pyramidal layer,
+   start with `Kay_ripple_detector` on ripple-band filtered LFP ([Quick Start](#quick-start)).
+   At its default 2 SD it is a sensitive candidate generator (about 20 events a minute
+   on pure noise in the [simulation study](#how-the-detectors-compare-on-simulated-data));
+   raise `zscore_threshold` to 3, or use `Shvartsman_ripple_detector`, for fewer false
+   positives, `Karlsson_ripple_detector` when the ripple may appear on only some
+   channels, and `multiunit_HSE_detector` when you have spikes but no LFP.
+   [Choosing a detector](#choosing-a-detector) compares them all.
+2. **A published paper's rule** (`ripple_detection.literature_methods`): each surveyed
+   paper's candidate-event rule with that paper's fixed criteria, for reproducing or
+   comparing published analyses. These are not the general detectors with other
+   defaults: `karlsson_2009` keeps only events below 2 cm/s where
+   `Karlsson_ripple_detector` defaults to 4 cm/s. See
+   [Running a surveyed literature method](#running-a-surveyed-literature-method).
+3. **Your own variant**, composed from the building blocks the detectors use
+   (`detect_events_from_trace`, `require_active_units`, `state_intervals`, ...). See
+   [Detecting on a trace you build](#detecting-on-a-trace-you-build).
+
 ## Features
 
 - **Multiple Detection Algorithms**
@@ -42,6 +66,9 @@ A Python package for detecting [sharp-wave ripple](https://en.wikipedia.org/wiki
     events separated by a short gap: join them, or keep the first and drop the rest
   - `exclude_movement` / `exclude_movement_by_majority` - the two speed rules: immobile
     at the event's first and last sample, or over most of its samples
+  - `require_inside`, `intervals_to_mask`, `intersect_intervals` - keep events wholly
+    inside intervals (a brain state, curated rest), turn intervals into a sample mask,
+    and intersect two sets of intervals
 
 - **Simulation Tools**
   - Generate synthetic LFPs with embedded ripples
@@ -119,19 +146,41 @@ session = simulate_session(time, [5.0, 10.0, 15.0, 20.0, 25.0], rng=0)
 LFPs, speed = session.lfps, session.speed
 
 # Filter into the ripple band (150-250 Hz) first: the ripple-band detectors take
-# filtered LFP (Long_sharp_wave_ripple_detector, which takes raw LFP, is the exception)
-filtered_lfps = filter_ripple_band(LFPs, sampling_frequency=sampling_frequency)
+# filtered LFP (Long_sharp_wave_ripple_detector, which takes raw LFP, is the exception).
+# Passing time stops the filter at pauses in the recording as well as at NaN samples.
+filtered_lfps = filter_ripple_band(LFPs, sampling_frequency=sampling_frequency, time=time)
 
 # Detect ripples
 ripple_times = Kay_ripple_detector(
     time, filtered_lfps, speed, sampling_frequency,
     speed_threshold=4.0,        # cm/s
-    minimum_duration=0.015,     # seconds
+    minimum_duration=0.015,     # seconds above threshold, not the whole event
     zscore_threshold=2.0
 )
 
 print(ripple_times[["start_time", "end_time", "duration", "max_zscore"]])
 ```
+
+### Checking the detections
+
+Look at the events on the trace they were detected on before trusting a threshold.
+`get_Kay_ripple_consensus_trace` returns Kay's trace (other detectors report their
+thresholded trace's statistics in the output columns):
+
+```python
+import matplotlib.pyplot as plt
+from ripple_detection import get_Kay_ripple_consensus_trace
+
+consensus = get_Kay_ripple_consensus_trace(filtered_lfps, sampling_frequency, time=time)
+fig, ax = plt.subplots(figsize=(10, 3))
+ax.plot(time, consensus, color="black", linewidth=0.5)
+for event in ripple_times.itertuples():
+    ax.axvspan(event.start_time, event.end_time, color="tab:orange", alpha=0.3)
+ax.set(xlabel="Time (s)", ylabel="Consensus trace", xlim=(time[0], time[0] + 10))
+```
+
+The [tutorial](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/ripple_detection_tutorial.ipynb)
+has fuller quality checks.
 
 ### Data-driven threshold (Yu et al. 2017)
 
@@ -257,14 +306,14 @@ seeds:
 
 | Detector | Recall, `ripple_snr` 2 | Recall, `ripple_snr` 4 | False positives per minute, no ripples (4 / 16 / 32 ch) | Recall with the ripple on a quarter of 32 channels, `ripple_snr` 3 | Precision with 20 common-mode artifacts |
 |---|---|---|---|---|---|
-| Kay | 0.46 | 0.98 | 18 / 21 / 24 | 0.15 | 0.00 |
-| Karlsson | 0.32 | 0.98 | 2 / 9 / 19 | 0.60 | 0.00 |
-| Roumis | 0.46 | 0.99 | 21 / 23 / 26 | 0.10 | 0.00 |
-| Shvartsman | 0.08 | 0.92 | 0 / 0.7 / 2 | 0.40 | 0.00 |
-| Yu | 0.47 | 1.00 | 15 / 25 / 70 | 0.18 | 0.27 |
-| Zugaro | 0.27 | 0.92 | 11 / 14 / 16 | 0.06 | 0.00 |
-| Long | 0.42 | 0.81 | 8 / 8 / 8 | 0.58 | 0.94 |
-| Carey | 0.92 | 0.98 | 0.7 / 0.5 / 0.2 | 0.87 | 0.79 |
+| Kay | 0.48 | 0.99 | 18 / 21 / 24 | 0.14 | 0.00 |
+| Karlsson | 0.30 | 0.98 | 2 / 9 / 19 | 0.64 | 0.02 |
+| Roumis | 0.48 | 0.99 | 21 / 23 / 26 | 0.11 | 0.00 |
+| Shvartsman | 0.13 | 0.93 | 0 / 0.7 / 2 | 0.48 | 0.00 |
+| Yu | 0.58 | 1.00 | 15 / 25 / 70 | 0.17 | 0.30 |
+| Zugaro | 0.32 | 0.93 | 11 / 14 / 16 | 0.07 | 0.00 |
+| Long | 0.42 | 0.83 | 8 / 8 / 8 | 0.61 | 0.93 |
+| Carey | 0.96 | 0.99 | 0.7 / 0.5 / 0.2 | 0.86 | 0.79 |
 | HSE | 0.99 | 0.99 | 50 / 50 / 53 | 0.98 | 0.85 |
 
 What it shows:
@@ -273,9 +322,10 @@ What it shows:
   count, since any one channel crossing 3 SD makes an event; Yu's data-driven threshold falls the
   more correlated channels feed its median. Kay, Roumis, Zugaro, Long and Shvartsman barely move.
 - **At a matched false-positive rate the ripple-band algorithms are close, and Shvartsman
-  leads.** On 16 channels Kay at 3.0 SD (1.5 false positives a minute) and Karlsson at 3.5
-  (1.8) recall 0.62 to 0.64 of ripples at `ripple_snr` 3; Zugaro needs 8 SD to fall below one
-  a minute (0.8), and then recalls 0.32. Shvartsman at its default allows 0.7 and recalls 0.67.
+  trades a little recall for half the false positives.** On 16 channels Kay at 3.0 SD (1.5
+  false positives a minute) and Karlsson at 3.5 (1.8) recall 0.76 and 0.67 of ripples at
+  `ripple_snr` 3; Zugaro needs 8 SD to fall below one a minute (0.8), and then recalls 0.37.
+  Shvartsman at its default allows 0.7 and recalls 0.72.
   Most of what separates the defaults is where the threshold sits. Kay at 2 SD is a candidate
   generator, about 20 events a minute on noise.
 - **Which channels carry the ripple matters more than how many there are.** Pooled traces are
@@ -287,8 +337,8 @@ What it shows:
   from 0.83 to 0.32. HSE at 2 SD gives 50 events a minute on noise.
 - **Long's recall plateaus near 0.9** by construction: its percentile cuts drop the weakest tenth
   of the sharp-wave cluster, and it does not evaluate candidates within 5 s of a block edge. Its
-  events mark the sharp wave, so they start about 18 ms after the ripple window and end 18 ms
-  before it.
+  events mark the sharp wave, so they start about 18 ms after the ripple window starts and end
+  17 ms before it ends.
 - **Common-mode artifacts silence the ripple-band detectors at their defaults, except Yu and Long**,
   whose threshold is read off the noise side of the histogram. Long cancels them in its channel
   difference. The notebook shows what
@@ -325,6 +375,7 @@ All detectors return a pandas DataFrame with comprehensive event statistics:
 | `mean_speed` | Mean speed during event |
 | `clipped_start` | The event begins on the first sample of its block: it was cut off by missing data or the recording edge. For Zugaro, that the run has no crossing below `low_threshold` on that side |
 | `clipped_end` | The event ends on the last sample of its block |
+| `peak_time` | Time of the largest value of the detection trace in the event, the first such sample on a tie. For Long, the time of the sharp-wave peak |
 
 The z-score columns describe the trace each detector thresholds: the consensus trace for Kay and Roumis, the per-sample maximum over channels for Karlsson, the mean over participating channels for Shvartsman, the immobility-normalized median for Yu, the z-scored squared power for Zugaro, the joint score for Carey, the population rate for HSE, and the globally z-scored ripple power for Long. Their scales differ, so a `mean_zscore` of 3 from one detector is not 3 from another.
 
@@ -334,8 +385,7 @@ The index is `event_number`. Some detectors add columns:
 |---|---|
 | `Shvartsman_ripple_detector` | `participants` (sorted tuple of channel indices), `n_participants`, `frac_participants` |
 | `Yu_ripple_detector` | `n_suprathreshold_samples`, `detection_threshold_zscore` |
-| `Zugaro_ripple_detector` | `peak_time` |
-| `Long_sharp_wave_ripple_detector` | `peak_time`, `sharp_wave_zscore`, `sharp_wave_local_percentile`, `ripple_power_zscore`, `ripple_power_local_percentile`, `sharp_wave_duration`, `ripple_duration` |
+| `Long_sharp_wave_ripple_detector` | `sharp_wave_zscore`, `sharp_wave_local_percentile`, `ripple_power_zscore`, `ripple_power_local_percentile`, `sharp_wave_duration`, `ripple_duration` |
 | `Carey_candidate_detector` | `n_active_units` |
 | `multiunit_HSE_detector` | `n_active_units` |
 
@@ -370,6 +420,30 @@ ripples_with_a_burst = require_overlap(ripples, bursts)  # the other direction
 `require_overlap` takes a detector's DataFrame or an `(n_events, 2)` array of
 start and end times, and `minimum_overlap` raises the bar above "any overlap".
 
+Two more filters confirm one signal's events with another. `require_trace_peak`
+keeps the events in which a trace reaches a level ("a burst with a ripple z-score of
+at least 3 inside it"), and `require_times_inside` keeps the events that contain one of
+a set of times ("bursts containing a ripple's peak",
+`require_times_inside(bursts, ripples.peak_time)`). `windows_around_times` makes the
+fixed windows some papers use instead of trace crossings ("100 ms around each
+peak"). Two functions narrow detected events to their core: `trim_events_to_trace`
+moves each bound to the first or last sample where a trace is at or above a level
+("the first upward to the last downward crossing of 2 spikes/s per cell", or "onset
+at the first spike"), and `trim_events_to_spike_windows` moves them until the first
+and last decoding windows hold enough spikes.
+
+Participation criteria work the same way on any inventory. `require_active_units`
+keeps the events in which enough of chosen units fire, and `count_spikes_in_events`
+returns the per-event, per-unit spike counts they are read from:
+
+```python
+# "at least 5 place cells, or 15% of them, whichever is larger"
+kept = require_active_units(
+    ripples, multiunit, time,
+    minimum_active_units=5, minimum_active_fraction=0.15, units=is_place_cell,
+)
+```
+
 `exclude_overlap` is its complement, for vetoes: it keeps the events
 `require_overlap` would drop. The intervals to avoid come from outside this
 package: artifacts marked by hand or by another tool, periods of high muscle
@@ -386,6 +460,168 @@ clean = exclude_overlap(ripples, artifact_intervals + np.array([-0.1, 0.1]))
 A zero-length interval has no duration to overlap, so point events, such as
 the peak times of interictal spikes, veto nothing until widened into windows:
 `exclude_overlap(ripples, peak_times[:, np.newaxis] + [-0.1, 0.1])`.
+
+### Detecting on a trace you build
+
+Published detectors differ mostly in the trace they threshold: the mean or the
+sum of ripple envelopes across tetrodes, an RMS or wavelet power, a population
+rate of chosen cells. `detect_events_from_trace` takes any such trace and does
+the rest the way the detectors do: missing samples split the recording, the
+trace is optionally smoothed and normalized, runs at or above `threshold` for
+`minimum_duration` become events that extend to `bound_threshold`, and the speed,
+duration and close-event rules follow. The result has the detectors' columns.
+
+```python
+from ripple_detection import detect_events_from_trace, filter_ripple_band, get_envelope
+
+# Pfeiffer & Foster 2015: the ripple envelope averaged over tetrodes, smoothed
+# 12.5 ms, above 3 SD of the still periods, bounded at the mean, 50 ms to 2 s
+envelope = get_envelope(filter_ripple_band(lfps, sampling_frequency)).mean(axis=1)
+events = detect_events_from_trace(
+    time, envelope, speed, sampling_frequency,
+    threshold=3.0, smoothing_sigma=0.0125, normalization_mask=speed < 5,
+    minimum_duration=0.0, minimum_event_duration=0.05, maximum_duration=2.0,
+    speed_threshold=5.0,
+)
+```
+
+The arguments the detectors do not have cover what published rules vary:
+
+- `bound_threshold`: where an event ends, for papers that bound events at 0.5, 1
+  or 2 SD rather than at the mean. With `bound_search_window`, the bounds are sought
+  only that far from the run's first sample, and a sequence of levels gives fallbacks
+  for a side that finds none, as Tirole et al. 2022 did (`(0.0, 0.25, 0.5)` within
+  300 ms); a bound set at the search's edge is flagged in `clipped_start` or `clipped_end`.
+- `threshold` as an array: a level per sample, for a threshold that changes over the
+  recording.
+- `normalization_method="none"`: threshold the trace as given, for a trace
+  scaled the way a paper specifies (by its baseline mean, or by its maximum).
+- `minimum_event_duration`: a minimum on the whole event, which is what most
+  published minimums mean. It runs before close events are dropped, unlike a
+  filter on the result's `duration` column.
+- `speed_rule`: the endpoint rule, or every sample, the mean or the median speed
+  (as in `exclude_movement(..., rule=...)`), or `"restrict"`, which detects only on
+  slow samples and cuts an event where movement starts.
+- `close_event_rule="merge"`: join close events before the other rules, where
+  `"drop"` keeps the first of them after.
+
+### Events bounded by silence
+
+Some detectors use no rate threshold: an event is spiking from chosen cells set off by
+silence. `detect_silence_bounded_events` splits the pooled spike train wherever no
+selected unit fires for `minimum_silence` (Foster & Wilson 2006, Liu et al. 2019), or,
+with `window`, takes the window after each silence (Diba & Buzsáki 2007: 60 ms of
+silence, then at least 5 cells in the next 300 ms). A window ends at its last spike
+unless `window_end_rule="fixed"` keeps the whole window, as Diba did. `maximum_isi`
+first collapses each unit's bursts to their first spike, as Lee & Wilson 2002 did:
+
+```python
+from ripple_detection import detect_silence_bounded_events
+
+events = detect_silence_bounded_events(
+    time, multiunit, sampling_frequency,
+    minimum_silence=0.06, window=0.3, window_end_rule="fixed",
+    units=template_cells, minimum_active_units=5,
+)
+```
+
+### Carey's published candidates
+
+`Carey_candidate_detector` follows the van der Meer lab's `GenCandidateEvents` with its
+Hilbert ripple score. The candidates released with Carey, Tanaka & van der Meer 2019 used
+the code's spectral score instead, matched against a template built from example ripples,
+and a single threshold at 4 on the joint score rescaled to mean 0.5.
+`carey_spectral_ripple_score` reimplements that score (it equals the original's to
+rounding) and `threshold_method="mean"` that scaling:
+
+```python
+from ripple_detection import Carey_candidate_detector, carey_spectral_ripple_score
+
+# example_ripples: (n, 2) start and end times; the paper picked them by hand
+score = carey_spectral_ripple_score(time, raw_lfp, sampling_frequency, example_ripples)
+events = Carey_candidate_detector(
+    time, None, multiunit, speed, sampling_frequency,
+    ripple_score=score, threshold_method="mean", low_threshold=4.0, high_threshold=4.0,
+    theta_lfp=theta_lfp,
+)
+```
+
+### Restricting detection to a brain state
+
+Many papers detect only in slow-wave sleep or quiet rest, where theta is low
+relative to delta. `theta_delta_ratio` gives the ratio of the two bands' Hilbert
+envelopes from one raw channel, and `state_intervals` the periods a signal stays
+below (or above) a threshold, merged across short gaps and kept when long enough.
+The intervals keep or drop events, or restrict the normalization statistics:
+
+```python
+from ripple_detection import (
+    intersect_intervals, intervals_to_mask, require_inside, state_intervals, theta_delta_ratio,
+)
+
+ratio = theta_delta_ratio(raw_lfp, sampling_frequency, theta_band=(6, 12), delta_band=(1, 4))
+low_theta = state_intervals(ratio, time, 2.0)                        # ratio below 2
+still = state_intervals(speed, time, 1.0, minimum_duration=300.0)    # < 1 cm/s for 5 min
+sleep = intersect_intervals(low_theta, still)   # low theta while still
+
+events = require_inside(events, sleep)          # events wholly inside those periods
+in_sleep = intervals_to_mask(time, sleep)       # e.g. normalization_mask=in_sleep
+```
+
+Intervals are inclusive `[start, end]` pairs, sorted and disjoint. `require_overlap`
+and `exclude_overlap` keep or drop events that merely overlap intervals.
+
+`two_cluster_threshold(ratio)` splits a signal into two states by k-means instead of
+at a fixed level, and `histogram_minimum_threshold` takes a threshold at the first
+trough of a distribution after its peak, as for a population spike count. Published
+state rules differ in the bands, the power estimate and the threshold, and rarely
+report all of them, so these reproduce a rule's shape rather than its numbers.
+
+### Running a surveyed literature method
+
+`ripple_detection.literature_methods` runs each surveyed paper's candidate-event rule,
+and its secondary ripple and MUA inventories, on your recording. Build the recording
+once, find a method and what it needs, check the call, run it, and save the events
+with their provenance:
+
+```python
+from ripple_detection.literature_methods import (
+    Recording, check_method, list_methods, run_method, save_events,
+)
+
+recording = Recording.from_arrays(
+    time, sampling_frequency,
+    lfps=raw_lfp[:, channels],   # raw, not filtered; the pyramidal-layer channel first
+    multiunit=spike_counts,      # whole-number counts per sample and unit, not rates
+    speed=speed,                 # cm/s on the same timestamps; NaN where unknown
+    place_cells=place_cell_mask, pyramidal=pyramidal_mask,  # boolean masks over units
+    sleep_intervals=nrem, baseline_intervals=pre_task_rest,
+)
+methods = list_methods()  # per method: DOI, role, stages, grid, and what it needs
+methods.loc[methods.paper == "Chenani 2019", ["name", "signals", "cells", "intervals"]]
+
+check_method("chenani_2019", recording, behavior_intervals=reward_zones)  # [] if it can run
+events = run_method("chenani_2019", recording, behavior_intervals=reward_zones)
+events.attrs["diagnostics"]   # valid duration, interval coverage, events per step
+save_events(events, "chenani_2019.csv")  # and chenani_2019.json with the provenance
+```
+
+A method that lacks an input raises and lists everything missing at once;
+`check_method` returns the same list without running. `behavior_intervals` belong to
+each call because methods need different epochs (reward zones, rest, track ends).
+These are the papers' fixed rules, not tunable detectors: to vary a threshold, use a
+general detector or the building blocks. Every result starts with `start_time`,
+`end_time`, `duration`, `peak_time`, `clipped_start` and `clipped_end`, and
+`events.attrs` records the method, DOI, resolved options, grid and inputs.
+
+The recording holds float64 copies so that NaN can mark missing samples: one hour at
+1500 Hz with 100 units is 4.32 GB of spike counts. The
+[measured-data walkthrough](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/measured_walkthrough.py)
+covers every step, including channel and cell selection, baseline versus state
+intervals and analysis stages; the
+[implementation guide](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/docs/literature/implementation.md)
+covers input conventions, method coverage and remaining verification. These methods
+implement candidate-event rules; they do not perform replay decoding.
 
 ### Simulating realistic ripples
 
@@ -420,6 +656,18 @@ events = Kay_ripple_detector(session.time, filtered, session.speed, session.samp
 session.ripple_windows      # (n_ripples, 2): the interval each event should overlap
 ```
 
+To exercise the speed and state rules, give the session running bouts: the speed then rises
+and falls smoothly within each (`simulate_speed`), and `theta_amplitude` and
+`delta_amplitude` add 8 Hz theta while running and 2 Hz delta at rest to every channel
+(`simulate_theta_delta`), which `theta_delta_ratio` tells apart:
+
+```python
+session = simulate_session(
+    time, [2.0, 5.0, 8.0], running_intervals=[(10.0, 20.0)],
+    theta_amplitude=4.0, delta_amplitude=4.0, rng=0,
+)
+```
+
 The z-score a detector reports is larger
 than `ripple_snr` by a factor that depends on its smoothing and consensus rule; measure it for
 the detector you use rather than assuming a mapping. The
@@ -431,6 +679,7 @@ See the [examples](https://github.com/Eden-Kramer-Lab/ripple_detection/tree/mast
 - [Detection Examples](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/detection_examples.ipynb) - Using different detectors
 - [Algorithm Components](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/test_individual_algorithm_components.ipynb) - Testing individual components
 - [Simulation Study](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/simulation_study.ipynb) - Recall, precision, timing and false positives of every detector on simulated sessions
+- [Literature recipes](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/literature_recipes.py) - Runs the packaged primary literature methods on a simulated session (`uv run python examples/literature_recipes.py`)
 
 ## Troubleshooting
 
@@ -488,7 +737,21 @@ cost. Pass the decimated rate as `sampling_frequency`.
 
 #### No ripples detected (empty DataFrame)
 
-If detection returns no events, try adjusting parameters:
+Find out why before changing parameters. If you are reproducing a paper, a different
+threshold, duration or speed limit is a different method.
+
+1. Check the inputs: filtered (not raw) LFP from channels in or near the pyramidal
+   layer, speed in cm/s, time in seconds, and how much of the recording is valid
+   (not NaN) and slow enough to pass the speed rule.
+2. Plot the trace with any events ([Checking the detections](#checking-the-detections))
+   and look for 150-250 Hz oscillations during immobility.
+3. Check what the rule requires: `minimum_duration` is the time above threshold, the
+   speed rule applies at the event's first and last samples, and events closer than
+   `close_ripple_threshold` are dropped.
+4. For a literature method, read `events.attrs["diagnostics"]` and
+   `literature_methods.check_method(name, recording)`.
+
+Only then, if the question allows it, adjust and record the change:
 
 ```python
 ripples = Kay_ripple_detector(
@@ -498,12 +761,6 @@ ripples = Kay_ripple_detector(
     speed_threshold=10.0       # Increase if too restrictive (default 4.0)
 )
 ```
-
-**Diagnostic steps:**
-1. Check if your LFPs actually contain ripples (150-250 Hz oscillations)
-2. Verify speed is in cm/s (not m/s)
-3. Plot the filtered LFP to visually inspect for ripple events
-4. Try a different detector (see [Choosing a detector](#choosing-a-detector))
 
 ### Parameter Selection Guide
 
@@ -521,12 +778,38 @@ ripples = Kay_ripple_detector(
 | `minimum_active_units` | 0 on `multiunit_HSE_detector` (no criterion), 5 on `Carey_candidate_detector` | Units with at least one spike inside the event; every event reports `n_active_units` | Published criteria are most often around five units |
 | `band`, `transition_width` on `filter_ripple_band` | `None`, meaning 150-250 Hz, and `None`, meaning 25 Hz for a designed filter | Passband of the designed filter. `sampling_frequency` is always required; the shipped kernel (10 Hz transitions) is used only at 1500 Hz with the default band, whether `None` or `(150, 250)`, and no `transition_width`. Any other band, rate or width designs a filter | Published bands run from about 80-180 Hz at the lower edge to 200-300 Hz at the upper |
 
+### Public datasets for the surveyed papers
+
+`load_literature_datasets()` loads a separate packaged catalog of public
+recordings and released event files, with DANDI, CRCNS, Dryad, Zenodo,
+Figshare, Mendeley, OSF, DataLad and data-bearing repository links. It records original versus
+reused data, available inputs, event annotations and verification scope.
+
+```python
+from ripple_detection import load_literature_datasets, load_literature_parameters
+
+datasets = load_literature_datasets()
+papers = load_literature_parameters()[["DOI", "First Author", "Year"]]
+linked = datasets.merge(papers, left_on="paper_doi", right_on="DOI", validate="many_to_one")
+linked.loc[linked.event_annotations == "present", ["First Author", "dataset_url", "notes"]]
+```
+
+This is a partial catalog: a missing paper does not mean its data are
+unavailable. `not_verified` differs from `not_found_in_inspected_scope`, and
+published candidates are not automatically ground-truth replay labels.
+Mirrors and reused recordings mean rows are not independent datasets. See
+the [dataset guide](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/docs/literature/datasets.md)
+for the schema and inspection limits.
+
 ### Published parameter values
 
 Where the package's defaults sit relative to the literature. Compiled from 57
-papers that decode replay content (1999-2025), each value read from the paper's
-Methods; counts are of papers stating a bare number for that parameter, so
-entries like ">4" or "33% of the ensemble" are excluded rather than coerced.
+replay and reactivation papers (1999-2025), using Methods, supplements and the
+papers' released code. See the [literature guide](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/docs/literature/README.md)
+for field evidence, code/text differences and unresolved sources. Counts include
+secondary/control analyses and provisional entries, with one entry per paper;
+they are not counts of equivalent primary detectors. Only bare numbers enter
+these summaries; entries like ">4" or "10%" are excluded rather than coerced.
 
 The per-paper table ships with the package, so you can ask it your own question
 rather than take the summary below:
@@ -539,19 +822,20 @@ parameters.groupby("Detection")["SWR Z-score Thresh. (STD)"].median()
 parameters.loc[parameters["Spike sorting"] == "Clusterless", ["First Author", "Year", "DOI"]]
 ```
 
-| Parameter | Papers | Published range | Median | Most common | Package default |
+| Parameter | Papers | Recorded range | Median | Mode | Package default |
 |---|---|---|---|---|---|
-| `zscore_threshold` (ripple) | 27 | 1-8 SD | 3 SD | 3, 2, then 4 and 8 tied | 2.0 Kay/Roumis, 3.0 Karlsson/Shvartsman |
-| `zscore_threshold` (multiunit) | 27 | 2-4 SD | 3 SD | 3, 2, 4 | 2.0 |
-| ripple band | 30 | 80-180 Hz low, 200-300 Hz high | 150-250 Hz | 150-250 Hz (17 papers) | 150-250 Hz |
-| `smoothing_sigma` (ripple) | 18 | 4-100 ms | 12.5 ms | 4, 12.5, 15 | 4 ms; 10 ms on Carey |
-| `smoothing_sigma` (multiunit) | 28 | 5-30 ms | 15 ms | 15, 10, 5 | 15 ms |
-| `speed_threshold` | 42 | 0.05-10 cm/s | 5 cm/s | 5, 4, 2 | 4 cm/s |
-| `minimum_duration` | 41 | 15-100 ms | 50 ms | 50, 100, then 15 and 40 tied | 15 ms, 20 ms on Yu/Zugaro/Carey |
-| `maximum_duration` | 25 | 400-2000 ms | 600 ms | 500, 2000, 750 | none, except Zugaro 100 ms and Long 500 ms (sharp wave) |
-| merge or drop gap | 14 | 20-100 ms | 50 ms | 50, then 20, 40 and 100 tied | 0 (no exclusion); Zugaro merges within 30 ms, Long drops within 50 ms |
-| `minimum_active_units` | 27 | 3-10 units | 5 units | 5, 4, 3 | 0 on the burst detector, 5 on Carey |
-| channels required | 27 | 13 papers use one, 10 more than one, 4 a small number | one | one | one is enough except Shvartsman (2 by default) and Long (exactly 2); Kay, Roumis, Yu and Zugaro pool all channels |
+| `zscore_threshold` (ripple) | 33 | 1-8 SD | 3 SD | 3 | 2.0 Kay/Roumis, 3.0 Karlsson/Shvartsman |
+| `zscore_threshold` (multiunit) | 31 | 2-4 SD | 3 SD | 3 | 2.0 |
+| ripple band | 38 | 80-180 Hz low, 200-300 Hz high | 150-250 Hz | 150-250 Hz (19 papers) | 150-250 Hz |
+| smoothing width (ripple) | 22 | 4-80 ms | 12.5 ms | 4 | Gaussian SD 4 ms; 10 ms on Carey |
+| smoothing width (multiunit) | 32 | 5-80 ms | 15 ms | 15 | Gaussian SD 15 ms |
+| `speed_threshold` | 35 | 1-10 cm/s | 5 cm/s | 5 | 4 cm/s |
+| minimum event duration | 40 | 15-100 ms | 50 ms | 50 | 20 ms on Zugaro and Carey. Kay, Karlsson, Roumis, Shvartsman, Yu and HSE have none: their `minimum_duration` (15 ms; 20 ms on Yu) is time above threshold. `minimum_event_duration` on `detect_events_from_trace` |
+| `maximum_duration` | 24 | 300-2000 ms | 550 ms | 500 | none, except Zugaro 100 ms and Long 500 ms (sharp wave) |
+| event grouping interval | 15 | 20-100 ms | 50 ms | 50 | 0 (no exclusion); Zugaro merges within 30 ms, Long drops within 50 ms |
+| `minimum_active_units` | 27 | 3-10 units | 5 units | 5 | 0 on the burst detector, 5 on Carey |
+| ripple channels sampled | 32 | 10 papers use one, 18 multiple, 4 a range | — | — | See each detector's channel aggregation rule |
+
 
 Three cautions before treating this as a recipe:
 
@@ -563,11 +847,14 @@ Three cautions before treating this as a recipe:
 - **Our thresholds and minimum duration sit at the permissive end.** A 2 SD threshold
   held for 15 ms admits more than the field's median of 3 SD and 50 ms. Tightening to
   the median is a defensible sensitivity check, not an extreme one.
-- **Some published speed values restrict analysis rather than detection**, so that row
-  overstates how many papers gate detection on speed. `minimum_duration` also means
-  different things across papers: on Kay, Karlsson, Roumis, Shvartsman, Yu and the HSE
-  detector it is the run above threshold, before the extension to the mean; on Zugaro,
-  Carey and Long it is the event as reported, as in many papers.
+- **The columns contain different kinds of criteria.** Speed can define an analysis
+  state or gate an event. Duration can constrain a threshold crossing, a bounded
+  event, or a replay candidate. Smoothing widths include Gaussian SDs, moving-average
+  widths, RMS windows and spectral windows: they cannot all be passed as
+  `smoothing_sigma`. Tirole's MUA width is per pass of a forward/backward filter.
+  Grouping intervals include spike gaps, peak separations and gaps between event boundaries. Channels sampled
+  does not mean channels required to participate. Read the per-paper notes before
+  converting any row into detector arguments.
 
 ### Getting Help
 
@@ -602,7 +889,7 @@ conventions below.
 | `Yu_ripple_detector` | same | median over channels of each channel's z-scored 4 ms-smoothed envelope | `percentile` 99.99 of the mirrored immobility-noise distribution, estimated per call | ≥ 0.020 s | `close_ripple_threshold` 0.0 | noise from `speed <= threshold`; event endpoints ≤ threshold | Yu et al. 2017 |
 | `Zugaro_ripple_detector` | same, channels summed | z-scored smoothed squared signal, two thresholds (strictly above) | `low_threshold` 2.0 (bounds), `high_threshold` 5.0 (peak) | 0.020–0.100 s | `minimum_inter_ripple_interval` 0.030 s, merges | endpoints ≤ threshold | FMAToolbox `FindRipples` (Hirase; Zugaro) |
 | `Long_sharp_wave_ripple_detector` | **raw** LFP of the pyramidal-layer channel, and of a stratum radiatum channel as `sharp_wave_lfp=` | sharp-wave difference and ripple power, split by k-means with local (±5 s) statistics | `sharp_wave_thresholds`, `ripple_thresholds` (0.5, 2.5) | sharp wave 0.020–0.500 s **or** ripple ≥ 0.025 s: either minimum suffices; a sharp wave over 0.500 s is dropped | `minimum_separation` 0.050 s from the previous candidate, kept or not; drops | endpoints ≤ threshold | Long, buzcode/neurocode `DetectSWR` |
-| `Carey_candidate_detector` | ripple-band LFP **and** spikes `(n_time, n_units)` | geometric mean of a ripple-envelope score and a multiunit score, two thresholds (strictly above) | `low_threshold` 1.0, `high_threshold` 3.0; ≥ `minimum_active_units` 5 | ≥ 0.020 s | none | whole event inside a low-speed interval (`speed <= threshold`) | Carey, Tanaka & van der Meer 2019 |
+| `Carey_candidate_detector` | ripple-band LFP **and** spikes `(n_time, n_units)` | geometric mean of a ripple-envelope score and a multiunit score, two thresholds (strictly above) | `low_threshold` 1.0, `high_threshold` 3.0; ≥ `minimum_active_units` 5 | ≥ 0.020 s | none | whole event inside a low-speed interval (`speed <= threshold`) | van der Meer lab `GenCandidateEvents`, Hilbert option, for Carey, Tanaka & van der Meer 2019; the published candidates' `amSWR` score and `precand` threshold are `ripple_score=carey_spectral_ripple_score(...)` with `threshold_method="mean"` |
 | `multiunit_HSE_detector` | spikes `(n_time, n_units)`, no LFP | z-scored 15 ms-smoothed population rate | `zscore_threshold` 2.0 | ≥ 0.015 s | `close_event_threshold` 0.0 | endpoints ≤ threshold | package convention; Davidson et al. 2009 lineage |
 
 Notes:
@@ -651,7 +938,11 @@ Notes:
 - Two conventions are the package's, not each source's: every duration limit is an inclusive
   round-half-up sample count (`sample_count_within`), and immobility is `speed <= speed_threshold`.
 - "Close events" above says what each detector does by default. `merge_close_events` applies
-  the other convention, joining nearby events into one, to any inventory afterwards.
+  the other convention, joining nearby events into one, to any inventory afterwards: by gap,
+  with `inclusive=True` for rules written "40 ms or less", or by peak separation with
+  `measure="peak"`. `exclude_close_events(..., measure_from="start")` times the gap from the
+  earlier event's start, as "within 1 s after another SWR" does, and `require_isolation` drops
+  every event of a close pair, for rules such as "separated from others by at least 500 ms".
   The gating rule itself (endpoints, majority, interval containment) stays as each source defines it.
 - The other defaults reproduce each source's published or lab settings where one exists; they are
   not harmonized across detectors, so the same recording yields different event counts under

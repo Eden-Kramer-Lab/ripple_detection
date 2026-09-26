@@ -23,6 +23,7 @@ import pandas as pd
 from numpy.typing import ArrayLike
 
 from ripple_detection import _descriptions
+from ripple_detection._call_hints import keyword_notes
 from ripple_detection.detectors import (
     Carey_candidate_detector,
     Karlsson_ripple_detector,
@@ -34,7 +35,15 @@ from ripple_detection.detectors import (
     Zugaro_ripple_detector,
     multiunit_HSE_detector,
 )
+from ripple_detection.detectors._carey import _check_carey_parameters
+from ripple_detection.detectors._hse import _check_hse_parameters
+from ripple_detection.detectors._lfp import (
+    _check_shvartsman_parameters,
+    _check_threshold_parameters,
+)
+from ripple_detection.detectors._long import _check_long_parameters
 from ripple_detection.detectors._validation import _validate_multiunit
+from ripple_detection.detectors._zugaro import _check_zugaro_parameters
 
 SignalKind = Literal["ripple_band_lfp", "raw_lfp", "multiunit"]
 """The kinds of signal a detector can take. The three values below are the
@@ -281,7 +290,17 @@ class DetectorSpec:
         }
 
     def check_parameters(self, parameters: Mapping[str, object]) -> None:
-        """Raise if ``parameters`` holds a name this detector does not take.
+        """Raise if ``parameters`` would fail the detector before it read any data.
+
+        For a pipeline that stores a detector's parameters, to reject a bad
+        set when it is stored rather than when it is first run: a name the
+        detector does not take (with what it was meant to be: an argument
+        removed in 2.0, another detector's name for the same parameter, or a
+        misspelling), a value that is no number, one out of range, and a
+        duration in milliseconds where seconds belong. Parameters left out
+        take their defaults. What needs the data or the sampling rate, such
+        as a band below the Nyquist frequency or ``minimum_active_units``
+        against the number of units, is checked when the detector runs.
 
         Parameters
         ----------
@@ -291,7 +310,10 @@ class DetectorSpec:
         Raises
         ------
         ValueError
-            Naming the unknown keys and the detector's parameters.
+            Naming the unknown keys and the detector's parameters, or a value
+            out of range, with the detector's own message.
+        TypeError
+            If a value that must be a number is not one, such as ``"2"``.
 
         Examples
         --------
@@ -305,15 +327,26 @@ class DetectorSpec:
         ... except ValueError as error:
         ...     print(str(error).split(";")[0])
         Kay_ripple_detector does not take z_score_threshold
+        >>> try:
+        ...     spec.check_parameters({"minimum_duration": 15})
+        ... except ValueError as error:
+        ...     print(str(error).split(". ")[-1])
+        For 15 ms pass 0.015.
 
         """
         unknown = sorted(set(parameters) - set(self.parameters))
         if unknown:
+            notes = keyword_notes(self.name, list(self.parameters), unknown)
             msg = (
                 f"{self.name} does not take {', '.join(unknown)}; its parameters are "
-                f"{', '.join(self.parameters)}."
+                f"{', '.join(self.parameters)}." + "".join(f" {note}" for note in notes)
             )
             raise ValueError(msg)
+        check = _PARAMETER_CHECKS.get(self.detector)
+        if check is not None:
+            values = {**self.parameters, **parameters}
+            checked = inspect.signature(check).parameters
+            check(**{name: value for name, value in values.items() if name in checked})
 
     def check_inputs(self, *signals: ArrayLike, **keyword_signals: ArrayLike) -> None:
         """Raise if the signals do not have the shape this detector takes.
@@ -324,7 +357,8 @@ class DetectorSpec:
         whole numbers. It cannot tell raw LFP from ripple-band LFP; both are
         floats of the same shape, and no property of the numbers settles it
         for every recording. That remains the caller's responsibility, which
-        is why :attr:`inputs` states it.
+        is why :attr:`inputs` states it; the detectors warn when ripple-band
+        input has most of its power below 100 Hz, as raw LFP has.
 
         Parameters
         ----------
@@ -395,6 +429,26 @@ class DetectorSpec:
                 raise ValueError(msg)
             if kind == MULTIUNIT:
                 _validate_multiunit(array, what)
+
+
+_PARAMETER_CHECKS: Mapping[Callable[..., pd.DataFrame], Callable[..., None]] = (
+    MappingProxyType(
+        {
+            Kay_ripple_detector: _check_threshold_parameters,
+            Karlsson_ripple_detector: _check_threshold_parameters,
+            Roumis_ripple_detector: _check_threshold_parameters,
+            Yu_ripple_detector: _check_threshold_parameters,
+            Shvartsman_ripple_detector: _check_shvartsman_parameters,
+            Zugaro_ripple_detector: _check_zugaro_parameters,
+            Long_sharp_wave_ripple_detector: _check_long_parameters,
+            Carey_candidate_detector: _check_carey_parameters,
+            multiunit_HSE_detector: _check_hse_parameters,
+        }
+    )
+)
+"""Each detector's checks on its tunables that need no data, the ones it
+runs first; :meth:`DetectorSpec.check_parameters` passes each the
+parameters it names."""
 
 
 def _spec(

@@ -48,15 +48,23 @@ jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --exec
 
 # Re-run the simulation study sweep the notebook reads (about two minutes)
 uv run python examples/simulation_study.py
+
+# Run every surveyed paper's packaged method on a simulated session (seconds;
+# overwrites examples/literature_recipes_results.csv). Widloski 2022 has none:
+# its replay is defined by decoding (literature_methods.NOT_REPRODUCED)
+uv run python examples/literature_recipes.py
+
+# The measured-data walkthrough for literature_methods (seconds; the tests run it)
+uv run python examples/measured_walkthrough.py
 ```
 
 ## Architecture
 
 ### Core Module Structure
 
-The package lives under `src/` (the Scientific Python guide's layout, so tests import the installed package, never the checkout) and is organized into five modules, one of them a package:
+The package lives under `src/` (the Scientific Python guide's layout, so tests import the installed package, never the checkout) and is organized into six modules, one of them a package:
 
-1. **[src/ripple_detection/core.py](src/ripple_detection/core.py)** - Low-level signal processing utilities
+1. **[src/ripple_detection/core.py](src/ripple_detection/core.py)** - Low-level signal processing utilities, and the event and interval rules (`merge_close_events`, `require_overlap`, `require_inside`, `intervals_to_mask`, `intersect_intervals`, ...). Intervals are inclusive, sorted and disjoint; event bounds are closed intervals on recorded timestamps
 
 2. **[src/ripple_detection/detectors/](src/ripple_detection/detectors/)** - High-level detection algorithms, a package whose `__init__` re-exports the public names so `from ripple_detection.detectors import Kay_ripple_detector` still works
    - `_validation.py` - shape, length, unit and duration-limit checks
@@ -65,8 +73,12 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
    - `_lfp.py` - `Kay_ripple_detector` (Kay et al. 2016), `Karlsson_ripple_detector` (Karlsson & Frank 2009), `Roumis_ripple_detector` (Frank-lab variant, unpublished), `Shvartsman_ripple_detector` (unpublished), `Yu_ripple_detector` (Yu et al. 2017), and the two consensus traces
    - `_zugaro.py` - `Zugaro_ripple_detector`, the FMAToolbox `FindRipples` two-threshold rule
    - `_long.py` - `Long_sharp_wave_ripple_detector`, sharp wave + ripple power on two raw channels, k-means split (Long, `DetectSWR`)
-   - `_carey.py` - `Carey_candidate_detector`, joint ripple-envelope × multiunit score (Carey, Tanaka & van der Meer 2019)
+   - `_carey.py` - `Carey_candidate_detector`, joint ripple-envelope × multiunit score (the van der Meer lab's `GenCandidateEvents` for Carey, Tanaka & van der Meer 2019), and `carey_spectral_ripple_score`, the lab's `amSWR` score behind the paper's published candidates (with `ripple_score=` and `threshold_method="mean"`)
    - `_hse.py` - `multiunit_HSE_detector`, multiunit High Synchrony Events (spikes only)
+   - `_silence.py` - `detect_silence_bounded_events`, spiking set off by silence (groups between silences, or the window after each); not a registered detector, since it takes no speed and returns its own columns
+   - `_state.py` - `theta_delta_ratio` and `state_intervals`, for detection restricted to a brain or behavioural state
+   - `_units.py` - `count_spikes_in_events` and `require_active_units`, participation criteria on any event inventory, and `trim_events_to_spike_windows`
+   - `_trace.py` - `detect_events_from_trace`, the shared thresholding on a trace the caller builds (bound level, raw thresholds, whole-event minimum, speed and close-event rules); not a registered detector, since its signal is whatever trace the caller passes
    - The README's "Choosing a detector" table is the reference for how their conventions differ
    - All detectors return pandas DataFrames with event statistics
 
@@ -75,7 +87,7 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
    - `simulate_multichannel_LFP`: channels sharing one ripple (per-channel gains) in noise that is part shared, part their own; optional common-mode artifacts
    - `simulate_sharp_wave_ripple_pair`: the raw pyramidal-layer and stratum radiatum channels the Long detector takes
    - `simulate_multiunit`: Poisson units that burst with the ripples
-   - `simulate_session`: all of the above from one draw of per-ripple durations and frequencies, returned with the ground truth as a `SimulatedSession` (`ripple_windows` are the intervals a detected event should overlap)
+   - `simulate_session`: all of the above from one draw of per-ripple durations and frequencies, returned with the ground truth as a `SimulatedSession` (`ripple_windows` are the intervals a detected event should overlap); `running_intervals` gives it running bouts (`simulate_speed`) and `theta_amplitude`/`delta_amplitude` add theta while running and delta at rest to every channel, radiatum included (`simulate_theta_delta`), all after the random draws so the defaults are unchanged
    - The basis of the integration tests and of `examples/simulation_study.py`
 
 4. **[src/ripple_detection/registry.py](src/ripple_detection/registry.py)** - `DETECTORS`, `get_detector`, `DetectorSpec`
@@ -83,9 +95,18 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
    - `spec.describe()`: JSON-ready inputs, tunables (default, unit, meaning) and output columns, from [_descriptions.py](src/ripple_detection/_descriptions.py); `tests/test_registry.py::TestDescribe` fails when a new or renamed parameter or column has no entry there
    - For pipelines that store a detector's name rather than importing it
 
-5. **[src/ripple_detection/literature.py](src/ripple_detection/literature.py)** - `load_literature_parameters`
+5. **[src/ripple_detection/literature.py](src/ripple_detection/literature.py)** - `load_literature_parameters` and `load_literature_datasets`
    - The survey of detection parameters from 57 replay papers, shipped as `data/literature_detection_parameters.csv`
    - The README's "Published parameter values" table is computed from it
+   - [docs/literature/README.md](docs/literature/README.md) defines the current survey conventions: the packaged CSV owns values, `evidence.csv` owns field statuses/citations, `sources.md` owns source versions/fingerprints, and one note per paper explains methods and uncertainties. Git preserves correction history.
+   - The separate packaged `data/literature_datasets.csv` owns public data links, reuse relationships and scoped availability summaries, joined by paper DOI. It is a partial catalog; [datasets.md](docs/literature/datasets.md) defines its schema and distinguishes unverified annotations from annotations not found in an inspected scope.
+
+6. **[src/ripple_detection/literature_methods.py](src/ripple_detection/literature_methods.py)** - Packaged paper/protocol methods
+   - `Recording.from_arrays`, native population grids, `list_methods`, `check_method`, `run_method`, `save_events` and `load_events`
+   - Primary recipes and separate ripple/HFE/MUA/protocol inventories, identified by function name, DOI and output role
+   - Each method declares its requirements (`Requirement`) once, in its registration; `list_methods` reports them and `check_method`/`run_method` check them, and a test runs every method with exactly its declared inputs and with each removed. `behavior_intervals` are a per-call argument, not a `Recording` field
+   - Every result starts with the same six columns, and its `attrs` (method, options, grid, inputs, diagnostics) are plain JSON types
+   - The simulation script only supplies demonstration inputs; [implementation.md](docs/literature/implementation.md) owns usage and current implementation limits
 
 Two private modules serve callers rather than detection: [_call_hints.py](src/ripple_detection/_call_hints.py) wraps the public functions so a call written for 1.x fails with the 2.0 change behind it (add a removed or renamed argument to `REMOVED_ARGUMENTS` there, keyed by function, and only for a name a release shipped: users upgrade from a release, so a name that changed between releases gets no hint; `SAME_ROLE` maps other detectors' and libraries' names for a parameter by what it does), and [_descriptions.py](src/ripple_detection/_descriptions.py) holds what `describe()` reports. Warnings go through `core._warn_at_caller`, which attributes them to the first frame outside the package, so no function passes a `stacklevel`.
 

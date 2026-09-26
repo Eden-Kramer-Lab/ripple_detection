@@ -2,7 +2,7 @@
 Shvartsman and Yu, with their consensus traces."""
 
 from itertools import chain
-from typing import cast
+from typing import Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -13,6 +13,8 @@ from ripple_detection.core import (
     BoolArray,
     FloatArray,
     IntArray,
+    NormalizationMethod,
+    _check_non_negative,
     _is_immobile,
     _is_immobile_at_endpoints,
     _is_immobile_by_majority,
@@ -48,6 +50,7 @@ from ripple_detection.detectors._validation import (
     _validate_detector_inputs,
     _validate_duration_limits,
     _validate_lfp_dimensions,
+    _warn_if_not_ripple_band,
 )
 
 
@@ -75,7 +78,8 @@ def get_Kay_ripple_consensus_trace(
     Parameters
     ----------
     ripple_filtered_lfps : array_like, shape (n_time, n_channels)
-        Bandpass filtered LFP signals in the ripple band (150-250 Hz).
+        Bandpass filtered LFP signals in the ripple band (150-250 Hz). Input with most of its
+        power below 100 Hz, as raw LFP and ADC counts have, warns.
     sampling_frequency : float
         Sampling rate in Hz.
     smoothing_sigma : float, optional
@@ -110,23 +114,31 @@ def get_Kay_ripple_consensus_trace(
     # cannot overflow before the square root.
     ripple_filtered_lfps = np.asarray(ripple_filtered_lfps, dtype=float)
     _validate_lfp_dimensions(ripple_filtered_lfps)
-    time_array = _consensus_time(time, ripple_filtered_lfps.shape[0])
+    time_array = _consensus_time(time, ripple_filtered_lfps.shape)
     is_valid = np.all(np.isfinite(ripple_filtered_lfps), axis=1)
     if not np.any(is_valid):
         msg = "No sample has finite values in every channel."
         raise ValueError(msg)
+    _warn_if_not_ripple_band(ripple_filtered_lfps, sampling_frequency, "ripple_filtered_lfps")
     blocks = _contiguous_valid_blocks(is_valid, time_array)
     return _kay_consensus(ripple_filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
 
 
-def _consensus_time(time: ArrayLike | None, n_time: int) -> FloatArray | None:
+def _consensus_time(time: ArrayLike | None, lfp_shape: tuple[int, ...]) -> FloatArray | None:
     """The optional timestamps of a consensus trace as a float array of one
-    timestamp per sample, or None."""
+    timestamp per row of an LFP of shape ``lfp_shape``, or None."""
     if time is None:
         return None
     time_array = np.asarray(time, dtype=float)
-    if time_array.shape != (n_time,):
-        msg = f"time has shape {time_array.shape} but filtered_lfps has {n_time} samples."
+    if time_array.shape != lfp_shape[:1]:
+        msg = (
+            f"time has shape {time_array.shape} but filtered_lfps has {lfp_shape[0]} samples."
+        )
+        if time_array.shape == lfp_shape[1:]:
+            msg += (
+                f" filtered_lfps has shape {lfp_shape}, which looks transposed: transpose "
+                "it to (n_time, n_channels), time down the rows (pass .T)."
+            )
         raise ValueError(msg)
     return time_array
 
@@ -172,7 +184,8 @@ def get_Yu_ripple_consensus_trace(
     Parameters
     ----------
     ripple_filtered_lfps : array_like, shape (n_time, n_channels)
-        Bandpass filtered LFP signals in the ripple band (150-250 Hz).
+        Bandpass filtered LFP signals in the ripple band (150-250 Hz). Input with most of its
+        power below 100 Hz, as raw LFP and ADC counts have, warns.
     sampling_frequency : float
         Sampling rate in Hz.
     smoothing_sigma : float, optional
@@ -213,11 +226,12 @@ def get_Yu_ripple_consensus_trace(
     """
     ripple_filtered_lfps = np.asarray(ripple_filtered_lfps, dtype=float)
     _validate_lfp_dimensions(ripple_filtered_lfps)
-    time_array = _consensus_time(time, ripple_filtered_lfps.shape[0])
+    time_array = _consensus_time(time, ripple_filtered_lfps.shape)
     is_valid = np.all(np.isfinite(ripple_filtered_lfps), axis=1)
     if not np.any(is_valid):
         msg = "No sample has finite values in every channel."
         raise ValueError(msg)
+    _warn_if_not_ripple_band(ripple_filtered_lfps, sampling_frequency, "ripple_filtered_lfps")
     return _yu_consensus(
         ripple_filtered_lfps,
         is_valid,
@@ -320,6 +334,99 @@ def _extract_Yu_ripple_events(
     return np.asarray(event_times, dtype=float).reshape(-1, 2), n_suprathreshold
 
 
+def _check_threshold_parameters(
+    *,
+    speed_threshold: float,
+    minimum_duration: float,
+    maximum_duration: float | None,
+    close_ripple_threshold: float,
+    smoothing_sigma: float,
+    zscore_threshold: float | None = None,
+) -> None:
+    """The checks on the envelope detectors' tunables that need no data:
+    types, ranges, and durations that look like milliseconds. Yu has no
+    ``zscore_threshold``. ``DetectorSpec.check_parameters`` runs them too."""
+    _check_non_negative(speed_threshold=speed_threshold)
+    _validate_duration_limits(minimum_duration, maximum_duration)
+    if zscore_threshold is not None:
+        _check_finite_non_negative(zscore_threshold=zscore_threshold)
+    _check_gap(close_ripple_threshold=close_ripple_threshold)
+    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
+
+
+def _check_shvartsman_parameters(
+    *,
+    speed_threshold: float,
+    minimum_duration: float,
+    maximum_duration: float | None,
+    zscore_threshold: float,
+    close_ripple_threshold: float,
+    smoothing_sigma: float,
+    normalization_method: str,
+    normalization_mask: object,
+    channel_baselines: object,
+    channel_deviations: object,
+    minimum_participating_channels: int | None,
+    minimum_participating_fraction: float | None,
+) -> None:
+    """``_check_threshold_parameters`` and the normalization and
+    participation options of ``Shvartsman_ripple_detector``: which go
+    together, and their ranges."""
+    if normalization_method not in ("zscore", "median_mad", "manual"):
+        msg = (
+            "normalization_method must be 'zscore', 'median_mad' or 'manual', "
+            f"got {normalization_method!r}."
+        )
+        raise ValueError(msg)
+    if normalization_method == "manual":
+        if channel_baselines is None or channel_deviations is None:
+            msg = (
+                "normalization_method='manual' needs channel_baselines and "
+                "channel_deviations, one entry per channel."
+            )
+            raise ValueError(msg)
+        if normalization_mask is not None:
+            msg = (
+                "normalization_mask has no meaning with normalization_method='manual': "
+                "the statistics are the ones supplied. Drop one or the other."
+            )
+            raise ValueError(msg)
+    elif channel_baselines is not None or channel_deviations is not None:
+        msg = (
+            "channel_baselines and channel_deviations apply only with "
+            f"normalization_method='manual', not {normalization_method!r}."
+        )
+        raise ValueError(msg)
+    if (
+        minimum_participating_channels is not None
+        and minimum_participating_fraction is not None
+    ):
+        msg = (
+            "Give minimum_participating_channels or minimum_participating_fraction, not both."
+        )
+        raise ValueError(msg)
+    if minimum_participating_channels is not None:
+        _check_whole_number(
+            "minimum_participating_channels", minimum_participating_channels, 0
+        )
+    if minimum_participating_fraction is not None and not (
+        0.0 <= minimum_participating_fraction <= 1.0
+    ):
+        msg = (
+            f"minimum_participating_fraction must lie in [0, 1], got "
+            f"{minimum_participating_fraction}."
+        )
+        raise ValueError(msg)
+    _check_threshold_parameters(
+        speed_threshold=speed_threshold,
+        minimum_duration=minimum_duration,
+        maximum_duration=maximum_duration,
+        close_ripple_threshold=close_ripple_threshold,
+        smoothing_sigma=smoothing_sigma,
+        zscore_threshold=zscore_threshold,
+    )
+
+
 @explain_call_errors
 def Shvartsman_ripple_detector(
     time: ArrayLike,
@@ -332,7 +439,7 @@ def Shvartsman_ripple_detector(
     zscore_threshold: float = 3.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
-    normalization_method: str = "zscore",
+    normalization_method: NormalizationMethod | Literal["manual"] = "zscore",
     normalization_mask: ArrayLike | None = None,
     channel_baselines: ArrayLike | None = None,
     channel_deviations: ArrayLike | None = None,
@@ -363,6 +470,8 @@ def Shvartsman_ripple_detector(
     filtered_lfps : array_like, shape (n_time, n_channels)
         LFP signals **already bandpass filtered** to ripple band (150-250 Hz).
         Must be pre-filtered using `filter_ripple_band()` before calling this detector.
+        Input with most of its power below 100 Hz, as raw LFP and ADC counts
+        have, warns.
     speed : array_like, shape (n_time,)
         Animal's running speed at each time point in **cm/s**.
     sampling_frequency : float
@@ -378,13 +487,17 @@ def Shvartsman_ripple_detector(
         by 100. To disable movement exclusion, pass ``np.inf``, which also
         keeps events whose speed is unknown (NaN).
     minimum_duration : float, optional
-        Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
-        The signal must stay at or above ``zscore_threshold`` for at least
-        ``minimum_sample_count(time, minimum_duration)`` consecutive samples,
-        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms).
-        The 15 ms is Karlsson & Frank 2009's; the rounding is the Frank lab
-        ``extractevents`` convention. The event is then extended to the surrounding
-        mean-crossings, so the reported ``duration`` is typically longer.
+        Minimum time above threshold in **seconds**. Default is 0.015 (15
+        milliseconds). The signal must stay at or above ``zscore_threshold`` for
+        at least ``minimum_sample_count(time, minimum_duration)`` consecutive
+        samples, rounded half up from the median timestamp step (23 at 1500 Hz
+        and 15 ms). The 15 ms is Karlsson & Frank 2009's; the rounding is the
+        Frank lab ``extractevents`` convention. The event is then extended to
+        the surrounding mean-crossings, so the reported ``duration`` is
+        typically longer.
+        It is the time above threshold, not the whole event's duration; for a
+        minimum on the whole event, which most published minimums mean, see
+        ``detect_events_from_trace(minimum_event_duration=)``.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
     zscore_threshold : float, optional
@@ -494,56 +607,20 @@ def Shvartsman_ripple_detector(
     True
 
     """
-    if normalization_method not in ("zscore", "median_mad", "manual"):
-        msg = (
-            "normalization_method must be 'zscore', 'median_mad' or 'manual', "
-            f"got {normalization_method!r}."
-        )
-        raise ValueError(msg)
-    manual = normalization_method == "manual"
-    if manual:
-        if channel_baselines is None or channel_deviations is None:
-            msg = (
-                "normalization_method='manual' needs channel_baselines and "
-                "channel_deviations, one entry per channel."
-            )
-            raise ValueError(msg)
-        if normalization_mask is not None:
-            msg = (
-                "normalization_mask has no meaning with normalization_method='manual': "
-                "the statistics are the ones supplied. Drop one or the other."
-            )
-            raise ValueError(msg)
-    elif channel_baselines is not None or channel_deviations is not None:
-        msg = (
-            "channel_baselines and channel_deviations apply only with "
-            f"normalization_method='manual', not {normalization_method!r}."
-        )
-        raise ValueError(msg)
-    if (
-        minimum_participating_channels is not None
-        and minimum_participating_fraction is not None
-    ):
-        msg = (
-            "Give minimum_participating_channels or minimum_participating_fraction, not both."
-        )
-        raise ValueError(msg)
-    if minimum_participating_channels is not None:
-        _check_whole_number(
-            "minimum_participating_channels", minimum_participating_channels, 0
-        )
-    if minimum_participating_fraction is not None and not (
-        0.0 <= minimum_participating_fraction <= 1.0
-    ):
-        msg = (
-            f"minimum_participating_fraction must lie in [0, 1], got "
-            f"{minimum_participating_fraction}."
-        )
-        raise ValueError(msg)
-    _validate_duration_limits(minimum_duration, maximum_duration)
-    _check_finite_non_negative(zscore_threshold=zscore_threshold)
-    _check_gap(close_ripple_threshold=close_ripple_threshold)
-    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
+    _check_shvartsman_parameters(
+        speed_threshold=speed_threshold,
+        minimum_duration=minimum_duration,
+        maximum_duration=maximum_duration,
+        zscore_threshold=zscore_threshold,
+        close_ripple_threshold=close_ripple_threshold,
+        smoothing_sigma=smoothing_sigma,
+        normalization_method=normalization_method,
+        normalization_mask=normalization_mask,
+        channel_baselines=channel_baselines,
+        channel_deviations=channel_deviations,
+        minimum_participating_channels=minimum_participating_channels,
+        minimum_participating_fraction=minimum_participating_fraction,
+    )
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
@@ -559,9 +636,10 @@ def Shvartsman_ripple_detector(
         raise ValueError(msg)
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
     _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
+    _warn_if_not_ripple_band(filtered_lfps, sampling_frequency)
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
-    if manual:
+    if normalization_method == "manual":
         normalized = normalize_signal_manually(
             smoothed, cast(ArrayLike, channel_baselines), cast(ArrayLike, channel_deviations)
         )
@@ -625,7 +703,7 @@ def Kay_ripple_detector(
     zscore_threshold: float = 2.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
-    normalization_method: str = "zscore",
+    normalization_method: NormalizationMethod = "zscore",
     normalization_mask: ArrayLike | None = None,
     maximum_duration: float | None = None,
 ) -> pd.DataFrame:
@@ -643,6 +721,8 @@ def Kay_ripple_detector(
     filtered_lfps : array_like, shape (n_time, n_channels)
         LFP signals **already bandpass filtered** to ripple band (150-250 Hz).
         Must be pre-filtered using `filter_ripple_band()` before calling this detector.
+        Input with most of its power below 100 Hz, as raw LFP and ADC counts
+        have, warns.
     speed : array_like, shape (n_time,)
         Animal's running speed at each time point in **cm/s**.
     sampling_frequency : float
@@ -658,13 +738,17 @@ def Kay_ripple_detector(
         by 100. To disable movement exclusion, pass ``np.inf``, which also
         keeps events whose speed is unknown (NaN).
     minimum_duration : float, optional
-        Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
-        The signal must stay at or above ``zscore_threshold`` for at least
-        ``minimum_sample_count(time, minimum_duration)`` consecutive samples,
-        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms).
-        The 15 ms is Karlsson & Frank 2009's; the rounding is the Frank lab
-        ``extractevents`` convention. The event is then extended to the surrounding
-        mean-crossings, so the reported ``duration`` is typically longer.
+        Minimum time above threshold in **seconds**. Default is 0.015 (15
+        milliseconds). The signal must stay at or above ``zscore_threshold`` for
+        at least ``minimum_sample_count(time, minimum_duration)`` consecutive
+        samples, rounded half up from the median timestamp step (23 at 1500 Hz
+        and 15 ms). The 15 ms is Karlsson & Frank 2009's; the rounding is the
+        Frank lab ``extractevents`` convention. The event is then extended to
+        the surrounding mean-crossings, so the reported ``duration`` is
+        typically longer.
+        It is the time above threshold, not the whole event's duration; for a
+        minimum on the whole event, which most published minimums mean, see
+        ``detect_events_from_trace(minimum_event_duration=)``.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
     zscore_threshold : float, optional
@@ -709,6 +793,7 @@ def Kay_ripple_detector(
         - speed metrics: speed_at_start, speed_at_end, max/min/median/mean_speed
         - clipped_start, clipped_end: whether the event was cut off by missing
           data or the recording edge
+        - peak_time: time of the consensus trace's largest value in the event
 
         Returns empty DataFrame if no ripples detected. If this occurs, try:
         - Lowering zscore_threshold (e.g., from 2.0 to 1.5)
@@ -753,15 +838,20 @@ def Kay_ripple_detector(
        doi:10.1038/nature17144
 
     """
-    _validate_duration_limits(minimum_duration, maximum_duration)
-    _check_finite_non_negative(zscore_threshold=zscore_threshold)
-    _check_gap(close_ripple_threshold=close_ripple_threshold)
-    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
+    _check_threshold_parameters(
+        speed_threshold=speed_threshold,
+        minimum_duration=minimum_duration,
+        maximum_duration=maximum_duration,
+        close_ripple_threshold=close_ripple_threshold,
+        smoothing_sigma=smoothing_sigma,
+        zscore_threshold=zscore_threshold,
+    )
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
     _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
+    _warn_if_not_ripple_band(filtered_lfps, sampling_frequency)
 
     consensus = _kay_consensus(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     return _detect_from_trace(
@@ -819,7 +909,8 @@ def Yu_ripple_detector(
         Time values for each sample in seconds.
     filtered_lfps : array_like, shape (n_time, n_channels)
         LFP signals already bandpass filtered to the ripple band (150-250 Hz),
-        e.g. with ``filter_ripple_band``. NaN marks missing samples.
+        e.g. with ``filter_ripple_band``. NaN marks missing samples. Input with
+        most of its power below 100 Hz, as raw LFP and ADC counts have, warns.
     speed : array_like, shape (n_time,)
         Animal's running speed in cm/s.
     sampling_frequency : float
@@ -834,6 +925,9 @@ def Yu_ripple_detector(
     minimum_duration : float, optional
         Minimum time the consensus must stay at or above the threshold, in
         seconds, applied as a sample count (round-half-up). Default is 0.020.
+        It is the time above threshold, not the whole event's duration; for a
+        minimum on the whole event, which most published minimums mean, see
+        ``detect_events_from_trace(minimum_event_duration=)``.
     percentile : float, optional
         Percentile of the mirrored noise distribution used as the threshold.
         Default is 99.99.
@@ -871,8 +965,8 @@ def Yu_ripple_detector(
     ripple_times : pd.DataFrame
         One row per event, indexed by ``event_number``, with the columns of
         the other detectors (``start_time``, ``end_time``, ``duration``,
-        ``max_sustained_zscore``, z-score and speed statistics, ``clipped_start`` and
-        ``clipped_end``) plus ``n_suprathreshold_samples`` (longest run at or
+        ``max_sustained_zscore``, z-score and speed statistics, ``clipped_start``,
+        ``clipped_end`` and ``peak_time``) plus ``n_suprathreshold_samples`` (longest run at or
         above the threshold) and ``detection_threshold_zscore`` (the threshold
         in the normalized units the statistics are reported in).
 
@@ -908,14 +1002,19 @@ def Yu_ripple_detector(
     True
 
     """
-    _validate_duration_limits(minimum_duration, maximum_duration)
-    _check_gap(close_ripple_threshold=close_ripple_threshold)
-    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
+    _check_threshold_parameters(
+        speed_threshold=speed_threshold,
+        minimum_duration=minimum_duration,
+        maximum_duration=maximum_duration,
+        close_ripple_threshold=close_ripple_threshold,
+        smoothing_sigma=smoothing_sigma,
+    )
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
     _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
+    _warn_if_not_ripple_band(filtered_lfps, sampling_frequency)
 
     consensus = _yu_consensus(
         filtered_lfps,
@@ -1001,7 +1100,7 @@ def Karlsson_ripple_detector(
     zscore_threshold: float = 3.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
-    normalization_method: str = "zscore",
+    normalization_method: NormalizationMethod = "zscore",
     normalization_mask: ArrayLike | None = None,
     maximum_duration: float | None = None,
 ) -> pd.DataFrame:
@@ -1018,6 +1117,8 @@ def Karlsson_ripple_detector(
     filtered_lfps : array_like, shape (n_time, n_channels)
         LFP signals **already bandpass filtered** to ripple band (150-250 Hz).
         Must be pre-filtered using `filter_ripple_band()` before calling this detector.
+        Input with most of its power below 100 Hz, as raw LFP and ADC counts
+        have, warns.
     speed : array_like, shape (n_time,)
         Animal's running speed at each time point in **cm/s**.
     sampling_frequency : float
@@ -1033,13 +1134,17 @@ def Karlsson_ripple_detector(
         by 100. To disable movement exclusion, pass ``np.inf``, which also
         keeps events whose speed is unknown (NaN).
     minimum_duration : float, optional
-        Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
-        The signal must stay at or above ``zscore_threshold`` for at least
-        ``minimum_sample_count(time, minimum_duration)`` consecutive samples,
-        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms).
-        The 15 ms is Karlsson & Frank 2009's; the rounding is the Frank lab
-        ``extractevents`` convention. The event is then extended to the surrounding
-        mean-crossings, so the reported ``duration`` is typically longer.
+        Minimum time above threshold in **seconds**. Default is 0.015 (15
+        milliseconds). The signal must stay at or above ``zscore_threshold`` for
+        at least ``minimum_sample_count(time, minimum_duration)`` consecutive
+        samples, rounded half up from the median timestamp step (23 at 1500 Hz
+        and 15 ms). The 15 ms is Karlsson & Frank 2009's; the rounding is the
+        Frank lab ``extractevents`` convention. The event is then extended to
+        the surrounding mean-crossings, so the reported ``duration`` is
+        typically longer.
+        It is the time above threshold, not the whole event's duration; for a
+        minimum on the whole event, which most published minimums mean, see
+        ``detect_events_from_trace(minimum_event_duration=)``.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
     zscore_threshold : float, optional
@@ -1121,15 +1226,20 @@ def Karlsson_ripple_detector(
     ('event_number', True)
 
     """
-    _validate_duration_limits(minimum_duration, maximum_duration)
-    _check_finite_non_negative(zscore_threshold=zscore_threshold)
-    _check_gap(close_ripple_threshold=close_ripple_threshold)
-    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
+    _check_threshold_parameters(
+        speed_threshold=speed_threshold,
+        minimum_duration=minimum_duration,
+        maximum_duration=maximum_duration,
+        close_ripple_threshold=close_ripple_threshold,
+        smoothing_sigma=smoothing_sigma,
+        zscore_threshold=zscore_threshold,
+    )
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
     _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
+    _warn_if_not_ripple_band(filtered_lfps, sampling_frequency)
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
@@ -1172,7 +1282,7 @@ def Roumis_ripple_detector(
     zscore_threshold: float = 2.0,
     smoothing_sigma: float = 0.004,
     close_ripple_threshold: float = 0.0,
-    normalization_method: str = "zscore",
+    normalization_method: NormalizationMethod = "zscore",
     normalization_mask: ArrayLike | None = None,
     maximum_duration: float | None = None,
 ) -> pd.DataFrame:
@@ -1189,6 +1299,8 @@ def Roumis_ripple_detector(
     filtered_lfps : array_like, shape (n_time, n_channels)
         LFP signals **already bandpass filtered** to ripple band (150-250 Hz).
         Must be pre-filtered using `filter_ripple_band()` before calling this detector.
+        Input with most of its power below 100 Hz, as raw LFP and ADC counts
+        have, warns.
     speed : array_like, shape (n_time,)
         Animal's running speed at each time point in **cm/s**.
     sampling_frequency : float
@@ -1204,13 +1316,17 @@ def Roumis_ripple_detector(
         by 100. To disable movement exclusion, pass ``np.inf``, which also
         keeps events whose speed is unknown (NaN).
     minimum_duration : float, optional
-        Minimum ripple duration in **seconds**. Default is 0.015 (15 milliseconds).
-        The signal must stay at or above ``zscore_threshold`` for at least
-        ``minimum_sample_count(time, minimum_duration)`` consecutive samples,
-        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms).
-        The 15 ms is Karlsson & Frank 2009's; the rounding is the Frank lab
-        ``extractevents`` convention. The event is then extended to the surrounding
-        mean-crossings, so the reported ``duration`` is typically longer.
+        Minimum time above threshold in **seconds**. Default is 0.015 (15
+        milliseconds). The signal must stay at or above ``zscore_threshold`` for
+        at least ``minimum_sample_count(time, minimum_duration)`` consecutive
+        samples, rounded half up from the median timestamp step (23 at 1500 Hz
+        and 15 ms). The 15 ms is Karlsson & Frank 2009's; the rounding is the
+        Frank lab ``extractevents`` convention. The event is then extended to
+        the surrounding mean-crossings, so the reported ``duration`` is
+        typically longer.
+        It is the time above threshold, not the whole event's duration; for a
+        minimum on the whole event, which most published minimums mean, see
+        ``detect_events_from_trace(minimum_event_duration=)``.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
     zscore_threshold : float, optional
@@ -1289,15 +1405,20 @@ def Roumis_ripple_detector(
     ('event_number', True)
 
     """
-    _validate_duration_limits(minimum_duration, maximum_duration)
-    _check_finite_non_negative(zscore_threshold=zscore_threshold)
-    _check_gap(close_ripple_threshold=close_ripple_threshold)
-    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
+    _check_threshold_parameters(
+        speed_threshold=speed_threshold,
+        minimum_duration=minimum_duration,
+        maximum_duration=maximum_duration,
+        close_ripple_threshold=close_ripple_threshold,
+        smoothing_sigma=smoothing_sigma,
+        zscore_threshold=zscore_threshold,
+    )
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
     _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
+    _warn_if_not_ripple_band(filtered_lfps, sampling_frequency)
 
     smoothed_power = _smoothed_envelope(
         filtered_lfps, blocks, sampling_frequency, smoothing_sigma, square=True

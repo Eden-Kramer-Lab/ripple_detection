@@ -318,21 +318,21 @@ class TestSimulationProperties:
     @settings(max_examples=20, deadline=1000)
     def test_white_noise_shape(self, n):
         """White noise should have correct shape."""
-        noise = white(n)
+        noise = white(n, rng=0)
         assert noise.shape == (n,)
 
     @given(n=st.integers(min_value=100, max_value=5000))
     @settings(max_examples=20, deadline=1000)
     def test_pink_noise_shape(self, n):
         """Pink noise should have correct shape."""
-        noise = pink(n)
+        noise = pink(n, rng=0)
         assert noise.shape == (n,)
 
     @given(n=st.integers(min_value=100, max_value=5000))
     @settings(max_examples=20, deadline=1000)
     def test_brown_noise_shape(self, n):
         """Brown noise should have correct shape."""
-        noise = brown(n)
+        noise = brown(n, rng=0)
         assert noise.shape == (n,)
 
     @given(
@@ -366,7 +366,7 @@ class TestSimulationProperties:
         # Generate ripple times that don't overlap
         ripple_times = np.linspace(0.5, duration - 0.5, n_ripples) if n_ripples > 0 else []
 
-        lfp = simulate_LFP(time, ripple_times=ripple_times)
+        lfp = simulate_LFP(time, ripple_times=ripple_times, rng=0)
 
         assert lfp.shape == time.shape
 
@@ -385,9 +385,14 @@ class TestSimulationProperties:
             ripple_times=ripple_times,
             ripple_amplitude=ripple_amplitude,
             noise_amplitude=noise_amplitude,
+            rng=0,
         )
         lfp_no_ripple = simulate_LFP(
-            time, ripple_times=[], ripple_amplitude=0, noise_amplitude=noise_amplitude
+            time,
+            ripple_times=[],
+            ripple_amplitude=0,
+            noise_amplitude=noise_amplitude,
+            rng=0,
         )
 
         # Total power with ripple should be higher
