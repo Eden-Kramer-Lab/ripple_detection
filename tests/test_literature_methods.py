@@ -1150,10 +1150,11 @@ def test_method_roles_are_independent_of_demonstration_grouping(measured):
     catalog = lm.list_methods().set_index("name")
     assert catalog.loc["harvey_2023_no_radiatum", "role"] == "candidate_detection"
     assert catalog.loc["harvey_2023_no_radiatum", "inventory"] == "additional"
-    assert catalog.loc["widloski_2025_bursts", "role"] == "secondary_label"
+    assert catalog.loc["widloski_2025_bursts", "role"] == "secondary"
     assert catalog.loc["widloski_2025", "inventory"] == "default"
+    assert catalog.loc["widloski_2025", "role"] == "secondary"
     result = lm.mallory_2025_ripples(measured)
-    assert result.attrs["role"] == "candidate_detection"
+    assert result.attrs["role"] == "secondary"
     assert result.attrs["inventory"] == "additional"
 
 
@@ -2119,3 +2120,64 @@ def test_tirole_and_pfeiffer_help_state_their_rules_and_channels():
     assert "41-point" in catalog["tirole_2022"]
     assert "every selected channel" in catalog["pfeiffer_2015"]
     assert "12.5 ms Gaussian" in catalog["pfeiffer_2015"]
+
+
+SECONDARY_INVENTORIES = {
+    "widloski_2025",
+    "kaefer_2020",
+    "widloski_2025_bursts",
+    "mallory_2025_ripples",
+    "bush_2022_ripples",
+    "igata_2021_ripples",
+    "gridchyn_2020_ripples",
+    "xu_2019_ripples",
+    "farooq_2019_neuron_ripples",
+    "farooq_2019_science_ripples",
+    "liu_2019_ripples",
+    "drieu_2018_ripples",
+    "olafsdottir_2017_ripples",
+    "wu_2014_ripples",
+    "pfeiffer_2013_ripples",
+    "davidson_2009_ripples",
+    "diba_2007_ripples",
+    "ji_2007_ripples",
+    "lee_2002_ripples",
+    "foster_2006_ripples",
+    "krause_2022_hse",
+    "denovellis_2021_mua",
+    "gillespie_2021_mua",
+    "muessig_2019_ripples",
+    "bhattarai_2020_ripples",
+}
+
+
+def test_secondary_is_a_role_not_part_of_the_output_description():
+    catalog = lm.list_methods().set_index("name")
+    assert set(catalog.index[catalog.role == "secondary"]) == SECONDARY_INVENTORIES
+    assert set(catalog.role) == {"candidate_detection", "secondary", "candidate_gate"}
+    for word in ("secondary", "separate"):
+        assert not catalog.output.str.contains(word).any(), word
+
+
+def test_paper_labels_use_the_surveys_spelling():
+    survey = rd.load_literature_parameters()
+    for entry in (*lm.RECIPES, *lm.VARIANTS):
+        assert entry.paper.startswith(survey.loc[entry.row, "First Author"]), entry.paper
+
+
+def test_not_reproduced_names_the_methods_that_remain():
+    catalog = lm.list_methods().set_index("name")
+    for row, (paper, reason, methods) in lm.NOT_REPRODUCED.items():
+        assert paper
+        assert reason
+        for name in methods:
+            assert lm._ENTRIES[name].row == row, name
+            assert catalog.loc[name, "role"] in {"secondary", "candidate_gate"}, name
+    assert lm.NOT_REPRODUCED[1][2] == ("widloski_2025", "widloski_2025_bursts")
+    assert lm.NOT_REPRODUCED[9][2] == ()
+
+
+def test_list_methods_defines_every_column_once():
+    doc = inspect.getdoc(lm.list_methods)
+    terms = [line.strip() for line in doc.splitlines() if re.fullmatch(r"    [a-z_]+", line)]
+    assert sorted(terms) == sorted(lm.list_methods().columns)

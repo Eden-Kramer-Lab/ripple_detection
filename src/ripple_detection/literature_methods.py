@@ -1421,8 +1421,8 @@ def _mallory_candidates(time: FloatArray, z: FloatArray) -> pd.DataFrame:
 # --------------------------------------------------------------------------- recipes
 
 
-Role = Literal["candidate_detection", "secondary_label", "candidate_gate"]
-"""A method's output: candidate events, a secondary label, or a candidate gate."""
+Role = Literal["candidate_detection", "secondary", "candidate_gate"]
+"""A method's scientific use; ``list_methods`` defines each value."""
 
 Stage = Literal["detection", "decoding_candidates"]
 """The initial inventory, or the candidates a paper's decoding analysis kept."""
@@ -1433,26 +1433,26 @@ Inventory = Literal["default", "additional"]
 
 @dataclass(frozen=True)
 class Recipe:
-    """One registered literature method.
+    """One registered literature method; ``list_methods`` shows every entry.
 
     Attributes
     ----------
     row : int
         The paper's row in ``load_literature_parameters()``.
     paper : str
-        Paper label, naming the variant when a paper has several.
+        ``list_methods``' ``paper``.
     trigger : str
-        What the output is, such as "MUA", "SWR+MUA" or "secondary ripple peaks".
+        ``list_methods``' ``output``.
     run : callable
         The public method, ``run(rec, **options)``; it dispatches through
         ``run_method`` and returns a DataFrame.
     note : str
-        The implementation's docstring: its interpretation and assumptions.
-    role : {"candidate_detection", "secondary_label", "candidate_gate"}
-        The output's scientific use.
+        ``list_methods``' ``interpretation``.
+    role : {"candidate_detection", "secondary", "candidate_gate"}
+        ``list_methods``' ``role``.
     inventory : {"default", "additional"}
-        "default" for the demonstration's inventories (``RECIPES``),
-        "additional" for the others (``VARIANTS``).
+        ``list_methods``' ``inventory``: "default" entries are in ``RECIPES``,
+        "additional" ones in ``VARIANTS``.
     """
 
     row: int
@@ -1575,7 +1575,7 @@ def mallory_2025(rec: Recording) -> pd.DataFrame:
     return _mallory_candidates(rec.time, _zscore(trace, ddof=1))
 
 
-@_recipe(1, "Widloski 2025", "secondary ripple label", role="secondary_label")
+@_recipe(1, "Widloski 2025", "ripple label", role="secondary")
 def widloski_2025(rec: Recording) -> pd.DataFrame | FloatArray:
     """Replays are defined by decoding (not reproduced). This is the ripple
     label: 100-220 Hz, one channel per tetrode, envelope smoothed with an
@@ -2308,7 +2308,7 @@ def gridchyn_2020(
     return result
 
 
-@_recipe(18, "Kaefer 2020", "secondary SWR label", role="secondary_label")
+@_recipe(18, "Kaefer 2020", "SWR label", role="secondary")
 def kaefer_2020(rec: Recording) -> pd.DataFrame:
     """Secondary SWR label: reference-subtracted 240 ms FFT chunks every 20 ms.
 
@@ -2727,7 +2727,7 @@ def maboudi_2018(rec: Recording) -> FloatArray:
     )
 
 
-@_recipe(32, "Olafsdottir 2017", "MUA")
+@_recipe(32, "Ólafsdóttir 2017", "MUA")
 def olafsdottir_2017(rec: Recording, *, analysis: str = "arm") -> pd.DataFrame | FloatArray:
     """Native place-cell MUA candidates, with separate arm/trajectory participation.
 
@@ -2864,7 +2864,7 @@ def jadhav_2016(rec: Recording, *, stage: Stage = "detection") -> pd.DataFrame |
     return rd.require_active_units(events, rec.multiunit, rec.time, minimum_active_units=4)
 
 
-@_recipe(39, "Olafsdottir 2016", "MUA")
+@_recipe(39, "Ólafsdóttir 2016", "MUA")
 def olafsdottir_2016(rec: Recording) -> pd.DataFrame | FloatArray:
     """Place cells, 5 ms Gaussian, > 3 SD, bounds at the mean, >= 40 ms,
     >=15% of the place cells; no speed rule. Supply a rest recording;
@@ -2892,7 +2892,7 @@ def silva_2015(rec: Recording) -> pd.DataFrame | FloatArray:
     )  # fmt: skip
 
 
-@_recipe(41, "Olafsdottir 2015", "MUA")
+@_recipe(41, "Ólafsdóttir 2015", "MUA")
 def olafsdottir_2015(rec: Recording, *, minimum_active_units: int = 0) -> FloatArray:
     """Per-template silence-bounded candidates before optional decoding filters.
 
@@ -3215,7 +3215,7 @@ def lee_2002(rec: Recording) -> pd.DataFrame | FloatArray:
     )  # fmt: skip
 
 
-@_recipe(55, "Nadasdy 1999", "SWR")
+@_recipe(55, "Nádasdy 1999", "SWR")
 def nadasdy_1999(
     rec: Recording, *, rms_window: float | None = None, bound_threshold: float | None = None
 ) -> FloatArray:
@@ -3265,27 +3265,43 @@ def kudrimoti_1999(rec: Recording, *, threshold_sd: float | None = None) -> pd.D
     )
 
 
-NOT_REPRODUCED: dict[int, tuple[str, str]] = {
+NOT_REPRODUCED: dict[int, tuple[str, str, tuple[str, ...]]] = {
     1: (
         "Widloski 2025",
-        "Decoded replay definition is not implemented; the available method returns secondary ripple labels.",
+        (
+            "Decoded replay definition is not implemented; the available methods return "
+            "secondary ripple and population-burst labels."
+        ),
+        ("widloski_2025", "widloski_2025_bursts"),
     ),
     18: (
         "Kaefer 2020",
-        "Adaptive-window trajectory decoding is not implemented; the available method returns secondary SWR labels.",
+        (
+            "Adaptive-window trajectory decoding is not implemented; the available method "
+            "returns secondary SWR labels."
+        ),
+        ("kaefer_2020",),
     ),
     48: (
         "Gupta 2010",
-        "Flexible spike-sequence windows are not implemented; the available method returns only the SWR gate.",
+        (
+            "Flexible spike-sequence windows are not implemented; the available method "
+            "returns only the SWR gate."
+        ),
+        ("gupta_2010",),
     ),
     9: (
         "Widloski 2022",
         (
-            "events are defined by decoding; ripple amplitude and spike density are "
-            "reference traces only"
+            "Events are defined by decoding; ripple amplitude and spike density are "
+            "reference traces only."
         ),
+        (),
     ),
 }
+"""Papers whose own event definition is not implemented, keyed by survey row:
+``(paper, reason, methods)``, where ``methods`` names the inventories that
+remain available for that paper (secondary labels or a gate), if any."""
 
 
 # --------------------------------------------------------------------------- run
@@ -3441,7 +3457,7 @@ def harvey_2023_no_radiatum(rec: Recording, *, stage: Stage = "detection") -> Fl
     return _harvey_stage(rec, _spiking_filter(rec, ripples), stage)
 
 
-@_variant(0, "Mallory 2025", "secondary ripple candidates")
+@_variant(0, "Mallory 2025", "ripple candidates", role="secondary")
 def mallory_2025_ripples(rec: Recording) -> pd.DataFrame:
     """Single-channel 150-250 Hz Hilbert amplitude, 12.5 ms smoothing.
 
@@ -3455,7 +3471,7 @@ def mallory_2025_ripples(rec: Recording) -> pd.DataFrame:
     return _mallory_candidates(rec.time, _zscore(amplitude, ddof=1))
 
 
-@_variant(7, "Bush 2022", "secondary ripple candidates")
+@_variant(7, "Bush 2022", "ripple candidates", role="secondary")
 def bush_2022_ripples(rec: Recording, *, fir_window: str = "hamming") -> FloatArray:
     """400th-order 150-250 Hz FIR, Hilbert amplitude, 5 ms Gaussian.
 
@@ -3497,7 +3513,7 @@ def bush_2022_ripples(rec: Recording, *, fir_window: str = "hamming") -> FloatAr
     )
 
 
-@_variant(16, "Igata 2021", "secondary per-channel ripple candidates")
+@_variant(16, "Igata 2021", "per-channel ripple candidates", role="secondary")
 def igata_2021_ripples(rec: Recording) -> pd.DataFrame:
     """150-250 Hz envelope, 4 ms Gaussian, stopped baseline, 3 SD/mean, 50-500 ms.
 
@@ -3565,7 +3581,7 @@ def _rms_ripples(
     )
 
 
-@_variant(17, "Gridchyn 2020", "secondary ripple candidates")
+@_variant(17, "Gridchyn 2020", "ripple candidates", role="secondary")
 def gridchyn_2020_ripples(
     rec: Recording, *, rms_window: float, bound_threshold: float
 ) -> pd.DataFrame:
@@ -3584,7 +3600,7 @@ def gridchyn_2020_ripples(
     )
 
 
-@_variant(21, "Xu 2019", "secondary ripple candidates")
+@_variant(21, "Xu 2019", "ripple candidates", role="secondary")
 def xu_2019_ripples(
     rec: Recording, *, rms_window: float, bound_threshold: float
 ) -> pd.DataFrame:
@@ -3603,7 +3619,7 @@ def xu_2019_ripples(
     )
 
 
-@_variant(22, "Farooq 2019 (Neuron)", "secondary ripple candidates")
+@_variant(22, "Farooq 2019 (Neuron)", "ripple candidates", role="secondary")
 def farooq_2019_neuron_ripples(
     rec: Recording, *, threshold: float, bound_threshold: float, smoothing_sigma: float
 ) -> pd.DataFrame:
@@ -3622,7 +3638,7 @@ def farooq_2019_neuron_ripples(
     )
 
 
-@_variant(23, "Farooq 2019 (Science)", "secondary ripple candidates")
+@_variant(23, "Farooq 2019 (Science)", "ripple candidates", role="secondary")
 def farooq_2019_science_ripples(
     rec: Recording, *, power_measure: str, bound_threshold: float
 ) -> pd.DataFrame:
@@ -3690,7 +3706,7 @@ def chenani_2019_hfe(rec: Recording, *, ar_coefficients: ArrayLike) -> pd.DataFr
     return pd.concat(rows, ignore_index=True)
 
 
-@_variant(26, "Liu 2019", "secondary ripple peaks and centered controls")
+@_variant(26, "Liu 2019", "ripple peaks and centered controls", role="secondary")
 def liu_2019_ripples(
     rec: Recording, *, smoothing_sigma: float, window: float = 0.24
 ) -> pd.DataFrame:
@@ -3713,7 +3729,7 @@ def liu_2019_ripples(
     )
 
 
-@_variant(30, "Drieu 2018", "secondary ripple candidates")
+@_variant(30, "Drieu 2018", "ripple candidates", role="secondary")
 def drieu_2018_ripples(rec: Recording, *, signal_measure: str) -> pd.DataFrame:
     """Detrended 100-250 Hz minus 300-500 Hz signal, 3/1 SD, >20 and <110 ms.
 
@@ -3746,7 +3762,7 @@ def drieu_2018_ripples(rec: Recording, *, signal_measure: str) -> pd.DataFrame:
     )
 
 
-@_variant(32, "Olafsdottir 2017", "secondary ripple candidates")
+@_variant(32, "Ólafsdóttir 2017", "ripple candidates", role="secondary")
 def olafsdottir_2017_ripples(rec: Recording) -> FloatArray:
     """150-250 Hz squared Hilbert modulus, 2.5 SD/mean, 40-500 ms, then <40 ms merge.
 
@@ -3763,14 +3779,14 @@ def olafsdottir_2017_ripples(rec: Recording) -> FloatArray:
     return rec.merge(events, 0.04, power)
 
 
-@_variant(43, "Wu 2014", "secondary ripple peaks")
+@_variant(43, "Wu 2014", "ripple peaks", role="secondary")
 def wu_2014_ripples(rec: Recording) -> pd.DataFrame:
     """150-250 Hz mean envelope, 8 ms Gaussian, local peaks >2.5 stopped-baseline SD."""
     trace = rec.smooth(rec.mean_envelope((150.0, 250.0)), 0.008)
     return _local_peaks(rec, _zscore(trace, rec.speed < 5), 2.5)
 
 
-@_variant(45, "Pfeiffer 2013", "secondary ripple candidates")
+@_variant(45, "Pfeiffer 2013", "ripple candidates", role="secondary")
 def pfeiffer_2013_ripples(rec: Recording) -> pd.DataFrame:
     """150-250 Hz mean envelope, 12.5 ms Gaussian, 3 SD/mean over stopping.
 
@@ -3788,14 +3804,14 @@ def pfeiffer_2013_ripples(rec: Recording) -> pd.DataFrame:
     )
 
 
-@_variant(50, "Davidson 2009", "secondary ripple peaks")
+@_variant(50, "Davidson 2009", "ripple peaks", role="secondary")
 def davidson_2009_ripples(rec: Recording) -> pd.DataFrame:
     """150-250 Hz mean envelope, 12.5 ms Gaussian, local peaks >2.5 stopped-baseline SD."""
     trace = rec.smooth(rec.mean_envelope((150.0, 250.0)), 0.0125)
     return _local_peaks(rec, _zscore(trace, rec.speed < 5), 2.5)
 
 
-@_variant(51, "Diba 2007", "secondary ripple candidates")
+@_variant(51, "Diba 2007", "ripple candidates", role="secondary")
 def diba_2007_ripples(rec: Recording, *, rms_window: float) -> pd.DataFrame:
     """Single CA1 channel, 100-300 Hz RMS, 2 SD peak and 1.5 SD bounds.
 
@@ -3813,7 +3829,7 @@ def diba_2007_ripples(rec: Recording, *, rms_window: float) -> pd.DataFrame:
     )
 
 
-@_variant(52, "Ji 2007", "secondary ripple candidates")
+@_variant(52, "Ji 2007", "ripple candidates", role="secondary")
 def ji_2007_ripples(rec: Recording) -> FloatArray:
     """Rectified 80-250 Hz LFP, low 3*S/high 7*S where S is filtered-LFP SD.
 
@@ -3834,7 +3850,7 @@ def ji_2007_ripples(rec: Recording) -> FloatArray:
     return rd.require_trace_peak(merged, trace, rec.time, 7 * scale)
 
 
-@_variant(54, "Lee 2002", "secondary ripple candidates")
+@_variant(54, "Lee 2002", "ripple candidates", role="secondary")
 def lee_2002_ripples(rec: Recording) -> FloatArray:
     """Rectified 100-400 Hz, SWS mean+5 SD, crossings <=20 ms apart joined, >=20 ms.
 
@@ -3850,7 +3866,7 @@ def lee_2002_ripples(rec: Recording) -> FloatArray:
     return within_duration(rec.merge(events, 0.02, trace, inclusive=True), low=0.02)
 
 
-@_variant(53, "Foster 2006", "secondary ripple candidates")
+@_variant(53, "Foster 2006", "ripple candidates", role="secondary")
 def foster_2006_ripples(rec: Recording) -> pd.DataFrame:
     """Inherited Lee ripple rule; reported event time is the interval midpoint."""
     events = _IMPLEMENTATIONS["lee_2002_ripples"](rec)
@@ -3859,7 +3875,7 @@ def foster_2006_ripples(rec: Recording) -> pd.DataFrame:
     return result
 
 
-@_variant(1, "Widloski 2025", "population burst labels", role="secondary_label")
+@_variant(1, "Widloski 2025", "population burst labels", role="secondary")
 def widloski_2025_bursts(rec: Recording) -> pd.DataFrame:
     """All good clusters in 1 ms bins, 80 ms Gaussian, stopped baseline, 3 SD/mean, >=50 ms."""
     return _detect_population(
@@ -3874,7 +3890,7 @@ def widloski_2025_bursts(rec: Recording) -> pd.DataFrame:
     )
 
 
-@_variant(10, "Krause 2022", "secondary HSE candidates")
+@_variant(10, "Krause 2022", "HSE candidates", role="secondary")
 def krause_2022_hse(rec: Recording, *, interpretation: str = "text") -> pd.DataFrame:
     """Pooled 1 ms spike bins, 3 SD/mean, explicitly distinct text/code branches.
 
@@ -3911,7 +3927,7 @@ def krause_2022_hse(rec: Recording, *, interpretation: str = "text") -> pd.DataF
     )
 
 
-@_variant(13, "Denovellis 2021", "secondary MUA candidates")
+@_variant(13, "Denovellis 2021", "MUA candidates", role="secondary")
 def denovellis_2021_mua(rec: Recording) -> pd.DataFrame:
     """Historical 2 ms MUA grid, 15 ms Gaussian, 2 SD for >=15 ms, speed <=4 cm/s.
 
@@ -3929,7 +3945,7 @@ def denovellis_2021_mua(rec: Recording) -> pd.DataFrame:
     )
 
 
-@_variant(14, "Gillespie 2021", "secondary MUA candidates")
+@_variant(14, "Gillespie 2021", "MUA candidates", role="secondary")
 def gillespie_2021_mua(rec: Recording) -> pd.DataFrame:
     """Published 1 ms MUA bins, 15 ms Gaussian, stopped (<4) baseline, 3 SD/mean,
     speed <4 at both ends (which samples is not stated).
@@ -3953,7 +3969,7 @@ def maboudi_2018_open_field(rec: Recording) -> FloatArray:
     return _IMPLEMENTATIONS["pfeiffer_2013"](rec)
 
 
-@_variant(29, "Muessig 2019", "secondary ripple windows")
+@_variant(29, "Muessig 2019", "ripple windows", role="secondary")
 def muessig_2019_ripples(rec: Recording) -> pd.DataFrame:
     """7 ms RMS, 100-250 Hz, most-variable channel, >99th percentile, +/-50 ms.
 
@@ -3968,7 +3984,7 @@ def muessig_2019_ripples(rec: Recording) -> pd.DataFrame:
     return _local_peaks(rec, rms, level, before=0.05, after=0.05)
 
 
-@_variant(19, "Bhattarai 2020", "separate ripple candidates")
+@_variant(19, "Bhattarai 2020", "ripple candidates", role="secondary")
 def bhattarai_2020_ripples(
     rec: Recording, *, power_measure: str = "squared_signal"
 ) -> FloatArray:
@@ -4048,14 +4064,33 @@ def list_methods() -> pd.DataFrame:
     Returns
     -------
     methods : pandas.DataFrame
-        One row per method: ``name``, ``doi``, ``paper``, ``output``, ``role``,
-        ``inventory`` (demonstration grouping), ``required_options`` and
-        ``interpretation``. Names distinguish protocols and secondary
-        inventories. ``required_options`` lists only the keyword options the
-        signature requires; inputs a method needs from a measured Recording
-        (curated intervals, templates, reference or example ripples, speed)
-        and options it requires only for measured data are stated in its
-        docstring and raise when missing.
+        One row per method. The columns, defined here for every place that
+        reports them (``Recipe``, result ``attrs``, the demonstration CSV):
+
+        name
+            The function name, accepted by ``run_method``. Names distinguish
+            a paper's protocols and inventories.
+        doi
+            The paper's DOI URL, as in ``load_literature_parameters()``.
+        paper
+            First author and year as the survey spells them (Ólafsdóttir,
+            Nádasdy), naming the variant when a paper has several.
+        output
+            What the events are, such as "MUA", "SWR+MUA" or "ripple peaks".
+        role
+            The events' scientific use: "candidate_detection" for the paper's
+            candidate events; "secondary" for an inventory the paper uses
+            alongside them (ripple labels, controls, a separate ripple or MUA
+            inventory); "candidate_gate" for a gate that is not itself an
+            event definition (Gupta 2010).
+        inventory
+            The demonstration's grouping, independent of role: "default" for
+            the inventory examples/literature_recipes.py runs per paper,
+            "additional" for the others.
+        required_options
+            Keyword options the signature requires.
+        interpretation
+            The method's docstring: its rule, interpretation and assumptions.
     """
     survey = rd.load_literature_parameters()
     rows = []

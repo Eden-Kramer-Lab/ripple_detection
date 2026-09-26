@@ -3,7 +3,6 @@
 import importlib.util
 import json
 import sys
-import unicodedata
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,10 +12,6 @@ import pytest
 from ripple_detection import load_literature_parameters
 
 SCRIPT = Path(__file__).resolve().parents[1] / "examples" / "literature_recipes.py"
-
-
-def _ascii(text):
-    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
 
 
 @pytest.fixture(scope="module")
@@ -55,7 +50,7 @@ def test_every_surveyed_paper_has_a_recipe_or_a_reason(recipes):
 def test_each_recipe_names_its_paper_as_the_survey_does(recipes):
     survey = load_literature_parameters()
     for entry in recipes.RECIPES:
-        author = _ascii(survey.loc[entry.row, "First Author"])
+        author = survey.loc[entry.row, "First Author"]
         assert entry.paper.startswith(author), (entry.row, entry.paper)
         assert str(survey.loc[entry.row, "Year"]) in entry.paper, (entry.row, entry.paper)
         assert entry.note, entry.paper
