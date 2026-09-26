@@ -139,9 +139,14 @@ Other inventories are exercised with their required settings in the tests.
   Wu 2014/2017, Ji, Michon, Krause and the shared population recipes. Berners-Lee
   and Maboudi use their documented finite kernels. Sample timestamps remain
   quantized to the caller's input clock. Native-grid events are reported at the
-  outer edges of their first and last complete bins, so an event of n bins lasts
-  n bin widths; duration limits and close-event gaps are measured between those
-  edges. Tirole applies its released rules to bin times and reports edges.
+  first and last recorded samples of their first and last bins: closed bounds
+  holding exactly the samples those bins counted, so participation counts see no
+  spike from a neighboring bin. Duration limits count bins (n bins last n bin
+  widths) and close-event gaps are measured edge to edge; later duration rules on
+  these bounds count samples inclusively. Interval restrictions (curated sleep
+  or rest) keep only bins whose counted samples all lie inside an interval, and
+  containment in behavior intervals allows the clock's rounding error. Tirole
+  applies its released rules to bin times and reports the bins' samples.
 - Tirole uses the finite forward/backward kernel, threshold-anchor grouping,
   inclusive crossing samples, fallback bounds, sampled-speed rule and a
   reconstructed ripple preprocessing path. Polyphase LFP resampling and modern

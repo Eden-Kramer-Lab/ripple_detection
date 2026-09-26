@@ -960,10 +960,11 @@ def test_mou_scaling_options_change_bounds_when_background_is_nonzero(monkeypatc
         return lm.PopulationTrace(np.arange(100) / 100, rate.copy(), np.zeros(100), 100)
 
     monkeypatch.setattr(lm, "population_trace", trace)
-    # Bins centered on 0.40-0.59 s; bounds are their outer edges.
-    np.testing.assert_allclose(lm.bounds(lm.mou_2022(rec)), [[0.395, 0.595]])
+    # A trace built by hand has no recorded samples per bin, so its events
+    # are reported at the centers of the bins centered on 0.40-0.59 s.
+    np.testing.assert_allclose(lm.bounds(lm.mou_2022(rec)), [[0.40, 0.59]])
     np.testing.assert_allclose(
-        lm.bounds(lm.mou_2022(rec, normalization="maximum")), [[-0.005, 0.995]]
+        lm.bounds(lm.mou_2022(rec, normalization="maximum")), [[0.0, 0.99]]
     )
 
 
@@ -1255,30 +1256,35 @@ def _detect_bursts(trace, **options):
     )
 
 
-def test_native_grid_events_are_reported_at_bin_edges():
-    # Spikes fill 10.000-10.049 s: five complete 10 ms bins, 50 ms edge to edge.
+def test_native_grid_events_are_reported_at_their_bins_samples():
+    # Spikes fill 10.000-10.049 s: five complete 10 ms bins, 50 ms edge to edge,
+    # reported at the first and last samples those bins counted.
     trace = _burst_trace([(10.0, 10.05)])
     events = _detect_bursts(trace)
-    np.testing.assert_allclose(lm.bounds(events), [[10.0, 10.05]], atol=1e-9)
-    np.testing.assert_allclose(events.duration, [0.05], atol=1e-9)
-    # Duration limits count bins, so they agree with the reported edges.
+    np.testing.assert_allclose(lm.bounds(events), [[10.0, 10.049]], atol=1e-9)
+    np.testing.assert_allclose(events.duration, [0.049], atol=1e-9)
+    # Duration limits count bins: five bins last 50 ms.
     assert len(_detect_bursts(trace, minimum_event_duration=0.05, maximum_duration=0.05))
     assert not len(_detect_bursts(trace, minimum_event_duration=0.06))
     assert not len(_detect_bursts(trace, maximum_duration=0.04))
-    # The merge accepts the edges it reports.
-    np.testing.assert_allclose(trace.merge(events, 0.0), [[10.0, 10.05]], atol=1e-9)
+    # The merge accepts the bounds detect reports.
+    np.testing.assert_allclose(trace.merge(events, 0.0), [[10.0, 10.049]], atol=1e-9)
 
 
 def test_native_grid_close_event_gaps_are_measured_between_edges():
     trace = _burst_trace([(10.0, 10.05), (10.08, 10.1)])  # 30 ms from edge to edge
     kept_apart = _detect_bursts(trace, close_event_threshold=0.03, close_event_rule="merge")
     np.testing.assert_allclose(
-        lm.bounds(kept_apart), [[10.0, 10.05], [10.08, 10.1]], atol=1e-9
+        lm.bounds(kept_apart), [[10.0, 10.049], [10.08, 10.099]], atol=1e-9
     )
     merged = _detect_bursts(trace, close_event_threshold=0.031, close_event_rule="merge")
-    np.testing.assert_allclose(lm.bounds(merged), [[10.0, 10.1]], atol=1e-9)
-    np.testing.assert_allclose(trace.merge(kept_apart, 0.031), [[10.0, 10.1]], atol=1e-9)
-    np.testing.assert_allclose(trace.merge(kept_apart, 0.03), lm.bounds(kept_apart), atol=1e-9)
+    np.testing.assert_allclose(lm.bounds(merged), [[10.0, 10.099]], atol=1e-9)
+    # merge measures between the bounds it is given: from the last sample of
+    # one event to the first of the next, 31 ms here (30 ms edge to edge).
+    np.testing.assert_allclose(trace.merge(kept_apart, 0.032), [[10.0, 10.099]], atol=1e-9)
+    np.testing.assert_allclose(
+        trace.merge(kept_apart, 0.031), lm.bounds(kept_apart), atol=1e-9
+    )
 
 
 def test_native_bins_leave_out_a_sample_on_the_final_edge():
@@ -1443,8 +1449,8 @@ def test_tirole_flags_bounds_set_by_the_search_limit_or_a_block_edge():
 def test_tirole_output_keeps_clipped_flags(measured, monkeypatch):
     bounds_found = pd.DataFrame(
         {
-            "start_time": [1.0, 5.0],
-            "end_time": [1.2, 5.3],
+            "start_time": [1.0005, 5.0005],  # 1 ms bin centers
+            "end_time": [1.2005, 5.3005],
             "clipped_start": [True, False],
             "clipped_end": [False, True],
         }
@@ -1456,7 +1462,10 @@ def test_tirole_output_keeps_clipped_flags(measured, monkeypatch):
     )
     monkeypatch.setattr(lm, "_zscore", lambda values, *a, **k: np.full(len(values), 5.0))
     events = lm.tirole_2022(measured)
-    np.testing.assert_allclose(lm.bounds(events), [[0.9995, 1.2005], [4.9995, 5.3005]])
+    # The first and last 1500 Hz samples of those bins.
+    np.testing.assert_allclose(
+        lm.bounds(events), [[1.0, 1.2 + 1 / 1500], [5.0, 5.3 + 1 / 1500]], atol=1e-9
+    )
     np.testing.assert_array_equal(events.clipped_start, [True, False])
     np.testing.assert_array_equal(events.clipped_end, [False, True])
 
@@ -1967,3 +1976,84 @@ def test_population_trace_error_paths(bin_width, n_time, message):
     )
     with pytest.raises(ValueError, match=message):
         lm.population_trace(rec, bin_width=bin_width)
+
+
+def _burst_recording(origin, fs, *, burst=(10.0, 10.05), next_cell_spike=True, **kwargs):
+    """Three cells fire at every sample of [burst start, burst end); a fourth
+    fires once at the first sample of the following bin."""
+    time = origin + np.arange(int(20 * fs)) / fs
+    spikes = np.zeros((len(time), 4))
+    first, stop = round(burst[0] * fs), round(burst[1] * fs)
+    spikes[first:stop, :3] = 1
+    if next_cell_spike:
+        spikes[stop, 3] = 1
+    rec = lm.Recording.from_arrays(
+        time, fs, multiunit=spikes, place_cells=np.arange(4), **kwargs
+    )
+    return rec, first, stop
+
+
+_EXACT_RATE = {
+    "threshold": 1000.0,
+    "bound_threshold": 1000.0,
+    "normalization_method": "none",
+    "minimum_duration": 0.0,
+    "speed_threshold": np.inf,
+}
+
+
+@pytest.mark.parametrize("origin", [0.0, 1_700_000_000.0])
+@pytest.mark.parametrize("fs", [1000.0, 1500.0])
+def test_native_grid_bounds_are_the_first_and_last_samples_of_the_bins(origin, fs):
+    rec, first, stop = _burst_recording(origin, fs)
+    events = lm.population_trace(rec, bin_width=0.01).detect(**_EXACT_RATE)
+    # Closed bounds on the recording's own timestamps: exactly the samples
+    # counted in the event's bins, none from the next bin.
+    np.testing.assert_array_equal(lm.bounds(events), [[rec.time[first], rec.time[stop - 1]]])
+    active = rd.require_active_units(
+        events, rec.multiunit, rec.time, minimum_active_units=4, units=np.arange(4)
+    )
+    assert not len(active)  # the fourth cell fired in the next bin
+    assert len(
+        rd.require_active_units(
+            events, rec.multiunit, rec.time, minimum_active_units=3, units=np.arange(4)
+        )
+    )
+
+
+@pytest.mark.parametrize("origin", [0.0, 1_700_000_000.0])
+def test_events_matching_an_interval_are_contained_at_any_clock_origin(origin):
+    rec, first, stop = _burst_recording(origin, 1000.0)
+    events = lm.population_trace(rec, bin_width=0.01).detect(**_EXACT_RATE)
+    edges = [[origin + 10.0, origin + 10.05]]
+    assert len(lm.within_intervals(events, edges)) == 1
+    # A bound off by less than the clock's resolution still counts as inside.
+    ulp = float(np.spacing(origin + 10.0))
+    shifted = lm.bounds(events) + np.array([[-ulp, ulp]])
+    assert len(lm.within_intervals(shifted, [[rec.time[first], rec.time[stop - 1]]])) == 1
+
+
+@pytest.mark.parametrize("origin", [0.0, 1_700_000_000.0])
+@pytest.mark.parametrize("fs", [1000.0, 1500.0])
+def test_interval_restricted_events_stay_inside_unaligned_intervals(origin, fs):
+    rec, _, _ = _burst_recording(origin, fs, burst=(10.0, 10.3), next_cell_spike=False)
+    interval = np.array([[origin + 10.0254, origin + 10.1808]])
+    events = lm._detect_population_in(rec, interval, np.ones(4, bool), 0.0, **_EXACT_RATE)
+    found = lm.bounds(events)
+    assert len(found) == 1
+    assert found[0, 0] >= interval[0, 0]
+    assert found[0, 1] <= interval[0, 1]
+    # Only bins lying wholly inside the interval are kept: the first bin that
+    # starts at or after 10.0254 s, the last that ends at or before 10.1808 s.
+    samples = rec.time[(rec.time >= interval[0, 0]) & (rec.time <= interval[0, 1])]
+    assert samples[0] <= found[0, 0]
+    assert found[0, 1] <= samples[-1]
+
+
+@pytest.mark.parametrize("fs", [1000.0, 1500.0])
+def test_duration_limits_on_sample_bounds_count_samples_inclusively(fs):
+    rec, _, _ = _burst_recording(0.0, fs, next_cell_spike=False)
+    events = lm.population_trace(rec, bin_width=0.001).detect(**_EXACT_RATE)
+    # Fifty 1 ms bins last 50 ms by the package's inclusive sample count.
+    assert len(lm.within_duration(events, 0.05, sampling_frequency=fs)) == 1
+    assert not len(lm.within_duration(events, 0.05 + 1 / fs, sampling_frequency=fs))

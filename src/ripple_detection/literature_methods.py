@@ -732,9 +732,13 @@ def bounds(events: pd.DataFrame | FloatArray) -> FloatArray:
 
 
 def within_duration(
-    events: pd.DataFrame | FloatArray, low: float = 0.0, high: float = np.inf
+    events: pd.DataFrame | FloatArray,
+    low: float = 0.0,
+    high: float = np.inf,
+    *,
+    sampling_frequency: float | None = None,
 ) -> FloatArray:
-    """Keep events whose elapsed duration is from ``low`` to ``high`` seconds.
+    """Keep events whose duration is from ``low`` to ``high`` seconds.
 
     Parameters
     ----------
@@ -744,6 +748,11 @@ def within_duration(
         Inclusive duration limits in seconds; defaults keep every duration.
         Durations are compared with a tolerance scaled to the timestamps'
         magnitude, so an event exactly at a limit is kept at any clock origin.
+    sampling_frequency : float, optional
+        When given, the bounds are an event's first and last samples at this
+        rate and its duration counts one more sample period, the package's
+        inclusive sample count (n samples last n / sampling_frequency). By
+        default the duration is the elapsed time from start to end.
 
     Returns
     -------
@@ -751,15 +760,20 @@ def within_duration(
         Start/end times of the kept events, in input order.
     """
     events = bounds(events)
-    return events[_within_duration_mask(events, low, high)]
+    return events[_within_duration_mask(events, low, high, sampling_frequency)]
 
 
 def _within_duration_mask(
-    events: pd.DataFrame | FloatArray, low: float = 0.0, high: float = np.inf
+    events: pd.DataFrame | FloatArray,
+    low: float = 0.0,
+    high: float = np.inf,
+    sampling_frequency: float | None = None,
 ) -> BoolArray:
     """Which events last from ``low`` to ``high`` seconds, inclusive."""
     events = bounds(events)
     duration = events[:, 1] - events[:, 0]
+    if sampling_frequency is not None:
+        duration = duration + 1 / sampling_frequency
     tolerance = _time_tolerance(events)
     return (duration >= low - tolerance) & (duration <= high + tolerance)
 
@@ -774,7 +788,8 @@ def _event_block_groups(
 ) -> IntArray:
     """Validate complete block containment and return each event's block index.
 
-    ``margin`` widens each block on both sides, half a bin for bin-edge bounds.
+    ``margin`` widens each block on both sides: half a bin covers bounds at a
+    bin's recorded samples, which lie up to half a bin from its center.
     """
     _, blocks = _valid_blocks(time, trace)
     intervals = np.asarray(
@@ -808,7 +823,9 @@ def within_intervals(events: pd.DataFrame | FloatArray, intervals: ArrayLike) ->
     events : pandas.DataFrame or ndarray
         Table with start_time/end_time columns or an array of time pairs.
     intervals : array_like, shape (n_intervals, 2)
-        Sorted, disjoint, inclusive [start, end] intervals in seconds.
+        Sorted, disjoint, inclusive [start, end] intervals in seconds. A
+        bound within the timestamps' rounding error of an interval's edge
+        counts as inside.
 
     Returns
     -------
@@ -821,12 +838,19 @@ def within_intervals(events: pd.DataFrame | FloatArray, intervals: ArrayLike) ->
         The intervals are not finite, sorted and disjoint.
     """
     events = bounds(events)
+    return np.asarray(events[_within_intervals_mask(events, intervals)], dtype=float)
+
+
+def _within_intervals_mask(events: FloatArray, intervals: ArrayLike) -> BoolArray:
+    """Which ``(start, end)`` pairs lie inside one interval, allowing the
+    subtraction error of the clock's magnitude at either bound."""
     allowed = _interval_array(np.asarray(intervals, dtype=float).reshape(-1, 2))
-    if allowed is None or len(allowed) == 0:
-        return events[:0]
-    which = np.searchsorted(allowed[:, 0], events[:, 0], side="right") - 1
-    inside = (which >= 0) & (events[:, 1] <= allowed[np.clip(which, 0, None), 1])
-    return np.asarray(events[inside], dtype=float)
+    if allowed is None or len(allowed) == 0 or len(events) == 0:
+        return np.zeros(len(events), dtype=bool)
+    tolerance = _time_tolerance(np.concatenate([events.ravel(), allowed.ravel()]))
+    which = np.searchsorted(allowed[:, 0], events[:, 0] + tolerance, side="right") - 1
+    inside = (which >= 0) & (events[:, 1] <= allowed[np.clip(which, 0, None), 1] + tolerance)
+    return np.asarray(inside, dtype=bool)
 
 
 def _only_in(rec: Recording, values: FloatArray, intervals: FloatArray) -> FloatArray:
@@ -996,23 +1020,58 @@ class PopulationTrace:
         Nearest observed speed (cm/s); None when the recording has no speed.
     sampling_frequency : float
         Reciprocal bin width in Hz.
+    first_sample, last_sample : ndarray or None
+        Timestamps (seconds) of the first and last recorded samples counted in
+        each bin, NaN for a bin holding none. Events are reported at these
+        samples. None for a trace built by hand, whose events are then
+        reported at bin centers.
 
     Raises
     ------
     ValueError
-        ``data`` or ``speed`` does not have one value per bin.
+        ``data``, ``speed``, ``first_sample`` or ``last_sample`` does not have
+        one value per bin.
     """
 
     time: FloatArray
     data: FloatArray
     speed: FloatArray | None
     sampling_frequency: float
+    first_sample: FloatArray | None = None
+    last_sample: FloatArray | None = None
 
     def __post_init__(self) -> None:
         n_bins = len(self.time)
-        if len(self.data) != n_bins or (self.speed is not None and len(self.speed) != n_bins):
-            msg = f"PopulationTrace needs one value per bin ({n_bins}) in data and speed."
+        per_bin = (self.data, self.speed, self.first_sample, self.last_sample)
+        if any(values is not None and len(values) != n_bins for values in per_bin):
+            msg = (
+                f"PopulationTrace needs one value per bin ({n_bins}) in data, speed, "
+                "first_sample and last_sample."
+            )
             raise ValueError(msg)
+
+    def sample_bounds(self, centers: FloatArray) -> FloatArray:
+        """Convert bounds at bin centers to the bins' recorded samples.
+
+        Parameters
+        ----------
+        centers : ndarray, shape (n_events, 2)
+            Start/end bin centers, as ``detect_events_from_trace`` reports
+            them on this grid.
+
+        Returns
+        -------
+        bounds : ndarray, shape (n_events, 2)
+            The first recorded sample of each start bin and the last of each
+            end bin: closed bounds holding exactly the samples counted in the
+            event's bins. Bin centers for a trace built by hand.
+        """
+        centers = np.asarray(centers, dtype=float).reshape(-1, 2)
+        if self.first_sample is None or self.last_sample is None or not len(centers):
+            return centers.copy()
+        first = rd.core.nearest_sample_index(self.time, centers[:, 0])
+        last = rd.core.nearest_sample_index(self.time, centers[:, 1])
+        return np.column_stack([self.first_sample[first], self.last_sample[last]])
 
     def smooth(self, sigma: float) -> FloatArray:
         """Gaussian-smooth the trace without crossing missing bins.
@@ -1047,10 +1106,12 @@ class PopulationTrace:
         Returns
         -------
         events : pandas.DataFrame
-            ``detect_events_from_trace`` output. Bounds are the outer edges of
-            an event's first and last bins, so an event of n bins lasts n bin
-            widths, as the duration limits count it; ``peak_time`` stays a bin
-            center.
+            ``detect_events_from_trace`` output. Bounds are the first and last
+            recorded samples of the event's first and last bins (see
+            ``sample_bounds``), so they hold exactly the samples the bins
+            counted and a participation count sees no spike from a neighboring
+            bin. ``duration`` is end minus start; the duration limits count
+            bins (n bins last n bin widths). ``peak_time`` stays a bin center.
 
         Raises
         ------
@@ -1069,8 +1130,7 @@ class PopulationTrace:
         events = rd.detect_events_from_trace(
             self.time, self.data, speed, self.sampling_frequency, **kwargs
         )
-        events["start_time"] -= width / 2
-        events["end_time"] += width / 2
+        events[["start_time", "end_time"]] = self.sample_bounds(bounds(events))
         events["duration"] = events.end_time - events.start_time
         return events
 
@@ -1082,10 +1142,12 @@ class PopulationTrace:
         Parameters
         ----------
         events : pandas.DataFrame or ndarray
-            Event bounds in seconds at bin edges, as ``detect`` reports them.
+            Event bounds in seconds on this grid: the recorded samples
+            ``detect`` reports, or bin centers.
         gap : float
-            Separation in seconds, from one event's end to the next's start,
-            below which events are merged.
+            Separation in seconds between the given bounds, from one event's
+            end to the next's start, below which events are merged. Between
+            recorded samples it is one sample period longer than edge to edge.
         inclusive : bool, optional
             Also merge events exactly ``gap`` apart.
 
@@ -1170,13 +1232,23 @@ def population_trace(
         )
     observed &= centers <= relative[-1] + tolerance
     values = np.where(observed, values / bin_width, np.nan)
+    # Each bin's first and last recorded samples, by the histogram's own
+    # half-open assignment, so reported bounds hold exactly the counted samples.
+    counted_time = rec.time[inside]
+    which = np.searchsorted(edges, relative[inside], side="right") - 1
+    bins, first_index = np.unique(which, return_index=True)
+    last_index = np.r_[first_index[1:] - 1, len(which) - 1]
+    first_sample = np.full(n, np.nan)
+    last_sample = np.full(n, np.nan)
+    first_sample[bins] = counted_time[first_index]
+    last_sample[bins] = counted_time[last_index]
     time = centers + rec.time[0]
     speed = (
         None
         if rec.session.speed is None
         else rec.session.speed[rd.core.nearest_sample_index(rec.time, time)]
     )
-    trace = PopulationTrace(time, values, speed, 1 / bin_width)
+    trace = PopulationTrace(time, values, speed, 1 / bin_width, first_sample, last_sample)
     if smoothing_sigma:
         trace = dataclasses.replace(trace, data=trace.smooth(smoothing_sigma))
     return trace
@@ -1548,8 +1620,8 @@ def _tirole(rec: Recording) -> pd.DataFrame:
     merging. Speed is sampled every 10 ms; place-cell and ripple gates follow.
     Bin origin is the recording start; counts retain the input timestamp precision.
     The duration, merge, speed, cell and ripple rules use bin centers, as the
-    release's onset-offset differences do; the reported bounds are the outer
-    bin edges, half a bin wider on each side, as for other native grids.
+    release's onset-offset differences do; the reported bounds are the first
+    and last recorded samples of the outer bins, as for other native grids.
     LFP resampling uses scipy's polyphase anti-alias filter, whose edge behavior
     can differ from the original acquisition/downsampling pipeline.
     """
@@ -1589,11 +1661,11 @@ def _tirole(rec: Recording) -> pd.DataFrame:
     )
     events = events[selected]
     # A merged event starts at its first part's start and ends at its last's end.
-    half_bin = 0.5 / trace.sampling_frequency
+    reported = trace.sample_bounds(events)
     return pd.DataFrame(
         {
-            "start_time": events[:, 0] - half_bin,
-            "end_time": events[:, 1] + half_bin,
+            "start_time": reported[:, 0],
+            "end_time": reported[:, 1],
             "clipped_start": found.groupby("start_time")
             .clipped_start.any()[events[:, 0]]
             .to_numpy(dtype=bool)
@@ -2714,7 +2786,7 @@ def grosmark_2016(rec: Recording, *, stage: Stage = "detection") -> FloatArray:
     if stage == "detection":
         return events
     return rd.require_active_units(
-        within_duration(events, low=0.1),
+        within_duration(events, low=0.1, sampling_frequency=rec.fs),
         rec.multiunit,
         rec.time,
         minimum_active_units=5,
@@ -2944,7 +3016,7 @@ def pfeiffer_2013(rec: Recording) -> pd.DataFrame | FloatArray:
     events = rd.require_active_units(
         events, rec.multiunit, rec.time, minimum_active_fraction=0.1, units=rec.pyramidal
     )
-    return within_duration(events, 0.05, 2.0)
+    return within_duration(events, 0.05, 2.0, sampling_frequency=rec.fs)
 
 
 @_recipe(46, "Carr 2012", "SWR")
@@ -3282,7 +3354,11 @@ def _detect_population_in(
     rec: Recording, intervals: FloatArray, units: BoolArray | None, sigma: float, **kwargs: Any
 ) -> pd.DataFrame:
     trace = population_trace(rec, bin_width=0.001, units=units, smoothing_sigma=sigma)
-    mask = _intervals_to_mask(trace.time, intervals)
+    # A bin counts as inside only when every sample it counted is inside, so
+    # events reported at those samples stay within the supplied intervals.
+    first = trace.time if trace.first_sample is None else trace.first_sample
+    last = trace.time if trace.last_sample is None else trace.last_sample
+    mask = _within_intervals_mask(np.column_stack([first, last]), intervals)
     return dataclasses.replace(trace, data=np.where(mask, trace.data, np.nan)).detect(**kwargs)
 
 
@@ -4011,11 +4087,7 @@ def run_method(name: str, recording: Recording, **options: Any) -> pd.DataFrame:
         else pd.DataFrame(bounds(raw), columns=["start_time", "end_time"])
     )
     if recording.behavior_intervals is not None:
-        keep = np.zeros(len(result), dtype=bool)
-        for start, end in recording.behavior_intervals:
-            keep |= (result.start_time.to_numpy() >= start) & (
-                result.end_time.to_numpy() <= end
-            )
+        keep = _within_intervals_mask(bounds(result), recording.behavior_intervals)
         result = result.loc[keep].copy()
     if "duration" not in result:
         result["duration"] = result.end_time - result.start_time
