@@ -9,6 +9,7 @@ from ripple_detection.core import (
     BoolArray,
     FloatArray,
     IntArray,
+    _bounds_frame,
     _event_bounds,
     _gap_tolerance,
     _samples_within,
@@ -230,7 +231,7 @@ def trim_events_to_spike_windows(
     minimum_spikes: int = 2,
     units: ArrayLike | None = None,
     minimum_duration: float = 0.0,
-) -> FloatArray:
+) -> FloatArray | pd.DataFrame:
     """Move each event's bounds inward until its edge windows hold enough spikes.
 
     For decoding rules that need spikes in an event's first and last time
@@ -265,8 +266,12 @@ def trim_events_to_spike_windows(
 
     Returns
     -------
-    trimmed_events : ndarray, shape (n_kept, 2)
-        The trimmed bounds, in input order.
+    trimmed_events : ndarray, shape (n_kept, 2), or pd.DataFrame
+        The trimmed bounds, in input order. For a DataFrame, a DataFrame of
+        ``start_time`` and ``end_time`` under the kept events' index: its
+        other columns describe the untrimmed event, so they are left out,
+        and ``trimmed.join(events.drop(columns=["start_time", "end_time"]))``
+        brings back any that still apply.
 
     Raises
     ------
@@ -328,8 +333,8 @@ def trim_events_to_spike_windows(
             b = np.searchsorted(time, high + tolerance, "right")
         return float(cumulative[b] - cumulative[a])
 
-    trimmed = []
-    for start_time, end_time in events:
+    trimmed, kept = [], []
+    for row, (start_time, end_time) in enumerate(events):
         n_steps = int(np.floor((end_time - start_time - window + tolerance) / step))
         if n_steps < 0:
             continue
@@ -351,4 +356,8 @@ def trim_events_to_spike_windows(
         if not sample_count_within(last - first + 1, time, minimum_duration):
             continue
         trimmed.append((time[first], time[last]))
-    return np.asarray(trimmed, dtype=float).reshape(-1, 2)
+        kept.append(row)
+    bounds = np.asarray(trimmed, dtype=float).reshape(-1, 2)
+    if isinstance(event_times, pd.DataFrame):
+        return _bounds_frame(bounds, event_times.index[kept])
+    return bounds

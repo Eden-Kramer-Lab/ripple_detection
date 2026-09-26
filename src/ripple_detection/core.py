@@ -833,6 +833,13 @@ def _event_bounds(events: ArrayLike | pd.DataFrame) -> FloatArray:
     return bounds
 
 
+def _bounds_frame(bounds: FloatArray, index: pd.Index) -> pd.DataFrame:
+    """``start_time`` and ``end_time`` columns over ``index``: what a helper
+    that changes event bounds returns for a DataFrame, whose other columns
+    no longer describe the events."""
+    return pd.DataFrame({"start_time": bounds[:, 0], "end_time": bounds[:, 1]}, index=index)
+
+
 def _is_immobile(speed: ArrayLike, speed_threshold: float) -> BoolArray:
     """Samples known to be at or below ``speed_threshold``.
 
@@ -1935,7 +1942,7 @@ def merge_close_events(
     *,
     inclusive: bool = False,
     measure: MergeMeasure = "gap",
-) -> FloatArray:
+) -> FloatArray | pd.DataFrame:
     """Join events separated by less than a gap into one longer event.
 
     The other convention for closely spaced events is
@@ -1956,8 +1963,6 @@ def merge_close_events(
     event_times : array_like, shape (n_events, 2), or pd.DataFrame
         ``[start_time, end_time]`` per event, sorted by start time, or a
         detector's DataFrame, whose ``start_time`` and ``end_time`` are read.
-        Merging changes the bounds, so the result is always an array; the
-        other columns of a merged event have no single value.
     close_event_threshold : float, optional
         Events separated by strictly less than this gap are merged. A gap equal
         to the threshold does not merge, within floating-point tolerance,
@@ -1984,9 +1989,11 @@ def merge_close_events(
 
     Returns
     -------
-    merged_event_times : ndarray, shape (n_merged_events, 2)
+    merged_event_times : ndarray, shape (n_merged_events, 2), or pd.DataFrame
         Merged events, sorted by start time. Shape ``(0, 2)`` when there is
-        no input.
+        no input. For a DataFrame, a DataFrame of ``start_time`` and
+        ``end_time`` indexed by ``event_number`` from 1: the other columns
+        of a merged event, its peak among them, have no single value.
 
     Raises
     ------
@@ -2014,18 +2021,43 @@ def merge_close_events(
             "detector's DataFrame, which has one."
         )
         raise ValueError(msg)
-    events = _event_bounds(event_times).copy()
-    if events.size == 0:
-        return np.empty((0, 2))
+    events = _event_bounds(event_times)
     if np.any(np.diff(events[:, 0]) < 0):
         msg = (
             "event_times must be sorted by start time. Sort the events before merging: "
             "event_times[np.argsort(event_times[:, 0])]."
         )
         raise ValueError(msg)
-    if measure == "peak":
-        assert isinstance(event_times, pd.DataFrame)
-        first_peak = event_times["peak_time"].to_numpy(dtype=float).copy()
+    peaks = (
+        event_times["peak_time"].to_numpy(dtype=float)
+        if measure == "peak" and isinstance(event_times, pd.DataFrame)
+        else None
+    )
+    merged = _merged_bounds(
+        events, close_event_threshold, maximum_duration, inclusive=inclusive, peaks=peaks
+    )
+    if isinstance(event_times, pd.DataFrame):
+        return _bounds_frame(merged, pd.RangeIndex(1, len(merged) + 1, name="event_number"))
+    return merged
+
+
+def _merged_bounds(
+    events: FloatArray,
+    close_event_threshold: float = 0.0,
+    maximum_duration: float | None = None,
+    *,
+    inclusive: bool = False,
+    peaks: FloatArray | None = None,
+) -> FloatArray:
+    """:func:`merge_close_events` on bounds sorted by start, as an array;
+    with ``peaks``, one per event, the gap is measured peak to peak. The
+    default merges only events that touch or overlap, their union."""
+    events = np.array(events, dtype=float).reshape(-1, 2)
+    if events.size == 0:
+        return np.empty((0, 2))
+    measure = "gap" if peaks is None else "peak"
+    if peaks is not None:
+        first_peak = np.array(peaks, dtype=float)
         last_peak = first_peak.copy()
 
     # merging reuses the input bounds, so their largest magnitude holds
@@ -2108,7 +2140,7 @@ def _overlaps(
     if not len(reference):
         return events, np.zeros(len(events), dtype=bool)
     reference = reference[np.argsort(reference[:, 0], kind="stable")]
-    reference = merge_close_events(reference)
+    reference = _merged_bounds(reference)
     starts, ends = events[:, 0], events[:, 1]
     ref_start, ref_end = reference[:, 0], reference[:, 1]
     # the reference is disjoint and sorted, so the intervals that can meet
@@ -2338,7 +2370,7 @@ def trim_events_to_trace(
     *,
     sides: TrimSide = "both",
     minimum_duration: float = 0.0,
-) -> FloatArray:
+) -> FloatArray | pd.DataFrame:
     """Move each event's bounds inward to where a trace is at or above a threshold.
 
     For rules that narrow a detected event to its core: "the period from the
@@ -2369,9 +2401,12 @@ def trim_events_to_trace(
 
     Returns
     -------
-    trimmed_events : ndarray, shape (n_kept, 2)
-        The trimmed bounds, in input order. Always an array: the other
-        columns of a detector's DataFrame describe the untrimmed event.
+    trimmed_events : ndarray, shape (n_kept, 2), or pd.DataFrame
+        The trimmed bounds, in input order. For a DataFrame, a DataFrame of
+        ``start_time`` and ``end_time`` under the kept events' index: its
+        other columns describe the untrimmed event, so they are left out,
+        and ``trimmed.join(events.drop(columns=["start_time", "end_time"]))``
+        brings back any that still apply.
 
     Raises
     ------
@@ -2402,8 +2437,10 @@ def trim_events_to_trace(
     _check_non_negative(minimum_duration=minimum_duration)
     events = _event_bounds(event_times)
     first, last = _samples_within(events, time, _NO_TIME_SAMPLES)
-    trimmed = []
-    for (start_time, end_time), a, b in zip(events, first, last, strict=True):
+    trimmed, kept = [], []
+    for row, ((start_time, end_time), a, b) in enumerate(
+        zip(events, first, last, strict=True)
+    ):
         with np.errstate(invalid="ignore"):
             above = np.flatnonzero(values[a:b] >= threshold)
         if above.size == 0:
@@ -2419,7 +2456,11 @@ def trim_events_to_trace(
                     time[stop] if sides in ("both", "end") else end_time,
                 )
             )
-    return np.asarray(trimmed, dtype=float).reshape(-1, 2)
+            kept.append(row)
+    bounds = np.asarray(trimmed, dtype=float).reshape(-1, 2)
+    if isinstance(event_times, pd.DataFrame):
+        return _bounds_frame(bounds, event_times.index[kept])
+    return bounds
 
 
 def require_times_inside(
@@ -2766,7 +2807,7 @@ def windows_around_times(
         raise ValueError(msg)
     windows = np.column_stack([centers - before, centers + after]).reshape(-1, 2)
     if merge_overlapping:
-        return merge_close_events(windows)
+        return _merged_bounds(windows)
     return windows
 
 

@@ -10,8 +10,8 @@ from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import (
     FloatArray,
     _check_choice,
+    _merged_bounds,
     get_envelope,
-    merge_close_events,
     nearest_sample_index,
     sample_count_within,
 )
@@ -280,7 +280,7 @@ def state_intervals(
         )
         intervals = np.concatenate(
             [
-                merge_close_events(intervals[block_of_run == block], merge_gap)
+                _merged_bounds(intervals[block_of_run == block], merge_gap)
                 for block in np.unique(block_of_run)
             ]
         )

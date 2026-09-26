@@ -6440,6 +6440,23 @@ class TestTrimEventsToSpikeWindows:
         )
         np.testing.assert_array_equal(result, [[time[28], time[64]]])
 
+    def test_a_frame_returns_the_trimmed_bounds_under_its_index(self):
+        from ripple_detection import trim_events_to_spike_windows
+
+        multiunit = self._spikes([30, 32, 60, 61])
+        frame = pd.DataFrame(
+            {"start_time": [0.0, 0.8], "end_time": [0.99, 0.99], "n_samples": [100, 20]},
+            index=pd.Index([3, 9], name="event_number"),
+        )
+        result = trim_events_to_spike_windows(
+            frame, multiunit, self.TIME, window=0.05, step=0.01
+        )
+        expected = pd.DataFrame(
+            {"start_time": [0.28], "end_time": [0.64]},
+            index=pd.Index([3], name="event_number"),
+        )
+        pd.testing.assert_frame_equal(result, expected)
+
     def test_edges_that_already_hold_enough_do_not_move(self):
         from ripple_detection import trim_events_to_spike_windows
 

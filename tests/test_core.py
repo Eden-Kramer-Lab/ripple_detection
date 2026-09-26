@@ -1919,11 +1919,22 @@ class TestTrimEventsToTrace:
         assert len(kept) == 1
         assert len(dropped) == 0
 
-    def test_a_frame_returns_bare_bounds(self):
-        frame = pd.DataFrame({"start_time": [0.0], "end_time": [0.9], "max_zscore": [9.0]})
+    def test_a_frame_returns_the_trimmed_bounds_under_its_index(self):
+        """The other columns describe the untrimmed event, so they are left
+        out; the index joins the result back to them."""
+        frame = pd.DataFrame(
+            {"start_time": [0.0, 0.6], "end_time": [0.9, 0.9], "max_zscore": [9.0, 1.0]},
+            index=pd.Index([4, 7], name="event_number"),
+        )
         result = trim_events_to_trace(frame, self.RATE, self.TIME, 3.0)
-        assert isinstance(result, np.ndarray)
-        np.testing.assert_allclose(result, [[0.2, 0.5]])
+        expected = pd.DataFrame(
+            {"start_time": [0.2], "end_time": [0.5]},
+            index=pd.Index([4], name="event_number"),
+        )
+        pd.testing.assert_frame_equal(result, expected)
+        empty = trim_events_to_trace(frame.iloc[:0], self.RATE, self.TIME, 3.0)
+        assert list(empty.columns) == ["start_time", "end_time"]
+        assert len(empty) == 0
 
     def test_no_events(self):
         assert trim_events_to_trace(np.empty((0, 2)), self.RATE, self.TIME, 3.0).shape == (
@@ -2060,6 +2071,26 @@ class TestMergeCloseEvents:
         merged = merge_close_events(events, 0.0)
 
         np.testing.assert_allclose(merged, events)
+
+    def test_a_frame_returns_a_frame_of_the_merged_bounds(self):
+        frame = pd.DataFrame(
+            {
+                "start_time": [0.0, 0.13, 0.5],
+                "end_time": [0.1, 0.2, 0.6],
+                "peak_time": [0.05, 0.15, 0.55],
+            },
+            index=pd.Index([1, 2, 3], name="event_number"),
+        )
+        for kwargs in ({}, {"measure": "peak"}):
+            result = merge_close_events(frame, 0.11, **kwargs)
+            expected = pd.DataFrame(
+                {"start_time": [0.0, 0.5], "end_time": [0.2, 0.6]},
+                index=pd.RangeIndex(1, 3, name="event_number"),
+            )
+            pd.testing.assert_frame_equal(result, expected)
+        empty = merge_close_events(frame.iloc[:0], 0.1)
+        assert list(empty.columns) == ["start_time", "end_time"]
+        assert len(empty) == 0
 
     def test_empty_input(self):
         """An empty event list stays empty and keeps its shape."""

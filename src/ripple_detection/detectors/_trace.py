@@ -20,9 +20,9 @@ from ripple_detection.core import (
     _check_choice,
     _is_immobile,
     _is_immobile_by_rule,
+    _merged_bounds,
     _runs_extended_to_mean,
     gaussian_smooth,
-    merge_close_events,
     minimum_sample_count,
     nearest_sample_index,
     normalize_signal,
@@ -161,7 +161,7 @@ def _merge_with_flags(
     """``merge_close_events`` within a block, carrying each merged event's
     flags: the start's from its first member, the end's from the member that
     ends it."""
-    merged = merge_close_events(events, gap)
+    merged = _merged_bounds(events, gap)
     first = np.searchsorted(events[:, 0], merged[:, 0], side="left")
     after = np.searchsorted(events[:, 0], merged[:, 1], side="right")
     merged_flags = np.zeros((len(merged), 2), dtype=bool)
