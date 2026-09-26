@@ -2743,3 +2743,16 @@ def test_from_arrays_rejects_noninteger_or_negative_counts_anywhere(bad):
     counts[-5000:] = bad
     with pytest.raises(ValueError, match="nonnegative integer"):
         lm.Recording.from_arrays(np.arange(300_000) / 1000, 1000, multiunit=counts)
+
+
+def test_named_methods_take_the_recording_first_and_options_by_keyword(measured):
+    pd.testing.assert_frame_equal(lm.karlsson_2009(rec=measured), lm.karlsson_2009(measured))
+    with pytest.raises(TypeError, match="recording positionally and options by keyword"):
+        lm.mou_2022(measured, "maximum")
+    with pytest.raises(TypeError, match="recording positionally"):
+        lm.karlsson_2009()
+
+
+def test_json_ready_attrs_convert_numpy_scalars_and_non_finite_numbers():
+    values = {"count": np.int64(3), "rate": np.float64(np.inf), "nested": (np.nan, 1.5)}
+    assert lm._jsonable(values, n_time=10) == {"count": 3, "rate": None, "nested": [None, 1.5]}
