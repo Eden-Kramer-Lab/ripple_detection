@@ -35,3 +35,4 @@ For agent invocation, **load only the slice you need**:
   - [phase-4-runner.md](phase-4-runner.md) — benchmark runner: conditions, threshold sweeps, recipes, event-level outputs
   - [phase-5-analyses.md](phase-5-analyses.md) — agreement, boundaries, operating curves, robustness, rates and participation
   - [phase-6-attribution.md](phase-6-attribution.md) — one-component-at-a-time, Sobol and Shapley attribution of disagreement
+  - [phase-7-reference-recordings.md](phase-7-reference-recordings.md) — real recordings with released events: verify inputs, run the package method, match and explain differences

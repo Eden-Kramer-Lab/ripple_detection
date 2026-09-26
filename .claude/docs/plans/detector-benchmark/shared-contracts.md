@@ -72,27 +72,34 @@ Invariants (do not weaken):
 | `frequency` | float64 | `fast_gamma` only, Hz; NaN otherwise. |
 | `channel` | int64 | `spike_leakage`: the LFP channel the leaking units sit on; -1 (all channels) otherwise. |
 | `n_units` | int64 | `spike_leakage` and `theta_burst`: units involved; 0 otherwise. |
+| `n_spikes` | int64 | `spike_leakage`: spikes per leaking unit; 0 otherwise. |
+| `isi` | float64 | `spike_leakage`: inter-spike interval in seconds; NaN otherwise. |
 
 Same ordering, span and empty-table invariants as the event table.
 
 ## SimulatedSession additions
 
-`src/ripple_detection/simulate.py:1077` gains four fields **after** `sampling_frequency`, each
+`src/ripple_detection/simulate.py:1077` gains five fields **after** `sampling_frequency`, each
 with a default so every existing constructor call keeps working:
 
 ```python
 events: pd.DataFrame = field(default_factory=_empty_events)          # latent event table
 non_events: pd.DataFrame = field(default_factory=_empty_non_events)  # non-event table
 unit_types: StrArray = field(default_factory=lambda: np.empty(0, dtype="<U11"))  # (n_units,)
+baseline_rates: FloatArray = field(default_factory=lambda: np.empty(0))  # (n_units,) spikes/s
 running_intervals: FloatArray = field(default_factory=lambda: np.empty((0, 2)))  # (n_bouts, 2)
 ```
 
 - `unit_types[i]` is one of `UNIT_TYPES`; `"place"` units are pyramidal units with place fields
   (a subset in meaning, a distinct label in the array). Empty when the simulator did not assign
   types (`simulate_session`).
+- `baseline_rates[i]` is unit `i`'s realized baseline rate in spikes/s, as drawn by the
+  renderer; the runner writes it to `units.csv.gz`. Empty when the simulator did not record
+  them (`simulate_session`).
 - `simulate_session` sets `running_intervals` from its argument (empty for None) and leaves the
-  other three at their defaults. Its signals are unchanged.
-- `__post_init__` checks `unit_types` is empty or has `multiunit.shape[1]` entries.
+  other four at their defaults. Its signals are unchanged.
+- `__post_init__` checks `unit_types` and `baseline_rates` are each empty or have
+  `multiunit.shape[1]` entries.
 - For network sessions, `ripple_times`, `ripple_durations`, `ripple_frequencies` hold one entry per
   ripple component: `ripple_times = center + 1.5 (decay_sigma - rise_sigma)`,
   `ripple_durations = 3 (rise_sigma + decay_sigma)`, `ripple_frequencies = frequency_start`, so
@@ -345,9 +352,10 @@ and 6. Every table is CSV; `.csv.gz` for the large ones.
 | `methods.csv` | session × method × setting | `session_id`, `method`, `setting`, `doi`, `role`, `inventory`, `stage`, `primary_expression`, `resolved_options` (JSON), `input_policy` (JSON or references), `assumptions` (JSON), `interpretation` |
 | `conditions.csv` | condition | `condition_id`, `factor`, `level`, `params` (JSON of the full parameter set after overrides) |
 | `sessions.csv.gz` | session | `session_id` (`f"{condition_id}/{replicate}"`), `condition_id`, `replicate`, `seed`, `duration_s`, `rest_s`, `event_time_s` (union of network windows at 0.1), `n_events_<type>` per `EVENT_TYPES`, `n_non_events_<type>` per `NON_EVENT_TYPES`, `simulate_s`, `detect_s` |
-| `truth.csv.gz` | truth component | `session_id`, `table` (`"event"`/`"non_event"`), `id`, `type`, `expression`, `component`, then the remaining columns of the event or non-event table (NaN where not applicable) |
-| `units.csv.gz` | session × unit | `session_id`, `unit`, `unit_type`, `baseline_rate` |
-| `events/<condition_id>.csv.gz` | detected event | `session_id`, `method`, `setting`, `event_index`, `start_time`, `end_time`, `peak_time`, `n_active_units` |
+| `truth.csv.gz` | truth component | `session_id`, `table` (`"event"`/`"non_event"`), `id`, `type`, `expression`, `component`, then the remaining columns of the event or non-event table (NaN where not applicable), and for event rows `n_active_units`, `n_active_principal` (observed within the network truth window at 0.1) |
+| `units.csv.gz` | session × unit | `session_id`, `unit`, `unit_type`, `baseline_rate` (from `SimulatedSession.baseline_rates`) |
+| `events/<condition_id>.csv.gz` | detected event | `session_id`, `method`, `setting`, `event_index`, `start_time`, `end_time`, `peak_time`, `n_active_units`, `n_active_principal` |
+| `results/<condition_id>/<method_slug>__<setting>.csv.gz` and `.json` | detected event, complete | `session_id`, then every column the method returned, in its order (clipping flags, per-event statistics, method-specific columns); the JSON sidecar holds each column's dtype and, per `session_id`, the result's complete `attrs` (recipes: method, DOI, resolved options, grid, inputs, diagnostics such as adaptive threshold updates, `ripple_detection_version`; detectors: name, resolved parameters, version). `method_slug` is `method` with `:` replaced by `--`. |
 | `metrics.csv.gz` | session × method × setting × expression | `session_id`, `method`, `setting`, `expression`, `n_reference`, `n_detected`, `n_matched`, `recall`, `precision`, `f1`, `false_positives_per_minute`, `median_iou`, `median_coverage`, `median_temporal_precision`, `median_onset_error_<f>`, `median_offset_error_<f>` for `f` in 10, 25, 50, `n_split`, `n_merged` |
 | `failures.csv` | failed call | `session_id`, `method`, `setting`, `error` (`f"{type(error).__name__}: {error}"`, first 200 characters) |
 
@@ -355,11 +363,18 @@ and 6. Every table is CSV; `.csv.gz` for the large ones.
   configuration. `config_id` includes the stable package method name and any protocol
   or stage discriminator; it does not depend on mutable survey row numbers.
 - `setting` is `"default"`, the swept value formatted with `repr(float(v))`, or `"literature"`. The latter labels a configured interpretation; `assumptions`
-  discloses settings not established by the paper.
+  discloses settings not established by the paper. These three are the only values; the main
+  analyses select `setting in {"default", "literature"}` (detectors at defaults, every recipe).
 - `false_positives_per_minute` = unmatched detected events / (minutes of the session outside every
   network window at fraction 0.1).
-- `n_active_units` counts units with a spike in the event (`count_spikes_in_events`), for the
-  participation analysis.
+- `n_active_units` counts units with a spike in the event (`count_spikes_in_events`, all units),
+  `n_active_principal` the same over place and pyramidal units, for the participation
+  analysis. `truth.csv.gz` event rows carry both counts within each network truth window at
+  fraction 0.1, with the same unit selections, so boundary effects compare observed counts.
+- `results/` keeps every result complete, so nothing a method reports is lost; `events/` holds
+  only the columns analyses read. Written and read with the conventions of
+  `literature_methods.save_events`/`load_events` (`float_precision="round_trip"`, saved
+  dtypes): a reloaded result equals the original exactly, `attrs` included.
 - A method that raises on a session writes a `failures.csv` row and neither events nor metrics
   rows; analyses count a missing (session, method, setting) as a failure, never as zero events.
   Runs never abort on one method's error.

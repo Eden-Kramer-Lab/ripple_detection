@@ -43,6 +43,12 @@ Each was asked and answered; do not reopen them without asking.
 11. **Primary use of the package stays user detection.** Benchmark-only code must not enter the
     public API. (Maintainer's words: "The primary use of this package is for users to be able to do
     ripple detection on their data.")
+12. **Real recordings as a reference, not a truth.** The maintainer asked on 2026-09-26 that
+    the plan check the package's methods on real recordings whose authors released their
+    events, matching what the package computes against those events as far as the inputs can
+    be verified ([phase 7](phase-7-reference-recordings.md)). Released events are another
+    pipeline's output: they test implementation parity, not detection quality, and decision 2
+    still governs the benchmark's truth.
 
 Defaults chosen by the planner, open to override, recorded in [Open Questions](#open-questions):
 no new dependencies (outputs as `.csv.gz`, estimators in NumPy, `concurrent.futures` for
@@ -81,7 +87,8 @@ were checked against `master` on 2026-09-26.
 
 ### Non-Goals
 
-- Real data of any kind (decision 2).
+- Real data as ground truth, semi-synthetic data or hand labels (decision 2). Real recordings
+  enter only as reference-event parity checks (decision 12, phase 7).
 - Sequence capture, replay-candidate yield (decision 8).
 - Moving or duplicating the public paper-method API into benchmark code (decision 10).
 - Changing any existing detector, its defaults or its output.
@@ -130,7 +137,8 @@ figures use matplotlib from the existing `examples` extra.
 
 Phase order: 1a, then 1b and 2 (2 needs 1a's `truth_windows` for its integration test); 3 after
 2, so adapter validation uses the shared evaluator and integrated package methods; 4
-needs 1a, 1b, 2 and 3; 5 needs 4; 6 needs 3, 4 and 5 (it imports phase 5's `paired_bootstrap`).
+needs 1a, 1b, 2 and 3; 5 needs 4; 6 needs 3, 4 and 5 (it imports phase 5's `paired_bootstrap`);
+7 needs only 2 (`match_events`) and can run alongside 3-6.
 Every phase must pass CI's dependency-floors job (Python 3.10, NumPy 1.24, SciPy 1.10, pandas
 2.0, no matplotlib, `.github/workflows/release.yml:94-111`), which runs the whole test suite,
 benchmark tests included: plotting code imports matplotlib inside the plotting functions, and no

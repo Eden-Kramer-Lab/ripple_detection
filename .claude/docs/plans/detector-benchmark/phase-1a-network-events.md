@@ -14,13 +14,13 @@ at any envelope fraction. Public, because users can test a detector on it.
 - [src/ripple_detection/simulate.py:728-1074](../../../../src/ripple_detection/simulate.py) — sharp-wave helpers, `simulate_multiunit`, `simulate_speed`, `simulate_theta_delta`.
 - [src/ripple_detection/_call_hints.py:143](../../../../src/ripple_detection/_call_hints.py) — `explain_call_errors`; every new public function is wrapped.
 - [tests/test_simulate.py:915-1146](../../../../tests/test_simulate.py) — `TestSimulateSession`, `TestSessionStates` (including `test_the_defaults_are_unchanged` at 1110): the style new tests follow and the guards that must pass untouched.
-- [src/ripple_detection/__init__.py:72-85,146-153](../../../../src/ripple_detection/__init__.py) and `tests/test_public_api.py` — exports and the pinned `__all__`.
+- [src/ripple_detection/__init__.py:75-88,153-160](../../../../src/ripple_detection/__init__.py) and `tests/test_public_api.py` — exports and the pinned `__all__`.
 
 **Contracts referenced:**
 
 - [Vocabularies](shared-contracts.md#vocabularies) — defines `EVENT_TYPES`, `EXPRESSIONS`, `UNIT_TYPES` (`NON_EVENT_TYPES` too, used in 1b).
 - [Latent event table](shared-contracts.md#latent-event-table) — produced here; do not weaken the ordering, span and empty-table invariants.
-- [SimulatedSession additions](shared-contracts.md#simulatedsession-additions) — all four fields land here (`non_events` stays empty until 1b).
+- [SimulatedSession additions](shared-contracts.md#simulatedsession-additions) — all five fields land here (`non_events` stays empty until 1b).
 - [Truth windows](shared-contracts.md#truth-windows) — implemented here; same-row-order-for-every-fraction is load-bearing for phases 2 and 4.
 
 **Designs referenced:** [parameter sources](designs.md#parameter-sources),
@@ -44,11 +44,10 @@ at any envelope fraction. Public, because users can test a detector on it.
 - Add the vocabularies to `simulate.py` and `StrArray = NDArray[np.str_]` to `core.py`'s alias
   block (`core.py:26-32`, beside `FloatArray`).
 - Extend `SimulatedSession` (`simulate.py:1077`) with `events`, `non_events`, `unit_types`,
-  `running_intervals` per the contract: `field(default_factory=...)` defaults, an
-  `_empty_events()` / `_empty_non_events()` pair building the typed empty frames, the `unit_types`
-  length check in `__post_init__` (`simulate.py:1124`), and docstring entries. In the same edit,
-  correct the `speed` attribute's docstring ("Zeros: an immobile animal", now wrong since
-  `running_intervals` was added) to "Zeros unless `running_intervals` was given".
+  `baseline_rates`, `running_intervals` per the contract: `field(default_factory=...)` defaults,
+  an `_empty_events()` / `_empty_non_events()` pair building the typed empty frames, the
+  `unit_types` and `baseline_rates` length checks in `__post_init__` (`simulate.py:1124`), and
+  docstring entries.
 - `simulate_session` passes `running_intervals` (empty `(0, 2)` for None) into the result. Nothing
   else in it changes.
 - Implement `draw_network_events` per [designs.md#drawing-network-events](designs.md#drawing-network-events),
@@ -60,11 +59,11 @@ at any envelope fraction. Public, because users can test a detector on it.
 - Implement `truth_windows` per [designs.md#truth-windows](designs.md#truth-windows), in
   `simulate.py` (it reads the simulator's tables).
 - Export `draw_network_events`, `simulate_network_session`, `truth_windows`, `EVENT_TYPES`,
-  `NON_EVENT_TYPES`, `EXPRESSIONS`, `UNIT_TYPES` from `ripple_detection` (`__init__.py:72-85`
+  `NON_EVENT_TYPES`, `EXPRESSIONS`, `UNIT_TYPES` from `ripple_detection` (`__init__.py:75-88`
   imports, `__all__` at 146-153) and update `tests/test_public_api.py`'s pinned list.
 - **Docs:**
   - README: a subsection "Simulating sessions with known event types" after "Simulating realistic
-    ripples" (`README.md:522`): drawing events, editing the table, rendering, `truth_windows` at
+    ripples" (`README.md:626`): drawing events, editing the table, rendering, `truth_windows` at
     two fractions; a runnable snippet that prints column names, not counts (the doctest convention
     in CLAUDE.md).
   - CHANGELOG `[2.0.0]` → Added (`CHANGELOG.md:16`): one entry for the three functions and the
@@ -93,7 +92,8 @@ at any envelope fraction. Public, because users can test a detector on it.
 | existing `tests/test_simulate.py`, `tests/test_snapshots.py` | Pass with no edits and no snapshot updates (the extraction and the new fields change nothing). |
 | CI | Green, including the dependency-floors job (overview Rollout Strategy). |
 | `TestSimulatedSessionFields::test_defaults_keep_old_constructors_working` | A `SimulatedSession(...)` built with only the 11 original fields has empty `events`/`non_events` with the contract's columns and dtypes, `unit_types.shape == (0,)`, `running_intervals.shape == (0, 2)`. |
-| `TestSimulatedSessionFields::test_unit_types_length_is_checked` | `unit_types` of the wrong length raises `ValueError`. |
+| `TestSimulatedSessionFields::test_unit_types_length_is_checked` | `unit_types` or `baseline_rates` of the wrong length raises `ValueError`. |
+| `TestSimulateNetworkSession::test_baseline_rates_are_kept` | `baseline_rates` has one entry per unit, each inside its type's `baseline_rate` range, and differs between two seeds. |
 | `TestSimulatedSessionFields::test_simulate_session_records_running_intervals` | `simulate_session(..., running_intervals=[(2, 4)])` returns them as a `(1, 2)` array, and `(0, 2)` for None. Signals are guarded by the existing `test_the_defaults_are_unchanged`, which must pass unedited. |
 | `TestDrawNetworkEvents::test_schema_and_order` | Columns, dtypes, sort order, RangeIndex; `event_id` increasing with the earliest component's centre. |
 | `TestDrawNetworkEvents::test_components_per_type` | `swr` has ripple, sharp wave, burst; `burst_only` only a burst; `sharp_wave_only` only a sharp wave; a doublet has 2-3 ripples, as many sharp waves, one burst whose ±3-sigma span runs from the first ripple's start to the last's end. |

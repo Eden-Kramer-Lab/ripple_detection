@@ -37,12 +37,14 @@ detection does to event rates and participation.
   session's event and non-event tables from `truth.csv.gz` and re-match events per session (the
   runner stores events, not pairs); re-matching is parallel over sessions.
 - `paired_bootstrap` and `sign_flip_test` per the design (settings there), in `analyze.py`. Every
-  interval reported is a paired bootstrap over sessions, and across conditions over replicates;
+  interval reported is a paired bootstrap over sessions (`key="session_id"`) within a condition,
+  and over replicates (`key="replicate"`) whenever conditions are compared;
   every "A differs from B" claim carries a sign-flip p-value.
 - Keep computation and plotting apart: each analysis is a function returning a DataFrame, and its
   figure a separate function that imports matplotlib inside itself. Tests call only the former (the
   dependency-floors CI job has no matplotlib).
-- Analyses (methods at `default` or `published` unless stated; reference condition unless stated):
+- Analyses (rows with `setting` `"default"` or `"literature"`, the output contract's values:
+  detectors at defaults and every recipe, unless stated; reference condition unless stated):
   1. **Detection profile**: recall per event type against the network truth, per method; heatmap.
   2. **False-positive classes**: unmatched events (against the primary expression) labelled by
      `label_by_overlap` against a window table of every event type's components (labelled
@@ -100,6 +102,9 @@ detection does to event rates and participation.
 | Test | Asserts |
 | --- | --- |
 | `tests/test_benchmark_analyze.py::test_paired_bootstrap_by_hand` | On a hand-built per-session frame, the estimate equals the full-sample statistic and the interval brackets it; same draws for every method (paired). |
+| `test_paired_bootstrap_keeps_replicates_paired` | Two conditions, every replicate +1 in the second: with `key="replicate"` the interval of the mean difference is exactly [1, 1]. |
+| `test_main_analyses_include_recipes` | A hand-built output directory with `default`, a swept value and `literature` rows: the main-analysis selection keeps the detectors' defaults and every recipe, and drops the sweep. |
+| `test_boundary_effect_is_zero_for_equal_bounds` | A matched pair with detected bounds equal to the truth window: the observed count difference is 0 even when recruited cells were silent and interneurons fired. |
 | `test_sign_flip_exact` | For differences `[1, 1, 1, 1]`, p = 2/16; for `[1, -1]`, p = 1. |
 | `test_recall_at_interpolates_in_log_rate` | Hand-built curve: interpolated value by hand; NaN outside the range; zero FP rate replaced by half the resolution. |
 | `test_false_positive_labels` | A hand-built session: an event over a leakage burst is labelled `spike_leakage`, one over a `burst_only` burst `burst_only:burst`, one over nothing `background`. |

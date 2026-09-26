@@ -14,7 +14,7 @@ the smoke test, the extrapolation, and the full run.
 - Phase 3: `examples/benchmark/recipe_configs.py` (`make_recording`, `RECIPES`, `EXCLUSIONS`, `run_recipe`).
 - [src/ripple_detection/registry.py:462-478](../../../../src/ripple_detection/registry.py) — `DETECTORS`; detectors are resolved by name.
 - [examples/simulation_study.py:108-141](../../../../examples/simulation_study.py) — `call` and `detector_calls`: the error-recording call and the per-detector input wiring to mirror.
-- [src/ripple_detection/detectors/_units.py:34](../../../../src/ripple_detection/detectors/_units.py) — `count_spikes_in_events`, for `n_active_units`.
+- [src/ripple_detection/detectors/_units.py:71](../../../../src/ripple_detection/detectors/_units.py) — `count_spikes_in_events`, for `n_active_units`.
 
 **Contracts referenced:**
 
@@ -42,6 +42,9 @@ the smoke test, the extrapolation, and the full run.
   `--resume`, `--smoke`, and `manifest.json`. Every method call is guarded by `except Exception`
   (the design's runner step 3), so no recipe or detector can abort a run. Metrics per the output schema, using
   `truth_windows(events, 0.1, expression)` for matching and `boundary_errors` at 0.25 and 0.5.
+- Persist every result complete under `results/` (see the output contract: all columns, dtypes
+  and `attrs`), alongside the `events/` summary with `n_active_units` and `n_active_principal`,
+  and the observed counts within each truth window in `truth.csv.gz`.
 - Persist `methods.csv` with the resolved public-call metadata and input policy for
   each session/configuration. Reports separate output roles and stages; failed or
   excluded methods never count as successful zero-event calls.
@@ -90,6 +93,7 @@ the smoke test, the extrapolation, and the full run.
 | `test_running_schedule` | Sorted, non-overlapping bouts inside the session, rest first and last, bout and rest lengths in range. |
 | `test_run_session_schema` | A 60 s reference session (long enough for one bout: see the schedule) with two detectors, one sweep point and two recipes including Gridchyn 2020: every frame has exactly the contract's columns; `metrics` has one row per method × setting × expression. |
 | `test_metrics_agree_with_match_events` | For one method, the metrics row equals `match_events` called directly on the written events and `truth_windows`. |
+| `test_results_round_trip` | For a recipe with diagnostics and a detector, the reloaded `results/` frames equal the originals exactly (`check_exact=True`) and their `attrs` are equal. |
 | `test_failures_are_recorded_not_raised` | Stub methods raising `ValueError` and `IndexError` each yield a `failures` row (`"IndexError: ..."`) and no events or metrics rows; the others still run. A Gridchyn configuration with a missing or invalid pre-rest baseline fails explicitly; absence of a running bout alone does not imply a missing baseline. |
 | `test_resume_skips_finished_conditions` | With `--resume`, a condition whose files exist is not re-simulated (monkeypatched `run_session` call count). |
 | manual | Smoke-test numbers and extrapolation recorded; spot-check PNGs inspected. |

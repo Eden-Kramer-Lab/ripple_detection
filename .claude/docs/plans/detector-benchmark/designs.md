@@ -208,7 +208,8 @@ Steps:
    and the radiatum; `simulate_speed` (`simulate.py:941`), exactly as `simulate_session` does
    (`simulate.py:1280-1295`).
 5. **Units.** `unit_types` = `"place"` × 40, `"pyramidal"` × 10, `"interneuron"` × 10 by default
-   (in that order). Baseline rates per type drawn uniformly from `baseline_rate[type]`.
+   (in that order). Baseline rates per type drawn uniformly from `baseline_rate[type]`,
+   and kept per unit in `SimulatedSession.baseline_rates`.
    Modulation starts at 1 per unit and sample. Per burst component: participants are place units
    with probability `participation` and other pyramidal units with `participation / 2` (a Bernoulli
    draw per unit); `n_participants` is recorded in the returned events table (pyramidal and place
@@ -218,7 +219,8 @@ Steps:
    elementwise max). Spikes: `rng.poisson(rates * step * modulation)`, as `simulate_multiunit`
    (`simulate.py:918-919`).
 6. **Session.** `SimulatedSession` with `raw_lfp = lfps[:, 0].copy()`, `sharp_wave_lfp` the
-   radiatum, the events table (with `n_participants`), `unit_types`, `running_intervals`, and the
+   radiatum, the events table (with `n_participants`), `unit_types`, `baseline_rates`,
+   `running_intervals`, and the
    ripple arrays derived as in [SimulatedSession additions](shared-contracts.md#simulatedsession-additions).
 
 `simulate_session` is not reimplemented on top of this; the two coexist (`simulate_session` for
@@ -257,8 +259,10 @@ Poisson process per type on its allowed time (as in step 2 of drawing events), t
 ±4-sigma containment rejection. Non-events may overlap network events; that is intended (a
 leakage burst during a ripple is realistic) and analyses classify by longest overlap.
 
-For `spike_leakage` the row stores the burst as `center_time` with
-`rise_sigma = decay_sigma = (n_spikes - 1) * isi / 6`; the spike train is regular at `isi`. Unit
+For `spike_leakage` the row stores the drawn `n_spikes` and `isi`, which the renderer
+reads (the spike train is regular at `isi`), and the burst's envelope as `center_time` with
+`rise_sigma = decay_sigma = (n_spikes - 1) * isi / 6` for truth windows; the sigmas alone do
+not determine the signal (3 spikes at 6 ms and 5 at 3 ms share them). Unit
 identities are drawn at render time. `channel ~ U{0 .. n_channels - 1}`.
 
 Rendering, in `simulate_network_session` when `non_events` is given (after the burst
@@ -576,18 +580,29 @@ curves of the detectors with the same primary expression.
 ## Bootstrap and permutation tests
 
 ```python
-def paired_bootstrap(frame, statistic, *, n_resamples=2000, seed=0, level=0.95):
-    """Resample session_id with replacement, the same draw for every method; statistic(frame)
-    returns a Series; returns estimate, low, high per Series entry (percentile interval)."""
+def paired_bootstrap(frame, statistic, *, key, n_resamples=2000, seed=0, level=0.95):
+    """Resample the values of `key` with replacement, one draw shared by every row with that
+    value: key="session_id" within one condition (every method shares the draw), and
+    key="replicate" whenever the statistic compares conditions (a replicate's sessions in every
+    condition share a seed, so drawing the replicate keeps the pairs together). `frame` has
+    `session_id` and `replicate` columns; statistic(frame) returns a Series; returns estimate,
+    low, high per Series entry (percentile interval)."""
     rng = np.random.default_rng(seed)
-    sessions = frame.session_id.unique()
-    groups = {s: g for s, g in frame.groupby("session_id")}
+    values = frame[key].unique()
+    groups = {v: g for v, g in frame.groupby(key)}
     estimate = statistic(frame)
     draws = []
     for _ in range(n_resamples):
-        pick = rng.choice(sessions, size=sessions.size, replace=True)
-        # a session drawn twice is two sessions: relabel so per-session grouping keeps both
-        resampled = [groups[s].assign(session_id=f"{s}#{k}") for k, s in enumerate(pick)]
+        pick = rng.choice(values, size=values.size, replace=True)
+        # a value drawn twice is two draws: relabel both ids so per-session and per-replicate
+        # grouping keep both copies
+        resampled = [
+            groups[v].assign(
+                session_id=groups[v].session_id.astype(str) + f"#{k}",
+                replicate=groups[v].replicate.astype(str) + f"#{k}",
+            )
+            for k, v in enumerate(pick)
+        ]
         draws.append(statistic(pd.concat(resampled, ignore_index=True)))
     draws = pd.DataFrame(draws)
     alpha = (1 - level) / 2
@@ -756,7 +771,12 @@ past a workstation.
 - **Rates by state.** Per method, events per minute in rest and in running (event assigned by its
   `peak_time`, else midpoint), against the true rates (network events at rest; theta bursts in
   running as the non-event rate).
-- **Participation bias.** For truth events with a burst: the distribution of true `n_participants`
-  among those a method matched, against all truth events (ratio of means with bootstrap interval;
-  `scipy.stats.ks_2samp` statistic). For matched pairs: detected `n_active_units` minus true
-  `n_participants`, per method (bounds change counts).
+- **Participation bias.** For truth events with a burst: the distribution of latent
+  `n_participants` (recruited cells, some of which stay silent) among those a method matched,
+  against all truth events (ratio of means with bootstrap interval; `scipy.stats.ks_2samp`
+  statistic). Reported on its own, never subtracted from an observed count.
+- **Boundary effect on counts.** For matched pairs: observed active units within the detected
+  bounds minus observed active units within the matched truth window (fraction 0.1), both from
+  `count_spikes_in_events` with the same unit selection (`n_active_units`: all units;
+  `n_active_principal`: place and pyramidal units). Interneurons, background spikes and silent
+  recruits count on both sides, so the difference is zero when the bounds agree.
