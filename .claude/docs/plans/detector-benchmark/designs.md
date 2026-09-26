@@ -340,7 +340,11 @@ def match_events(reference, detected, *, minimum_iou=0.0):
     with np.errstate(invalid="ignore", divide="ignore"):
         iou = np.where(intersection > 0, intersection / union, 0.0)
     eligible = (intersection > 0) & (iou > minimum_iou)
-    # exact one-to-one assignment, per connected component of the eligibility graph
+    # exact one-to-one assignment, per connected component of the eligibility graph:
+    # the most pairs first, then the largest summed IoU. A pair's weight is bonus + IoU with
+    # bonus above any component's summed IoU, so no IoU gain outweighs one more pair; the
+    # maximum pair count does not depend on which inventory is the reference, so counts
+    # (and F1, Jaccard) are symmetric even when summed IoU ties
     graph = scipy.sparse.bmat([[None, scipy.sparse.csr_array(eligible)],
                                [scipy.sparse.csr_array(eligible.T), None]])
     n_components, label = scipy.sparse.csgraph.connected_components(graph, directed=False)
@@ -349,9 +353,10 @@ def match_events(reference, detected, *, minimum_iou=0.0):
     for component in np.unique(ref_label[eligible.any(axis=1)]):
         r = np.flatnonzero(ref_label == component)
         d = np.flatnonzero(det_label == component)
-        weight = np.where(eligible[np.ix_(r, d)], iou[np.ix_(r, d)], 0.0)
+        bonus = min(len(r), len(d)) + 1.0
+        weight = np.where(eligible[np.ix_(r, d)], bonus + iou[np.ix_(r, d)], 0.0)
         i, j = scipy.optimize.linear_sum_assignment(weight, maximize=True)
-        keep = weight[i, j] > 0
+        keep = eligible[np.ix_(r, d)][i, j]
         rows.extend(r[i[keep]]); cols.extend(d[j[keep]])
     order = np.argsort(rows, kind="stable")
     r, d = np.asarray(rows, dtype=int)[order], np.asarray(cols, dtype=int)[order]
@@ -370,6 +375,11 @@ def match_events(reference, detected, *, minimum_iou=0.0):
   (`core.py:2129-2138`); factor that check into a shared `core._check_bounds(name, bounds)` used by
   both, a behavior-preserving extraction.
 - `_peaks` returns the `peak_time` column as floats, or NaNs.
+- Why pairs before IoU: with IoU alone, `[[0, 1], [2, 4]]` against `[[0, 4], [2.5, 3]]` ties
+  (two pairs at 0.25 or one at 0.5) and the solver returned two pairs one way and one the
+  other. With the pair count first, 3000 random swapped inventories (half-integer bounds, so
+  frequent ties) gave equal pair counts and summed IoU both ways. Assignments equal in both
+  can still differ in which events pair; counts and summaries do not.
 - Return early (no pairs, zero overlap counts) when either input is empty, before building the
   sparse graph.
 - Checked during planning: this code gives the expected result for every hand case in phase 2's
@@ -540,8 +550,19 @@ Per session, in a worker (`ProcessPoolExecutor`, default `os.cpu_count() - 1` wo
 4. Per method × setting × expression in (`ripple`, `sharp_wave`, `burst`, `network`):
    `match_events(truth_windows(events, 0.1, expression), detected)`, boundary errors at 0.25 and
    0.5 via `boundary_errors`, the metrics row.
-5. Return the session's truth, units, events and metrics frames; the parent appends them and writes
-   each condition's files when its sessions are done (so `--resume` skips finished conditions).
+5. Return the session's truth, units, events and metrics frames; the parent appends them and,
+   when a condition's sessions are all done, writes its files under temporary names, renames
+   them into place, and only then writes the condition's completion marker
+   `done/<condition_id>.json` (row counts and SHA-256 of every file it wrote).
+
+**Run specification and resume.** A new run writes `run_spec.json` before any session: the
+resolved parameters of every condition (after CLI overrides such as `--duration`), the
+replicate count and seeds, every method and setting with its resolved options, and the
+package version and git commit. `--resume` rebuilds the specification from its arguments and
+stops with the differing keys if it is not equal to the saved one; it never reuses outputs
+made under another specification. A condition counts as finished only when its marker
+exists and its files match the marker's counts and hashes; files without a marker (an
+interrupted write) are deleted and the condition runs again.
 
 `--smoke` runs the reference condition, 1 replicate, 1 worker; prints per-method runtime,
 simulate time, peak resident memory (`resource.getrusage(RUSAGE_SELF).ru_maxrss`, bytes on macOS
@@ -561,20 +582,29 @@ Per detector, condition and expression, pooled over sessions: at each setting,
 Curves are drawn in threshold order. For a target FP rate `r` in `(0.5, 1, 2, 5)` per minute:
 
 ```python
-def recall_at(fp_rate, recall, target, floor):
-    """Linear in log FP rate between the settings bracketing target; NaN outside.
+def at_fp_rate(curve, target, floor, columns):
+    """curve: one row per setting of one detector, condition and expression, in threshold
+    order, with `fp_rate`, `recall` and the metric `columns`. Settings with the same floored
+    FP rate keep one row, the best recall (ties: the first in threshold order), whole; every
+    column is then interpolated linearly in log FP rate between the same two bracketing rows,
+    so recall and the boundary errors describe the same settings. NaN outside the range.
     floor: half of 1 / total non-event minutes, the estimate's resolution, used for 0."""
-    points = pd.DataFrame({"x": np.log(np.maximum(fp_rate, floor)), "y": recall})
-    points = points.groupby("x", sort=True).y.max()   # equal rates: the best recall
-    x, y = points.index.to_numpy(), points.to_numpy()
-    if not (x[0] <= np.log(target) <= x[-1]):
-        return np.nan
-    return float(np.interp(np.log(target), x, y))
+    x = np.log(np.maximum(curve.fp_rate.to_numpy(float), floor))
+    ranked = curve.assign(_x=x, _order=np.arange(len(curve)))
+    ranked = ranked.sort_values(["_x", "recall", "_order"], ascending=[True, False, True])
+    points = ranked.drop_duplicates("_x", keep="first")
+    xs, t = points._x.to_numpy(), np.log(target)
+    if not (xs[0] <= t <= xs[-1]):
+        return pd.Series(np.nan, index=list(columns))
+    return pd.Series({c: float(np.interp(t, xs, points[c].to_numpy(float))) for c in columns})
 ```
 
-Settings with equal FP rates (several at 0, floored to the same value) collapse to their largest
-recall, so `np.interp` gets strictly increasing `x`. The same interpolation gives median onset and offset error at the
-target. Recipes are points `(fp_rate, recall)` on their primary expression's axes, drawn over the
+Settings with equal FP rates (several at 0, floored to the same value) collapse to one setting,
+the best recall, so `np.interp` gets strictly increasing `x`. The setting is chosen once, by
+recall, and its whole row is kept: median onset and offset errors at the target come from the
+same settings as the recall, never from a per-column maximum (which, on a curve where two
+settings share an FP rate, paired the better setting's recall with the other's +20 ms onset
+error instead of its own -10 ms). Recipes are points `(fp_rate, recall)` on their primary expression's axes, drawn over the
 curves of the detectors with the same primary expression.
 
 ## Bootstrap and permutation tests
@@ -612,8 +642,14 @@ def paired_bootstrap(frame, statistic, *, key, n_resamples=2000, seed=0, level=0
 
 def sign_flip_test(differences, *, n_resamples=10_000, seed=0):
     """Two-sided paired test of mean difference 0 over sessions; exact below 17 sessions,
-    else Monte Carlo with the (k + 1) / (n + 1) estimate, which is never 0."""
+    else Monte Carlo with the (k + 1) / (n + 1) estimate, which is never 0. Differences must be
+    finite: the caller pairs sessions where both values exist and reports how many were dropped.
+    With no pairs there is no test: NaN."""
     d = np.asarray(differences, dtype=float)
+    if not np.isfinite(d).all():
+        raise ValueError("sign_flip_test needs finite paired differences; drop incomplete pairs first.")
+    if d.size == 0:
+        return float("nan")
     observed = abs(d.mean())
     if d.size <= 16:
         signs = np.array(list(itertools.product((-1.0, 1.0), repeat=d.size)))
@@ -775,8 +811,9 @@ past a workstation.
   `n_participants` (recruited cells, some of which stay silent) among those a method matched,
   against all truth events (ratio of means with bootstrap interval; `scipy.stats.ks_2samp`
   statistic). Reported on its own, never subtracted from an observed count.
-- **Boundary effect on counts.** For matched pairs: observed active units within the detected
-  bounds minus observed active units within the matched truth window (fraction 0.1), both from
+- **Boundary effect on counts.** For matched pairs against an expression: observed active units
+  within the detected bounds minus observed active units within the matched truth window of that
+  expression (fraction 0.1, from `truth_counts.csv.gz`), both from
   `count_spikes_in_events` with the same unit selection (`n_active_units`: all units;
   `n_active_principal`: place and pyramidal units). Interneurons, background spikes and silent
   recruits count on both sides, so the difference is zero when the bounds agree.

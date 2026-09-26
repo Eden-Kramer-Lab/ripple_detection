@@ -13,7 +13,7 @@ decompositions of the difference between particular recipes.
 - Phase 3: `examples/benchmark/recipe_configs.py` (`RecipeConfig`, `run_recipe`,
   `make_recording`, `RECIPES`) and the installed public primitives.
 - Phase 4: `examples/benchmark/conditions.py` (`simulate_condition`, `conditions`) — attribution
-  uses the reference condition's sessions, re-simulated by seed.
+  uses the reference condition's sessions, re-simulated from the run's saved parameters.
 - Phase 2: `match_events`.
 - Phase 5: `paired_bootstrap` in `examples/benchmark/analyze.py`.
 
@@ -21,7 +21,12 @@ decompositions of the difference between particular recipes.
 
 - [Recipe config](shared-contracts.md#recipe-config) — method configurations call the package; only independently verified experimental templates are decomposable.
 - [Primary expression](shared-contracts.md#primary-expression) — for context only: `Y` uses one expression per family ([designs.md#attribution](designs.md#attribution), "Outputs `Y`"), not each recipe's primary expression.
-- [Conditions](shared-contracts.md#conditions) — the reference sessions are `simulate_condition(reference, k)`, `k = 0..4`.
+- [Conditions](shared-contracts.md#conditions) — the reference sessions are
+  `simulate_condition(saved_reference, k)`, `k = 0..4`, where `saved_reference` is built from the
+  run's `conditions.csv` `params` (the resolved parameters, after overrides such as a halved
+  `duration_s`), never from current defaults. Each regenerated session's seed and duration must
+  equal `sessions.csv.gz`, and its truth table must equal the saved `truth.csv.gz` rows for that
+  session; any difference stops attribution.
 - [Benchmark outputs](shared-contracts.md#benchmark-outputs) — attribution writes under `output/<run_name>/attribution/` and `results/<run_name>/attribution/`.
 
 **Designs referenced:** [attribution](designs.md#attribution).
@@ -91,7 +96,8 @@ decompositions of the difference between particular recipes.
 ## Fixtures
 
 Hand-built template lists and toy value functions inline; one 60 s reference session for the
-memoization test, re-simulated by seed.
+memoization test, re-simulated from a saved `conditions.csv` row, plus a test that a run
+saved with `duration_s` halved regenerates the halved sessions and that a truth mismatch raises.
 
 ## Review
 

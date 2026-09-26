@@ -104,9 +104,11 @@ detection does to event rates and participation.
 | `tests/test_benchmark_analyze.py::test_paired_bootstrap_by_hand` | On a hand-built per-session frame, the estimate equals the full-sample statistic and the interval brackets it; same draws for every method (paired). |
 | `test_paired_bootstrap_keeps_replicates_paired` | Two conditions, every replicate +1 in the second: with `key="replicate"` the interval of the mean difference is exactly [1, 1]. |
 | `test_main_analyses_include_recipes` | A hand-built output directory with `default`, a swept value and `literature` rows: the main-analysis selection keeps the detectors' defaults and every recipe, and drops the sweep. |
-| `test_boundary_effect_is_zero_for_equal_bounds` | A matched pair with detected bounds equal to the truth window: the observed count difference is 0 even when recruited cells were silent and interneurons fired. |
+| `test_boundary_effect_is_zero_for_equal_bounds` | A pair matched against the ripple expression, with detected bounds equal to that ripple's truth window: the observed count difference is 0 even when recruited cells were silent, interneurons fired and the network window is wider. |
 | `test_sign_flip_exact` | For differences `[1, 1, 1, 1]`, p = 2/16; for `[1, -1]`, p = 1. |
-| `test_recall_at_interpolates_in_log_rate` | Hand-built curve: interpolated value by hand; NaN outside the range; zero FP rate replaced by half the resolution. |
+| `test_sign_flip_needs_finite_pairs` | `[NaN, 0]` and `[NaN, NaN]` raise `ValueError`; `[]` returns NaN. |
+| `test_at_fp_rate_interpolates_in_log_rate` | Hand-built curve: interpolated values by hand; NaN outside the range; zero FP rate replaced by half the resolution. |
+| `test_at_fp_rate_keeps_one_setting` | Two settings share an FP rate, recall 0.8 with onset -10 ms and recall 0.6 with +20 ms: at that rate recall is 0.8 and onset -10 ms. |
 | `test_false_positive_labels` | A hand-built session: an event over a leakage burst is labelled `spike_leakage`, one over a `burst_only` burst `burst_only:burst`, one over nothing `background`. |
 | `test_profile_and_consensus_on_tiny_run` | A two-session hand-built output directory (written by a fixture): detection profile and consensus tables equal hand values. |
 | `test_results_size_limit` | Writing a file over 1 MB raises. |

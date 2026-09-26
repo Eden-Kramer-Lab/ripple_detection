@@ -168,8 +168,10 @@ class EventMatching:
 
 - **Overlap** is intersection of positive length; touching endpoints do not overlap (matches
   `require_overlap`'s default, `core.py:2201-2203`).
-- **Matching is one-to-one**, maximizing the summed IoU of pairs whose IoU exceeds
-  `minimum_iou`, solved exactly per connected component of the overlap graph (algorithm in
+- **Matching is one-to-one** over pairs whose IoU exceeds `minimum_iou`, maximizing first the
+  number of pairs and then their summed IoU, solved exactly per connected component of the
+  overlap graph. The pair count is the same with the inventories swapped, so recall and
+  precision exchange roles and F1 and Jaccard are unchanged (algorithm in
   [designs.md#matching](designs.md#matching)). Do not weaken to greedy: split and merge counts and
   boundary errors depend on which detected event is the match.
 - `pairs` columns, per pair (`r` reference, `d` detected, `∩` intersection length):
@@ -349,10 +351,13 @@ and 6. Every table is CSV; `.csv.gz` for the large ones.
 | File | One row per | Columns |
 | --- | --- | --- |
 | `manifest.json` | run | `run_name`, `git_commit`, `package_version`, `numpy_version`, `scipy_version`, `command`, `started`, `finished`, `n_workers` |
+| `run_spec.json` | run | the resolved specification `--resume` checks: every condition's parameters after overrides, `replicates`, seeds, every method and setting with its resolved options, `package_version`, `git_commit` |
+| `done/<condition_id>.json` | finished condition | row count and SHA-256 of every file the condition wrote; written last, after the files are renamed into place |
 | `methods.csv` | session × method × setting | `session_id`, `method`, `setting`, `doi`, `role`, `inventory`, `stage`, `primary_expression`, `resolved_options` (JSON), `input_policy` (JSON or references), `assumptions` (JSON), `interpretation` |
-| `conditions.csv` | condition | `condition_id`, `factor`, `level`, `params` (JSON of the full parameter set after overrides) |
+| `conditions.csv` | condition | `condition_id`, `factor`, `level`, `params` (JSON of the full parameter set after the condition's and the command line's overrides, such as `--duration`; phase 6 regenerates sessions from it) |
 | `sessions.csv.gz` | session | `session_id` (`f"{condition_id}/{replicate}"`), `condition_id`, `replicate`, `seed`, `duration_s`, `rest_s`, `event_time_s` (union of network windows at 0.1), `n_events_<type>` per `EVENT_TYPES`, `n_non_events_<type>` per `NON_EVENT_TYPES`, `simulate_s`, `detect_s` |
-| `truth.csv.gz` | truth component | `session_id`, `table` (`"event"`/`"non_event"`), `id`, `type`, `expression`, `component`, then the remaining columns of the event or non-event table (NaN where not applicable), and for event rows `n_active_units`, `n_active_principal` (observed within the network truth window at 0.1) |
+| `truth.csv.gz` | truth component | `session_id`, `table` (`"event"`/`"non_event"`), `id`, `type`, `expression`, `component`, then the remaining columns of the event or non-event table (NaN where not applicable) |
+| `truth_counts.csv.gz` | truth window × expression | `session_id`, `expression` (`ripple`, `sharp_wave`, `burst`, `network`), `row` (position in `truth_windows(events, 0.1, expression)`, the rows matching uses), `n_active_units`, `n_active_principal` (observed within that window) |
 | `units.csv.gz` | session × unit | `session_id`, `unit`, `unit_type`, `baseline_rate` (from `SimulatedSession.baseline_rates`) |
 | `events/<condition_id>.csv.gz` | detected event | `session_id`, `method`, `setting`, `event_index`, `start_time`, `end_time`, `peak_time`, `n_active_units`, `n_active_principal` |
 | `results/<condition_id>/<method_slug>__<setting>.csv.gz` and `.json` | detected event, complete | `session_id`, then every column the method returned, in its order (clipping flags, per-event statistics, method-specific columns); the JSON sidecar holds each column's dtype and, per `session_id`, the result's complete `attrs` (recipes: method, DOI, resolved options, grid, inputs, diagnostics such as adaptive threshold updates, `ripple_detection_version`; detectors: name, resolved parameters, version). `method_slug` is `method` with `:` replaced by `--`. |
@@ -369,8 +374,9 @@ and 6. Every table is CSV; `.csv.gz` for the large ones.
   network window at fraction 0.1).
 - `n_active_units` counts units with a spike in the event (`count_spikes_in_events`, all units),
   `n_active_principal` the same over place and pyramidal units, for the participation
-  analysis. `truth.csv.gz` event rows carry both counts within each network truth window at
-  fraction 0.1, with the same unit selections, so boundary effects compare observed counts.
+  analysis. `truth_counts.csv.gz` holds both counts for every truth window of every expression
+  at fraction 0.1, with the same unit selections, so a pair matched against any expression
+  compares observed counts at its own truth window.
 - `results/` keeps every result complete, so nothing a method reports is lost; `events/` holds
   only the columns analyses read. Written and read with the conventions of
   `literature_methods.save_events`/`load_events` (`float_precision="round_trip"`, saved

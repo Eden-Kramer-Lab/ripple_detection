@@ -82,6 +82,7 @@ event, and labelling of events by what they overlap. Users can run it on their o
 | `TestMatchEvents::test_pair_metrics_by_hand` | Reference `[[0, 10]]`, detected `[[2, 12]]`: IoU 8/12, coverage 0.8, temporal precision 0.8, onset +2, offset +2. |
 | `TestMatchEvents::test_touching_is_not_overlap` | `[[0, 1]]` vs `[[1, 2]]`: no pair, overlap counts 0. |
 | `TestMatchEvents::test_optimal_not_greedy` | Reference `[[0, 4], [4.5, 10]]`, detected `[[0, 10], [5, 6]]`: two pairs (d0–r0, d1–r1), not the greedy single pair d0–r1. |
+| `TestMatchEvents::test_matching_is_symmetric` | `[[0, 1], [2, 4]]` against `[[0, 4], [2.5, 3]]` gives two pairs both ways; for random inventories with tied IoUs, swapping gives the same pair count, summed IoU, F1 and Jaccard. |
 | `TestMatchEvents::test_split_and_merge` | One reference overlapped by three detected: `split_reference == [0]`, one pair (the largest IoU); one detected over two references: `merged_detected == [0]`, one pair. |
 | `TestMatchEvents::test_minimum_iou` | A pair at IoU 0.2 is kept at `minimum_iou=0.1`, dropped at 0.3, and still counted in the overlap counts. |
 | `TestMatchEvents::test_indices_refer_to_input_rows` | Shuffled inputs give pairs whose indices point at the right rows of the inputs as given. |

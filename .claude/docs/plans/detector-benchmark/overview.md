@@ -105,6 +105,11 @@ Shapley values and bootstrap are NumPy; parallelism is `concurrent.futures.Proce
 `scipy.optimize.linear_sum_assignment` (already a dependency through scipy) does the matching;
 figures use matplotlib from the existing `examples` extra.
 
+One exception, for phase 7 only: its scripts stream DANDI NWB files with `remfile` and `h5py`,
+which are not declared anywhere in `pyproject.toml`. They run in an isolated environment
+(`uv run --with remfile --with h5py ...`) and record the versions used; no package or test
+imports them, so CI and the dependency-floors job are unaffected.
+
 ## Metrics
 
 - Phase 1a/1b: truth windows computed analytically equal those measured on the rendered signal
