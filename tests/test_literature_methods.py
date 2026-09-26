@@ -1723,16 +1723,6 @@ def test_grosmark_rejects_an_unknown_stage(measured):
         )
 
 
-def test_within_intervals_rejects_unsorted_or_overlapping_intervals():
-    events = np.array([[1.0, 1.5], [3.2, 3.4]])
-    np.testing.assert_allclose(
-        lm.within_intervals(events, [[0.5, 2.0], [3.0, 3.3]]), events[:1]
-    )
-    for intervals in ([[3.0, 3.5], [0.5, 2.0]], [[0.5, 2.0], [1.0, 3.5]]):
-        with pytest.raises(ValueError, match="sorted, disjoint"):
-            lm.within_intervals(events, intervals)
-
-
 @pytest.mark.parametrize("entry", [*lm.RECIPES, *lm.VARIANTS], ids=lambda e: e.run.__name__)
 def test_public_method_docstrings_list_their_actual_parameters(entry):
     doc = entry.run.__doc__
@@ -2080,11 +2070,11 @@ def test_events_matching_an_interval_are_contained_at_any_clock_origin(origin):
     rec, first, stop = _burst_recording(origin, 1000.0)
     events = lm.population_trace(rec, bin_width=0.01).detect(**_EXACT_RATE)
     edges = [[origin + 10.0, origin + 10.05]]
-    assert len(lm.within_intervals(events, edges)) == 1
+    assert len(rd.require_inside(events, edges)) == 1
     # A bound off by less than the clock's resolution still counts as inside.
     ulp = float(np.spacing(origin + 10.0))
     shifted = lm.bounds(events) + np.array([[-ulp, ulp]])
-    assert len(lm.within_intervals(shifted, [[rec.time[first], rec.time[stop - 1]]])) == 1
+    assert len(rd.require_inside(shifted, [[rec.time[first], rec.time[stop - 1]]])) == 1
 
 
 @pytest.mark.parametrize("origin", [0.0, 1_700_000_000.0])

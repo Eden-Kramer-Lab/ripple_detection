@@ -2672,16 +2672,21 @@ def require_inside(
 
     """
     events = _checked_bounds(event_times, "event_times")
-    bounds = _checked_intervals(intervals, "intervals")
-    if not (len(events) and len(bounds)):
-        keep = np.zeros(len(events), dtype=bool)
-    else:
-        tolerance = _bound_tolerance(events, bounds)
-        which = np.searchsorted(bounds[:, 0], events[:, 0] + tolerance, side="right") - 1
-        keep = (which >= 0) & (events[:, 1] <= bounds[np.clip(which, 0, None), 1] + tolerance)
+    keep = _inside_mask(events, _checked_intervals(intervals, "intervals"))
     if isinstance(event_times, pd.DataFrame):
         return event_times.iloc[np.flatnonzero(keep)].copy()
     return events[keep]
+
+
+def _inside_mask(events: FloatArray, intervals: FloatArray) -> BoolArray:
+    """Which ``(start, end)`` rows lie wholly inside one checked interval,
+    allowing the rounding error of the clock's magnitude at either bound."""
+    if not (len(events) and len(intervals)):
+        return np.zeros(len(events), dtype=bool)
+    tolerance = _bound_tolerance(events, intervals)
+    which = np.searchsorted(intervals[:, 0], events[:, 0] + tolerance, side="right") - 1
+    inside = (which >= 0) & (events[:, 1] <= intervals[np.clip(which, 0, None), 1] + tolerance)
+    return np.asarray(inside, dtype=bool)
 
 
 def _checked_bounds(event_times: ArrayLike | pd.DataFrame, name: str) -> FloatArray:

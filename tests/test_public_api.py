@@ -121,7 +121,6 @@ LITERATURE_HELPERS = [
     "run_method",
     "save_events",
     "within_duration",
-    "within_intervals",
 ]
 
 

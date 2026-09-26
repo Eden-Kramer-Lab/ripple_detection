@@ -852,42 +852,13 @@ def _event_slice(time: FloatArray, start: float, end: float, tolerance: float) -
     )
 
 
-def within_intervals(events: pd.DataFrame | FloatArray, intervals: ArrayLike) -> FloatArray:
-    """Keep events lying entirely inside one of the intervals.
-
-    Parameters
-    ----------
-    events : pandas.DataFrame or ndarray
-        Table with start_time/end_time columns or an array of time pairs.
-    intervals : array_like, shape (n_intervals, 2)
-        Sorted, disjoint, inclusive [start, end] intervals in seconds. A
-        bound within the timestamps' rounding error of an interval's edge
-        counts as inside.
-
-    Returns
-    -------
-    bounds : ndarray, shape (n_kept, 2)
-        Start/end times of the events inside an interval, in input order.
-
-    Raises
-    ------
-    ValueError
-        The intervals are not finite, sorted and disjoint.
-    """
-    events = bounds(events)
-    return np.asarray(events[_within_intervals_mask(events, intervals)], dtype=float)
-
-
 def _within_intervals_mask(events: FloatArray, intervals: ArrayLike) -> BoolArray:
-    """Which ``(start, end)`` pairs lie inside one interval, allowing the
-    subtraction error of the clock's magnitude at either bound."""
-    allowed = _interval_array(np.asarray(intervals, dtype=float).reshape(-1, 2))
-    if allowed is None or len(allowed) == 0 or len(events) == 0:
-        return np.zeros(len(events), dtype=bool)
-    tolerance = _time_tolerance(np.concatenate([events.ravel(), allowed.ravel()]))
-    which = np.searchsorted(allowed[:, 0], events[:, 0] + tolerance, side="right") - 1
-    inside = (which >= 0) & (events[:, 1] <= allowed[np.clip(which, 0, None), 1] + tolerance)
-    return np.asarray(inside, dtype=bool)
+    """Which ``(start, end)`` pairs lie inside one interval (``require_inside``'s
+    rule, with the clock's rounding error allowed at either bound)."""
+    return rd.core._inside_mask(
+        np.asarray(events, dtype=float).reshape(-1, 2),
+        rd.core._checked_intervals(intervals, "intervals"),
+    )
 
 
 def _only_in(rec: Recording, values: FloatArray, intervals: FloatArray) -> FloatArray:
@@ -1981,7 +1952,7 @@ def _population_with_ripple_peak(
         raise ValueError(msg)
     else:
         eligible = sleep
-    return within_intervals(events, eligible)
+    return bounds(rd.require_inside(events, eligible))
 
 
 @_recipe(
@@ -3229,7 +3200,7 @@ def muessig_2019(
         speed_threshold=np.nextafter(limit, -np.inf) if sample_speed_veto else np.inf,
     )
     events = rd.require_overlap(bursts, _IMPLEMENTATIONS["muessig_2019_ripples"](rec))
-    return within_intervals(events, rec.sleep(limit, 2.0, measure="power"))
+    return bounds(rd.require_inside(events, rec.sleep(limit, 2.0, measure="power")))
 
 
 @_recipe(
@@ -3707,12 +3678,12 @@ def wikenheiser_2013(
     )
     if branch == "rest":
         if rec.sleep_intervals is not None or not rec.allows_simulation_proxies:
-            return within_intervals(events, rec.sleep(2.0, 0.0))
+            return bounds(rd.require_inside(events, rec.sleep(2.0, 0.0)))
         ratio = _zscore(rec.ratio((6.0, 10.0), (2.0, 4.0), measure="power"))
         still = rd.state_intervals(rec.speed, rec.time, 2.0, minimum_duration=2.0)
         low = rd.state_intervals(ratio, rec.time, 0.0)
         rest = rec.mask_to_intervals(rec.intervals_to_mask(still) & rec.intervals_to_mask(low))
-        return within_intervals(events, rest)
+        return bounds(rd.require_inside(events, rest))
     if theta_delta is None:
         msg = "Supply the z-scored theta_delta trace for the run-LIA branch."
         raise ValueError(msg)
@@ -3995,7 +3966,9 @@ def nadasdy_1999(
         bound_threshold=bound_threshold,
         reference_subtract=False,
     )
-    return within_intervals(events, rec.sleep(4.0, 1.0, theta=(5.0, 10.0), delta=(2.0, 4.0)))
+    return bounds(
+        rd.require_inside(events, rec.sleep(4.0, 1.0, theta=(5.0, 10.0), delta=(2.0, 4.0)))
+    )
 
 
 @_recipe(
@@ -5720,5 +5693,4 @@ __all__ = [
     "run_method",
     "save_events",
     "within_duration",
-    "within_intervals",
 ] + [entry.run.__name__ for entry in (*RECIPES, *VARIANTS)]
