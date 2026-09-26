@@ -66,7 +66,7 @@ def _readme_parameter_table():
         ("smoothing width (ripple)", "SWR smooth (ms)"),
         ("smoothing width (multiunit)", "MUA smooth (ms)"),
         ("`speed_threshold`", "Animal Speed (cm/s)"),
-        ("`minimum_duration`", "Min. Duration (ms)"),
+        ("minimum event duration", "Min. Duration (ms)"),
         ("`maximum_duration`", "Max Duration (ms)"),
         ("`minimum_active_units`", "Min. Cells (#)"),
         ("event grouping interval", "Combine Events Thresh. (ms)"),
