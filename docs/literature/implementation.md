@@ -141,6 +141,16 @@ example, spikes filling 10.000–10.049 s at 1000 Hz fill five 10 ms bins; the
 event is reported at the first and last counted samples, 10.000 and 10.049 s,
 so `duration` is 0.049 s, while a 50 ms minimum duration (five bins) keeps it.
 
+`attrs["diagnostics"]` is the place to look when a result is empty or
+surprising, before changing any setting: the time each supplied signal is valid
+(finite in every channel or unit; known speed), the time the sleep, baseline and
+behavior intervals cover, and each detection step the method ran with the number
+of events it found before the method's later filters (participation, overlap,
+state, stage), then the counts before and after the call's behavior intervals.
+Filters inside a shared detector (its speed and duration rules) act before its
+count. An empty inventory with many detections was emptied by those later
+filters; one with none points at the signal, its coverage or the threshold.
+
 The [simulation script](../../examples/literature_recipes.py) supplies synthetic
 cell groups, templates, reference and a baseline spanning the initial 0–12 s
 rest epoch, including its simulated events (clipped for shorter recordings).

@@ -2532,3 +2532,58 @@ def test_a_native_grid_reports_bins_and_elapsed_duration():
     empty = lm.run_method("denovellis_2021_mua", moving)  # speed <=4 at both ends
     assert empty.empty
     _assert_output_core(empty, rec)
+
+
+def test_diagnostics_report_valid_signal_and_interval_coverage():
+    inputs = _measured_inputs()
+    inputs["sleep_intervals"] = [[2.0, 5.0]]
+    del inputs["baseline_intervals"]
+    rec = lm.Recording.from_arrays(**inputs, artifact_intervals=[[10.0, 12.0]])
+    events = lm.run_method("karlsson_2009", rec, behavior_intervals=[[0.0, 15.0]])
+    diagnostics = events.attrs["diagnostics"]
+    time = inputs["time"]
+    artifact = (time >= 10.0) & (time <= 12.0)
+    assert diagnostics["recording_seconds"] == pytest.approx(20.0)
+    lfps = diagnostics["signals"]["lfps"]
+    assert lfps["valid_fraction"] == pytest.approx(1 - artifact.mean())
+    assert lfps["valid_seconds"] == pytest.approx((~artifact).sum() / 1500)
+    assert diagnostics["signals"]["speed"]["valid_fraction"] == 1.0  # artifacts keep speed
+    covered = diagnostics["interval_seconds"]
+    assert covered["sleep_intervals"] == pytest.approx(
+        ((time >= 2) & (time <= 5)).sum() / 1500
+    )
+    assert covered["baseline_intervals"] is None
+    assert covered["behavior_intervals"] == pytest.approx((time <= 15).sum() / 1500)
+
+
+def test_diagnostics_count_each_detection_step_before_later_filters(measured):
+    events = lm.run_method("pfeiffer_2013_ripples", measured, behavior_intervals=[[5, 10]])
+    diagnostics = events.attrs["diagnostics"]
+    assert diagnostics["detections"] == [
+        {
+            "step": "detect_events_from_trace",
+            "events": diagnostics["events_before_behavior_intervals"],
+        }
+    ]
+    assert (
+        diagnostics["events_before_behavior_intervals"] > diagnostics["events"] == len(events)
+    )
+    # A population burst gate and its cell criterion: the grid step counts the
+    # bursts before participation removes any.
+    xu = lm.run_method("xu_2019", measured)
+    steps = xu.attrs["diagnostics"]["detections"]
+    assert [step["step"] for step in steps] == ["detect_events_from_trace (0.001 s bins)"]
+    assert steps[0]["events"] >= len(xu)
+    # Two steps, in call order: Bhattarai's ripples, then its silence-bounded frames.
+    inputs, _ = _method_inputs("bhattarai_2020")
+    bhattarai = lm.run_method("bhattarai_2020", lm.Recording.from_arrays(**inputs))
+    assert [step["step"] for step in bhattarai.attrs["diagnostics"]["detections"]] == [
+        "detect_events_from_trace",
+        "detect_silence_bounded_events",
+    ]
+
+
+def test_detection_counts_belong_to_the_call_that_ran_them(measured):
+    lm.run_method("karlsson_2009", measured)
+    assert lm._DETECTIONS.get() is None
+    assert lm._mallory_candidates(np.arange(10) / 10, np.zeros(10)).empty  # no call: no record

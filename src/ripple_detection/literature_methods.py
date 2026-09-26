@@ -14,14 +14,15 @@ synthetic tests do not establish parity with historical event inventories.
 
 from __future__ import annotations
 
+import contextvars
 import dataclasses
 import difflib
 import functools
 import inspect
 import unicodedata
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Sequence, Sized
 from dataclasses import dataclass
-from typing import Any, Literal, ParamSpec
+from typing import Any, Literal, ParamSpec, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -101,6 +102,33 @@ _NO_SPEED = (
     "This method uses the animal's speed, which was not supplied; pass speed "
     "(cm/s) to Recording.from_arrays, with NaN where it is unknown."
 )
+
+
+# The detection steps of the run_method call in progress: each appends its
+# step name and event count, for attrs["diagnostics"].
+_DETECTIONS: contextvars.ContextVar[list[dict[str, Any]] | None] = contextvars.ContextVar(
+    "_DETECTIONS", default=None
+)
+_Events = TypeVar("_Events", bound=Sized)
+
+
+def _counted(step: str, events: _Events) -> _Events:
+    """Record how many events a detection step found, and return them."""
+    record = _DETECTIONS.get()
+    if record is not None:
+        record.append({"step": step, "events": len(events)})
+    return events
+
+
+def _detected(
+    function: Callable[..., pd.DataFrame], step: str | None = None
+) -> Callable[..., pd.DataFrame]:
+    """``function``, recording its event count as a detection step."""
+
+    def detect(*args: Any, **kwargs: Any) -> pd.DataFrame:
+        return _counted(step or function.__name__, function(*args, **kwargs))
+
+    return detect
 
 
 def _known_speed(speed: FloatArray | None) -> FloatArray:
@@ -861,7 +889,7 @@ def _zugaro_ripple_peaks(rec: Recording, band: tuple[float, float]) -> pd.DataFr
     Buzsaki-lineage papers that require a ripple peak but do not describe
     their ripple detector (assumed: Huszar et al. 2022's 5 SD peak and 2 SD
     bounds, 20-200 ms; its noise-channel veto is not reproduced)."""
-    return rd.Zugaro_ripple_detector(
+    return _detected(rd.Zugaro_ripple_detector)(
         rec.time, rec.filtered(band)[:, :1], _speed_or_unknown(rec), rec.fs,
         low_threshold=2.0, high_threshold=5.0, maximum_duration=0.2,
         speed_threshold=np.inf,
@@ -1150,9 +1178,9 @@ class PopulationTrace:
         if kwargs.get("close_event_threshold", 0.0) > 0:
             # Between centers, the gap between edges is one bin width longer.
             kwargs["close_event_threshold"] = kwargs["close_event_threshold"] + width
-        events = rd.detect_events_from_trace(
-            self.time, self.data, speed, self.sampling_frequency, **kwargs
-        )
+        events = _detected(
+            rd.detect_events_from_trace, f"detect_events_from_trace ({width:g} s bins)"
+        )(self.time, self.data, speed, self.sampling_frequency, **kwargs)
         events[["start_time", "end_time"]] = self.sample_bounds(bounds(events))
         events["duration"] = events.end_time - events.start_time
         return events
@@ -1302,7 +1330,7 @@ def _ripple_trace_events(
 ) -> pd.DataFrame:
     kwargs.setdefault("minimum_duration", 0.0)
     kwargs.setdefault("speed_threshold", np.inf)
-    return rd.detect_events_from_trace(
+    return _detected(rd.detect_events_from_trace)(
         rec.time,
         trace,
         rec.speed if np.isfinite(kwargs["speed_threshold"]) else _speed_or_unknown(rec),
@@ -1339,16 +1367,19 @@ def _local_peaks(
                     bool(last > rec.time[stop - 1] + tolerance),
                 )
             )
-    return pd.DataFrame(
-        rows,
-        columns=[
-            "start_time",
-            "end_time",
-            "peak_time",
-            "peak_value",
-            "clipped_start",
-            "clipped_end",
-        ],
+    return _counted(
+        "local peaks",
+        pd.DataFrame(
+            rows,
+            columns=[
+                "start_time",
+                "end_time",
+                "peak_time",
+                "peak_value",
+                "clipped_start",
+                "clipped_end",
+            ],
+        ),
     )
 
 
@@ -1404,7 +1435,10 @@ def _mallory_candidates(time: FloatArray, z: FloatArray) -> pd.DataFrame:
             "clipped_end",
         ],
     )
-    return result.astype({"clipped_start": bool, "clipped_end": bool})
+    return _counted(
+        "peaks bounded by mean crossings",
+        result.astype({"clipped_start": bool, "clipped_end": bool}),
+    )
 
 
 # --------------------------------------------------------------------------- recipes
@@ -1843,7 +1877,7 @@ def widloski_2025(rec: Recording) -> pd.DataFrame | FloatArray:
     80 ms Gaussian and averaged, z-scored over stopping (speed < 5), peak > 2 SD
     for >= 15 ms, bounds at the mean, merged < 50 ms (the text; the code merges
     none)."""
-    return rd.detect_events_from_trace(
+    return _detected(rd.detect_events_from_trace)(
         rec.time, rec.mean_envelope((100.0, 220.0)), rec.speed, rec.fs,
         threshold=2.0, smoothing_sigma=0.08, normalization_mask=rec.speed < 5,
         minimum_duration=0.015, close_event_threshold=0.05, close_event_rule="merge",
@@ -2087,7 +2121,7 @@ def harvey_2023_code(
     Manual curation and EMG vetoes are external. Replay filtering is selectable
     with stage='decoding_candidates'; detection is the default.
     """
-    ripples = rd.Long_sharp_wave_ripple_detector(
+    ripples = _detected(rd.Long_sharp_wave_ripple_detector)(
         rec.time, rec.session.raw_lfp, _speed_or_unknown(rec), rec.fs,
         sharp_wave_lfp=rec.session.sharp_wave_lfp, speed_threshold=np.inf,
     )  # fmt: skip
@@ -2178,7 +2212,7 @@ def liu_2023(rec: Recording) -> pd.DataFrame | FloatArray:
     curation is not reproduced); the candidates are pyramidal-cell bursts
     (10 ms Gaussian, assumed to be its SD; > 2 SD, bounds at the mean,
     100-500 ms) overlapping an SWR."""
-    swrs = rd.Long_sharp_wave_ripple_detector(
+    swrs = _detected(rd.Long_sharp_wave_ripple_detector)(
         rec.time, rec.session.raw_lfp, _speed_or_unknown(rec), rec.fs,
         sharp_wave_lfp=rec.session.sharp_wave_lfp, speed_threshold=np.inf,
     )  # fmt: skip
@@ -2230,7 +2264,7 @@ def bush_2022(rec: Recording) -> pd.DataFrame | FloatArray:
     when <= 40 ms apart, events <= 40 ms dropped, then >= 5 or 15% of
     pyramidal cells (whichever is larger), median speed <= 10, <= 0.5 s."""
     trace = rec.rate(rec.pyramidal, 0.005)
-    events = rd.detect_events_from_trace(
+    events = _detected(rd.detect_events_from_trace)(
         rec.time, trace, rec.speed, rec.fs,
         threshold=3.0, minimum_duration=0.0, speed_threshold=np.inf,
     )  # fmt: skip
@@ -2284,7 +2318,7 @@ def _pfeiffer_2015_swrs(
 ) -> pd.DataFrame:
     """Pfeiffer & Foster 2015's SWR rule at ``threshold`` SD, over the first
     ``channels`` selected channels (all by default), 50 ms to ``maximum_duration``."""
-    return rd.detect_events_from_trace(
+    return _detected(rd.detect_events_from_trace)(
         rec.time, rec.mean_envelope((150.0, 250.0), channels), rec.speed, rec.fs,
         threshold=threshold, smoothing_sigma=0.0125, normalization_mask=rec.speed < 5,
         minimum_duration=0.0, minimum_event_duration=0.05, maximum_duration=maximum_duration,
@@ -2484,7 +2518,7 @@ def gillespie_2021(rec: Recording) -> pd.DataFrame | FloatArray:
     """Kay consensus trace over every selected channel (square root of the
     summed squared 150-250 Hz envelopes, 4 ms Gaussian), 2 SD for >= 15 ms,
     bounds at the mean, speed < 4 cm/s at both ends."""
-    return rd.Kay_ripple_detector(
+    return _detected(rd.Kay_ripple_detector)(
         rec.time,
         rec.filtered((150.0, 250.0)),
         rec.speed,
@@ -2522,7 +2556,7 @@ def _michon(rec: Recording, *, order: str = "text") -> FloatArray:
         "close_event_rule": "merge",
         "speed_threshold": np.inf,
     }
-    ripples = rd.detect_events_from_trace(
+    ripples = _detected(rd.detect_events_from_trace)(
         rec.time,
         detrended(
             rec.time,
@@ -2755,7 +2789,7 @@ def kaefer_2020(rec: Recording) -> pd.DataFrame:
         power[j] = np.sqrt(np.mean(filtered**2, axis=0)).mean()
     time = rec.time[centers]
     baseline = _baseline(rec, required=True)[centers]
-    return rd.detect_events_from_trace(
+    return _detected(rd.detect_events_from_trace)(
         time,
         power,
         _speed_or_unknown(rec)[centers],
@@ -2791,7 +2825,7 @@ def bhattarai_2020(
     Supply block-specific place cells; silence is measured in that population.
     """
     swrs = _IMPLEMENTATIONS["bhattarai_2020_ripples"](rec, power_measure=power_measure)
-    replays = rd.detect_silence_bounded_events(
+    replays = _detected(rd.detect_silence_bounded_events)(
         rec.time, rec.multiunit, rec.fs,
         minimum_silence=0.06 + 1 / rec.fs, window=0.3, window_end_rule=window_end_rule, units=rec.place_cells,
         minimum_active_units=5,
@@ -3001,7 +3035,7 @@ def liu_2019(rec: Recording) -> pd.DataFrame | FloatArray:
     Gaussian), split at >= 100 ms of silence, >= 4 cells, 80 ms-1.2 s. The
     awake-rest frames are available separately in liu_2019_awake."""
     sleep = rec.sleep(1.0, 2.0, smoothing_sigma=5.0)
-    return rd.detect_silence_bounded_events(
+    return _detected(rd.detect_silence_bounded_events)(
         rec.time, _only_in(rec, rec.multiunit, sleep), rec.fs,
         minimum_silence=0.1, units=rec.pyramidal, minimum_active_units=4,
         minimum_duration=0.08, maximum_duration=1.2,
@@ -3014,7 +3048,7 @@ def _karlsson_rule(rec: Recording, speed_threshold: float) -> pd.DataFrame:
 
     Speed at both ends at or below ``speed_threshold``; a paper's strict
     "less than" passes the next float below its limit."""
-    return rd.Karlsson_ripple_detector(
+    return _detected(rd.Karlsson_ripple_detector)(
         rec.time,
         rec.filtered((150.0, 250.0)),
         rec.speed,
@@ -3072,12 +3106,14 @@ def carey_2019(rec: Recording) -> pd.DataFrame:
         if not rec.allows_simulation_proxies:
             msg = "Supply example_ripples for Carey's spectral template."
             raise ValueError(msg)
-        kay = rd.Kay_ripple_detector(rec.time, rec.filtered((150.0, 250.0)), rec.speed, rec.fs)
+        kay = _detected(rd.Kay_ripple_detector)(
+            rec.time, rec.filtered((150.0, 250.0)), rec.speed, rec.fs
+        )
         examples = kay.nlargest(5, "max_zscore")
     else:
         examples = rec.example_ripples
     score = rd.carey_spectral_ripple_score(rec.time, rec.session.raw_lfp, rec.fs, examples)
-    return rd.Carey_candidate_detector(
+    return _detected(rd.Carey_candidate_detector)(
         rec.time,
         None,
         rec.multiunit,
@@ -3192,7 +3228,7 @@ def _drieu_events(rec: Recording) -> pd.DataFrame | FloatArray:
         ratio, rec.time, rd.two_cluster_threshold(ratio), comparison="<=",
         merge_gap=1.0, minimum_duration=2.0,
     )  # fmt: skip
-    return rd.detect_events_from_trace(
+    return _detected(rd.detect_events_from_trace)(
         rec.time, _only_in(rec, rec.rate(rec.place_cells, 0.010), sleep), rec.speed, rec.fs,
         threshold=3.0, minimum_duration=0.0, maximum_duration=0.5, speed_threshold=np.inf,
     )  # fmt: skip
@@ -3321,7 +3357,7 @@ def yamamoto_2017(rec: Recording) -> pd.DataFrame | FloatArray:
     """One reading of an ambiguous rule: summed spikes in nonoverlapping 10 ms bins, peak > 3 SD, bounds at 1 SD, kept when
     overlapping a period of 140-200 Hz power above 3 SD on one channel. The
     paper does not say how the two combine or which trace sets the bounds."""
-    ripples = rd.detect_events_from_trace(
+    ripples = _detected(rd.detect_events_from_trace)(
         rec.time, rec.envelope((140.0, 200.0))[:, 0] ** 2, _speed_or_unknown(rec), rec.fs,
         threshold=3.0, bound_threshold=3.0, minimum_duration=0.0, speed_threshold=np.inf,
     )  # fmt: skip
@@ -3394,7 +3430,7 @@ def ambrose_2016(rec: Recording) -> pd.DataFrame | FloatArray:
     stopping periods (the lab's convention, inferred); no duration limits are
     reported in the main Methods or supplement. The proximity to the well is
     not reproduced."""
-    return rd.detect_events_from_trace(
+    return _detected(rd.detect_events_from_trace)(
         rec.time, rec.mean_envelope((150.0, 250.0)), rec.speed, rec.fs,
         threshold=3.0, smoothing_sigma=0.0125, minimum_duration=0.0,
         speed_rule="restrict", speed_threshold=np.nextafter(5.0, -np.inf),
@@ -3483,7 +3519,7 @@ def olafsdottir_2015(rec: Recording, *, minimum_active_units: int = 0) -> FloatA
         if template.sum() < minimum_active_units:
             small += 1
             continue
-        events = rd.detect_silence_bounded_events(
+        events = _detected(rd.detect_silence_bounded_events)(
             rec.time,
             rec.multiunit,
             rec.fs,
@@ -3601,7 +3637,9 @@ def wikenheiser_2013(
             anchors = np.flatnonzero(np.diff(np.r_[False, z >= 1].astype(int)) == 1)
         windows = rd.windows_around_times(rec.time[start + anchors], 0.075)
         found.append(np.clip(windows, rec.time[start], rec.time[stop - 1]))
-    events = np.concatenate(found) if found else np.empty((0, 2))
+    events = _counted(
+        "joined ripple-power windows", np.concatenate(found) if found else np.empty((0, 2))
+    )
     events = rd.require_active_units(
         events, rec.multiunit, rec.time, minimum_active_units=3, minimum_spikes=5
     )
@@ -3707,7 +3745,7 @@ def gupta_2010(rec: Recording, *, log_amplitude: bool = True) -> pd.DataFrame | 
     pause apply to sequence windows, which this gate does not construct."""
     amplitude = rec.mean_envelope((180.0, 220.0))
     trace = np.log(np.maximum(amplitude, np.finfo(float).tiny)) if log_amplitude else amplitude
-    return rd.detect_events_from_trace(
+    return _detected(rd.detect_events_from_trace)(
         rec.time, trace, _speed_or_unknown(rec), rec.fs,
         threshold=2.0, minimum_duration=0.0, speed_threshold=np.inf,
     )  # fmt: skip
@@ -3753,7 +3791,7 @@ def diba_2007(rec: Recording) -> pd.DataFrame | FloatArray:
     speed <=10 at both ends (assumed). Supply place_cells for one directional
     template and behavior_intervals for the eligible track-end reward areas;
     measured recordings without them raise."""
-    events = rd.detect_silence_bounded_events(
+    events = _detected(rd.detect_silence_bounded_events)(
         rec.time, rec.multiunit, rec.fs,
         minimum_silence=0.06, window=0.3, window_end_rule="fixed", units=rec.place_cells,
         minimum_active_units=5, minimum_active_fraction=0.3,
@@ -3830,7 +3868,7 @@ def foster_2006(rec: Recording) -> pd.DataFrame | FloatArray:
     place_cells for one probe sequence and behavior_intervals for the
     eligible facing-direction epochs; measured recordings without them raise."""
     stopped = rec.mask_to_intervals(rec.speed < 5)
-    return rd.detect_silence_bounded_events(
+    return _detected(rd.detect_silence_bounded_events)(
         rec.time, _only_in(rec, rec.multiunit, stopped), rec.fs,
         minimum_silence=0.05 + 1 / rec.fs, units=rec.place_cells,
         minimum_active_fraction=1 / 3, maximum_duration=0.5,
@@ -3855,7 +3893,7 @@ def lee_2002(rec: Recording) -> pd.DataFrame | FloatArray:
     with ISI <50 ms collapse to their first spike; the resulting letters split
     at gaps >100 ms. Only simulation uses speed <4 and theta/delta <1 as SWS."""
     sleep = rec.sleep(4.0, 1.0)
-    return rd.detect_silence_bounded_events(
+    return _detected(rd.detect_silence_bounded_events)(
         rec.time, _only_in(rec, rec.multiunit, sleep), rec.fs,
         minimum_silence=0.1 + 1 / rec.fs, maximum_isi=0.05, units=rec.place_cells,
     )  # fmt: skip
@@ -4024,10 +4062,11 @@ def _tirole_bounds(time: FloatArray, z: FloatArray) -> pd.DataFrame:
     ).astype(
         {"start_time": float, "end_time": float, "clipped_start": bool, "clipped_end": bool}
     )
-    return (
+    return _counted(
+        "threshold anchors' bounds",
         result.groupby(["start_time", "end_time"], as_index=False)
         .any()
-        .sort_values(["start_time", "end_time"], ignore_index=True)
+        .sort_values(["start_time", "end_time"], ignore_index=True),
     )
 
 
@@ -4119,7 +4158,7 @@ def harvey_2023_no_radiatum(rec: Recording, *, stage: Stage = "detection") -> Fl
     gates: >=80 ms before overlap merging, >=5 place cells and <50% empty
     nonoverlapping 20 ms bins. Detection is the default.
     """
-    ripples = rd.Zugaro_ripple_detector(
+    ripples = _detected(rd.Zugaro_ripple_detector)(
         rec.time,
         rec.filtered((100.0, 250.0))[:, :1],
         _speed_or_unknown(rec),
@@ -4922,7 +4961,7 @@ def liu_2019_awake(
         msg = "Supply track-end behavior_intervals for awake frames."
         raise ValueError(msg)
     mask = rec.intervals_to_mask(behavior_intervals) & (rec.speed < 2)
-    return rd.detect_silence_bounded_events(
+    return _detected(rd.detect_silence_bounded_events)(
         rec.time,
         np.where(mask[:, None], rec.multiunit, np.nan),
         rec.fs,
@@ -5237,9 +5276,22 @@ def run_method(
         ``inventory`` and ``interpretation`` (defined in ``list_methods``);
         ``options`` (every keyword option, defaults resolved);
         ``behavior_intervals`` (the array supplied, or None); ``grid``;
-        ``clipping_tracked`` (whether the method reports clipping); plus any
-        the method adds (Gridchyn: ``threshold_updates`` and
-        ``expected_count``).
+        ``clipping_tracked`` (whether the method reports clipping);
+        ``diagnostics``; plus any the method adds (Gridchyn:
+        ``threshold_updates`` and ``expected_count``).
+
+        ``diagnostics`` says what the recording held and where events were
+        lost, to read before changing anything when a result is empty or
+        surprising: ``recording_seconds`` (samples / rate); ``signals``, the
+        ``valid_fraction`` and ``valid_seconds`` of each supplied signal
+        (finite in every channel or unit; known speed); ``interval_seconds``,
+        the time the sleep, baseline and behavior intervals cover (samples
+        inside / rate; None when not supplied); ``detections``, each
+        detection step the method ran, in call order, with the ``events`` it
+        found before the method's later filters (speed, duration and
+        participation rules inside a shared detector are applied before its
+        count; cell, overlap, state and stage filters after); and the counts
+        ``events_before_behavior_intervals`` and ``events``.
 
         ``grid`` holds ``input_sampling_frequency`` (Hz), ``bin_width``
         (seconds of the population grid, or None for the input samples),
@@ -5275,12 +5327,18 @@ def run_method(
     call = inspect.signature(implementation).bind(recording, **resolved)
     if "behavior_intervals" in inspect.signature(implementation).parameters:
         call.arguments["behavior_intervals"] = eligible
-    raw = implementation(*call.args, **call.kwargs)
+    detections: list[dict[str, Any]] = []
+    token = _DETECTIONS.set(detections)
+    try:
+        raw = implementation(*call.args, **call.kwargs)
+    finally:
+        _DETECTIONS.reset(token)
     result = (
         raw.copy()
         if isinstance(raw, pd.DataFrame)
         else pd.DataFrame(bounds(raw), columns=["start_time", "end_time"])
     )
+    n_found = len(result)
     if eligible is not None:
         result = result.loc[_within_intervals_mask(bounds(result), eligible)].copy()
     clipping_tracked = {"clipped_start", "clipped_end"} <= set(result.columns)
@@ -5301,9 +5359,64 @@ def run_method(
             "behavior_intervals": eligible,
             "grid": _grid(entry, recording.fs),
             "clipping_tracked": clipping_tracked,
+            "diagnostics": _diagnostics(recording, eligible, detections, n_found, len(result)),
         }
     )
     return result
+
+
+def _diagnostics(
+    rec: Recording,
+    behavior_intervals: FloatArray | None,
+    detections: list[dict[str, Any]],
+    n_found: int,
+    n_events: int,
+) -> dict[str, Any]:
+    """What the recording held and where events were lost, for attrs."""
+    session = rec.session
+    n_time = len(rec.time)
+    signals: dict[str, Any] = {}
+    lfps = getattr(session, "lfps", None)
+    if lfps is not None and np.shape(lfps)[1]:
+        signals["lfps"] = np.isfinite(lfps).all(axis=1)
+    sharp = getattr(session, "sharp_wave_lfp", None)
+    if sharp is not None and np.isfinite(sharp).any():
+        signals["sharp_wave_lfp"] = np.isfinite(sharp)
+    if rec.reference_lfp is not None:
+        signals["reference_lfp"] = np.isfinite(rec.reference_lfp)
+    if rec.multiunit.shape[1]:
+        signals["multiunit"] = np.isfinite(rec.multiunit).all(axis=1)
+    speed = getattr(session, "speed", None)
+    if speed is not None:
+        signals["speed"] = np.isfinite(speed)
+
+    def seconds(samples: int) -> float:
+        return float(samples / rec.fs)
+
+    intervals = {
+        "sleep_intervals": rec.sleep_intervals,
+        "baseline_intervals": rec.baseline_intervals,
+        "behavior_intervals": behavior_intervals,
+    }
+    return {
+        "recording_seconds": seconds(n_time),
+        "signals": {
+            name: {
+                "valid_fraction": float(valid.mean()),
+                "valid_seconds": seconds(int(valid.sum())),
+            }
+            for name, valid in signals.items()
+        },
+        "interval_seconds": {
+            name: None
+            if values is None
+            else seconds(int(_intervals_to_mask(rec.time, values).sum()))
+            for name, values in intervals.items()
+        },
+        "detections": detections,
+        "events_before_behavior_intervals": n_found,
+        "events": n_events,
+    }
 
 
 _CORE_COLUMNS = [
