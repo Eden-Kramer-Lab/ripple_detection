@@ -182,12 +182,19 @@ UNFILTERED_CUTOFF = 100.0
 """Hz. A ripple-band signal, at any published lower edge (80 Hz and up),
 has little power below this; raw LFP has most of its power there."""
 
-_UNFILTERED_POWER_FRACTION = 0.5
+_UNFILTERED_POWER_FRACTION = 0.9
 """Share of power below ``UNFILTERED_CUTOFF`` above which a channel is taken
-for unfiltered. Measured on simulated sessions at 1000 to 30000 Hz: raw pink
-noise holds 0.65-0.86 of its power there, with theta and delta 0.87-0.94, ADC
-counts with an offset 0.996; the 150-250 Hz filter's output under 0.001, an
-80-250 Hz band's about 0.25, and white noise at 1500 Hz 0.13."""
+for unfiltered: only a signal that is almost all slow waves.
+
+Recorded raw LFP holds 0.98-0.99 of its power below 100 Hz (a 30 kHz Trodes
+recording, and the same decimated to 1.5 kHz), and ADC counts with an offset
+0.996. Filtered signals hold far less, even from crude filters: at most 0.72
+from a one-pass first-order 150-250 Hz Butterworth on strongly slow-wave
+dominated simulated LFP (on which Kay found the same ripples as after
+``filter_ripple_band``), about 0.3 from a third-order 80-180 Hz band, and under
+0.03 from any second-order or zero-phase 150-250 Hz filter. The share cannot
+tell a crude filter from raw pink noise, whose share is 0.44-0.69, so pink
+noise without slow waves is not flagged; recorded LFP is not pink noise."""
 
 _SPECTRUM_BUDGET = 2**20
 """Most samples, over every channel, the unfiltered-input check reads."""
@@ -199,8 +206,9 @@ _SPECTRUM_SEGMENTS = 32
 def _warn_if_not_ripple_band(
     filtered_lfps: FloatArray, sampling_frequency: float, name: str = "filtered_lfps"
 ) -> None:
-    """Warn when a signal meant to be ripple-band LFP has most of its power
-    below ``UNFILTERED_CUTOFF``, as raw LFP and ADC counts do.
+    """Warn when a signal meant to be ripple-band LFP has almost all of its
+    power below ``UNFILTERED_CUTOFF``, as recorded raw LFP and ADC counts do.
+    Any working filter, however crude, leaves far less there.
 
     Raw LFP passes every shape check and gives events that follow the slow
     waves rather than the ripples. The spectrum is estimated on at most

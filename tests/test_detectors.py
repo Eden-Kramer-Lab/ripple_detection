@@ -4770,17 +4770,29 @@ LFP_CONSUMERS = [
 
 class TestUnfilteredInputWarns:
     """Raw LFP, or ADC counts, where ripple-band LFP belongs gives events that
-    follow the slow waves; every function that takes ripple-band LFP says so."""
+    follow the slow waves; every function that takes ripple-band LFP says so.
+    A filter that works, however crude, stays silent."""
 
     @staticmethod
     @pytest.fixture(scope="class")
     def session():
         from ripple_detection.simulate import simulate_session, simulate_time
 
+        # Theta and delta strong enough that, as in recorded raw LFP, about 98%
+        # of the power lies below 100 Hz.
         time = simulate_time(30_000, 1500)
-        return simulate_session(time, [4.0, 8.0, 12.0, 16.0], rng=0)
+        return simulate_session(
+            time,
+            [4.0, 8.0, 12.0, 16.0],
+            rng=0,
+            theta_amplitude=5.0,
+            delta_amplitude=5.0,
+            running_intervals=[[1.0, 6.0]],
+        )
 
     @pytest.mark.parametrize("name", LFP_CONSUMERS)
+    # On raw input Yu's noise histogram is abnormal and says so as well.
+    @pytest.mark.filterwarnings("ignore:Histogram mode is positive")
     def test_raw_lfp_warns(self, session, name):
         with (
             pytest.warns(UserWarning, match="does not look filtered to the ripple band"),
@@ -4791,6 +4803,8 @@ class TestUnfilteredInputWarns:
             )
 
     @pytest.mark.parametrize("name", LFP_CONSUMERS)
+    # On raw input Yu's noise histogram is abnormal and says so as well.
+    @pytest.mark.filterwarnings("ignore:Histogram mode is positive")
     def test_integer_counts_warn(self, session, name):
         counts = np.round(session.lfps * 200 + 1200).astype(np.int16)
         with pytest.warns(UserWarning, match=r"below 100 Hz"), contextlib.suppress(ValueError):
@@ -4809,6 +4823,35 @@ class TestUnfilteredInputWarns:
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             _call_lfp_consumer(name, time, filtered, session.speed, fs, session.multiunit)
+
+    @pytest.mark.parametrize("fs", [1000, 1500, 30_000])
+    def test_weak_but_working_filters_do_not_warn(self, fs):
+        """A one-pass first-order Butterworth leaves most of the power of slow-wave
+        dominated LFP below 100 Hz, yet Kay finds the same ripples on it; wider
+        or lower bands keep a large share there too. None of these is raw."""
+        from scipy.signal import butter, sosfilt, sosfiltfilt
+
+        rng = np.random.default_rng(0)
+        time = np.arange(int(30 * fs)) / fs
+        brown = np.cumsum(rng.normal(size=len(time)))
+        brown -= np.convolve(brown, np.ones(int(fs)) / int(fs), mode="same")
+        raw = (
+            50 * brown / brown.std()
+            + 200 * np.sin(2 * np.pi * 8 * time)
+            + 300 * np.sin(2 * np.pi * 2 * time)
+            + 1000
+        )[:, np.newaxis]
+        filtered = [
+            sosfilt(butter(1, [150, 250], "bandpass", fs=fs, output="sos"), raw, axis=0),
+            sosfiltfilt(butter(3, [80, 180], "bandpass", fs=fs, output="sos"), raw, axis=0),
+            sosfiltfilt(butter(3, [80, 250], "bandpass", fs=fs, output="sos"), raw, axis=0),
+        ]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            for signal in filtered:
+                get_Kay_ripple_consensus_trace(signal, fs)
+        with pytest.warns(UserWarning, match="does not look filtered"):
+            get_Kay_ripple_consensus_trace(raw, fs)
 
     def test_a_rate_too_low_for_a_ripple_band_is_not_judged(self):
         time = np.arange(3000) / 300
