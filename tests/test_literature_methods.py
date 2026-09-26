@@ -2366,7 +2366,7 @@ def test_the_catalog_reports_the_declared_requirements():
     assert catalog.loc["diba_2007", "intervals"] == (
         "behavior_intervals: track-end reward areas (measured data)",
     )
-    assert catalog.loc["harvey_2023_code", "signals"][1] == (
+    assert catalog.loc["harvey_2023_code", "signals"][1].startswith(
         "sharp_wave_lfp: the stratum radiatum channel"
     )
     assert catalog.loc["mou_2022", "cells"] == (
@@ -2428,3 +2428,48 @@ def test_check_method_names_options_and_stages():
         lm.run_method("karlsson_2009", bare, window=0.1)
     with pytest.raises(KeyError, match="Unknown literature method"):
         lm.check_method("unrecognized", rec)
+
+
+@pytest.mark.parametrize(
+    ("query", "listed"),
+    [
+        ("Pfeiffer 2013", "pfeiffer_2013, pfeiffer_2013_ripples"),
+        ("https://doi.org/10.1038/nature12112", "pfeiffer_2013, pfeiffer_2013_ripples"),
+        ("10.1038/NATURE12112", "pfeiffer_2013, pfeiffer_2013_ripples"),
+        ("Olafsdottir 2016", "olafsdottir_2016"),
+        ("Ólafsdóttir 2016", "olafsdottir_2016"),
+        ("nadasdy", "nadasdy_1999"),
+    ],
+)
+def test_a_paper_or_doi_lists_its_methods_without_choosing_one(measured, query, listed):
+    for function in (lm.run_method, lm.check_method):
+        with pytest.raises(KeyError, match=f"methods for that paper: {listed}[.;]"):
+            function(query, measured)
+
+
+def test_an_unknown_name_suggests_close_ones(measured):
+    with pytest.raises(KeyError, match="Did you mean karlsson_2009"):
+        lm.run_method("karlson_2009", measured)
+    with pytest.raises(KeyError, match=r"list_methods\(\)"):
+        lm.run_method("no_such_method", measured)
+
+
+def test_tuning_keywords_explain_that_inventories_are_fixed(measured):
+    inputs, _ = _method_inputs("kaefer_2020")
+    rec = lm.Recording.from_arrays(**inputs)
+    with pytest.raises(TypeError, match="fixed published rules") as error:
+        lm.run_method("kaefer_2020", rec, zscore_threshold=4)
+    assert "its options are: none" in str(error.value)
+    with pytest.raises(TypeError, match="its options are: stage, histogram_bins"):
+        lm.ji_2007(measured, zscore_threshold=4)
+
+
+def test_harvey_code_without_radiatum_names_the_channel_and_the_alternative():
+    inputs = _measured_inputs()
+    del inputs["sharp_wave_lfp"]
+    rec = lm.Recording.from_arrays(**inputs)
+    with pytest.raises(
+        ValueError, match="sharp_wave_lfp: the stratum radiatum channel"
+    ) as error:
+        lm.harvey_2023_code(rec)
+    assert "harvey_2023_no_radiatum" in str(error.value)

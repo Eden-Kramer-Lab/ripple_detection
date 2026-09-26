@@ -15,8 +15,10 @@ synthetic tests do not establish parity with historical event inventories.
 from __future__ import annotations
 
 import dataclasses
+import difflib
 import functools
 import inspect
+import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, ParamSpec
@@ -1710,9 +1712,13 @@ def _register(
 
         @functools.wraps(function)
         def public_method(*args: Any, **options: Any) -> pd.DataFrame:
-            call = signature.bind(*args, **options)
-            recording = call.arguments.pop("rec")
-            return run_method(name, recording, **call.arguments)
+            # Options are checked by run_method, which names every problem.
+            if not args and "rec" in options:
+                args = (options.pop("rec"),)
+            if len(args) != 1:
+                msg = f"{name}() takes the recording positionally and options by keyword."
+                raise TypeError(msg)
+            return run_method(name, args[0], **options)
 
         public_method.__name__ = name
         public_method.__qualname__ = name
@@ -2060,7 +2066,11 @@ def _harvey_stage(
     "SWR",
     needs=(
         _lfps("the first selected channel: CA1 pyramidal layer"),
-        Requirement("sharp_wave_lfp", "the stratum radiatum channel"),
+        Requirement(
+            "sharp_wave_lfp",
+            "the stratum radiatum channel; without one, harvey_2023_no_radiatum is the "
+            "released branch",
+        ),
         "multiunit",
         "pyramidal",
         _when("place_cells", stage="decoding_candidates"),
@@ -5046,6 +5056,39 @@ def list_methods() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _folded(text: str) -> str:
+    """Case- and accent-insensitive form, so "Olafsdottir" finds "Ólafsdóttir"."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold().strip()
+
+
+def _unknown_method(name: str) -> str:
+    """Why ``name`` names no method: the methods of a paper or DOI it names,
+    or close method names. One paper can have several methods, so none is
+    chosen for the caller."""
+    query = _folded(name)
+    doi = query.removeprefix("https://doi.org/").removeprefix("doi:").strip()
+    survey = rd.load_literature_parameters()
+    matches = [
+        method
+        for method, entry in _ENTRIES.items()
+        if query
+        and (
+            _folded(entry.paper).startswith(query)
+            or _folded(str(survey.loc[entry.row, "DOI"])).removeprefix("https://doi.org/")
+            == doi
+        )
+    ]
+    if matches:
+        return (
+            f"{name!r} is not a method name; methods for that paper: {', '.join(matches)}. "
+            "Choose one: they are different inventories (see list_methods())."
+        )
+    close = difflib.get_close_matches(name, list(_ENTRIES), n=3, cutoff=0.6)
+    hint = f" Did you mean {' or '.join(close)}?" if close else ""
+    return f"Unknown literature method {name!r}.{hint} See list_methods() for every name."
+
+
 def _option_problems(name: str, options: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
     """Options the method does not take or requires, and every option resolved
     to its given or default value."""
@@ -5056,7 +5099,9 @@ def _option_problems(name: str, options: dict[str, Any]) -> tuple[list[str], dic
     }
     accepted = ", ".join(parameters) or "none"
     problems = [
-        f"{key} - not an option of {name}; its options are: {accepted}"
+        f"{key} - {name} takes no option {key!r}: literature methods run fixed "
+        f"published rules, not tunable detectors; its options are: {accepted}. "
+        "To tune a threshold, use the package's detectors or detect_events_from_trace."
         for key in options
         if key not in parameters
     ]
@@ -5080,8 +5125,7 @@ def _check(
     """The call's option problems and input problems, the resolved options and
     the validated behavior intervals."""
     if name not in _ENTRIES:
-        msg = f"Unknown literature method {name!r}; inspect list_methods()."
-        raise KeyError(msg)
+        raise KeyError(_unknown_method(name))
     entry = _ENTRIES[name]
     eligible = _interval_array(behavior_intervals)
     option_problems, resolved = _option_problems(name, options)
