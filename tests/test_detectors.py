@@ -4795,7 +4795,7 @@ class TestUnfilteredInputWarns:
     @pytest.mark.filterwarnings("ignore:Histogram mode is positive")
     def test_raw_lfp_warns(self, session, name):
         with (
-            pytest.warns(UserWarning, match="does not look filtered to the ripple band"),
+            pytest.warns(UserWarning, match="does not look filtered"),
             contextlib.suppress(ValueError),
         ):
             _call_lfp_consumer(

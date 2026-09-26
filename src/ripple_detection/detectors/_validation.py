@@ -182,19 +182,23 @@ UNFILTERED_CUTOFF = 100.0
 """Hz. A ripple-band signal, at any published lower edge (80 Hz and up),
 has little power below this; raw LFP has most of its power there."""
 
-_UNFILTERED_POWER_FRACTION = 0.9
+_UNFILTERED_POWER_FRACTION = 0.8
 """Share of power below ``UNFILTERED_CUTOFF`` above which a channel is taken
-for unfiltered: only a signal that is almost all slow waves.
+for unfiltered, or too weakly filtered to detect ripples on.
 
-Recorded raw LFP holds 0.98-0.99 of its power below 100 Hz (a 30 kHz Trodes
-recording, and the same decimated to 1.5 kHz), and ADC counts with an offset
-0.996. Filtered signals hold far less, even from crude filters: at most 0.72
-from a one-pass first-order 150-250 Hz Butterworth on strongly slow-wave
-dominated simulated LFP (on which Kay found the same ripples as after
-``filter_ripple_band``), about 0.3 from a third-order 80-180 Hz band, and under
-0.03 from any second-order or zero-phase 150-250 Hz filter. The share cannot
-tell a crude filter from raw pink noise, whose share is 0.44-0.69, so pink
-noise without slow waves is not flagged; recorded LFP is not pink noise."""
+Measured per channel on recorded hippocampal LFP from seven DANDI dandisets
+(000044, 000115, 000165, 000233, 000447, 001371, 001695: Buzsaki, Frank,
+Huang, Jadhav, Singer and Vöröslakos labs; rats and mice; tetrodes, silicon
+probes, Neuropixels; stored LFP at 1-2 kHz and raw at 20-30 kHz; rest, sleep
+and running), 3-minute segments: 309 unfiltered channels held 0.855-1.000,
+and 3997 filtered ones at most 0.816. Every zero-phase or second-order
+150-250 Hz filter, and ``filter_ripple_band``, left under 0.003; a 51-tap FIR
+0.33; third-order 80-180 and 80-250 Hz bands 0.62 and 0.60. Only a one-pass
+first-order Butterworth crossed 0.8 (two channels, in stratum radiatum and
+lacunosum-moleculare), and on those channels Kay's events matched the
+properly filtered ones no better than on raw LFP (recall 0.69 and 0.68).
+A share this high means the input is raw or barely filtered; a lower share
+does not prove a good filter (the 80-180 Hz band also degraded detection)."""
 
 _SPECTRUM_BUDGET = 2**20
 """Most samples, over every channel, the unfiltered-input check reads."""
@@ -206,9 +210,9 @@ _SPECTRUM_SEGMENTS = 32
 def _warn_if_not_ripple_band(
     filtered_lfps: FloatArray, sampling_frequency: float, name: str = "filtered_lfps"
 ) -> None:
-    """Warn when a signal meant to be ripple-band LFP has almost all of its
-    power below ``UNFILTERED_CUTOFF``, as recorded raw LFP and ADC counts do.
-    Any working filter, however crude, leaves far less there.
+    """Warn when a signal meant to be ripple-band LFP has most of its power
+    below ``UNFILTERED_CUTOFF``, as recorded raw LFP, ADC counts and barely
+    filtered LFP do; a ripple-band filter leaves almost none there.
 
     Raw LFP passes every shape check and gives events that follow the slow
     waves rather than the ripples. The spectrum is estimated on at most
@@ -260,7 +264,7 @@ def _warn_if_not_ripple_band(
     if flagged.size:
         shown = ", ".join(str(int(channel)) for channel in flagged[:5])
         _warn_at_caller(
-            f"{name} does not look filtered to the ripple band: "
+            f"{name} does not look filtered, or looks too weakly filtered, to the ripple band: "
             f"{100 * np.max(share[flagged]):.0f}% of the power of channel(s) "
             f"[{shown}{', ...' if flagged.size > 5 else ''}] lies below "
             f"{UNFILTERED_CUTOFF:g} Hz, where a ripple-band signal has almost none. On raw "
