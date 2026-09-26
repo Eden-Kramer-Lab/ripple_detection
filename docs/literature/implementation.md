@@ -73,15 +73,18 @@ use the midpoint as the peak. Supply true peaks when the rule requires them.
 Yang/Grosmark also require eligible quiet-waking/NREM `behavior_intervals`,
 separate from the NREM normalization baseline. Chenani (reward zones),
 Ólafsdóttir 2015 (rest) and 2017 (corners), Diba (track-end reward areas) and
-Foster (facing-direction epochs) require their eligible `behavior_intervals` too. Transforms are computed afresh
+Foster (facing-direction epochs) require their eligible `behavior_intervals` too;
+`Recipe.behavior` names the epochs each method needs. Transforms are computed afresh
 on each call, so a recording can be released after use and changed arrays do
 not retain stale filtered results. Simulation fallbacks are limited to explicit
 `SimulatedSession` inputs.
 
-Optional `behavior_intervals` retain wholly contained events in both `run_method`
-and direct named method calls. The dispatcher does not change normalization.
-For example, these intervals can express caller-curated
-reward zones, rest sessions, track ends or facing-direction restrictions.
+`behavior_intervals` belong to a call, not to the recording, because their
+meaning differs between methods: pass them to `run_method(name, recording,
+behavior_intervals=...)` or to the named method. They retain wholly contained
+events; the dispatcher does not change normalization. For example, these
+intervals can express caller-curated reward zones, rest sessions, track ends or
+facing-direction restrictions, and one recording then serves every method.
 The explicit Farooq Science awake-frame method also masks its trace to these
 intervals before estimating normalization statistics; Liu awake frames restrict
 their spike input to these intervals. These are method-specific uses.

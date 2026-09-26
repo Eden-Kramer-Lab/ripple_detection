@@ -122,7 +122,9 @@ class Recording:
     passing them; single-channel methods use the first selected channel. Cell
     masks identify the caller's sorted populations, not automatically classified
     cells. Methods needing sleep require curated intervals for measured data;
-    only explicit SimulatedSession inputs permit state proxies.
+    only explicit SimulatedSession inputs permit state proxies. Behavioral
+    epochs (reward zones, rest, track ends) differ between methods, so they
+    are not part of a recording: pass ``behavior_intervals`` to each call.
     """
 
     session: rd.SimulatedSession | RecordedSignals
@@ -132,7 +134,6 @@ class Recording:
     baseline_intervals: FloatArray | None = None
     reference_lfp: FloatArray | None = None
     templates: tuple[BoolArray, ...] = ()
-    behavior_intervals: FloatArray | None = None
     example_ripples: FloatArray | None = None
     external_ripples: FloatArray | None = None
 
@@ -143,7 +144,6 @@ class Recording:
         self.templates = tuple(_cell_mask(template, n_units) for template in self.templates)
         self.sleep_intervals = _interval_array(self.sleep_intervals)
         self.baseline_intervals = _interval_array(self.baseline_intervals)
-        self.behavior_intervals = _interval_array(self.behavior_intervals)
         self.example_ripples = _interval_array(self.example_ripples)
         self.external_ripples = _external_ripple_array(self.external_ripples)
         if self.reference_lfp is not None and np.shape(self.reference_lfp) != (n_time,):
@@ -167,7 +167,6 @@ class Recording:
         artifact_intervals: ArrayLike | None = None,
         reference_lfp: ArrayLike | None = None,
         templates: Sequence[ArrayLike] = (),
-        behavior_intervals: ArrayLike | None = None,
         example_ripples: ArrayLike | None = None,
         external_ripples: ArrayLike | None = None,
     ) -> Recording:
@@ -196,10 +195,6 @@ class Recording:
             only by methods that explicitly request a caller-selected baseline.
         templates : sequence of array_like, optional
             Per-template cell masks or indices, with no fixed ensemble size.
-        behavior_intervals : array_like, optional
-            Allowed intervals applied by run_method as whole-event containment.
-            Explicit awake-frame methods also select their detection trace
-            using these intervals, as described in their docstrings.
         example_ripples : array_like, optional
             Manually selected start/end intervals for Carey's spectral template.
         external_ripples : array_like, optional
@@ -305,7 +300,6 @@ class Recording:
             _interval_array(baseline_intervals),
             reference if reference_lfp is not None else None,
             tuple(cells(x) for x in templates),
-            _interval_array(behavior_intervals),
             _interval_array(example_ripples),
             external,
         )
@@ -921,13 +915,6 @@ def _interval_array(value: ArrayLike | None) -> FloatArray | None:
     return intervals
 
 
-def _require_behavior_intervals(rec: Recording, what: str) -> None:
-    """Measured data must say which epochs are eligible; only simulation may not."""
-    if rec.behavior_intervals is None and not rec.allows_simulation_proxies:
-        msg = f"Supply behavior_intervals for the eligible {what}."
-        raise ValueError(msg)
-
-
 def _baseline(rec: Recording, *, required: bool = False) -> BoolArray:
     if rec.baseline_intervals is not None:
         return rec.intervals_to_mask(rec.baseline_intervals)
@@ -1453,6 +1440,12 @@ class Recipe:
     inventory : {"default", "additional"}
         ``list_methods``' ``inventory``: "default" entries are in ``RECIPES``,
         "additional" ones in ``VARIANTS``.
+    behavior : str or None
+        The epochs ``behavior_intervals`` must select, when the method needs
+        them; None when they are optional.
+    behavior_everywhere : bool
+        Whether a SimulatedSession needs them too (otherwise the simulation
+        uses a documented proxy).
     """
 
     row: int
@@ -1462,6 +1455,8 @@ class Recipe:
     note: str
     role: Role = "candidate_detection"
     inventory: Inventory = "default"
+    behavior: str | None = None
+    behavior_everywhere: bool = False
 
 
 RECIPES: list[Recipe] = []
@@ -1477,33 +1472,42 @@ _ENTRIES: dict[str, Recipe] = {}
 
 
 def _register(
-    registry: list[Recipe], row: int, paper: str, trigger: str, role: Role
-) -> Callable[[Callable[P, pd.DataFrame | FloatArray]], Callable[P, pd.DataFrame]]:
+    registry: list[Recipe],
+    row: int,
+    paper: str,
+    trigger: str,
+    role: Role,
+    behavior: str | None,
+    behavior_everywhere: bool,
+) -> Callable[[Callable[P, pd.DataFrame | FloatArray]], Callable[..., pd.DataFrame]]:
     inventory: Inventory = "default" if registry is RECIPES else "additional"
 
     def register(
         function: Callable[P, pd.DataFrame | FloatArray],
-    ) -> Callable[P, pd.DataFrame]:
+    ) -> Callable[..., pd.DataFrame]:
         name = function.__name__
         if name in _IMPLEMENTATIONS:
             msg = f"A literature method named {name!r} is already registered."
             raise ValueError(msg)
         _IMPLEMENTATIONS[name] = function
+        signature = _public_signature(function)
 
         @functools.wraps(function)
-        def public_method(*args: P.args, **options: P.kwargs) -> pd.DataFrame:
-            call = inspect.signature(function).bind(*args, **options)
+        def public_method(*args: Any, **options: Any) -> pd.DataFrame:
+            call = signature.bind(*args, **options)
             recording = call.arguments.pop("rec")
             return run_method(name, recording, **call.arguments)
 
         public_method.__name__ = name
         public_method.__qualname__ = name
-        public_method.__annotations__ = {**function.__annotations__, "return": pd.DataFrame}
-        public_method.__signature__ = inspect.signature(function).replace(  # type: ignore[attr-defined]
-            return_annotation=pd.DataFrame
-        )
+        public_method.__annotations__ = {
+            **function.__annotations__,
+            "behavior_intervals": "ArrayLike | None",
+            "return": pd.DataFrame,
+        }
+        public_method.__signature__ = signature  # type: ignore[attr-defined]
         public_method.__doc__ = (function.__doc__ or "").rstrip() + _parameter_section(
-            inspect.signature(function)
+            signature, behavior
         )
         entry = Recipe(
             row,
@@ -1513,6 +1517,8 @@ def _register(
             (function.__doc__ or "").strip(),
             role,
             inventory,
+            behavior,
+            behavior_everywhere,
         )
         registry.append(entry)
         _ENTRIES[name] = entry
@@ -1521,7 +1527,26 @@ def _register(
     return register
 
 
-def _parameter_section(signature: inspect.Signature) -> str:
+def _public_signature(function: Callable[..., Any]) -> inspect.Signature:
+    """The implementation's signature with the per-call ``behavior_intervals``
+    last, keyword-only, returning a DataFrame."""
+    parameters = [
+        parameter
+        for name, parameter in inspect.signature(function).parameters.items()
+        if name != "behavior_intervals"
+    ]
+    parameters.append(
+        inspect.Parameter(
+            "behavior_intervals",
+            inspect.Parameter.KEYWORD_ONLY,
+            default=None,
+            annotation="ArrayLike | None",
+        )
+    )
+    return inspect.Signature(parameters, return_annotation=pd.DataFrame)
+
+
+def _parameter_section(signature: inspect.Signature, behavior: str | None) -> str:
     """The numpy-style Parameters and Returns of a registered method's wrapper."""
     lines = [
         "",
@@ -1532,7 +1557,7 @@ def _parameter_section(signature: inspect.Signature) -> str:
         "        Selected signals, cells and curated intervals.",
     ]
     for name, parameter in signature.parameters.items():
-        if name == "rec":
+        if name in {"rec", "behavior_intervals"}:
             continue
         if parameter.default is inspect.Parameter.empty:
             lines += [f"    {name} : {parameter.annotation}", "        Required; see above."]
@@ -1542,22 +1567,34 @@ def _parameter_section(signature: inspect.Signature) -> str:
                 "        See above.",
             ]
     lines += [
+        "    behavior_intervals : array_like, shape (n_intervals, 2), optional",
+        (
+            f"        Required: the eligible {behavior}. Events not wholly inside one"
+            if behavior
+            else "        Eligible epochs; events not wholly inside one"
+        ),
+        "        interval are dropped (see run_method).",
         "",
         "    Returns",
         "    -------",
         "    events : pandas.DataFrame",
         "        Candidate bounds and available diagnostics, with method metadata in",
-        "        attrs (see run_method). Supplied behavior_intervals retain wholly",
-        "        contained events.",
+        "        attrs (see run_method).",
         "    ",
     ]
     return "\n".join(lines)
 
 
 def _recipe(
-    row: int, paper: str, trigger: str, *, role: Role = "candidate_detection"
-) -> Callable[[Callable[P, pd.DataFrame | FloatArray]], Callable[P, pd.DataFrame]]:
-    return _register(RECIPES, row, paper, trigger, role)
+    row: int,
+    paper: str,
+    trigger: str,
+    *,
+    role: Role = "candidate_detection",
+    behavior: str | None = None,
+    behavior_everywhere: bool = False,
+) -> Callable[[Callable[P, pd.DataFrame | FloatArray]], Callable[..., pd.DataFrame]]:
+    return _register(RECIPES, row, paper, trigger, role, behavior, behavior_everywhere)
 
 
 @_recipe(0, "Mallory 2025", "MUA")
@@ -1590,12 +1627,14 @@ def widloski_2025(rec: Recording) -> pd.DataFrame | FloatArray:
     )  # fmt: skip
 
 
-def _population_with_ripple_peak(rec: Recording, sleep: FloatArray) -> FloatArray:
-    """Population candidates normalized over supplied NREM, with a ripple peak.
+def _population_with_ripple_peak(
+    rec: Recording, sleep: FloatArray, behavior_intervals: FloatArray | None
+) -> FloatArray:
+    """Population candidates normalized over supplied NREM, with a ripple peak,
+    inside the eligible quiet-waking/NREM ``behavior_intervals``.
 
     The historical ripple detector is unresolved. Real recordings require an
     external inventory; the simulation alone uses the documented Zugaro proxy.
-    Supply behavior_intervals to run_method for quiet-waking/NREM eligibility.
     """
     events = _detect_population(
         rec,
@@ -1623,8 +1662,8 @@ def _population_with_ripple_peak(rec: Recording, sleep: FloatArray) -> FloatArra
             else rec.external_ripples.mean(axis=1)
         )
     events = rd.require_times_inside(events, peaks)
-    if rec.behavior_intervals is not None:
-        eligible = rec.behavior_intervals
+    if behavior_intervals is not None:
+        eligible = behavior_intervals
     elif not rec.allows_simulation_proxies:
         msg = "Supply eligible quiet-waking/NREM behavior_intervals separately from the NREM baseline."
         raise ValueError(msg)
@@ -1633,8 +1672,10 @@ def _population_with_ripple_peak(rec: Recording, sleep: FloatArray) -> FloatArra
     return within_intervals(events, eligible)
 
 
-@_recipe(2, "Yang 2024", "SWR+MUA")
-def yang_2024(rec: Recording) -> pd.DataFrame | FloatArray:
+@_recipe(2, "Yang 2024", "SWR+MUA", behavior="quiet-waking/NREM epochs")
+def yang_2024(
+    rec: Recording, *, behavior_intervals: FloatArray | None = None
+) -> pd.DataFrame | FloatArray:
     """Population candidates with a coincident externally supplied ripple peak.
 
     Supply curated NREM normalization and eligible quiet-waking/NREM intervals;
@@ -1642,7 +1683,7 @@ def yang_2024(rec: Recording) -> pd.DataFrame | FloatArray:
     a speed <4 and theta/delta <1 proxy and an assumed ripple detector. The
     15 ms Gaussian width is interpreted as SD as in the shared Grosmark path.
     """
-    return _population_with_ripple_peak(rec, rec.sleep(4.0, 1.0))
+    return _population_with_ripple_peak(rec, rec.sleep(4.0, 1.0), behavior_intervals)
 
 
 def _tirole(rec: Recording) -> pd.DataFrame:
@@ -2508,13 +2549,11 @@ def farooq_2019_science(rec: Recording) -> pd.DataFrame | FloatArray:
     return _farooq(rec, sleep, rec.place_cells)
 
 
-@_recipe(24, "Chenani 2019", "MUA")
+@_recipe(24, "Chenani 2019", "MUA", behavior="reward zones")
 def chenani_2019(rec: Recording) -> pd.DataFrame | FloatArray:
     """Place-cell rate, 30 ms Gaussian, peak >= 3 SD, bounds >= 1 SD, >= 5
-    active cells. Supply reward-zone behavior_intervals to run_method; zones
-    chosen by eye are not inferred automatically; measured recordings without
-    them raise."""
-    _require_behavior_intervals(rec, "reward zones")
+    active cells. Supply reward-zone behavior_intervals; zones chosen by eye
+    are not inferred automatically; measured recordings without them raise."""
     events = _detect_population(
         rec, rec.place_cells, 0.030,
         threshold=3.0, bound_threshold=1.0, minimum_duration=0.0, speed_threshold=np.inf,
@@ -2727,19 +2766,18 @@ def maboudi_2018(rec: Recording) -> FloatArray:
     )
 
 
-@_recipe(32, "Ólafsdóttir 2017", "MUA")
+@_recipe(32, "Ólafsdóttir 2017", "MUA", behavior="corner epochs")
 def olafsdottir_2017(rec: Recording, *, analysis: str = "arm") -> pd.DataFrame | FloatArray:
     """Native place-cell MUA candidates, with separate arm/trajectory participation.
 
     5 ms Gaussian, 3 SD/mean, >=40 ms, all event speeds <=3. Supply corner
-    behavior_intervals to run_method; measured recordings without them raise.
+    behavior_intervals; measured recordings without them raise.
     Arm reactivation adds no cell-count criterion; analysis='trajectory'
     requires >=15% and >5 place cells.
     """
     if analysis not in {"arm", "trajectory"}:
         msg = "analysis must be 'arm' or 'trajectory'."
         raise ValueError(msg)
-    _require_behavior_intervals(rec, "corner epochs")
     events = _detect_population(
         rec,
         rec.place_cells,
@@ -2810,8 +2848,13 @@ def tang_2017(rec: Recording) -> pd.DataFrame | FloatArray:
     return _karlsson_rule(rec, np.nextafter(4.0, -np.inf))
 
 
-@_recipe(36, "Grosmark 2016", "SWR+MUA")
-def grosmark_2016(rec: Recording, *, stage: Stage = "detection") -> FloatArray:
+@_recipe(36, "Grosmark 2016", "SWR+MUA", behavior="quiet-waking/NREM epochs")
+def grosmark_2016(
+    rec: Recording,
+    *,
+    stage: Stage = "detection",
+    behavior_intervals: FloatArray | None = None,
+) -> FloatArray:
     """Population/ripple conjunction, with a separate decoding-candidate stage.
 
     The reported 15 ms Gaussian width is interpreted as its SD (unresolved).
@@ -2821,7 +2864,7 @@ def grosmark_2016(rec: Recording, *, stage: Stage = "detection") -> FloatArray:
     eligible quiet-waking/NREM behavior_intervals, and external ripple peaks.
     """
     _check_stage(stage)
-    events = _population_with_ripple_peak(rec, rec.sleep(4.0, 1.0))
+    events = _population_with_ripple_peak(rec, rec.sleep(4.0, 1.0), behavior_intervals)
     if stage == "detection":
         return events
     return rd.require_active_units(
@@ -2892,20 +2935,19 @@ def silva_2015(rec: Recording) -> pd.DataFrame | FloatArray:
     )  # fmt: skip
 
 
-@_recipe(41, "Ólafsdóttir 2015", "MUA")
+@_recipe(41, "Ólafsdóttir 2015", "MUA", behavior="rest epochs")
 def olafsdottir_2015(rec: Recording, *, minimum_active_units: int = 0) -> FloatArray:
     """Per-template silence-bounded candidates before optional decoding filters.
 
     Supply templates as cell masks; >=15% of a template in <=300 ms bounded
     by >=50 ms of silence. The optional minimum_active_units can impose the
     decoding-stage seven-cell criterion. Rest epochs are caller-supplied
-    behavior_intervals to run_method; measured recordings without them raise.
+    behavior_intervals; measured recordings without them raise.
     No ensemble size is assumed.
     """
     if not rec.templates:
         msg = "Supply templates: one cell selection per directional template."
         raise ValueError(msg)
-    _require_behavior_intervals(rec, "rest epochs")
     if any(not template.any() for template in rec.templates):
         msg = "A template selects no cells; supply each directional template's cells."
         raise ValueError(msg)
@@ -3127,14 +3169,13 @@ def davidson_2009(rec: Recording) -> pd.DataFrame | FloatArray:
     return rd.require_overlap(events, running + np.array([-30.0, 30.0]))
 
 
-@_recipe(51, "Diba 2007", "MUA")
+@_recipe(51, "Diba 2007", "MUA", behavior="track-end reward areas")
 def diba_2007(rec: Recording) -> pd.DataFrame | FloatArray:
     """>= 60 ms of silence (of the template's cells, assumed), then >= 5 and
     >= 30% of the template's cells (whichever is greater) in the next 300 ms,
     speed <=10 at both ends (assumed). Supply place_cells for one directional
     template and behavior_intervals for the eligible track-end reward areas;
     measured recordings without them raise."""
-    _require_behavior_intervals(rec, "track-end reward areas")
     events = rd.detect_silence_bounded_events(
         rec.time, rec.multiunit, rec.fs,
         minimum_silence=0.06, window=0.3, window_end_rule="fixed", units=rec.place_cells,
@@ -3185,13 +3226,12 @@ def ji_2007(
     )
 
 
-@_recipe(53, "Foster 2006", "MUA")
+@_recipe(53, "Foster 2006", "MUA", behavior="facing-direction epochs")
 def foster_2006(rec: Recording) -> pd.DataFrame | FloatArray:
     """Probe cells' spikes during stopping (< 5 cm/s, assumed) pooled and split
     at gaps of more than 50 ms, >=1/3 of the cells, <=500 ms. Supply
     place_cells for one probe sequence and behavior_intervals for the
     eligible facing-direction epochs; measured recordings without them raise."""
-    _require_behavior_intervals(rec, "facing-direction epochs")
     stopped = rec.mask_to_intervals(rec.speed < 5)
     return rd.detect_silence_bounded_events(
         rec.time, _only_in(rec, rec.multiunit, stopped), rec.fs,
@@ -3427,9 +3467,15 @@ VARIANTS: list[Recipe] = []
 
 
 def _variant(
-    row: int, paper: str, trigger: str, *, role: Role = "candidate_detection"
-) -> Callable[[Callable[P, pd.DataFrame | FloatArray]], Callable[P, pd.DataFrame]]:
-    return _register(VARIANTS, row, paper, trigger, role)
+    row: int,
+    paper: str,
+    trigger: str,
+    *,
+    role: Role = "candidate_detection",
+    behavior: str | None = None,
+    behavior_everywhere: bool = False,
+) -> Callable[[Callable[P, pd.DataFrame | FloatArray]], Callable[..., pd.DataFrame]]:
+    return _register(VARIANTS, row, paper, trigger, role, behavior, behavior_everywhere)
 
 
 @_variant(4, "Harvey 2023 (no radiatum)", "SWR")
@@ -4014,27 +4060,44 @@ def bhattarai_2020_ripples(
     )
 
 
-@_variant(23, "Farooq 2019 (Science)", "awake-rest population frames")
-def farooq_2019_science_awake(rec: Recording) -> FloatArray:
+@_variant(
+    23,
+    "Farooq 2019 (Science)",
+    "awake-rest population frames",
+    behavior="awake rest on the track",
+    behavior_everywhere=True,
+)
+def farooq_2019_science_awake(
+    rec: Recording, *, behavior_intervals: FloatArray | None = None
+) -> FloatArray:
     """Same frame criteria within supplied awake-rest epochs and speed <1 cm/s.
 
     Supply behavior_intervals selecting awake track rest; their curation must
     settle whether to apply the ambiguous theta/delta restriction.
     """
-    if rec.behavior_intervals is None:
+    if behavior_intervals is None:
         msg = "Supply behavior_intervals for awake rest on the track."
         raise ValueError(msg)
-    mask = rec.intervals_to_mask(rec.behavior_intervals) & (rec.speed < 1)
+    mask = rec.intervals_to_mask(behavior_intervals) & (rec.speed < 1)
     return _farooq(rec, rec.mask_to_intervals(mask), rec.place_cells)
 
 
-@_variant(26, "Liu 2019", "awake-rest silence-bounded frames")
-def liu_2019_awake(rec: Recording) -> pd.DataFrame:
-    """Silence-bounded frames at supplied track-end rest epochs, speed <2 cm/s."""
-    if rec.behavior_intervals is None:
+@_variant(
+    26,
+    "Liu 2019",
+    "awake-rest silence-bounded frames",
+    behavior="track-end rest epochs",
+    behavior_everywhere=True,
+)
+def liu_2019_awake(
+    rec: Recording, *, behavior_intervals: FloatArray | None = None
+) -> pd.DataFrame:
+    """Silence-bounded frames at supplied track-end rest epochs, speed <2 cm/s:
+    pyramidal spikes split at >=100 ms of silence, >=4 cells, 80 ms-1.2 s."""
+    if behavior_intervals is None:
         msg = "Supply track-end behavior_intervals for awake frames."
         raise ValueError(msg)
-    mask = rec.intervals_to_mask(rec.behavior_intervals) & (rec.speed < 2)
+    mask = rec.intervals_to_mask(behavior_intervals) & (rec.speed < 2)
     return rd.detect_silence_bounded_events(
         rec.time,
         np.where(mask[:, None], rec.multiunit, np.nan),
@@ -4115,7 +4178,13 @@ def list_methods() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def run_method(name: str, recording: Recording, **options: Any) -> pd.DataFrame:
+def run_method(
+    name: str,
+    recording: Recording,
+    *,
+    behavior_intervals: ArrayLike | None = None,
+    **options: Any,
+) -> pd.DataFrame:
     """Run a named paper/protocol inventory and attach its scientific context.
 
     Parameters
@@ -4125,6 +4194,14 @@ def run_method(name: str, recording: Recording, **options: Any) -> pd.DataFrame:
         because one paper can describe several distinct inventories.
     recording : Recording
         Measured or simulated inputs. Channel/cell selection belongs to callers.
+    behavior_intervals : array_like, shape (n_intervals, 2), optional
+        Sorted, disjoint, inclusive [start, end] eligible epochs in seconds,
+        for this call only: their meaning differs between methods (reward
+        zones, rest, corners, track ends, facing direction). Events not
+        wholly inside one interval are dropped; normalization is unchanged.
+        Methods that name the epochs they need (``Recipe.behavior``) raise on
+        measured data without them; awake-frame methods also restrict their
+        detection trace to them, as their docstrings say.
     **options
         Named method options, including required settings absent from sources.
 
@@ -4133,15 +4210,12 @@ def run_method(name: str, recording: Recording, **options: Any) -> pd.DataFrame:
     events : pandas.DataFrame
         At least start_time, end_time and duration (elapsed seconds), retaining
         any method-specific peak, channel, trigger and clipping columns.
-        behavior_intervals, if supplied, retain only wholly contained events.
-        The dispatcher does not change normalization. Explicit awake-frame
-        methods also use these intervals to select their detection trace.
         ``attrs`` holds ``method`` (the name), ``doi``, ``output`` (the
         trigger), ``role``, ``inventory``, ``interpretation`` (the docstring),
         ``options`` (every keyword option, defaults resolved),
-        ``input_sampling_frequency`` (Hz) and ``behavior_intervals_applied``,
-        plus any the method adds (Gridchyn: ``threshold_updates`` and
-        ``expected_count``).
+        ``behavior_intervals`` (the array supplied, or None) and
+        ``input_sampling_frequency`` (Hz), plus any the method adds
+        (Gridchyn: ``threshold_updates`` and ``expected_count``).
 
     Raises
     ------
@@ -4156,17 +4230,30 @@ def run_method(name: str, recording: Recording, **options: Any) -> pd.DataFrame:
         msg = f"Unknown literature method {name!r}; inspect list_methods()."
         raise KeyError(msg)
     entry = _ENTRIES[name]
-    call = inspect.signature(entry.run).bind(recording, **options)
+    eligible = _interval_array(behavior_intervals)
+    if (
+        entry.behavior is not None
+        and eligible is None
+        and (entry.behavior_everywhere or not recording.allows_simulation_proxies)
+    ):
+        msg = (
+            f"{name} needs behavior_intervals selecting the eligible {entry.behavior}; "
+            f"pass them to run_method or {name}(..., behavior_intervals=...)."
+        )
+        raise ValueError(msg)
+    implementation = _IMPLEMENTATIONS[name]
+    call = inspect.signature(implementation).bind(recording, **options)
     call.apply_defaults()
-    raw = _IMPLEMENTATIONS[name](*call.args, **call.kwargs)
+    if "behavior_intervals" in call.arguments:
+        call.arguments["behavior_intervals"] = eligible
+    raw = implementation(*call.args, **call.kwargs)
     result = (
         raw.copy()
         if isinstance(raw, pd.DataFrame)
         else pd.DataFrame(bounds(raw), columns=["start_time", "end_time"])
     )
-    if recording.behavior_intervals is not None:
-        keep = _within_intervals_mask(bounds(result), recording.behavior_intervals)
-        result = result.loc[keep].copy()
+    if eligible is not None:
+        result = result.loc[_within_intervals_mask(bounds(result), eligible)].copy()
     if "duration" not in result:
         result["duration"] = result.end_time - result.start_time
     result.attrs.update(
@@ -4177,9 +4264,13 @@ def run_method(name: str, recording: Recording, **options: Any) -> pd.DataFrame:
             "role": entry.role,
             "inventory": entry.inventory,
             "interpretation": entry.note,
-            "options": {key: value for key, value in call.arguments.items() if key != "rec"},
+            "options": {
+                key: value
+                for key, value in call.arguments.items()
+                if key not in {"rec", "behavior_intervals"}
+            },
+            "behavior_intervals": eligible,
             "input_sampling_frequency": recording.fs,
-            "behavior_intervals_applied": recording.behavior_intervals is not None,
         }
     )
     return result

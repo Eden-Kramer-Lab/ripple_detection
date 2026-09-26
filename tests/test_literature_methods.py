@@ -40,9 +40,15 @@ def _measured_inputs(fs=1500, origin=0.0, ripple_duration=(0.08, 0.16)):
         "pyramidal": np.arange(20),
         "sleep_intervals": [[time[0], time[-1]]],
         "baseline_intervals": [[time[0], time[-1]]],
-        "behavior_intervals": [[time[0], time[-1]]],
         "templates": [np.arange(10)],
     }
+
+
+def _eligible_epochs(name, time):
+    """behavior_intervals spanning the recording, for a method that needs them."""
+    if lm._ENTRIES[name].behavior is None:
+        return {}
+    return {"behavior_intervals": [[time[0], time[-1]]]}
 
 
 @pytest.fixture(scope="module")
@@ -269,7 +275,8 @@ def _method_inputs(name, origin=0.0):
     # The last ripple's noise stretch would run past the recording's end.
     inputs["example_ripples"] = np.c_[ripples - 0.04, ripples + 0.04][:-1]
     inputs["external_ripples"] = np.c_[ripples - 0.04, ripples + 0.04, ripples]
-    return inputs, {**VARIANT_OPTIONS, **RECIPE_OPTIONS}.get(name, {})
+    options = {**VARIANT_OPTIONS, **RECIPE_OPTIONS}.get(name, {})
+    return inputs, options | _eligible_epochs(name, inputs["time"])
 
 
 @pytest.mark.parametrize("name", ALL_METHODS)
@@ -330,7 +337,8 @@ def test_every_added_inventory_runs_with_explicit_inputs(entry):
     if name in RECTIFIED_LFP_METHODS:
         inputs = _with_strong_ripple(inputs)
     rec = lm.Recording.from_arrays(**inputs)
-    events = lm.run_method(name, rec, **VARIANT_OPTIONS.get(name, {}))
+    options = VARIANT_OPTIONS.get(name, {}) | _eligible_epochs(name, rec.time)
+    events = lm.run_method(name, rec, **options)
     assert isinstance(events, pd.DataFrame)
     assert bool(len(events)) is (name not in EMPTY_ON_THE_FIXTURE), name
     assert events.attrs["method"] == name
@@ -359,23 +367,41 @@ def test_missing_settings_are_not_silently_fabricated(measured):
     with pytest.raises(ValueError, match="example_ripples"):
         lm.run_method("carey_2019", measured)
     with pytest.raises(ValueError, match="external_ripples"):
-        lm.run_method("yang_2024", measured)
+        lm.run_method("yang_2024", measured, behavior_intervals=[[0, 20]])
     with pytest.raises(KeyError, match="Unknown literature method"):
         lm.run_method("unrecognized", measured)
 
 
 def test_run_method_applies_behavior_containment_and_preserves_context(measured):
-    original = measured.behavior_intervals
-    measured.behavior_intervals = np.array([[5.0, 10.0]])
-    try:
-        result = lm.run_method("pfeiffer_2013_ripples", measured)
-        assert len(result)
-        assert (result.start_time >= 5).all()
-        assert (result.end_time <= 10).all()
-        assert result.attrs["behavior_intervals_applied"]
-        assert "duration limits" in result.attrs["interpretation"]
-    finally:
-        measured.behavior_intervals = original
+    result = lm.run_method("pfeiffer_2013_ripples", measured, behavior_intervals=[[5, 10]])
+    assert len(result)
+    assert (result.start_time >= 5).all()
+    assert (result.end_time <= 10).all()
+    np.testing.assert_array_equal(result.attrs["behavior_intervals"], [[5, 10]])
+    assert "behavior_intervals" not in result.attrs["options"]
+    assert "duration limits" in result.attrs["interpretation"]
+    unrestricted = lm.run_method("pfeiffer_2013_ripples", measured)
+    assert unrestricted.attrs["behavior_intervals"] is None
+    assert len(unrestricted) > len(result)
+
+
+def test_behavior_intervals_belong_to_a_call_not_to_the_recording(measured):
+    """Epochs mean different things per method (reward zones, rest, track
+    ends), so one recording serves every method and each call says its own."""
+    assert not hasattr(measured, "behavior_intervals")
+    with pytest.raises(TypeError, match="behavior_intervals"):
+        lm.Recording.from_arrays(**_measured_inputs(), behavior_intervals=[[0, 1]])
+    zones = [[5.0, 10.0]]
+    chenani = lm.chenani_2019(measured, behavior_intervals=zones)
+    assert ((chenani.start_time >= 5) & (chenani.end_time <= 10)).all()
+    # The next method on the same recording is not restricted by that call.
+    karlsson = lm.karlsson_2009(measured)
+    assert ((karlsson.start_time < 5) | (karlsson.end_time > 10)).any()
+    parameter = inspect.signature(lm.karlsson_2009).parameters["behavior_intervals"]
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    assert parameter.default is None
+    with pytest.raises(ValueError, match="Intervals"):
+        lm.run_method("karlsson_2009", measured, behavior_intervals=[0, 1])
 
 
 @pytest.mark.parametrize(
@@ -474,13 +500,16 @@ def test_template_inventory_uses_caller_ensemble_size():
     time = np.arange(2000) / 1000
     spikes = np.zeros((2000, 8))
     spikes[[500, 510, 520], [1, 3, 6]] = 1
-    rec = lm.Recording.from_arrays(
-        time, 1000, multiunit=spikes, templates=[[1, 3, 6]], behavior_intervals=[[0, 2]]
-    )
-    events = lm.run_method("olafsdottir_2015", rec)
+    rec = lm.Recording.from_arrays(time, 1000, multiunit=spikes, templates=[[1, 3, 6]])
+    rest = [[0, 2]]
+    events = lm.run_method("olafsdottir_2015", rec, behavior_intervals=rest)
     np.testing.assert_allclose(lm.bounds(events), [[0.5, 0.52]])
     with pytest.warns(UserWarning, match="fewer than 7 cells"):
-        assert not len(lm.run_method("olafsdottir_2015", rec, minimum_active_units=7))
+        assert not len(
+            lm.run_method(
+                "olafsdottir_2015", rec, minimum_active_units=7, behavior_intervals=rest
+            )
+        )
 
 
 def test_native_bins_are_stable_with_unix_timestamps():
@@ -581,19 +610,21 @@ def test_analysis_participation_does_not_change_initial_detection(monkeypatch):
         place_cells=np.arange(20),
         pyramidal=np.arange(20),
         sleep_intervals=[[0, 2.999]],
-        behavior_intervals=[[0, 2.999]],
     )
+    eligible = {"behavior_intervals": [[0, 2.999]]}
     candidates = np.array([[0.5, 0.575], [1.5, 1.7]])
     monkeypatch.setattr(lm, "_population_with_ripple_peak", lambda *args: candidates.copy())
-    np.testing.assert_allclose(lm.bounds(lm.grosmark_2016(rec)), candidates)
+    np.testing.assert_allclose(lm.bounds(lm.grosmark_2016(rec, **eligible)), candidates)
     np.testing.assert_allclose(
-        lm.bounds(lm.grosmark_2016(rec, stage="decoding_candidates")), candidates[1:]
+        lm.bounds(lm.grosmark_2016(rec, stage="decoding_candidates", **eligible)),
+        candidates[1:],
     )
     frame = pd.DataFrame(candidates, columns=["start_time", "end_time"])
     monkeypatch.setattr(lm, "_detect_population", lambda *args, **kwargs: frame.copy())
-    np.testing.assert_allclose(lm.bounds(lm.olafsdottir_2017(rec)), candidates)
+    np.testing.assert_allclose(lm.bounds(lm.olafsdottir_2017(rec, **eligible)), candidates)
     np.testing.assert_allclose(
-        lm.bounds(lm.olafsdottir_2017(rec, analysis="trajectory")), candidates[1:]
+        lm.bounds(lm.olafsdottir_2017(rec, analysis="trajectory", **eligible)),
+        candidates[1:],
     )
 
 
@@ -705,6 +736,7 @@ def test_session_normalization_ignores_unrelated_baseline_intervals(measured, na
     full = replace(measured, baseline_intervals=None)
     restricted = replace(measured, baseline_intervals=np.array([[0, 1.5]]))
     options = {"window_anchor": "peaks"} if name == "wikenheiser_2013" else {}
+    options |= _eligible_epochs(name, measured.time)
     expected = lm.run_method(name, full, **options)
     assert len(expected), name
     actual = lm.run_method(name, restricted, **options)
@@ -752,7 +784,8 @@ def test_recording_transforms_are_fresh_and_do_not_keep_recordings_alive():
         ("nadasdy_1999", {}, "rms_window"),
         ("kudrimoti_1999", {}, "threshold_sd"),
         ("carey_2019", {}, "example_ripples"),
-        ("yang_2024", {}, "external_ripples"),
+        ("yang_2024", {"behavior_intervals": [[0, 20]]}, "external_ripples"),
+        ("chenani_2019", {}, "behavior_intervals"),
     ],
 )
 def test_arbitrary_session_objects_cannot_enable_simulation_fallbacks(
@@ -771,15 +804,12 @@ def test_arbitrary_session_objects_cannot_enable_simulation_fallbacks(
 
 @pytest.mark.parametrize("name", ["pfeiffer_2015", "bendor_2012", "mallory_2025_ripples"])
 def test_direct_methods_and_registry_apply_identical_behavior_filters(measured, name):
-    from dataclasses import replace
-
     unrestricted = lm.run_method(name, measured)
     assert len(unrestricted) > 1
-    rec = replace(measured, behavior_intervals=np.array([[5, 10]]))
-    direct = getattr(lm, name)(rec)
-    dispatched = lm.run_method(name, rec)
+    direct = getattr(lm, name)(measured, behavior_intervals=[[5, 10]])
+    dispatched = lm.run_method(name, measured, behavior_intervals=[[5, 10]])
     pd.testing.assert_frame_equal(direct, dispatched)
-    assert direct.attrs == dispatched.attrs
+    np.testing.assert_equal(direct.attrs, dispatched.attrs)
     assert 0 < len(direct) < len(unrestricted)
     assert (direct.start_time >= 5).all()
     assert (direct.end_time <= 10).all()
@@ -802,7 +832,6 @@ def test_direct_methods_and_registry_apply_identical_behavior_filters(measured, 
         ({"multiunit": np.full((100, 1), 0.5)}, "nonnegative integer"),
         ({"place_cells": [[0]]}, "Cell indices"),
         ({"baseline_intervals": [[0, np.nan]]}, "Intervals"),
-        ({"behavior_intervals": [0, 1]}, "Intervals"),
         ({"external_ripples": [0, 1]}, "start/end"),
         ({"external_ripples": [[0, 1, 0.5, 2]]}, "start/end"),
         ({"external_ripples": [[0, 1, np.nan]]}, "peaks"),
@@ -1378,11 +1407,9 @@ def test_a_fixed_channel_count_is_not_filled_from_fewer_channels(monkeypatch):
     ["chenani_2019", "olafsdottir_2017", "olafsdottir_2015", "diba_2007", "foster_2006"],
 )
 def test_measured_recordings_need_the_documented_behavior_intervals(measured, name):
-    from dataclasses import replace
-
-    lm.run_method(name, measured)  # runs with them
-    with pytest.raises(ValueError, match="behavior_intervals"):
-        lm.run_method(name, replace(measured, behavior_intervals=None))
+    lm.run_method(name, measured, **_eligible_epochs(name, measured.time))  # runs with them
+    with pytest.raises(ValueError, match=f"behavior_intervals.*{lm._ENTRIES[name].behavior}"):
+        lm.run_method(name, measured)
 
 
 def test_krause_warns_when_it_skips_swrs():
@@ -1411,16 +1438,15 @@ def test_olafsdottir_2015_warns_for_small_templates_and_rejects_empty_ones():
         1000,
         multiunit=spikes,
         templates=[np.arange(7), np.arange(7, 12)],
-        behavior_intervals=[[0, 2]],
     )
     with pytest.warns(UserWarning, match=r"^1 of 2 template\(s\) .* fewer than 7 cells"):
-        events = lm.olafsdottir_2015(rec, minimum_active_units=7)
+        events = lm.olafsdottir_2015(rec, minimum_active_units=7, behavior_intervals=[[0, 2]])
     np.testing.assert_allclose(lm.bounds(events), [[0.5, 0.56]])
     empty = lm.Recording.from_arrays(
-        time, 1000, multiunit=spikes, templates=[np.arange(7), []], behavior_intervals=[[0, 2]]
+        time, 1000, multiunit=spikes, templates=[np.arange(7), []]
     )
     with pytest.raises(ValueError, match="selects no cells"):
-        lm.olafsdottir_2015(empty)
+        lm.olafsdottir_2015(empty, behavior_intervals=[[0, 2]])
 
 
 def test_mallory_flags_candidates_cut_by_a_block_edge():
@@ -1571,7 +1597,6 @@ def _signals(n_time=100, n_units=3):
         ({"templates": (np.ones(4, dtype=bool),)}, "Cell masks"),
         ({"sleep_intervals": np.array([[0.05, 0.01]])}, "Intervals"),
         ({"baseline_intervals": np.array([0.0, 0.01])}, "Intervals"),
-        ({"behavior_intervals": np.array([[0.0, np.nan]])}, "Intervals"),
         ({"example_ripples": np.array([[0.02, 0.03], [0.025, 0.04]])}, "Intervals"),
         ({"external_ripples": np.array([[0.01, 0.02, 0.05]])}, "peaks"),
         ({"reference_lfp": np.zeros(5)}, "reference_lfp"),
@@ -1628,7 +1653,6 @@ def test_only_simulated_sessions_allow_simulation_proxies(measured):
         templates=(),
         sleep_intervals=None,
         baseline_intervals=None,
-        behavior_intervals=None,
         reference_lfp=None,
     )
     assert simulated.allows_simulation_proxies
@@ -1654,9 +1678,9 @@ def test_population_trace_arrays_share_the_bin_grid():
 def test_registry_rejects_a_duplicate_name_without_changing_the_inventory():
     before = (len(lm.RECIPES), len(lm.VARIANTS), dict(lm._IMPLEMENTATIONS))
     with pytest.raises(ValueError, match="already registered"):
-        lm._register(lm.VARIANTS, 0, "Mallory 2025", "MUA", "candidate_detection")(
-            lm._IMPLEMENTATIONS["mallory_2025"]
-        )
+        lm._register(
+            lm.VARIANTS, 0, "Mallory 2025", "MUA", "candidate_detection", None, False
+        )(lm._IMPLEMENTATIONS["mallory_2025"])
     assert (len(lm.RECIPES), len(lm.VARIANTS), dict(lm._IMPLEMENTATIONS)) == before
 
 
@@ -1670,7 +1694,7 @@ def test_each_entry_records_its_inventory():
 
 def test_grosmark_rejects_an_unknown_stage(measured):
     with pytest.raises(ValueError, match="stage must be"):
-        lm.grosmark_2016(measured, stage="replay")
+        lm.grosmark_2016(measured, stage="replay", behavior_intervals=[[0, 20]])
 
 
 def test_within_intervals_rejects_unsorted_or_overlapping_intervals():
@@ -1799,27 +1823,25 @@ def test_population_candidates_need_an_external_ripple_peak_inside(
 ):
     rec = lm.Recording.from_arrays(**population_candidates, external_ripples=external)
     np.testing.assert_allclose(
-        lm.bounds(lm.run_method(name, rec)), CANDIDATES[kept].reshape(-1, 2)
+        lm.bounds(lm.run_method(name, rec, **_eligible_epochs(name, rec.time))),
+        CANDIDATES[kept].reshape(-1, 2),
     )
 
 
 def test_population_candidates_keep_only_eligible_behavior_epochs(population_candidates):
     external = np.c_[CANDIDATES, CANDIDATES.mean(axis=1)]
-    inputs = {**population_candidates, "external_ripples": external}
-    inputs["behavior_intervals"] = [[0.5, 1.5], [2.9, 3.25]]
+    rec = lm.Recording.from_arrays(**population_candidates, external_ripples=external)
+    eligible = np.array([[0.5, 1.5], [2.9, 3.25]])
     np.testing.assert_allclose(
-        lm.bounds(lm.yang_2024(lm.Recording.from_arrays(**inputs))), CANDIDATES[[0, 2]]
+        lm.bounds(lm.yang_2024(rec, behavior_intervals=eligible)), CANDIDATES[[0, 2]]
     )
     # The eligible epochs are applied inside the method, not only by run_method.
     np.testing.assert_allclose(
-        lm._population_with_ripple_peak(
-            lm.Recording.from_arrays(**inputs), np.array([[0, 20]])
-        ),
+        lm._population_with_ripple_peak(rec, np.array([[0, 20]]), eligible),
         CANDIDATES[[0, 2]],
     )
-    del inputs["behavior_intervals"]
     with pytest.raises(ValueError, match="behavior_intervals"):
-        lm.yang_2024(lm.Recording.from_arrays(**inputs))
+        lm.yang_2024(rec)
 
 
 @pytest.mark.parametrize("name", ["farooq_2019_science", "drieu_2018"])
@@ -1924,11 +1946,11 @@ ERROR_PATHS = [
     ("olafsdottir_2015", _changed(templates=[]), {}, "Supply templates"),
     (
         "farooq_2019_science_awake",
-        _changed(drop=["behavior_intervals"]),
-        {},
+        _changed(),
+        {"behavior_intervals": None},
         "behavior_intervals",
     ),
-    ("liu_2019_awake", _changed(drop=["behavior_intervals"]), {}, "behavior_intervals"),
+    ("liu_2019_awake", _changed(), {"behavior_intervals": None}, "behavior_intervals"),
     ("wikenheiser_2013", _changed(), {"window_anchor": None}, "window_anchor explicitly"),
     ("wikenheiser_2013", _changed(), {"branch": "run_lia"}, "theta_delta trace"),
     (
@@ -1962,8 +1984,12 @@ ERROR_PATHS = [
     ids=[f"{name}-{message}" for name, _, _, message in ERROR_PATHS],
 )
 def test_literature_method_error_paths(name, make_inputs, options, message):
-    options = {**VARIANT_OPTIONS, **RECIPE_OPTIONS}.get(name, {}) | options
     rec = lm.Recording.from_arrays(**make_inputs())
+    options = (
+        {**VARIANT_OPTIONS, **RECIPE_OPTIONS}.get(name, {})
+        | _eligible_epochs(name, rec.time)
+        | options
+    )
     with pytest.raises(ValueError, match=message):
         lm.run_method(name, rec, **options)
 
