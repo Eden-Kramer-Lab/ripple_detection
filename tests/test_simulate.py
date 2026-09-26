@@ -6,13 +6,16 @@ import hashlib
 import numpy as np
 import pandas as pd
 import pytest
+from scipy import stats
 
 from ripple_detection import filter_ripple_band
 from ripple_detection.simulate import (
+    EVENT_TYPES,
     NOISE_FUNCTION,
     SimulatedSession,
     _draw_per_ripple,
     brown,
+    draw_network_events,
     mean_squared,
     normalize,
     pink,
@@ -1247,3 +1250,256 @@ class TestSimulatedSessionFields:
         assert still.running_intervals.shape == (0, 2)
         assert len(still.events) == 0
         assert still.unit_types.shape == still.baseline_rates.shape == (0,)
+
+
+EXPRESSION_ORDER = {"ripple": 0, "sharp_wave": 1, "burst": 2}
+
+
+def _spans(events, n_sides):
+    """Each row's [centre - n rise, centre + n decay]."""
+    return (
+        events.center_time - n_sides * events.rise_sigma,
+        events.center_time + n_sides * events.decay_sigma,
+    )
+
+
+class TestDrawNetworkEvents:
+    FS = 1500
+    TIME = simulate_time(FS * 300, FS)
+    RUNNING = ((40.0, 55.0), (120.0, 150.0))
+
+    @staticmethod
+    @pytest.fixture(scope="class")
+    def events():
+        return draw_network_events(
+            TestDrawNetworkEvents.TIME,
+            event_rate=1.0,
+            running_intervals=TestDrawNetworkEvents.RUNNING,
+            rng=0,
+        )
+
+    def test_schema_and_order(self, events):
+        _assert_schema(events, EVENT_COLUMNS)
+        assert isinstance(events.index, pd.RangeIndex)
+        key = list(
+            zip(
+                events.event_id,
+                events.expression.map(EXPRESSION_ORDER),
+                events.component,
+                strict=True,
+            )
+        )
+        assert key == sorted(key)
+        earliest = events.groupby("event_id").center_time.min()
+        np.testing.assert_array_equal(earliest.index, np.arange(len(earliest)))
+        assert np.all(np.diff(earliest.to_numpy()) > 0)
+        assert (events.envelope_power == 2).all()
+        assert (events.n_participants == 0).all()
+        ripple = events.expression == "ripple"
+        assert events.loc[ripple, ["frequency_start", "frequency_end"]].notna().all().all()
+        assert events.loc[~ripple, ["frequency_start", "frequency_end"]].isna().all().all()
+        burst = events.expression == "burst"
+        assert events.loc[burst, "participation"].between(0, 1).all()
+        assert events.loc[~burst, "participation"].isna().all()
+
+    def test_an_empty_draw_has_the_schema(self):
+        events = draw_network_events(self.TIME, event_rate=0.0, rng=0)
+        assert len(events) == 0
+        _assert_schema(events, EVENT_COLUMNS)
+
+    def test_components_per_type(self, events):
+        expected = {
+            "swr": {"ripple": 1, "sharp_wave": 1, "burst": 1},
+            "weak_ripple": {"ripple": 1, "sharp_wave": 1, "burst": 1},
+            "burst_only": {"burst": 1},
+            "sharp_wave_only": {"sharp_wave": 1},
+        }
+        n_ripples_seen = set()
+        for _, event in events.groupby("event_id"):
+            (event_type,) = set(event.event_type)
+            counts = event.expression.value_counts().to_dict()
+            if event_type != "ripple_doublet":
+                assert counts == expected[event_type]
+                continue
+            n_ripples = counts["ripple"]
+            n_ripples_seen.add(n_ripples)
+            assert counts == {"ripple": n_ripples, "sharp_wave": n_ripples, "burst": 1}
+            ripples = event[event.expression == "ripple"]
+            np.testing.assert_array_equal(ripples.component, np.arange(n_ripples))
+            (burst,) = event[event.expression == "burst"].itertuples()
+            first, last = ripples.iloc[0], ripples.iloc[-1]
+            assert burst.rise_sigma == pytest.approx(burst.decay_sigma)
+            assert burst.center_time - 3 * burst.rise_sigma == pytest.approx(
+                first.center_time - 3 * first.rise_sigma
+            )
+            assert burst.center_time + 3 * burst.decay_sigma == pytest.approx(
+                last.center_time + 3 * last.decay_sigma
+            )
+            assert np.all(np.diff(ripples.center_time) >= 0.06)
+        assert n_ripples_seen == {2, 3}
+        assert set(events.event_type) == set(EVENT_TYPES)
+
+    def test_type_specific_sizes(self, events):
+        weak = events.event_type == "weak_ripple"
+        ripples = events.expression == "ripple"
+        assert events.loc[ripples & weak, "amplitude"].between(1.2, 2.2).all()
+        assert events.loc[ripples & ~weak, "amplitude"].between(2.5, 6.0).all()
+        sharp = events.expression == "sharp_wave"
+        assert events.loc[sharp & weak, "amplitude"].between(1.5, 4.0).all()
+        assert events.loc[sharp & ~weak, "amplitude"].between(3.0, 8.0).all()
+        bursts = events.expression == "burst"
+        assert events.loc[bursts & weak, "participation"].between(0.02, 0.1).all()
+        assert events.loc[bursts & ~weak, "participation"].between(0.2, 0.6).all()
+        assert (events.loc[bursts, "amplitude"] == 40.0).all()
+        span = 3 * (events.rise_sigma + events.decay_sigma)
+        assert span[ripples].between(0.03, 0.15).all()
+        skew = events.decay_sigma / (events.rise_sigma + events.decay_sigma)
+        assert skew[ripples].between(0.5, 0.7).all()
+        chirp = events.frequency_start - events.frequency_end
+        assert chirp[ripples].between(0.0, 30.0).all()
+        assert events.loc[ripples, "frequency_start"].between(160, 220).all()
+        burst_only = bursts & (events.event_type == "burst_only")
+        assert span[burst_only].between(0.05, 0.3).all()
+
+    def test_events_only_at_rest_and_inside(self, events):
+        start, end = _spans(events, 4)
+        assert (start >= self.TIME[0] + 1).all()
+        assert (end <= self.TIME[-1] - 1).all()
+        for bout_start, bout_end in self.RUNNING:
+            assert not ((start < bout_end) & (end > bout_start)).any()
+
+    def test_events_are_separated(self, events):
+        start, end = _spans(events, 3)
+        spans = pd.DataFrame({"start": start, "end": end, "event_id": events.event_id})
+        union = spans.groupby("event_id").agg(start=("start", "min"), end=("end", "max"))
+        gaps = union.start.to_numpy()[1:] - union.end.to_numpy()[:-1]
+        assert gaps.min() >= 0.05
+
+    def test_rate(self):
+        time = simulate_time(1000 * 3600, 1000)
+        events = draw_network_events(
+            time,
+            event_rate=0.5,
+            type_probabilities={"swr": 1.0},
+            minimum_separation=0.0,
+            ripple_duration=(0.01, 0.01),
+            sharp_wave_duration=(0.01, 0.01),
+            burst_duration_ratio=(1, 1),
+            rng=1,
+        )
+        expected = 0.5 * (3600 - 2)
+        assert abs(events.event_id.nunique() - expected) < 4 * np.sqrt(expected)
+
+    def test_seeded_and_parameter_local(self, events):
+        again = draw_network_events(
+            self.TIME, event_rate=1.0, running_intervals=self.RUNNING, rng=0
+        )
+        pd.testing.assert_frame_equal(events, again)
+        louder = draw_network_events(
+            self.TIME,
+            event_rate=1.0,
+            running_intervals=self.RUNNING,
+            sharp_wave_amplitude=(10.0, 12.0),
+            rng=0,
+        )
+        sharp = events.expression == "sharp_wave"
+        pd.testing.assert_frame_equal(
+            events.drop(columns="amplitude"), louder.drop(columns="amplitude")
+        )
+        pd.testing.assert_series_equal(events.amplitude[~sharp], louder.amplitude[~sharp])
+        assert louder.amplitude[sharp & (louder.event_type != "weak_ripple")].min() >= 10.0
+
+    def test_type_probabilities_leave_times_in_place(self):
+        """Every event draws the same variates whatever its type."""
+        swr = draw_network_events(self.TIME, type_probabilities={"swr": 1}, rng=3)
+        burst = draw_network_events(self.TIME, type_probabilities={"burst_only": 1}, rng=3)
+        assert set(swr.event_type) == {"swr"}
+        assert set(burst.event_type) == {"burst_only"}
+        swr_ripples = swr[swr.expression == "ripple"].center_time.to_numpy()
+        burst_centres = burst.center_time.to_numpy()
+        assert np.isin(swr_ripples, burst_centres).mean() > 0.9
+
+    def test_envelope_power_is_stored(self):
+        events = draw_network_events(self.TIME, envelope_power=4, rng=0)
+        assert len(events) > 0
+        assert (events.envelope_power == 4).all()
+
+    @pytest.mark.parametrize("rho", [0.0, 0.6])
+    def test_strength_dependence(self, rho):
+        """Uniform marginals on each range at any correlation, and rank
+        correlations between an swr's four strengths near the Gaussian
+        copula's (6 / pi) asin(rho / 2). The spans do not depend on the
+        strengths, so dropping events leaves these distributions unchanged."""
+        time = simulate_time(1000 * 3600, 1000)
+        events = draw_network_events(
+            time,
+            event_rate=0.5,
+            type_probabilities={"swr": 1.0},
+            minimum_separation=0.0,
+            strength_correlation=rho,
+            rng=11,
+        )
+        by_expression = events.set_index(["event_id", "expression"])
+        strengths = pd.DataFrame(
+            {
+                "snr": by_expression.xs("ripple", level=1).amplitude,
+                "frequency": by_expression.xs("ripple", level=1).frequency_start,
+                "sharp_wave": by_expression.xs("sharp_wave", level=1).amplitude,
+                "participation": by_expression.xs("burst", level=1).participation,
+            }
+        )
+        n = len(strengths)
+        assert n > 1500
+        ranges = {
+            "snr": (2.5, 6.0),
+            "frequency": (160.0, 220.0),
+            "sharp_wave": (3.0, 8.0),
+            "participation": (0.2, 0.6),
+        }
+        for name, (low, high) in ranges.items():
+            result = stats.kstest(strengths[name], stats.uniform(low, high - low).cdf)
+            assert result.pvalue > 1e-3, name
+        rank = strengths.rank().corr().to_numpy()[np.triu_indices(4, 1)]
+        expected = 6 / np.pi * np.arcsin(rho / 2)
+        np.testing.assert_allclose(rank, expected, atol=4 / np.sqrt(n))
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"event_rate": -1.0}, "event_rate"),
+            ({"event_rate": np.nan}, "event_rate"),
+            ({"type_probabilities": {"sharp_wave_ripple": 1.0}}, "type_probabilities"),
+            ({"type_probabilities": {"swr": 0.0}}, "type_probabilities"),
+            ({"type_probabilities": {"swr": -1.0, "emg": 2.0}}, "type_probabilities"),
+            ({"ripple_duration": (0.1, 0.05)}, "ripple_duration"),
+            ({"ripple_duration": [0.05, 0.1]}, "ripple_duration"),
+            ({"ripple_duration": (0.0, 0.1)}, "ripple_duration"),
+            ({"ripple_skew": (0.5, 1.0)}, "ripple_skew"),
+            ({"ripple_frequency": (160.0, 800.0)}, "ripple_frequency"),
+            ({"ripple_chirp": (0.0, 200.0)}, "ripple_chirp"),
+            ({"ripple_snr": (0.0, 2.0)}, "ripple_snr"),
+            ({"weak_ripple_snr": (2.0, 1.0)}, "weak_ripple_snr"),
+            ({"sharp_wave_duration": (0.1, 0.05)}, "sharp_wave_duration"),
+            ({"sharp_wave_amplitude": (-1.0, 2.0)}, "sharp_wave_amplitude"),
+            ({"sharp_wave_lag": -0.01}, "sharp_wave_lag"),
+            ({"burst_duration_ratio": (0.0, 1.0)}, "burst_duration_ratio"),
+            ({"burst_lag": np.inf}, "burst_lag"),
+            ({"burst_gain": 0.5}, "burst_gain"),
+            ({"participation": (0.2, 1.5)}, "participation"),
+            ({"weak_participation": (-0.1, 0.1)}, "weak_participation"),
+            ({"burst_only_duration": (0.3, 0.05)}, "burst_only_duration"),
+            ({"doublet_interval": (0.0, 0.1)}, "doublet_interval"),
+            ({"minimum_separation": -0.05}, "minimum_separation"),
+            ({"strength_correlation": 1.5}, "strength_correlation"),
+            ({"strength_correlation": -0.1}, "strength_correlation"),
+            ({"envelope_power": 3}, "envelope_power"),
+            ({"running_intervals": [(5.0, 2.0)]}, "start before its end"),
+        ],
+    )
+    def test_validation(self, kwargs, message):
+        with pytest.raises(ValueError, match=message):
+            draw_network_events(simulate_time(3000, 1000), **kwargs)
+
+    def test_time_must_be_a_sampled_axis(self):
+        with pytest.raises(ValueError, match="time must be 1-D"):
+            draw_network_events(np.zeros((10, 2)))

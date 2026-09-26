@@ -7,16 +7,23 @@ trains that burst with the ripples, and ``simulate_session`` all of them at once
 with the ground truth, for testing detectors against known events.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
 import numpy as np
 import pandas as pd
 from numpy.typing import ArrayLike
+from scipy import special
 
 from ripple_detection._call_hints import explain_call_errors
-from ripple_detection.core import FloatArray, StrArray, _generator, filter_ripple_band
+from ripple_detection.core import (
+    FloatArray,
+    IntArray,
+    StrArray,
+    _generator,
+    filter_ripple_band,
+)
 
 RIPPLE_FREQUENCY = 200
 NoiseType = Literal["white", "pink", "brown"]
@@ -1458,3 +1465,516 @@ def simulate_session(
             else _running_intervals(running_intervals)
         ),
     )
+
+
+_REFERENCE_TYPE_PROBABILITIES = {
+    "swr": 0.55,
+    "weak_ripple": 0.15,
+    "burst_only": 0.10,
+    "ripple_doublet": 0.10,
+    "sharp_wave_only": 0.10,
+}
+_MAX_RIPPLES = 3
+_TRIPLET_PROBABILITY = 0.3
+# Columns of each event's fixed blocks of variates (see draw_network_events'
+# Notes): standard normals, then uniforms.
+_N_NORMALS = 1 + 2 * _MAX_RIPPLES + 2 * _MAX_RIPPLES + 2
+_N_UNIFORMS = 1 + 4 * _MAX_RIPPLES + _MAX_RIPPLES + 2
+
+
+def _check_range(
+    name: str,
+    value: object,
+    *,
+    lower: float = -np.inf,
+    lower_strict: bool = False,
+    upper: float = np.inf,
+    upper_strict: bool = False,
+) -> tuple[float, float]:
+    """``value`` as a finite ``(low, high)`` pair with ``low <= high`` inside
+    the stated bounds; ``ValueError`` naming ``name`` otherwise."""
+    if not isinstance(value, tuple) or len(value) != 2:
+        msg = f"{name} must be a (low, high) tuple, got {value!r}."
+        raise ValueError(msg)
+    low, high = float(value[0]), float(value[1])
+    inside = (
+        np.isfinite(low)
+        and np.isfinite(high)
+        and low <= high
+        and (low > lower if lower_strict else low >= lower)
+        and (high < upper if upper_strict else high <= upper)
+    )
+    if not inside:
+        bounds = (
+            f"{'(' if lower_strict else '['}{lower:g}, {upper:g}{')' if upper_strict else ']'}"
+        )
+        msg = f"{name} must be a finite (low, high) range with low <= high in {bounds}, got {value}."
+        raise ValueError(msg)
+    return low, high
+
+
+def _check_scalar(
+    name: str, value: float, *, lower: float = 0.0, lower_strict: bool = False
+) -> float:
+    """``value`` as a finite float at or above (or above) ``lower``."""
+    number = float(value)
+    if not (np.isfinite(number) and (number > lower if lower_strict else number >= lower)):
+        relation = ">" if lower_strict else ">="
+        msg = f"{name} must be finite and {relation} {lower:g}, got {value}."
+        raise ValueError(msg)
+    return number
+
+
+def _rest_intervals(time: FloatArray, running_intervals: ArrayLike | None) -> FloatArray:
+    """(n, 2) stretches of rest: the recording less its first and last second
+    and the running bouts."""
+    start, end = float(time[0]) + 1.0, float(time[-1]) - 1.0
+    bouts = (
+        np.empty((0, 2))
+        if running_intervals is None
+        else _running_intervals(running_intervals)
+    )
+    rest = []
+    cursor = start
+    for bout_start, bout_end in bouts:
+        if bout_start > cursor:
+            rest.append((cursor, min(bout_start, end)))
+        cursor = max(cursor, bout_end)
+    rest.append((cursor, end))
+    intervals = np.asarray(rest, dtype=float)
+    return intervals[intervals[:, 1] > intervals[:, 0]]
+
+
+def _poisson_times(
+    intervals: FloatArray, rate: float, rng: np.random.Generator
+) -> tuple[FloatArray, IntArray]:
+    """A Poisson process of ``rate`` per second on the concatenated
+    ``intervals``, mapped back to recording time: the sorted times and the
+    index of the interval each lies in. Draws the count, then the positions."""
+    lengths = intervals[:, 1] - intervals[:, 0]
+    total = float(lengths.sum())
+    n = int(rng.poisson(rate * total))
+    positions = np.sort(rng.uniform(0.0, total, size=n))
+    cumulative = np.concatenate([[0.0], np.cumsum(lengths)])
+    index = np.clip(np.searchsorted(cumulative, positions, side="right") - 1, 0, None)
+    return intervals[index, 0] + positions - cumulative[index], index
+
+
+@explain_call_errors
+def draw_network_events(
+    time: ArrayLike,
+    *,
+    event_rate: float = 0.5,
+    type_probabilities: Mapping[str, float] | None = None,
+    running_intervals: ArrayLike | None = None,
+    ripple_duration: tuple[float, float] = (0.03, 0.15),
+    ripple_skew: tuple[float, float] = (0.5, 0.7),
+    ripple_frequency: tuple[float, float] = (160.0, 220.0),
+    ripple_chirp: tuple[float, float] = (0.0, 30.0),
+    ripple_snr: tuple[float, float] = (2.5, 6.0),
+    weak_ripple_snr: tuple[float, float] = (1.2, 2.2),
+    sharp_wave_duration: tuple[float, float] = (0.04, 0.12),
+    sharp_wave_amplitude: tuple[float, float] = (3.0, 8.0),
+    sharp_wave_lag: float = 0.01,
+    burst_duration_ratio: tuple[float, float] = (1.0, 1.5),
+    burst_lag: float = 0.01,
+    burst_gain: float = 40.0,
+    participation: tuple[float, float] = (0.2, 0.6),
+    weak_participation: tuple[float, float] = (0.02, 0.1),
+    burst_only_duration: tuple[float, float] = (0.05, 0.3),
+    doublet_interval: tuple[float, float] = (0.06, 0.12),
+    minimum_separation: float = 0.05,
+    strength_correlation: float = 0.0,
+    envelope_power: int = 2,
+    rng: int | np.random.Generator | None = None,
+) -> pd.DataFrame:
+    """Draw latent network events: when they happen, of which type, and the
+    envelope, frequency and size of each component.
+
+    A latent network event is expressed as a ripple (pyramidal-layer LFP), a
+    sharp wave (stratum radiatum LFP) and a population burst (spikes), in five
+    types (``EVENT_TYPES``):
+
+    ==================  ======  ==========  =====  ================================
+    Type                Ripple  Sharp wave  Burst  Differences from ``swr``
+    ==================  ======  ==========  =====  ================================
+    ``swr``             yes     yes         yes    reference
+    ``weak_ripple``     weak    half size   weak   ``weak_ripple_snr``,
+                                                   ``weak_participation``
+    ``burst_only``                          yes    span ``burst_only_duration``
+    ``ripple_doublet``  2 or 3  one each    one    the burst spans all ripples
+    ``sharp_wave_only``         yes
+    ==================  ======  ==========  =====  ================================
+
+    Events occur only at rest: outside ``running_intervals`` and more than a
+    second from either end of ``time``. Render the table with
+    ``simulate_network_session`` and take its truth windows with
+    ``truth_windows``; edit it between the two to fix any value.
+
+    Parameters
+    ----------
+    time : array_like, shape (n_time,)
+        Sample timestamps in seconds, increasing.
+    event_rate : float, optional
+        Events per second of rest, before events too close to the previous
+        one are dropped. Default 0.5.
+    type_probabilities : mapping of str to float, optional
+        Relative frequency of each event type; a type left out never occurs,
+        and the values are normalized. Default None: swr 0.55, weak_ripple
+        0.15, burst_only 0.10, ripple_doublet 0.10, sharp_wave_only 0.10.
+    running_intervals : array_like, shape (n_bouts, 2), optional
+        Running bouts, start and end in seconds, sorted and not overlapping.
+        Default None: at rest throughout.
+    ripple_duration : (float, float), optional
+        Range of a ripple's nominal span, ``3 (rise_sigma + decay_sigma)``
+        seconds. Its width at half maximum is about 0.39 times the span.
+        Default (0.03, 0.15).
+    ripple_skew : (float, float), optional
+        Range of the fraction of the span after the peak, in (0, 1); above
+        0.5 decays more slowly than it rises. Default (0.5, 0.7).
+    ripple_frequency : (float, float), optional
+        Range of the frequency at the start of the span, Hz, below Nyquist.
+        Default (160, 220).
+    ripple_chirp : (float, float), optional
+        Range of the linear frequency decline over the span, Hz; ``(0, 0)``
+        gives constant-frequency ripples. Default (0, 30).
+    ripple_snr : (float, float), optional
+        Range of a ripple's nominal size: its peak after ``filter_ripple_band``
+        over the standard deviation of the filtered stationary background, as
+        ``simulate_LFP``'s ``ripple_snr``. For ``swr`` and
+        ``ripple_doublet``. Default (2.5, 6.0).
+    weak_ripple_snr : (float, float), optional
+        The same for ``weak_ripple``. Default (1.2, 2.2).
+    sharp_wave_duration : (float, float), optional
+        Range of a sharp wave's nominal span, six side scales; symmetric.
+        Default (0.04, 0.12).
+    sharp_wave_amplitude : (float, float), optional
+        Range of the radiatum deflection's peak, in signal units; halved for
+        ``weak_ripple``. Default (3, 8).
+    sharp_wave_lag : float, optional
+        Standard deviation in seconds of a sharp wave's centre about its
+        ripple's. Default 0.01.
+    burst_duration_ratio : (float, float), optional
+        Range of a burst's span relative to its ripple's; the burst takes the
+        ripple's skew. Default (1.0, 1.5).
+    burst_lag : float, optional
+        Standard deviation in seconds of a burst's centre about its ripple's.
+        Default 0.01.
+    burst_gain : float, optional
+        Peak intensity of a recruited unit relative to its baseline, at least
+        1. Default 40.
+    participation : (float, float), optional
+        Range of the probability that a place unit is recruited by a burst
+        (other pyramidal units: half of it), for ``swr``, ``ripple_doublet``
+        and ``burst_only``. A latent probability: the fraction of units that
+        fire in an event is lower. Default (0.2, 0.6).
+    weak_participation : (float, float), optional
+        The same for ``weak_ripple``. Default (0.02, 0.1).
+    burst_only_duration : (float, float), optional
+        Range of a ``burst_only`` burst's nominal span, symmetric. Default
+        (0.05, 0.3).
+    doublet_interval : (float, float), optional
+        Range of the centre-to-centre interval between successive ripples of
+        a ``ripple_doublet``, seconds. Default (0.06, 0.12).
+    minimum_separation : float, optional
+        Seconds required between one event's span (its components' union
+        at three side scales) and the next's. Default 0.05.
+    strength_correlation : float, optional
+        Latent correlation, in [0, 1], between an event's ripple SNR, onset
+        frequency, sharp-wave amplitude and participation. Each keeps its
+        uniform distribution on its range whatever the value. Default 0:
+        independent.
+    envelope_power : {2, 4}, optional
+        Shape of every envelope, ``exp(-ln 2 (|t| / (sqrt(2 ln 2) sigma))**p)``
+        on each side: 2 is a Gaussian with SD sigma; 4 is flatter at the top
+        and steeper at the edges, with the same half-maximum width. Default 2.
+    rng : int or numpy.random.Generator, optional
+        Seed, or a Generator to draw from. The draw order is in the Notes.
+
+    Returns
+    -------
+    events : pandas.DataFrame
+        One row per component, sorted by ``event_id``, then ``expression``
+        in ``EXPRESSIONS`` order (ripple, sharp wave, burst), then
+        ``component``, with a RangeIndex. Columns:
+
+        - ``event_id`` (int): the latent event, numbered from 0 in order of
+          its earliest component's centre.
+        - ``event_type``, ``expression`` (str): from ``EVENT_TYPES`` and
+          ``EXPRESSIONS``.
+        - ``component`` (int): 0, or the ripple's (and its sharp wave's)
+          place in a ``ripple_doublet``.
+        - ``center_time``, ``rise_sigma``, ``decay_sigma`` (float): the
+          envelope's peak and side scales, seconds.
+        - ``envelope_power`` (int).
+        - ``amplitude`` (float): ripple, nominal SNR; sharp wave, radiatum
+          peak in signal units (rendered negative); burst, ``burst_gain``.
+        - ``frequency_start``, ``frequency_end`` (float): Hz over the
+          ripple's span; NaN on other rows.
+        - ``participation`` (float): burst rows; NaN on others.
+        - ``n_participants`` (int): 0; ``simulate_network_session`` fills
+          it in for burst rows.
+
+        Every component's span at four side scales lies inside the rest
+        stretch its event began in. With no events the table is empty with
+        these columns and dtypes.
+
+    Raises
+    ------
+    ValueError
+        If ``time`` is not 1-D with two or more samples, a rate, lag, gain or
+        separation is negative or not finite, ``type_probabilities`` names an
+        unknown type or has no positive weight, a range is not a finite
+        ``(low, high)`` tuple with ``low <= high`` inside its bounds (positive
+        durations, SNRs and intervals, skew in (0, 1), participation in
+        [0, 1], frequencies and the frequency after the chirp between 0 and
+        Nyquist), ``strength_correlation`` lies outside [0, 1] or
+        ``envelope_power`` is not 2 or 4.
+
+    Notes
+    -----
+    Draw order: the event count (Poisson, ``event_rate`` times the rest
+    time), their positions on the concatenated rest time, their types; then
+    one row per event, in time order, of 15 standard normals and then one of
+    18 uniforms. Every event draws the same block whatever its type or the
+    parameters, and an event too close to the previous kept event, or whose
+    span at four side scales leaves its stretch of rest, is dropped, not
+    redrawn. So changing one parameter changes only the values it governs:
+    the other events and columns stay where they were.
+
+    The normals are the shared strength ``z``; per ripple slot (up to three)
+    the residuals for its SNR and onset frequency; per sharp-wave slot its
+    lag and the residual for its amplitude; the burst's lag and the residual
+    for its participation. A coupled value is ``low + (high - low) *
+    ndtr(sqrt(rho) z + sqrt(1 - rho) residual)``. The uniforms are the
+    doublet's ripple count (3 with probability 0.3, else 2); per ripple slot
+    its span, skew, chirp and the interval from the previous ripple; per
+    sharp-wave slot its span; the burst's duration ratio and its
+    ``burst_only`` span.
+
+    Examples
+    --------
+    >>> time = simulate_time(60 * 1500, 1500)
+    >>> events = draw_network_events(time, running_intervals=[(20.0, 35.0)], rng=0)
+    >>> list(events.columns)  # doctest: +NORMALIZE_WHITESPACE
+    ['event_id', 'event_type', 'expression', 'component', 'center_time',
+     'rise_sigma', 'decay_sigma', 'envelope_power', 'amplitude',
+     'frequency_start', 'frequency_end', 'participation', 'n_participants']
+    >>> bool(events.center_time.between(20.0, 35.0).any())
+    False
+
+    """
+    time = np.asarray(time, dtype=float)
+    if time.ndim != 1 or time.size < 2:
+        msg = f"time must be 1-D with at least two samples, got shape {time.shape}."
+        raise ValueError(msg)
+    nyquist = 0.5 / float(np.median(np.diff(time)))
+    event_rate = _check_scalar("event_rate", event_rate)
+    probabilities = _type_probabilities(type_probabilities)
+    ripple_duration = _check_range(
+        "ripple_duration", ripple_duration, lower=0, lower_strict=True
+    )
+    ripple_skew = _check_range(
+        "ripple_skew", ripple_skew, lower=0, lower_strict=True, upper=1, upper_strict=True
+    )
+    ripple_frequency = _check_range(
+        "ripple_frequency", ripple_frequency, lower=0, lower_strict=True, upper=nyquist,
+        upper_strict=True,
+    )  # fmt: skip
+    ripple_chirp = _check_range(
+        "ripple_chirp", ripple_chirp, lower=0, upper=ripple_frequency[0], upper_strict=True
+    )
+    ripple_snr = _check_range("ripple_snr", ripple_snr, lower=0, lower_strict=True)
+    weak_ripple_snr = _check_range(
+        "weak_ripple_snr", weak_ripple_snr, lower=0, lower_strict=True
+    )
+    sharp_wave_duration = _check_range(
+        "sharp_wave_duration", sharp_wave_duration, lower=0, lower_strict=True
+    )
+    sharp_wave_amplitude = _check_range("sharp_wave_amplitude", sharp_wave_amplitude, lower=0)
+    sharp_wave_lag = _check_scalar("sharp_wave_lag", sharp_wave_lag)
+    burst_duration_ratio = _check_range(
+        "burst_duration_ratio", burst_duration_ratio, lower=0, lower_strict=True
+    )
+    burst_lag = _check_scalar("burst_lag", burst_lag)
+    burst_gain = _check_scalar("burst_gain", burst_gain, lower=1.0)
+    participation = _check_range("participation", participation, lower=0, upper=1)
+    weak_participation = _check_range(
+        "weak_participation", weak_participation, lower=0, upper=1
+    )
+    burst_only_duration = _check_range(
+        "burst_only_duration", burst_only_duration, lower=0, lower_strict=True
+    )
+    doublet_interval = _check_range(
+        "doublet_interval", doublet_interval, lower=0, lower_strict=True
+    )
+    minimum_separation = _check_scalar("minimum_separation", minimum_separation)
+    rho = _check_scalar("strength_correlation", strength_correlation)
+    if rho > 1:
+        msg = f"strength_correlation must lie in [0, 1], got {strength_correlation}."
+        raise ValueError(msg)
+    if envelope_power not in (2, 4):
+        msg = f"envelope_power must be 2 or 4, got {envelope_power!r}."
+        raise ValueError(msg)
+    rng = _generator(rng)
+
+    rest = _rest_intervals(time, running_intervals)
+    event_times, rest_index = _poisson_times(rest, event_rate, rng)
+    n_events = event_times.size
+    types = rng.choice(len(EVENT_TYPES), size=n_events, p=probabilities)
+    normals = rng.standard_normal((n_events, _N_NORMALS))
+    uniforms = rng.random((n_events, _N_UNIFORMS))
+
+    rows: list[tuple[int, str, str, int, float, float, float, float, float, float, float]] = []
+    last_end = -np.inf
+    for event in range(n_events):
+        event_type = EVENT_TYPES[types[event]]
+        z, u = normals[event], uniforms[event]
+
+        def strength(
+            residual: float, bounds: tuple[float, float], shared: float = z[0]
+        ) -> float:
+            return _coupled_uniform(shared, residual, rho, bounds)
+
+        weak = event_type == "weak_ripple"
+        components = []  # (expression, component, center, rise, decay, amplitude, f0, f1, p)
+        if event_type in ("swr", "weak_ripple", "ripple_doublet"):
+            n_ripples = 1
+            if event_type == "ripple_doublet":
+                n_ripples = 3 if u[0] < _TRIPLET_PROBABILITY else 2
+            center = event_times[event]
+            ripples = []
+            for j in range(n_ripples):
+                if j > 0:
+                    center += _scaled(u[4 + 4 * j], doublet_interval)
+                span = _scaled(u[1 + 4 * j], ripple_duration)
+                skew = _scaled(u[2 + 4 * j], ripple_skew)
+                onset = strength(z[2 + 2 * j], ripple_frequency)
+                snr = strength(z[1 + 2 * j], weak_ripple_snr if weak else ripple_snr)
+                rise, decay = span * (1 - skew) / 3, span * skew / 3
+                ripples.append((center, rise, decay, span, skew))
+                components.append(
+                    ("ripple", j, center, rise, decay, snr, onset,
+                     onset - _scaled(u[3 + 4 * j], ripple_chirp), np.nan)
+                )  # fmt: skip
+                sharp_wave_sigma = _scaled(u[13 + j], sharp_wave_duration) / 6
+                amplitude = strength(z[8 + 2 * j], sharp_wave_amplitude) * (
+                    0.5 if weak else 1.0
+                )
+                components.append(
+                    ("sharp_wave", j, center + sharp_wave_lag * z[7 + 2 * j],
+                     sharp_wave_sigma, sharp_wave_sigma, amplitude, np.nan, np.nan, np.nan)
+                )  # fmt: skip
+            if event_type == "ripple_doublet":
+                first, last = ripples[0], ripples[-1]
+                start, end = first[0] - 3 * first[1], last[0] + 3 * last[2]
+                burst_center, burst_rise = (start + end) / 2, (end - start) / 6
+                burst_decay = burst_rise
+            else:
+                ripple_center, _, _, span, skew = ripples[0]
+                burst_center = ripple_center + burst_lag * z[13]
+                burst_span = span * _scaled(u[16], burst_duration_ratio)
+                burst_rise, burst_decay = burst_span * (1 - skew) / 3, burst_span * skew / 3
+            components.append(
+                ("burst", 0, burst_center, burst_rise, burst_decay, burst_gain, np.nan, np.nan,
+                 strength(z[14], weak_participation if weak else participation))
+            )  # fmt: skip
+        elif event_type == "burst_only":
+            sigma = _scaled(u[17], burst_only_duration) / 6
+            components.append(
+                ("burst", 0, event_times[event], sigma, sigma, burst_gain, np.nan, np.nan,
+                 strength(z[14], participation))
+            )  # fmt: skip
+        else:  # sharp_wave_only
+            sigma = _scaled(u[13], sharp_wave_duration) / 6
+            components.append(
+                ("sharp_wave", 0, event_times[event], sigma, sigma,
+                 strength(z[8], sharp_wave_amplitude), np.nan, np.nan, np.nan)
+            )  # fmt: skip
+
+        centers = np.array([c[2] for c in components])
+        rises = np.array([c[3] for c in components])
+        decays = np.array([c[4] for c in components])
+        start_3, end_3 = np.min(centers - 3 * rises), np.max(centers + 3 * decays)
+        start_4, end_4 = np.min(centers - 4 * rises), np.max(centers + 4 * decays)
+        rest_start, rest_end = rest[rest_index[event]]
+        if start_3 < last_end + minimum_separation:
+            continue
+        if start_4 < rest_start or end_4 > rest_end:
+            continue
+        last_end = end_3
+        rows.extend((event, event_type, *component) for component in components)
+
+    if not rows:
+        return _empty_events()
+    columns = list(zip(*rows, strict=True))
+    table = pd.DataFrame(
+        {
+            "event": np.asarray(columns[0]),
+            "event_type": np.asarray(columns[1], dtype=object),
+            "expression": np.asarray(columns[2], dtype=object),
+            "component": np.asarray(columns[3]),
+            "center_time": np.asarray(columns[4], dtype=float),
+            "rise_sigma": np.asarray(columns[5], dtype=float),
+            "decay_sigma": np.asarray(columns[6], dtype=float),
+            "amplitude": np.asarray(columns[7], dtype=float),
+            "frequency_start": np.asarray(columns[8], dtype=float),
+            "frequency_end": np.asarray(columns[9], dtype=float),
+            "participation": np.asarray(columns[10], dtype=float),
+        }
+    )
+    # renumber the kept events in order of their earliest component's centre
+    earliest = table.groupby("event", sort=True)["center_time"].min()
+    rank = np.argsort(np.argsort(earliest.to_numpy(), kind="stable"), kind="stable")
+    table["event_id"] = table["event"].map(pd.Series(rank, index=earliest.index))
+    table["envelope_power"] = envelope_power
+    table["n_participants"] = 0
+    return _sorted_events(
+        _table(_EVENT_COLUMNS, {name: table[name] for name in _EVENT_COLUMNS})
+    )
+
+
+def _scaled(u: float, bounds: tuple[float, float]) -> float:
+    """``u`` in [0, 1] mapped linearly onto ``(low, high)``."""
+    return bounds[0] + (bounds[1] - bounds[0]) * float(u)
+
+
+def _coupled_uniform(
+    shared: float, residual: float, rho: float, bounds: tuple[float, float]
+) -> float:
+    """A uniform draw on ``bounds`` whose latent normal has correlation ``rho``
+    with every other draw sharing ``shared``: ``ndtr(sqrt(rho) shared +
+    sqrt(1 - rho) residual)``, uniform for any ``rho``."""
+    latent = np.sqrt(rho) * shared + np.sqrt(1.0 - rho) * residual
+    return _scaled(float(special.ndtr(latent)), bounds)
+
+
+def _type_probabilities(type_probabilities: Mapping[str, float] | None) -> FloatArray:
+    """The probability of each of ``EVENT_TYPES``, normalized; a type left out has 0."""
+    given = _REFERENCE_TYPE_PROBABILITIES if type_probabilities is None else type_probabilities
+    unknown = sorted(set(given) - set(EVENT_TYPES))
+    if unknown:
+        msg = (
+            f"type_probabilities has unknown event types {unknown}; "
+            f"use {', '.join(map(repr, EVENT_TYPES))}."
+        )
+        raise ValueError(msg)
+    weights = np.array([float(given.get(name, 0.0)) for name in EVENT_TYPES])
+    if not (np.all(np.isfinite(weights)) and np.all(weights >= 0) and weights.sum() > 0):
+        msg = (
+            "type_probabilities must be finite and non-negative with a positive sum, "
+            f"got {dict(given)}."
+        )
+        raise ValueError(msg)
+    normalized: FloatArray = weights / weights.sum()
+    return normalized
+
+
+def _sorted_events(events: pd.DataFrame) -> pd.DataFrame:
+    """Sorted by ``event_id``, then expression in ``EXPRESSIONS`` order, then
+    ``component``, with a RangeIndex."""
+    rank = events["expression"].map({name: i for i, name in enumerate(EXPRESSIONS)})
+    order = np.lexsort(
+        (events["component"].to_numpy(), rank.to_numpy(), events["event_id"].to_numpy())
+    )
+    return events.iloc[order].reset_index(drop=True)
