@@ -11,7 +11,7 @@ detection does to event rates and participation.
 
 **Inputs to read first:**
 
-- Phase 4's outputs for a finished run (`examples/benchmark/output/<run_name>/`) and
+- Phase 4's combined tables for a finished run (`examples/benchmark/output/<run_name>/combined/`) and
   `examples/benchmark/run.py`'s module docstring (output columns).
 - Phase 2: `ripple_detection.evaluate` (`match_events`, `compare_detectors`, `consensus_counts`,
   `label_by_overlap`).

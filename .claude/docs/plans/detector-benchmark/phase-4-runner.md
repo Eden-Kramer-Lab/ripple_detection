@@ -39,12 +39,14 @@ the smoke test, the extrapolation, and the full run.
   `peak_thresholds` alias here), `run_session(condition, replicate, methods=None)`
   returning the session's `truth`, `units`, `methods`, `events`, `metrics`, `failures` frames and timings, and
   the CLI in [designs.md#runner](designs.md#runner) with `ProcessPoolExecutor`, per-condition writes,
-  `--resume` (validated against `run_spec.json`, skipping only conditions with a valid
-  completion marker), `--smoke`, and `manifest.json`. Every method call is guarded by `except Exception`
+  `--resume` (validated against `run_spec.json`, skipping only conditions whose directory has
+  a valid `done.json`), `--combine` (builds `combined/`), `--smoke`, and `manifest.json`.
+  Each condition writes only its own `conditions/<condition_id>/` directory, via a
+  `.partial` directory renamed into place after `done.json`. Every method call is guarded by `except Exception`
   (the design's runner step 3), so no recipe or detector can abort a run. Metrics per the output schema, using
   `truth_windows(events, 0.1, expression)` for matching and `boundary_errors` at 0.25 and 0.5.
 - Persist every result complete under `results/` (see the output contract: all columns, dtypes
-  and `attrs`), alongside the `events/` summary with `n_active_units` and `n_active_principal`,
+  and `attrs`), alongside the `events.csv.gz` summary with `n_active_units` and `n_active_principal`,
   and the observed counts within every truth window of every expression in
   `truth_counts.csv.gz`.
 - Persist `methods.csv` with the resolved public-call metadata and input policy for
@@ -98,7 +100,9 @@ the smoke test, the extrapolation, and the full run.
 | `test_results_round_trip` | For a recipe with diagnostics and a detector, the reloaded `results/` frames equal the originals exactly (`check_exact=True`) and their `attrs` are equal. |
 | `test_failures_are_recorded_not_raised` | Stub methods raising `ValueError` and `IndexError` each yield a `failures` row (`"IndexError: ..."`) and no events or metrics rows; the others still run. A Gridchyn configuration with a missing or invalid pre-rest baseline fails explicitly; absence of a running bout alone does not imply a missing baseline. |
 | `test_resume_skips_finished_conditions` | With `--resume`, a condition with a valid completion marker is not re-simulated (monkeypatched `run_session` call count). |
-| `test_resume_reruns_interrupted_conditions` | A condition's files without a marker, or with a marker whose hashes do not match, are deleted and the condition runs again. |
+| `test_resume_reruns_interrupted_conditions` | A condition's `.partial` directory, or a condition directory whose `done.json` hashes do not match, is deleted and the condition runs again. |
+| `test_resume_after_two_finished_and_one_interrupted` | Conditions A and B finished, C interrupted (a `.partial` directory): `--resume` runs only C; A's and B's directories are byte-identical before and after and their markers still verify; `combined/` then holds all three. |
+| `test_combine_is_derived` | Deleting `combined/` and running `--combine` reproduces it exactly; `--resume` ignores `combined/`. |
 | `test_resume_rejects_a_changed_specification` | Resuming with a different `--duration`, replicate count or method list stops with the differing keys and writes nothing. |
 | manual | Smoke-test numbers and extrapolation recorded; spot-check PNGs inspected. |
 

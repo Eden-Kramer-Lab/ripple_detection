@@ -550,19 +550,24 @@ Per session, in a worker (`ProcessPoolExecutor`, default `os.cpu_count() - 1` wo
 4. Per method × setting × expression in (`ripple`, `sharp_wave`, `burst`, `network`):
    `match_events(truth_windows(events, 0.1, expression), detected)`, boundary errors at 0.25 and
    0.5 via `boundary_errors`, the metrics row.
-5. Return the session's truth, units, events and metrics frames; the parent appends them and,
-   when a condition's sessions are all done, writes its files under temporary names, renames
-   them into place, and only then writes the condition's completion marker
-   `done/<condition_id>.json` (row counts and SHA-256 of every file it wrote).
+5. Return the session's truth, units, events and metrics frames; the parent collects them per
+   condition and, when a condition's sessions are all done, writes every table into
+   `conditions/<condition_id>.partial/`, then `done.json` (row counts and SHA-256 of every
+   other file there), then renames the directory to `conditions/<condition_id>/`. A condition
+   writes nothing outside its own directory.
+6. After the last condition, `--combine` builds `combined/` by concatenating the finished
+   conditions' tables; it can be re-run at any time and is never an input to `--resume`.
 
 **Run specification and resume.** A new run writes `run_spec.json` before any session: the
 resolved parameters of every condition (after CLI overrides such as `--duration`), the
 replicate count and seeds, every method and setting with its resolved options, and the
 package version and git commit. `--resume` rebuilds the specification from its arguments and
 stops with the differing keys if it is not equal to the saved one; it never reuses outputs
-made under another specification. A condition counts as finished only when its marker
-exists and its files match the marker's counts and hashes; files without a marker (an
-interrupted write) are deleted and the condition runs again.
+made under another specification. A condition counts as finished only when
+`conditions/<condition_id>/done.json` exists and the directory's files match its counts and
+hashes. A leftover `conditions/<condition_id>.partial/` (an interrupted write), or a
+condition directory that fails that check, is deleted and the condition runs again; only
+that condition's own directory is ever deleted.
 
 `--smoke` runs the reference condition, 1 replicate, 1 worker; prints per-method runtime,
 simulate time, peak resident memory (`resource.getrusage(RUSAGE_SELF).ru_maxrss`, bytes on macOS
@@ -571,7 +576,8 @@ output size for the full grid at the requested worker count. Decision rules:
 
 - one reference session takes more than 5 minutes on one core → halve `duration_s` and double
   the replicates;
-- extrapolated `events/` size passes 2 GB → write sweep events only for the reference condition,
+- extrapolated events size (all conditions' `events.csv.gz`) passes 2 GB → write sweep events
+  only for the reference condition,
   metrics only elsewhere;
 - workers = min(requested, free cores − 1, ⌊0.7 × available memory / peak memory per session⌋).
 

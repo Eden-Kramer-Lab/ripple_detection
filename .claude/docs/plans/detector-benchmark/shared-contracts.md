@@ -348,21 +348,33 @@ order are in [designs.md#conditions-grid](designs.md#conditions-grid).
 Written by phase 4 under `examples/benchmark/output/<run_name>/` (git-ignored). Read by phases 5
 and 6. Every table is CSV; `.csv.gz` for the large ones.
 
+- **Run files** (`manifest.json`, `run_spec.json`, `conditions.csv`) are written once when the
+  run starts; `manifest.json` gains `finished` at the end.
+- **Condition files** live in `conditions/<condition_id>/` and are immutable: a condition is
+  written into `conditions/<condition_id>.partial/`, its `done.json` last, and the directory is
+  then renamed into place. No condition writes to another's directory or to a shared table, so
+  finishing one condition never changes another's files or invalidates its marker.
+- **Combined tables** in `combined/` (the same file names as a condition directory, with
+  `events.csv.gz` and `results/<condition_id>/...`) are concatenations of the finished
+  conditions, built by `run.py --combine` (and at the end of a run). They are derived:
+  rebuilt from the condition directories at any time, never read by `--resume`. Phases 5 and 6
+  read `combined/`.
+
 | File | One row per | Columns |
 | --- | --- | --- |
 | `manifest.json` | run | `run_name`, `git_commit`, `package_version`, `numpy_version`, `scipy_version`, `command`, `started`, `finished`, `n_workers` |
 | `run_spec.json` | run | the resolved specification `--resume` checks: every condition's parameters after overrides, `replicates`, seeds, every method and setting with its resolved options, `package_version`, `git_commit` |
-| `done/<condition_id>.json` | finished condition | row count and SHA-256 of every file the condition wrote; written last, after the files are renamed into place |
-| `methods.csv` | session × method × setting | `session_id`, `method`, `setting`, `doi`, `role`, `inventory`, `stage`, `primary_expression`, `resolved_options` (JSON), `input_policy` (JSON or references), `assumptions` (JSON), `interpretation` |
+| `conditions/<condition_id>/done.json` | finished condition | row count and SHA-256 of every other file in the condition's directory; written last, before the directory is renamed into place |
+| `conditions/<condition_id>/methods.csv` | session × method × setting | `session_id`, `method`, `setting`, `doi`, `role`, `inventory`, `stage`, `primary_expression`, `resolved_options` (JSON), `input_policy` (JSON or references), `assumptions` (JSON), `interpretation` |
 | `conditions.csv` | condition | `condition_id`, `factor`, `level`, `params` (JSON of the full parameter set after the condition's and the command line's overrides, such as `--duration`; phase 6 regenerates sessions from it) |
-| `sessions.csv.gz` | session | `session_id` (`f"{condition_id}/{replicate}"`), `condition_id`, `replicate`, `seed`, `duration_s`, `rest_s`, `event_time_s` (union of network windows at 0.1), `n_events_<type>` per `EVENT_TYPES`, `n_non_events_<type>` per `NON_EVENT_TYPES`, `simulate_s`, `detect_s` |
-| `truth.csv.gz` | truth component | `session_id`, `table` (`"event"`/`"non_event"`), `id`, `type`, `expression`, `component`, then the remaining columns of the event or non-event table (NaN where not applicable) |
-| `truth_counts.csv.gz` | truth window × expression | `session_id`, `expression` (`ripple`, `sharp_wave`, `burst`, `network`), `row` (position in `truth_windows(events, 0.1, expression)`, the rows matching uses), `n_active_units`, `n_active_principal` (observed within that window) |
-| `units.csv.gz` | session × unit | `session_id`, `unit`, `unit_type`, `baseline_rate` (from `SimulatedSession.baseline_rates`) |
-| `events/<condition_id>.csv.gz` | detected event | `session_id`, `method`, `setting`, `event_index`, `start_time`, `end_time`, `peak_time`, `n_active_units`, `n_active_principal` |
-| `results/<condition_id>/<method_slug>__<setting>.csv.gz` and `.json` | detected event, complete | `session_id`, then every column the method returned, in its order (clipping flags, per-event statistics, method-specific columns); the JSON sidecar holds each column's dtype and, per `session_id`, the result's complete `attrs` (recipes: method, DOI, resolved options, grid, inputs, diagnostics such as adaptive threshold updates, `ripple_detection_version`; detectors: name, resolved parameters, version). `method_slug` is `method` with `:` replaced by `--`. |
-| `metrics.csv.gz` | session × method × setting × expression | `session_id`, `method`, `setting`, `expression`, `n_reference`, `n_detected`, `n_matched`, `recall`, `precision`, `f1`, `false_positives_per_minute`, `median_iou`, `median_coverage`, `median_temporal_precision`, `median_onset_error_<f>`, `median_offset_error_<f>` for `f` in 10, 25, 50, `n_split`, `n_merged` |
-| `failures.csv` | failed call | `session_id`, `method`, `setting`, `error` (`f"{type(error).__name__}: {error}"`, first 200 characters) |
+| `conditions/<condition_id>/sessions.csv.gz` | session | `session_id` (`f"{condition_id}/{replicate}"`), `condition_id`, `replicate`, `seed`, `duration_s`, `rest_s`, `event_time_s` (union of network windows at 0.1), `n_events_<type>` per `EVENT_TYPES`, `n_non_events_<type>` per `NON_EVENT_TYPES`, `simulate_s`, `detect_s` |
+| `conditions/<condition_id>/truth.csv.gz` | truth component | `session_id`, `table` (`"event"`/`"non_event"`), `id`, `type`, `expression`, `component`, then the remaining columns of the event or non-event table (NaN where not applicable) |
+| `conditions/<condition_id>/truth_counts.csv.gz` | truth window × expression | `session_id`, `expression` (`ripple`, `sharp_wave`, `burst`, `network`), `row` (position in `truth_windows(events, 0.1, expression)`, the rows matching uses), `n_active_units`, `n_active_principal` (observed within that window) |
+| `conditions/<condition_id>/units.csv.gz` | session × unit | `session_id`, `unit`, `unit_type`, `baseline_rate` (from `SimulatedSession.baseline_rates`) |
+| `conditions/<condition_id>/events.csv.gz` | detected event | `session_id`, `method`, `setting`, `event_index`, `start_time`, `end_time`, `peak_time`, `n_active_units`, `n_active_principal` |
+| `conditions/<condition_id>/results/<method_slug>__<setting>.csv.gz` and `.json` | detected event, complete | `session_id`, then every column the method returned, in its order (clipping flags, per-event statistics, method-specific columns); the JSON sidecar holds each column's dtype and, per `session_id`, the result's complete `attrs` (recipes: method, DOI, resolved options, grid, inputs, diagnostics such as adaptive threshold updates, `ripple_detection_version`; detectors: name, resolved parameters, version). `method_slug` is `method` with `:` replaced by `--`. |
+| `conditions/<condition_id>/metrics.csv.gz` | session × method × setting × expression | `session_id`, `method`, `setting`, `expression`, `n_reference`, `n_detected`, `n_matched`, `recall`, `precision`, `f1`, `false_positives_per_minute`, `median_iou`, `median_coverage`, `median_temporal_precision`, `median_onset_error_<f>`, `median_offset_error_<f>` for `f` in 10, 25, 50, `n_split`, `n_merged` |
+| `conditions/<condition_id>/failures.csv` | failed call | `session_id`, `method`, `setting`, `error` (`f"{type(error).__name__}: {error}"`, first 200 characters) |
 
 - `method` is a registry name for a detector or `recipe:<config_id>` for a method
   configuration. `config_id` includes the stable package method name and any protocol
@@ -377,11 +389,12 @@ and 6. Every table is CSV; `.csv.gz` for the large ones.
   analysis. `truth_counts.csv.gz` holds both counts for every truth window of every expression
   at fraction 0.1, with the same unit selections, so a pair matched against any expression
   compares observed counts at its own truth window.
-- `results/` keeps every result complete, so nothing a method reports is lost; `events/` holds
-  only the columns analyses read. Written and read with the conventions of
+- `results/` keeps every result complete, so nothing a method reports is lost; `events.csv.gz`
+  holds only the columns analyses read. Written and read with the conventions of
   `literature_methods.save_events`/`load_events` (`float_precision="round_trip"`, saved
   dtypes): a reloaded result equals the original exactly, `attrs` included.
-- A method that raises on a session writes a `failures.csv` row and neither events nor metrics
+- A method that raises on a session writes a `failures.csv` row (in its condition's directory)
+  and neither events nor metrics
   rows; analyses count a missing (session, method, setting) as a failure, never as zero events.
   Runs never abort on one method's error.
 - Phase 5 and 6 summaries go to `examples/benchmark/results/` (committed): small CSVs and PNG

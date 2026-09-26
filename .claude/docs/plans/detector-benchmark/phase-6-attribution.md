@@ -25,8 +25,8 @@ decompositions of the difference between particular recipes.
   `simulate_condition(saved_reference, k)`, `k = 0..4`, where `saved_reference` is built from the
   run's `conditions.csv` `params` (the resolved parameters, after overrides such as a halved
   `duration_s`), never from current defaults. Each regenerated session's seed and duration must
-  equal `sessions.csv.gz`, and its truth table must equal the saved `truth.csv.gz` rows for that
-  session; any difference stops attribution.
+  equal `conditions/reference/sessions.csv.gz`, and its truth table must equal that directory's
+  `truth.csv.gz` rows for the session; any difference stops attribution.
 - [Benchmark outputs](shared-contracts.md#benchmark-outputs) — attribution writes under `output/<run_name>/attribution/` and `results/<run_name>/attribution/`.
 
 **Designs referenced:** [attribution](designs.md#attribution).
