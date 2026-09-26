@@ -4661,6 +4661,25 @@ class TestValidationPaths:
         with pytest.warns(UserWarning, match="cm/s, not m/s"):
             Kay_ripple_detector(time, lfps, speed, self.FS)
 
+    def test_a_rest_heavy_session_in_cm_per_s_does_not_warn(self, time):
+        """Mostly still (median moving speed under 0.5 cm/s) with a little
+        running: cm/s, not m/s."""
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2000, 2060, 20.0)])
+        rng = np.random.default_rng(0)
+        speed = rng.uniform(0.0, 0.9, self.N_TIME)
+        speed[4000:4200] = 25.0  # a four percent running bout
+        assert np.median(speed[speed > 0]) < 0.5
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            Kay_ripple_detector(time, lfps, speed, self.FS)
+
+    def test_running_in_metres_per_second_warns(self, time):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2000, 2060, 20.0)])
+        speed = np.full(self.N_TIME, 0.01)
+        speed[1000:3000] = np.linspace(0.05, 0.6, 2000)  # running up to 60 cm/s
+        with pytest.warns(UserWarning, match="cm/s, not m/s"):
+            Kay_ripple_detector(time, lfps, speed, self.FS)
+
     def test_the_unit_is_not_judged_when_the_speed_criterion_is_off(self, time):
         """With ``speed_threshold=np.inf`` speed decides nothing, so a small
         unit is no error; under ``filterwarnings = error`` a warning would be."""

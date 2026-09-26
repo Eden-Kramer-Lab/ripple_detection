@@ -149,21 +149,33 @@ def _validate_speed_units(speed: FloatArray, speed_threshold: float) -> None:
     Warnings
     --------
     UserWarning
-        If speed values appear to be in m/s instead of cm/s.
+        If speed values appear to be in m/s instead of cm/s: the median of
+        the moving (positive) speeds is under 0.5 and the 99.9th percentile
+        of the finite speeds under ``_METRES_PER_SECOND_CEILING``. A rest or
+        sleep session in cm/s can have a median of a few tenths, but its
+        occasional runs reach well past 1 cm/s.
 
     """
     moving = speed[speed > 0]  # NaN compares False, so it drops out here
     if moving.size == 0 or speed_threshold <= 1.0 or np.isposinf(speed_threshold):
         return  # a threshold at or below 1 is not in cm/s; infinity ignores speed
     median_speed = np.median(moving)
-    # a median under 0.5 against a typical threshold (> 1 cm/s) is m/s
-    if median_speed < 0.5:
+    fastest = float(np.percentile(speed[np.isfinite(speed)], 99.9))
+    # a median under 0.5 against a typical threshold (> 1 cm/s) is m/s, unless
+    # the animal also moves faster than m/s would allow
+    if median_speed < 0.5 and fastest < _METRES_PER_SECOND_CEILING:
         _warn_at_caller(
-            f"Speed values appear very small (median non-zero: {median_speed:.4f}).\n"
+            f"Speed values appear very small (median non-zero: {median_speed:.4f}, "
+            f"99.9th percentile: {fastest:.4f}).\n"
             f"Speed should be in cm/s, not m/s.\n"
             f"If your speed is in m/s, multiply by 100:\n"
             "  speed_cms = speed_ms * 100",
         )
+
+
+_METRES_PER_SECOND_CEILING = 1.0
+"""The 99.9th percentile of speed below which small speeds are taken for
+m/s: a rodent that runs at all passes 1 cm/s, and in m/s rarely reaches 1."""
 
 
 UNFILTERED_CUTOFF = 100.0
