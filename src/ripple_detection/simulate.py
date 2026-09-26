@@ -548,18 +548,34 @@ def _add_ripple_bursts(
         # same at any time origin; the cosine puts the unit peak at the centre
         burst = np.cos(2 * np.pi * frequency * (time[window] - ripple_time)) * carrier
         if ripple_snr is not None:
-            # scale so that this burst's peak *after the filter* is ripple_snr
-            # background SDs; the filter's gain depends on frequency and duration.
-            # A second of zeros each side makes the run long enough for the kernel
-            # at any rate, and is what the burst is surrounded by in the record.
-            n_pad = int(np.ceil(rate))
-            padded = np.zeros(burst.size + 2 * n_pad)
-            padded[n_pad : n_pad + burst.size] = burst
-            filtered_peak = np.abs(filter_ripple_band(padded, sampling_frequency=rate)).max()
-            scale = ripple_snr * band_noise_sd / filtered_peak
+            scale = _scale_to_snr(burst, ripple_snr, band_noise_sd, rate)
         else:
             scale = amplitude / 2
         out[window] += scale * burst
+
+
+def _scale_to_snr(
+    burst: FloatArray,
+    snr: float,
+    band_noise_sd: float,
+    rate: float,
+    band: tuple[float, float] | None = None,
+) -> float:
+    """The factor that makes ``burst``'s peak *after the filter* ``snr`` times
+    ``band_noise_sd``; the filter's gain depends on frequency and duration.
+
+    ``band`` is passed to ``filter_ripple_band``; None filters the ripple band
+    (the shipped kernel at 1500 Hz). A second of zeros each side makes the run
+    long enough for the kernel at any rate, and is what the burst is
+    surrounded by in the record.
+    """
+    n_pad = int(np.ceil(rate))
+    padded = np.zeros(burst.size + 2 * n_pad)
+    padded[n_pad : n_pad + burst.size] = burst
+    filtered_peak = np.abs(
+        filter_ripple_band(padded, sampling_frequency=rate, band=band)
+    ).max()
+    return float(snr * band_noise_sd / filtered_peak)
 
 
 def _correlated_noise(
