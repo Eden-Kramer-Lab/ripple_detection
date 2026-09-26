@@ -499,6 +499,62 @@ landing page or the paper's own text:
   `replayEvents_*.mat` files, which were not opened. See
   [widloski-archives](#widloski-archives) for the code deposits.
 
+A third pass on September 26 opened files, not only landing pages, where
+the catalog's statuses rested on metadata:
+
+- DANDI 000552 version 0.230630.2304: two of 104 `behavior+ecephys` NWB
+  files. `sub-e13-1f1_ses-e13-1f1-200307` (asset
+  ceb11f1c-75b5-46e5-9ec6-b2a8e3108093; its SHA-256 matched DANDI's digest)
+  and `sub-e14-2m2_ses-e14-2m2-201017` each hold
+  `/processing/ecephys/Ripples`, "Ripples and their metrics", a TimeIntervals
+  table of 1247 and 3906 rows (`start_time`, `stop_time`, `peaks`,
+  frequencies, amplitudes; 20-144 ms).
+- DANDI 000115 version 0.210914.1732: the groups of
+  `ses-despereaux-08` and `ses-jaq-10` (about 90 GB each, read remotely):
+  raw `e-series`, position, DIO behavioral events, statescript and a 3-row
+  epochs table; no ripple or event table, no units.
+- DANDI 000978 version 0.240511.0307: `sub-JDS-SingleDay-JS14`: LFP, 72
+  units, position, 17 epoch intervals and 298 trials; no ripple table. The
+  local copy of Shin 2019's published PDF lists its six rats in Table S1
+  (ER1, KL8, JS14, JS15, JS17, JS21), all among the deposit's subjects.
+- Zenodo 16916108: all three files, each matching Zenodo's MD5. The event
+  statistics file has 6580 per-replay rows (772 all NaN) of 46 unlabeled
+  statistics with per-tetrode ripple measures and power spectra; the MAT
+  v7.3 ripple-field file has 37 sessions (rats Billy3, Curly2, Goethe2) of
+  decoded replay positions on a 5 ms grid; the shuffle file has 7197 rows.
+  No variable labels an event's start or end.
+- DataLad MotivationalT: every session's `metadata.mat` (24 read) holds
+  `SWRtimes`, 50 intervals of exactly 80 ms (150 in R050-2014-04-02), and
+  `SWRfreqs`, whose `parameters` (`weightby='amplitude'`, `win1=0.06`,
+  `fs=2000`, `hiPassCutoff=100`, one `csc`) equal the `amSWR` configuration
+  stored in the released R050-2014-03-29 candidates. The R050-2014-03-29
+  file was saved July 27, 2017; in three sessions the `SWRtimes` and
+  `SWRfreqs` channels differ. The session folder has `.ncs`, `.t`, `.nvt`,
+  cluster-quality files, a Neuralynx `Events.nev` and no candidate file.
+- CRCNS hc-3: the [metadata tables](https://crcns.org/files/data/hc3/crcns-hc3-metadata-tables.zip)
+  list one session at 16-40-19, `gor01-6-7/2006-6-7_16-40-19` on
+  `linearTwo`, 2587.8 s. Maboudi's release at the pinned commit loads
+  `gor01vvp01pin01` tables in `Figure2.ipynb` and uses session `'16-40-19'`.
+- Denovellis 2021 Dryad, through the Zenodo 5587779 mirror: the Conley,
+  Corriander and Remy archives, each matching its MD5, listed in full
+  (1252, 1273 and 500 entries). Conley and Corriander have no file named
+  for ripples or candidates; Remy has `remyca1rippleskons{35,36,37}.mat`.
+  `remyca1rippleskons35.mat` (created March 23, 2019) holds, per epoch,
+  `eventname='ca1ripples'`, `nstd=2`, `min_suprathresh_duration=0.015`, the
+  24 CA1 tetrodes, `starttime`/`endtime` and threshold measures for 611-1005
+  events, and an empty `excludedtimes`. The usage notes' `{animal}ripples`
+  and `{animal}candripples` files are absent from all three archives.
+- Tirole's Dryad version 13 file list gives RAT1_SESS2 and RAT4_SESS1 the same
+  SHA-256 for `extracted_clusters.mat` and for `extracted_position.mat`.
+
+Two candidates were looked at and not added. A Wilson-lab file of rat FK11
+on a 10 m track ([CRCNS_Shared_Data](https://github.com/wilsonlab/CRCNS_Shared_Data))
+has Kloosterman, a Davidson 2009 author, as experimenter, but that paper
+numbers its rats 1-4 and nothing ties FK11 to them. Yang 2024's third dataset
+URL (`buzsakilab.nyumc.org/datasets/HainmuellerT/TH11_210605/`) redirects to
+the lab's dataset index, and DANDI searches for Hainmueller and TH11 return
+nothing.
+
 All 23 distinct `dataset_url` values were also tested with direct HTTP GETs
 on September 26, after the second pass. Twenty-two returned 200 (Zenodo
 answers 403 to a bare `Mozilla/5.0` user agent and 200 to curl's default);
@@ -543,6 +599,15 @@ SHA-256 and byte counts identify the inspected copies. `*_listing.txt` and `dand
 | `csicsvari1999a.html` | [csicsvari-1999](#csicsvari-1999) | `9a91d9616ba16c0806dfb763106b1bee7182670e5bd1ccb574e2dcfc8145fd8e` | 231069 |
 | `krause_cda23b7/replay_structure/utils.py` | [krause-code](#krause-code) | `690712cd995404ad386e77b085f3720e37547ae4cdb995871140ce57798d9536` | 13946 |
 | `krause_cda23b7/replay_structure/ripple_preprocessing.py` | [krause-code](#krause-code) | `8529b4378c98f5bf4f87c0dad095570af5e1d915cbdd99187b0ac5cdb1d0007a` | 7541 |
+| `datalad_R050-2014-03-29-metadata.mat` | [dataset-catalog-checks](#dataset-catalog-checks) | `58ac0d41baf15a57330fcb0f1631900c7c08d8a0b3f39eedf4eac9cbb7379f7a` | 50519 |
+| `crcns-hc3-metadata-tables.zip` | [dataset-catalog-checks](#dataset-catalog-checks) | `e8c3eaaf3f9cd56a2c8cdbb931f4fd60aabd7bb94a4ecb7b18718e498e2d7f02` | 6104680 |
+| `maboudi_f86b7dc/Figure2.ipynb` | [dataset-catalog-checks](#dataset-catalog-checks) | `7af6d56efdef85994585b3231de39e64183591b649c866d62532e0c2a78ea6a4` | 425440 |
+| `shin2019_neuron.pdf (10.1016/j.neuron.2019.09.012)` | [dataset-catalog-checks](#dataset-catalog-checks) | `876e7ef5eba02befadb3fd628a58f12f4dacc8e70230ade38124d3a26a6f5f17` | 27483305 |
+| `sub-e13-1f1_ses-e13-1f1-200307_behavior+ecephys.nwb` | [dataset-catalog-checks](#dataset-catalog-checks) | `4a9a516f0568e6dd8081ca13a73a062fc3a3cf6efcb32694dd4eb1b004ef10e8` | 13966186 |
+| `remyca1rippleskons35.mat` | [dataset-catalog-checks](#dataset-catalog-checks) | `96bd5613b1f30e8b9b21d41e83a152724d90b9c0ee96aec098c2115e7355b0a4` | 110327860 |
+| `replayEvents_cellIDshuffle_sameEvents.mat` | [dataset-catalog-checks](#dataset-catalog-checks) | `1b96e39779ab554c299f4a8282b3f4fba6556b24e031b3e5186f7d7cd8281442` | 11021526 |
+| `replayEvents_rippleFieldStats_allCells_sigReplays.mat` | [dataset-catalog-checks](#dataset-catalog-checks) | `9735778165d343ca2d7f1a8bea861b57dbed4dc16bf632d9d3eca657001eb112` | 157609245 |
+| `replayEvents_eventStats_rippleThr2sd_wShiftComparison_075secPostReplay_spkDensityAllClusters_sigReplays.mat` | [dataset-catalog-checks](#dataset-catalog-checks) | `4ea5ee696411bfba309b4197348dae9c89a428a668bdfec320f02702aebe38e9` | 548372103 |
 
 ## Code-availability search scope
 
