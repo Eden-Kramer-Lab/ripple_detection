@@ -1333,6 +1333,22 @@ class TestFilterRippleBandChecksTheRate:
         )
 
 
+class TestFilterRippleBandInputHints:
+    def test_transposed_data_says_transpose(self):
+        data = np.random.default_rng(0).normal(size=(4, 6000))
+        with pytest.raises(ValueError, match=r"transpose[\s\S]*data\.T"):
+            filter_ripple_band(data, 1500)
+
+    def test_no_sampling_frequency_is_a_clear_error(self):
+        with pytest.raises(TypeError, match="sampling_frequency must be a number"):
+            filter_ripple_band(np.zeros(6000), None)
+
+    def test_float32_timestamps_at_a_unix_origin(self):
+        time = (1.7e9 + np.arange(6000) / 1500).astype(np.float32)
+        with pytest.raises(ValueError, match=r"float32[\s\S]*float64"):
+            filter_ripple_band(np.zeros(6000), 1500, time=time)
+
+
 class TestFilterRippleBandPadLength:
     def test_the_fir_pad_length_gives_filtfilt_s_default_output_exactly(self):
         """A run only needs as many samples as the kernel has taps because a

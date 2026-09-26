@@ -6,7 +6,9 @@ from numpy.typing import ArrayLike
 from ripple_detection.core import (
     FloatArray,
     _check_non_negative,
+    _check_number,
     _check_sampling_interval,
+    _repeated_timestamps_hint,
     _warn_at_caller,
 )
 
@@ -71,6 +73,16 @@ def _validate_array_lengths(
             f"  speed:        {n_speed_samples} samples\n"
             "Ensure your time, LFP, and speed arrays are aligned and have matching lengths."
         )
+        if n_lfp_samples != n_time_samples and filtered_lfps.shape[1] == n_time_samples:
+            msg += (
+                f"\nThe signal has shape {filtered_lfps.shape}, which looks transposed: "
+                "transpose it to (n_time, n_channels), time down the rows (pass .T)."
+            )
+        if n_speed_samples != n_time_samples and n_lfp_samples == n_time_samples:
+            msg += (
+                "\nIf speed was sampled on its own clock (position tracking at 30 Hz, say), "
+                "interpolate it onto time: speed = np.interp(time, speed_time, speed)."
+            )
         raise ValueError(msg)
 
 
@@ -119,7 +131,7 @@ def _validate_time_units(time: FloatArray, sampling_frequency: float) -> None:
             msg = (
                 f"The median time step is {median_dt}: most timestamps repeat, so no "
                 "duration can be measured in samples. Check the time array."
-            )
+            ) + _repeated_timestamps_hint(time)
             raise ValueError(msg)
         _check_sampling_interval(median_dt, sampling_frequency)
 
@@ -297,7 +309,9 @@ def _check_finite_non_negative(**values: float) -> None:
 
 
 def _check_positive(**values: float) -> None:
-    """Raise for a value that is not a positive finite number."""
+    """Raise for a value that is not a positive finite number: ``TypeError``
+    for one that is no number at all, such as None."""
+    _check_number(**values)
     for name, value in values.items():
         if not 0 < value < np.inf:
             msg = f"{name} must be positive and finite, got {value}."

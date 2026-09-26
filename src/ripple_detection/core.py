@@ -168,6 +168,37 @@ def _warn_at_caller(message: str) -> None:
     warnings.warn(message, UserWarning, stacklevel=stacklevel)
 
 
+def _check_number(**values: object) -> None:
+    """Raise ``TypeError`` for a value that is not a real number: ``None``
+    left where a rate or a width belongs would otherwise fail inside a
+    comparison, with a message that names neither."""
+    for name, value in values.items():
+        array = np.asarray(value)
+        if array.ndim != 0 or array.dtype.kind not in "iuf":
+            msg = f"{name} must be a number, got {value!r}."
+            raise TypeError(msg)
+
+
+def _repeated_timestamps_hint(time: ArrayLike) -> str:
+    """Advice to append when most timestamps repeat, if they may have lost
+    their precision to float32: held as float32 (``time``'s own dtype), or
+    large enough (from 1e4 s, a session clock or Unix time) that float32
+    resolves no better than a millisecond; a detector casts before it can
+    see the dtype. Empty otherwise."""
+    values = np.asarray(time)
+    finite = np.abs(values[np.isfinite(values)]) if values.dtype.kind == "f" else values
+    largest = float(np.max(finite)) if np.size(finite) else 0.0
+    if values.dtype not in (np.float32, np.float16) and largest < 1e4:
+        return ""
+    resolution = float(np.spacing(np.float32(largest)))
+    return (
+        f" If time was ever held as float32, timestamps near {largest:.6g} s are resolved "
+        f"only to {resolution:.3g} s there, so neighbouring samples share one. Keep time "
+        "as float64 from the source, or subtract the first timestamp (relative time) "
+        "before any conversion to float32."
+    )
+
+
 def _check_sampling_interval(median_step: float, sampling_frequency: float) -> None:
     """Raise, or warn, when the timestamps' median step and the stated rate
     describe different recordings.
@@ -473,7 +504,10 @@ def filter_ripple_band(
         holds a nonfinite or decreasing timestamp, has a median step of
         zero, or has a median step more than 10 percent from ``1 /
         sampling_frequency`` (the message names time in samples, time in
-        milliseconds, or the rate the timestamps imply).
+        milliseconds, or the rate the timestamps imply). A 2-D ``data``
+        too short down its rows but not across them is named as transposed.
+    TypeError
+        If ``sampling_frequency`` is not a number, such as None.
 
     Warns
     -----
@@ -496,6 +530,7 @@ def filter_ripple_band(
     """
     SHIPPED_KERNEL_SAMPLING_FREQUENCY = 1500.0
 
+    _check_number(sampling_frequency=sampling_frequency)
     default_band = band is None or tuple(float(edge) for edge in band) == DEFAULT_RIPPLE_BAND
     if (
         default_band
@@ -537,6 +572,11 @@ def filter_ripple_band(
             f"{longest}, but at least {min_required_length} are needed (the filter's tap "
             "count)."
         )
+        if data_array.ndim == 2 and data_array.shape[1] >= min_required_length:
+            msg += (
+                f" data has shape {data_array.shape}, which looks transposed: signals "
+                "are (n_time, n_channels), time down the rows. Pass data.T."
+            )
         raise ValueError(msg)
     if not np.all(long_enough):
         short = runs[~long_enough]
@@ -1070,7 +1110,9 @@ def _contiguous_valid_blocks(
         if n_time > 1:
             median_step = np.median(steps)
             if median_step <= 0:
-                msg = "time must have a positive median timestamp step."
+                msg = "time must have a positive median timestamp step." + (
+                    _repeated_timestamps_hint(time)
+                )
                 raise ValueError(msg)
             boundary[1:-1] |= steps > 1.5 * median_step
     edges = np.flatnonzero(boundary)

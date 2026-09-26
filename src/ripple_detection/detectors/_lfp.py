@@ -113,7 +113,7 @@ def get_Kay_ripple_consensus_trace(
     # cannot overflow before the square root.
     ripple_filtered_lfps = np.asarray(ripple_filtered_lfps, dtype=float)
     _validate_lfp_dimensions(ripple_filtered_lfps)
-    time_array = _consensus_time(time, ripple_filtered_lfps.shape[0])
+    time_array = _consensus_time(time, ripple_filtered_lfps.shape)
     is_valid = np.all(np.isfinite(ripple_filtered_lfps), axis=1)
     if not np.any(is_valid):
         msg = "No sample has finite values in every channel."
@@ -123,14 +123,21 @@ def get_Kay_ripple_consensus_trace(
     return _kay_consensus(ripple_filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
 
 
-def _consensus_time(time: ArrayLike | None, n_time: int) -> FloatArray | None:
+def _consensus_time(time: ArrayLike | None, lfp_shape: tuple[int, ...]) -> FloatArray | None:
     """The optional timestamps of a consensus trace as a float array of one
-    timestamp per sample, or None."""
+    timestamp per row of an LFP of shape ``lfp_shape``, or None."""
     if time is None:
         return None
     time_array = np.asarray(time, dtype=float)
-    if time_array.shape != (n_time,):
-        msg = f"time has shape {time_array.shape} but filtered_lfps has {n_time} samples."
+    if time_array.shape != lfp_shape[:1]:
+        msg = (
+            f"time has shape {time_array.shape} but filtered_lfps has {lfp_shape[0]} samples."
+        )
+        if time_array.shape == lfp_shape[1:]:
+            msg += (
+                f" filtered_lfps has shape {lfp_shape}, which looks transposed: transpose "
+                "it to (n_time, n_channels), time down the rows (pass .T)."
+            )
         raise ValueError(msg)
     return time_array
 
@@ -218,7 +225,7 @@ def get_Yu_ripple_consensus_trace(
     """
     ripple_filtered_lfps = np.asarray(ripple_filtered_lfps, dtype=float)
     _validate_lfp_dimensions(ripple_filtered_lfps)
-    time_array = _consensus_time(time, ripple_filtered_lfps.shape[0])
+    time_array = _consensus_time(time, ripple_filtered_lfps.shape)
     is_valid = np.all(np.isfinite(ripple_filtered_lfps), axis=1)
     if not np.any(is_valid):
         msg = "No sample has finite values in every channel."

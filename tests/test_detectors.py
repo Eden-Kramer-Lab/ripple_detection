@@ -4680,6 +4680,40 @@ class TestValidationPaths:
             Kay_ripple_detector(time, lfps, stationary, self.FS, normalization_mask=mask)
 
 
+class TestInputShapeHints:
+    """The commonest shape and unit slips get a message that names the fix."""
+
+    FS = 1500
+    N_TIME = 6000
+
+    def test_transposed_lfps_say_transpose(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2000, 2060, 20.0)])
+        with pytest.raises(ValueError, match=r"transpose[\s\S]*\(n_time, n_channels\)"):
+            Kay_ripple_detector(time, lfps.T, stationary, self.FS)
+
+    def test_transposed_lfps_with_time_in_a_consensus_trace(self, time):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2000, 2060, 20.0)])
+        with pytest.raises(ValueError, match="transpose"):
+            get_Kay_ripple_consensus_trace(lfps.T, self.FS, time=time)
+
+    def test_speed_on_its_own_clock_suggests_interpolating(self, time):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2000, 2060, 20.0)])
+        speed = np.full(self.N_TIME // 50, 2.0)  # 30 Hz position tracking
+        with pytest.raises(ValueError, match=r"np\.interp\(time, speed_time, speed\)"):
+            Kay_ripple_detector(time, lfps, speed, self.FS)
+
+    def test_float32_timestamps_at_a_unix_origin(self, stationary):
+        time = (1.7e9 + np.arange(self.N_TIME) / self.FS).astype(np.float32)
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2000, 2060, 20.0)])
+        with pytest.raises(ValueError, match=r"float32[\s\S]*float64"):
+            Kay_ripple_detector(time, lfps, stationary, self.FS)
+
+    def test_a_missing_sampling_frequency_is_named(self, time, stationary):
+        lfps = _synthetic_ripple_band(self.N_TIME, self.FS, [(2000, 2060, 20.0)])
+        with pytest.raises(TypeError, match="sampling_frequency must be a number"):
+            Kay_ripple_detector(time, lfps, stationary, None)
+
+
 def _call_lfp_consumer(name, time, lfps, speed, fs, multiunit):
     """Call one of the functions that take ripple-band LFP, by name."""
     if name == "Carey":
