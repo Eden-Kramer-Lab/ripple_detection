@@ -18,10 +18,14 @@ import contextvars
 import dataclasses
 import difflib
 import functools
+import hashlib
 import inspect
+import json
+import os
 import unicodedata
 from collections.abc import Callable, Sequence, Sized
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, ParamSpec, TypeVar
 
 import numpy as np
@@ -5321,10 +5325,17 @@ def run_method(
         method does not track clipping, see ``clipping_tracked``), then the
         method's own columns (channel, trigger, statistics).
 
-        ``attrs`` holds ``method``, ``doi``, ``output``, ``role``,
-        ``inventory`` and ``interpretation`` (defined in ``list_methods``);
-        ``options`` (every keyword option, defaults resolved);
-        ``behavior_intervals`` (the array supplied, or None); ``grid``;
+        ``attrs`` holds, in JSON types (lists for arrays, so results
+        concatenate and ``save_events`` can write them), ``method``, ``doi``,
+        ``output``, ``role``, ``inventory`` and ``interpretation`` (defined
+        in ``list_methods``); ``options`` (every keyword option, defaults
+        resolved; a per-sample trace such as Wikenheiser's ``theta_delta`` by
+        its ``shape``, ``dtype`` and ``sha256``); ``behavior_intervals`` (the
+        intervals supplied, or None); ``inputs`` (the sample count and time
+        range, LFP channel and unit counts, whether the radiatum, reference
+        and speed were supplied, the place-cell, pyramidal and template unit
+        indices, and the sleep, baseline, example and external intervals);
+        ``grid``;
         ``clipping_tracked`` (whether the method reports clipping);
         ``diagnostics``; plus any the method adds (Gridchyn:
         ``threshold_updates`` and ``expected_count``).
@@ -5407,12 +5418,128 @@ def run_method(
                 if key not in {"rec", "behavior_intervals"}
             },
             "behavior_intervals": eligible,
+            "inputs": _input_summary(recording),
             "grid": _grid(entry, recording.fs),
             "clipping_tracked": clipping_tracked,
             "diagnostics": _diagnostics(recording, eligible, detections, n_found, len(result)),
         }
     )
+    # JSON-ready, so results concatenate (pandas compares attrs) and export.
+    result.attrs = _jsonable(result.attrs, len(recording.time))
     return result
+
+
+def _input_summary(rec: Recording) -> dict[str, Any]:
+    """Which inputs and selections a call ran on, for provenance."""
+    session = rec.session
+    lfps = getattr(session, "lfps", None)
+    sharp = getattr(session, "sharp_wave_lfp", None)
+    return {
+        "n_samples": len(rec.time),
+        "time_range": [float(rec.time[0]), float(rec.time[-1])],
+        "n_lfp_channels": 0 if lfps is None else int(np.shape(lfps)[1]),
+        "sharp_wave_lfp": sharp is not None and bool(np.isfinite(sharp).any()),
+        "reference_lfp": rec.reference_lfp is not None,
+        "speed": getattr(session, "speed", None) is not None,
+        "n_units": int(rec.multiunit.shape[1]),
+        "place_cells": np.flatnonzero(rec.place_cells),
+        "pyramidal": np.flatnonzero(rec.pyramidal),
+        "templates": [np.flatnonzero(template) for template in rec.templates],
+        "sleep_intervals": rec.sleep_intervals,
+        "baseline_intervals": rec.baseline_intervals,
+        "example_ripples": rec.example_ripples,
+        "external_ripples": rec.external_ripples,
+    }
+
+
+def _jsonable(value: Any, n_time: int) -> Any:
+    """``value`` in JSON's types: arrays become lists, except per-sample
+    traces (one row per timestamp), recorded by shape, dtype and SHA-256;
+    non-finite numbers become None."""
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item, n_time) for key, item in value.items()}
+    if isinstance(value, np.ndarray):
+        if value.ndim and len(value) == n_time and n_time > 1:
+            return {
+                "shape": list(value.shape),
+                "dtype": str(value.dtype),
+                "sha256": hashlib.sha256(np.ascontiguousarray(value).tobytes()).hexdigest(),
+            }
+        return _jsonable(value.tolist(), n_time)
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(item, n_time) for item in value]
+    if isinstance(value, np.generic):
+        return _jsonable(value.item(), n_time)
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
+    return value
+
+
+def save_events(events: pd.DataFrame, path: str | os.PathLike[str]) -> Path:
+    """Write a literature method's events as CSV with a JSON provenance sidecar.
+
+    Parameters
+    ----------
+    events : pandas.DataFrame
+        A ``run_method`` (or named method) result, whose ``attrs`` hold its
+        provenance.
+    path : str or path-like
+        The CSV file to write. The sidecar goes beside it with the suffix
+        ``.json`` (``events.csv`` and ``events.json``).
+
+    Returns
+    -------
+    sidecar : pathlib.Path
+        The JSON file written: ``ripple_detection_version``, the table's
+        ``columns`` and their dtypes, and ``attrs`` (method, DOI, output, role,
+        inventory, interpretation, resolved options, behavior intervals, the
+        input selections, grid, clipping and diagnostics; see ``run_method``).
+        Strict JSON: no NaN or Infinity.
+
+    Raises
+    ------
+    ValueError
+        ``events`` carries no method provenance, or ``path`` ends in
+        ``.json`` (the sidecar would overwrite it).
+    """
+    table = Path(path)
+    if table.suffix == ".json":
+        msg = "Name the CSV file, not its .json sidecar."
+        raise ValueError(msg)
+    if "method" not in events.attrs:
+        msg = "These events carry no method provenance; save a run_method result."
+        raise ValueError(msg)
+    sidecar = table.with_suffix(".json")
+    provenance = {
+        "ripple_detection_version": rd.__version__,
+        "columns": {column: str(dtype) for column, dtype in events.dtypes.items()},
+        "attrs": _jsonable(dict(events.attrs), -1),
+    }
+    events.to_csv(table, index_label="event_number")
+    sidecar.write_text(json.dumps(provenance, indent=2, allow_nan=False, ensure_ascii=False))
+    return sidecar
+
+
+def load_events(path: str | os.PathLike[str]) -> pd.DataFrame:
+    """Read events written by ``save_events``, restoring dtypes and ``attrs``.
+
+    Parameters
+    ----------
+    path : str or path-like
+        The CSV file; its ``.json`` sidecar must sit beside it.
+
+    Returns
+    -------
+    events : pandas.DataFrame
+        Indexed by ``event_number``, with each column's saved dtype and the
+        saved provenance in ``attrs`` (JSON types: lists for arrays).
+    """
+    table = Path(path)
+    provenance = json.loads(table.with_suffix(".json").read_text())
+    events = pd.read_csv(table, index_col="event_number").astype(provenance["columns"])
+    events.index = events.index.astype("int64")
+    events.attrs = provenance["attrs"]
+    return events
 
 
 def _diagnostics(
@@ -5549,8 +5676,10 @@ __all__ = [
     "bounds",
     "check_method",
     "list_methods",
+    "load_events",
     "population_trace",
     "run_method",
+    "save_events",
     "within_duration",
     "within_intervals",
 ] + [entry.run.__name__ for entry in (*RECIPES, *VARIANTS)]

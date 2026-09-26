@@ -116,8 +116,10 @@ LITERATURE_HELPERS = [
     "bounds",
     "check_method",
     "list_methods",
+    "load_events",
     "population_trace",
     "run_method",
+    "save_events",
     "within_duration",
     "within_intervals",
 ]

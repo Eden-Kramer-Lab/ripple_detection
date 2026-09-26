@@ -1,6 +1,7 @@
 """Behavioral checks for packaged literature methods, beyond simulation coverage."""
 
 import inspect
+import json
 import re
 import warnings
 
@@ -596,7 +597,10 @@ def test_named_interpretations_accept_measured_inputs(measured, name, options):
         options["theta_delta"] = -np.ones_like(measured.time)
     events = lm.run_method(name, measured, **options)
     for key, value in options.items():
-        np.testing.assert_equal(events.attrs["options"][key], value)
+        if key == "theta_delta":  # a per-sample trace is recorded by fingerprint
+            assert events.attrs["options"][key]["shape"] == [len(value)]
+        else:
+            np.testing.assert_equal(events.attrs["options"][key], value)
     assert (events.start_time <= events.end_time).all()
 
 
@@ -2622,3 +2626,78 @@ def test_a_little_running_or_no_speed_raises_no_precondition_warning():
     lm.run_method("olafsdottir_2016", lm.Recording.from_arrays(**{**inputs, "speed": speed}))
     del inputs["speed"]
     lm.run_method("olafsdottir_2016", lm.Recording.from_arrays(**inputs))
+
+
+def _strict_json(text):
+    """Parse JSON that must not contain NaN or Infinity."""
+
+    def refuse(constant):
+        raise ValueError(constant)
+
+    return json.loads(text, parse_constant=refuse)
+
+
+def test_attrs_are_json_ready_and_results_concatenate(measured):
+    chenani = lm.chenani_2019_hfe(measured, ar_coefficients=np.full((3, 2), 0.1))
+    assert _strict_json(json.dumps(chenani.attrs, allow_nan=False)) == chenani.attrs
+    assert chenani.attrs["options"]["ar_coefficients"] == [[0.1, 0.1]] * 3
+    # Arrays in attrs made pd.concat raise on comparing them.
+    early = lm.karlsson_2009(measured, behavior_intervals=[[0, 10]])
+    late = lm.karlsson_2009(measured, behavior_intervals=[[10, 20]])
+    assert len(pd.concat([early, late])) == len(early) + len(late)
+    assert early.attrs["behavior_intervals"] == [[0.0, 10.0]]
+    inputs = early.attrs["inputs"]
+    assert inputs["n_lfp_channels"] == 3
+    assert inputs["n_units"] == 20
+    assert inputs["place_cells"] == list(range(15))
+    assert inputs["templates"] == [list(range(10))]
+    assert inputs["sleep_intervals"] == [[measured.time[0], measured.time[-1]]]
+    assert inputs["speed"] is True
+    assert inputs["reference_lfp"] is True
+
+
+def test_a_per_sample_option_is_recorded_by_fingerprint(measured):
+    theta_delta = -np.ones(len(measured.time))
+    events = lm.wikenheiser_2013(
+        measured, branch="run_lia", window_anchor="peaks", theta_delta=theta_delta
+    )
+    recorded = events.attrs["options"]["theta_delta"]
+    assert recorded["shape"] == [len(measured.time)]
+    assert recorded["dtype"] == "float64"
+    assert len(recorded["sha256"]) == 64
+    json.dumps(events.attrs, allow_nan=False)
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_save_and_load_events_keep_the_table_and_its_provenance(tmp_path, measured, empty):
+    events = lm.chenani_2019_hfe(measured, ar_coefficients=np.full((3, 2), 0.1))
+    if empty:
+        events = lm.run_method(
+            "chenani_2019_hfe",
+            measured,
+            ar_coefficients=np.full((3, 2), 0.1),
+            behavior_intervals=[[0.0, 0.001]],
+        )
+        assert events.empty
+    else:
+        assert len(events)
+    sidecar = lm.save_events(events, tmp_path / "events.csv")
+    assert sidecar == tmp_path / "events.json"
+    provenance = _strict_json(sidecar.read_text())
+    assert provenance["ripple_detection_version"] == rd.__version__
+    assert provenance["attrs"]["method"] == "chenani_2019_hfe"
+    assert provenance["attrs"]["doi"].startswith("https://doi.org/")
+    assert provenance["attrs"]["options"]["ar_coefficients"] == [[0.1, 0.1]] * 3
+    assert provenance["attrs"]["grid"]["input_sampling_frequency"] == 1500
+    loaded = lm.load_events(tmp_path / "events.csv")
+    pd.testing.assert_frame_equal(loaded, events)
+    assert loaded.attrs == events.attrs
+
+
+def test_save_events_refuses_a_table_without_provenance(tmp_path):
+    with pytest.raises(ValueError, match="run_method"):
+        lm.save_events(
+            pd.DataFrame({"start_time": [1.0], "end_time": [2.0]}), tmp_path / "x.csv"
+        )
+    with pytest.raises(ValueError, match=r"\.json"):
+        lm.save_events(pd.DataFrame(), tmp_path / "x.json")
