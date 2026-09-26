@@ -21,6 +21,7 @@ from ripple_detection.core import (
     FloatArray,
     IntArray,
     StrArray,
+    _check_choice,
     _generator,
     filter_ripple_band,
 )
@@ -1978,3 +1979,628 @@ def _sorted_events(events: pd.DataFrame) -> pd.DataFrame:
         (events["component"].to_numpy(), rank.to_numpy(), events["event_id"].to_numpy())
     )
     return events.iloc[order].reset_index(drop=True)
+
+
+_REFERENCE_UNIT_COUNTS = {"place": 40, "pyramidal": 10, "interneuron": 10}
+_REFERENCE_BASELINE_RATES = {
+    "place": (0.1, 0.5),
+    "pyramidal": (0.5, 1.5),
+    "interneuron": (2.0, 5.0),
+}
+SPATIAL_PROFILES = ("global", "local")
+SPIKE_MODELS = ("poisson", "refractory")
+# the renderer's random streams, each seeded from one draw of the caller's rng
+_RENDER_STREAMS = (
+    "noise",
+    "ripple_phases",
+    "spatial_profiles",
+    "noise_modulation",
+    "baseline_rates",
+    "participants",
+    "non_events",
+    "spikes",
+)
+
+
+def _event_envelope(
+    time: FloatArray, center: float, rise_sigma: float, decay_sigma: float, power: int
+) -> tuple[slice, FloatArray]:
+    """The unit-peak envelope ``exp(-ln 2 (|t| / (sqrt(2 ln 2) sigma))**power)``,
+    ``sigma`` the rise scale before ``center`` and the decay scale after, over
+    the samples within 8 side scales; at least one sample."""
+    first, last = np.searchsorted(time, [center - 8 * rise_sigma, center + 8 * decay_sigma])
+    if last <= first:
+        last = min(first + 1, time.size)
+        first = last - 1
+    window = slice(int(first), int(last))
+    offset = time[window] - center
+    sigma = np.where(offset < 0, rise_sigma, decay_sigma)
+    scaled = np.abs(offset) / (np.sqrt(2 * np.log(2)) * sigma)
+    return window, np.asarray(np.exp(-np.log(2) * scaled**power), dtype=float)
+
+
+def _chirp_cycles(
+    offset: FloatArray, rise_sigma: float, decay_sigma: float, start: float, end: float
+) -> FloatArray:
+    """Cycles elapsed from ``-3 rise_sigma`` to each ``offset`` from the centre
+    under a frequency constant at ``start`` before ``-3 rise_sigma``, linear to
+    ``end`` at ``+3 decay_sigma`` and constant after."""
+    t0, t1 = -3 * rise_sigma, 3 * decay_sigma
+    slope = (end - start) / (t1 - t0)
+    inside = np.clip(offset, t0, t1) - t0
+    cycles = (
+        start * (np.minimum(offset, t0) - t0)
+        + start * inside
+        + 0.5 * slope * inside**2
+        + end * (np.maximum(offset, t1) - t1)
+    )
+    return np.asarray(cycles, dtype=float)
+
+
+def _render_ripple(
+    time: FloatArray,
+    center: float,
+    rise_sigma: float,
+    decay_sigma: float,
+    frequency_start: float,
+    frequency_end: float,
+    phase: float,
+    power: int = 2,
+) -> tuple[slice, FloatArray]:
+    """A unit-envelope, linearly chirped ripple over ``center`` -8 rise .. +8
+    decay: the samples and the waveform there.
+
+    The frequency runs from ``frequency_start`` at -3 rise scales to
+    ``frequency_end`` at +3 decay scales, constant outside. The carrier's
+    phase is ``phase`` at the centre and is integrated exactly from it, so the
+    waveform is the same at any clock origin and a delayed copy is the same
+    waveform shifted.
+    """
+    window, envelope = _event_envelope(time, center, rise_sigma, decay_sigma, power)
+    offset = time[window] - center
+    cycles = _chirp_cycles(
+        offset, rise_sigma, decay_sigma, frequency_start, frequency_end
+    ) - _chirp_cycles(np.zeros(1), rise_sigma, decay_sigma, frequency_start, frequency_end)
+    return window, np.sin(phase + 2 * np.pi * cycles) * envelope
+
+
+def _noise_modulation(
+    time: FloatArray, log_amplitude: float, period: float, phase: float
+) -> FloatArray:
+    """``exp(a sin(2 pi (t - t_0) / T + phase))`` scaled to unit RMS; 1 for ``a = 0``."""
+    gain = np.exp(log_amplitude * np.sin(2 * np.pi * (time - time[0]) / period + phase))
+    return np.asarray(gain / np.sqrt(np.mean(gain**2)), dtype=float)
+
+
+def _rest_interval_of(
+    rest: FloatArray, start: float, end: float
+) -> tuple[float, float] | None:
+    """The stretch of ``rest`` holding ``[start, end]``, or None."""
+    inside = (rest[:, 0] <= start) & (end <= rest[:, 1])
+    if not inside.any():
+        return None
+    first = int(np.flatnonzero(inside)[0])
+    return float(rest[first, 0]), float(rest[first, 1])
+
+
+def _spatial_profile(
+    ripple: pd.Series,
+    rest: FloatArray,
+    gains: FloatArray,
+    *,
+    local: bool,
+    occupancy: float,
+    gain_range: tuple[float, float],
+    maximum_delay: float,
+    rng: np.random.Generator,
+) -> tuple[FloatArray, FloatArray]:
+    """One ripple's gain and delay on each channel, the recording-wide gains
+    included; unselected channels have gain 0 and delay 0.
+
+    ``local`` selects ``max(1, ceil(occupancy n_channels))`` channels, one of
+    them the anchor at event gain 1 and delay 0, the rest with a gain from
+    ``gain_range`` and a delay uniform on ``[-maximum_delay, maximum_delay]``
+    narrowed to the shifts that keep the ripple's span at four side scales in
+    its stretch of rest (0 always qualifies). Draws, per ripple, a channel
+    permutation, the anchor, then one gain and one delay variate per channel.
+    """
+    n_channels = gains.size
+    if not local:
+        return gains.copy(), np.zeros(n_channels)
+    order = rng.permutation(n_channels)
+    anchor_u = rng.random()
+    gain_u, delay_u = rng.random(n_channels), rng.random(n_channels)
+    selected = order[: max(1, int(np.ceil(occupancy * n_channels)))]
+    anchor = selected[int(anchor_u * selected.size)]
+    start = ripple.center_time - 4 * ripple.rise_sigma
+    end = ripple.center_time + 4 * ripple.decay_sigma
+    stretch = _rest_interval_of(rest, start, end)
+    low, high = (0.0, 0.0) if stretch is None else (
+        min(0.0, max(-maximum_delay, stretch[0] - start)),
+        max(0.0, min(maximum_delay, stretch[1] - end)),
+    )  # fmt: skip
+    event_gains, delays = np.zeros(n_channels), np.zeros(n_channels)
+    event_gains[selected] = gain_range[0] + (gain_range[1] - gain_range[0]) * gain_u[selected]
+    delays[selected] = low + (high - low) * delay_u[selected]
+    event_gains[anchor], delays[anchor] = 1.0, 0.0
+    return event_gains * gains, delays
+
+
+def _check_event_table(events: pd.DataFrame, nyquist: float) -> pd.DataFrame:
+    """The latent event table with its columns cast and sorted, or ValueError."""
+    missing = [name for name in _EVENT_COLUMNS if name not in events.columns]
+    if missing:
+        msg = f"events is missing the columns {missing}; build it with draw_network_events."
+        raise ValueError(msg)
+    table = _sorted_events(
+        _table(_EVENT_COLUMNS, {name: events[name] for name in _EVENT_COLUMNS})
+    )
+    for name, vocabulary in (("event_type", EVENT_TYPES), ("expression", EXPRESSIONS)):
+        unknown = sorted(set(table[name]) - set(vocabulary))
+        if unknown:
+            msg = f"events.{name} has unknown values {unknown}; use {', '.join(vocabulary)}."
+            raise ValueError(msg)
+    scales = table[["center_time", "rise_sigma", "decay_sigma", "amplitude"]].to_numpy()
+    if not (np.all(np.isfinite(scales)) and np.all(scales[:, 1:3] > 0)):
+        msg = (
+            "events needs finite times and amplitudes and positive rise_sigma and decay_sigma."
+        )
+        raise ValueError(msg)
+    if not table.envelope_power.isin([2, 4]).all():
+        msg = "events.envelope_power must be 2 or 4."
+        raise ValueError(msg)
+    ripples = table[table.expression == "ripple"]
+    frequencies = ripples[["frequency_start", "frequency_end"]].to_numpy()
+    if not np.all((frequencies > 0) & (frequencies < nyquist)):
+        msg = f"Ripple frequencies must lie in (0, {nyquist:g}) Hz, the Nyquist range."
+        raise ValueError(msg)
+    if not (ripples.amplitude > 0).all():
+        msg = "A ripple's amplitude, its SNR, must be positive."
+        raise ValueError(msg)
+    bursts = table[table.expression == "burst"]
+    if not (bursts.participation.between(0, 1).all() and (bursts.amplitude >= 1).all()):
+        msg = "A burst needs participation in [0, 1] and amplitude (its gain) of at least 1."
+        raise ValueError(msg)
+    return table
+
+
+def _unit_layout(
+    unit_counts: Mapping[str, int] | None,
+    baseline_rate: Mapping[str, tuple[float, float]] | None,
+) -> tuple[StrArray, dict[str, tuple[float, float]]]:
+    """Each unit's type, in ``UNIT_TYPES`` order, and each type's rate range."""
+    counts = _REFERENCE_UNIT_COUNTS if unit_counts is None else dict(unit_counts)
+    rates = dict(_REFERENCE_BASELINE_RATES)
+    rates.update({} if baseline_rate is None else dict(baseline_rate))
+    for name, given in (("unit_counts", counts), ("baseline_rate", rates)):
+        unknown = sorted(set(given) - set(UNIT_TYPES))
+        if unknown:
+            msg = f"{name} has unknown unit types {unknown}; use {', '.join(UNIT_TYPES)}."
+            raise ValueError(msg)
+    for unit_type, count in counts.items():
+        if int(count) != count or count < 0:
+            msg = f"unit_counts[{unit_type!r}] must be a non-negative integer, got {count}."
+            raise ValueError(msg)
+    if sum(counts.values()) < 1:
+        msg = "unit_counts must give at least one unit."
+        raise ValueError(msg)
+    ranges = {
+        unit_type: _check_range(f"baseline_rate[{unit_type!r}]", rates[unit_type], lower=0)
+        for unit_type in UNIT_TYPES
+    }
+    types = np.array(
+        [unit_type for unit_type in UNIT_TYPES for _ in range(int(counts.get(unit_type, 0)))],
+        dtype="<U11",
+    )
+    return types, ranges
+
+
+def _draw_units(
+    time: FloatArray,
+    events: pd.DataFrame,
+    unit_types: StrArray,
+    rate_ranges: Mapping[str, tuple[float, float]],
+    *,
+    interneuron_gain: float,
+    spike_model: str,
+    refractory_period: float,
+    streams: Mapping[str, np.random.Generator],
+) -> tuple[FloatArray, FloatArray, IntArray]:
+    """Baseline rates, spike counts ``(n_time, n_units)`` and the place and
+    pyramidal participants of each burst row.
+
+    Participants: per burst row in table order, one uniform per unit; a place
+    unit takes part below ``participation``, another pyramidal unit below
+    half of it. A participant's intensity gains ``(amplitude - 1)`` times the
+    burst's envelope; every interneuron gains ``(interneuron_gain - 1)`` times
+    the envelope of each event's ripples (their maximum, for a doublet).
+    Spikes, unit by unit: Poisson counts of the intensity times the step, or,
+    for ``"refractory"``, at most one per sample, emitted with probability
+    ``1 - exp(-intensity step)`` once ``refractory_period`` has passed since
+    the unit's last spike.
+    """
+    n_time, n_units = time.size, unit_types.size
+    step = float(np.median(np.diff(time)))
+    rates = np.empty(n_units)
+    for unit_type in UNIT_TYPES:
+        is_type = unit_types == unit_type
+        low, high = rate_ranges[unit_type]
+        rates[is_type] = streams["baseline_rates"].uniform(low, high, size=is_type.sum())
+    place = unit_types == "place"
+    pyramidal = unit_types == "pyramidal"
+    gains: list[list[tuple[slice, FloatArray]]] = [[] for _ in range(n_units)]
+    bursts = events[events.expression == "burst"]
+    n_participants = np.zeros(len(bursts), dtype=np.int64)
+    for row, burst in enumerate(bursts.itertuples()):
+        u = streams["participants"].random(n_units)
+        takes_part = (place & (u < burst.participation)) | (
+            pyramidal & (u < burst.participation / 2)
+        )
+        n_participants[row] = takes_part.sum()
+        window, envelope = _event_envelope(
+            time, burst.center_time, burst.rise_sigma, burst.decay_sigma, burst.envelope_power
+        )
+        for participant in np.flatnonzero(takes_part):
+            gains[participant].append((window, (burst.amplitude - 1.0) * envelope))
+    interneurons = np.flatnonzero(unit_types == "interneuron")
+    for _, ripples in events[events.expression == "ripple"].groupby("event_id", sort=True):
+        envelopes = [
+            _event_envelope(time, r.center_time, r.rise_sigma, r.decay_sigma, r.envelope_power)
+            for r in ripples.itertuples()
+        ]
+        first = min(window.start for window, _ in envelopes)
+        last = max(window.stop for window, _ in envelopes)
+        union = np.zeros(last - first)
+        for window, envelope in envelopes:
+            part = slice(window.start - first, window.stop - first)
+            union[part] = np.maximum(union[part], envelope)
+        for interneuron in interneurons:
+            gains[interneuron].append((slice(first, last), (interneuron_gain - 1.0) * union))
+    spikes = np.zeros((n_time, n_units))
+    tolerance = 4 * float(np.spacing(np.max(np.abs(time[[0, -1]]))))
+    for unit in range(n_units):
+        intensity = np.full(n_time, rates[unit] * step)
+        for window, gain in gains[unit]:
+            intensity[window] += rates[unit] * step * gain
+        if spike_model == "poisson":
+            spikes[:, unit] = streams["spikes"].poisson(intensity)
+            continue
+        candidates = np.flatnonzero(streams["spikes"].random(n_time) < -np.expm1(-intensity))
+        last_spike = -np.inf
+        for sample in candidates:
+            if time[sample] - last_spike >= refractory_period - tolerance:
+                spikes[sample, unit] = 1.0
+                last_spike = time[sample]
+    return rates, spikes, n_participants
+
+
+@explain_call_errors
+def simulate_network_session(
+    time: ArrayLike,
+    events: pd.DataFrame,
+    *,
+    n_channels: int = 4,
+    unit_counts: Mapping[str, int] | None = None,
+    baseline_rate: Mapping[str, tuple[float, float]] | None = None,
+    channel_gains: Sequence[float] | FloatArray | None = None,
+    spatial_profile: str = "global",
+    channel_occupancy: float = 1.0,
+    channel_gain_range: tuple[float, float] = (1.0, 1.0),
+    channel_delay: float = 0.0,
+    shared_noise_fraction: float = 0.5,
+    noise_type: NoiseType = "pink",
+    noise_amplitude: float = 1.3,
+    noise_log_amplitude: float = 0.0,
+    noise_modulation_period: float = 60.0,
+    sharp_wave_leak: float = 0.3,
+    ripple_leak: float = 0.3,
+    interneuron_gain: float = 3.0,
+    spike_model: str = "poisson",
+    refractory_period: float = 0.002,
+    running_intervals: ArrayLike | None = None,
+    peak_speed: float = 30.0,
+    theta_amplitude: float = 4.0,
+    delta_amplitude: float = 4.0,
+    rng: int | np.random.Generator | None = None,
+    sampling_frequency: float | None = None,
+) -> SimulatedSession:
+    """Render a table of latent network events into every input the
+    detectors take, with the truth.
+
+    Each ripple row becomes a chirped oscillation on the pyramidal-layer
+    channels (and ``ripple_leak`` of it on the radiatum channel), each sharp
+    wave a negative deflection on the radiatum channel (and
+    ``sharp_wave_leak`` of it, positive, on channel 0), and each burst a rise
+    in the intensity of the place and pyramidal units it recruits; every
+    interneuron follows each event's ripples. The noise, slow field and speed
+    are ``simulate_session``'s. Draw the table with ``draw_network_events``,
+    edit it if you like, and take truth windows with ``truth_windows``.
+
+    Parameters
+    ----------
+    time : array_like, shape (n_time,)
+        Sample timestamps in seconds, increasing.
+    events : pandas.DataFrame
+        A latent event table, as ``draw_network_events`` returns; rendered in
+        its sorted order whatever the order given.
+    n_channels : int, optional
+        Pyramidal-layer channels; the radiatum channel is separate. Default 4.
+    unit_counts : mapping of str to int, optional
+        Units of each of ``UNIT_TYPES``; a type left out has none. Default
+        None: 40 place, 10 other pyramidal, 10 interneurons, in that order.
+    baseline_rate : mapping of str to (float, float), optional
+        Range, in spikes/s, of each type's baseline intensity, drawn per unit;
+        a type left out keeps its default. Default None: place (0.1, 0.5),
+        pyramidal (0.5, 1.5), interneuron (2, 5).
+    channel_gains : sequence of float, shape (n_channels,), optional
+        Each channel's ripple gain, as in ``simulate_multichannel_LFP``.
+        Default None: 1 on every channel.
+    spatial_profile : {'global', 'local'}, optional
+        ``'global'``: every ripple on every channel at ``channel_gains``, with
+        no delay. ``'local'``: each ripple on
+        ``max(1, ceil(channel_occupancy * n_channels))`` channels drawn anew,
+        one of them the anchor at gain 1 and no delay, the others at a gain
+        from ``channel_gain_range`` and a delay uniform on
+        ``[-channel_delay, channel_delay]``, narrowed so the delayed ripple's
+        span at four side scales stays in its stretch of rest; all times the
+        recording-wide ``channel_gains``. Default 'global'.
+    channel_occupancy : float, optional
+        Fraction of channels a local ripple is on, in (0, 1]. Default 1.
+    channel_gain_range : (float, float), optional
+        Range of a local ripple's non-anchor gains, non-negative. Default
+        (1, 1).
+    channel_delay : float, optional
+        Largest delay in seconds of a local ripple on a non-anchor channel;
+        the whole waveform moves. Default 0.
+    shared_noise_fraction, noise_type, noise_amplitude : optional
+        As in ``simulate_multichannel_LFP``; the radiatum channel's noise is
+        drawn with the others. Defaults 0.5, 'pink', 1.3.
+    noise_log_amplitude : float, optional
+        ``a >= 0`` in the background's slow gain ``exp(a sin(2 pi (t - t0) / T
+        + phase))``, scaled to unit RMS over the recording and applied to the
+        noise only. Ripples are sized against the stationary noise, so their
+        local SNR rises and falls with it. Default 0: stationary.
+    noise_modulation_period : float, optional
+        ``T`` in seconds, positive. Default 60.
+    sharp_wave_leak, ripple_leak : float, optional
+        As in ``simulate_sharp_wave_ripple_pair``. Default 0.3 each.
+    interneuron_gain : float, optional
+        Every interneuron's peak intensity during a ripple relative to its
+        baseline, at least 1. Default 3.
+    spike_model : {'poisson', 'refractory'}, optional
+        ``'poisson'``: Poisson counts per sample of the intensity times the
+        step, as ``simulate_multiunit`` draws them. ``'refractory'``: at most
+        one spike per sample, emitted with probability ``1 - exp(-intensity *
+        step)`` once ``refractory_period`` has passed since the unit's last
+        spike; the dead time lowers the realized rate below the intensity.
+        Default 'poisson'.
+    refractory_period : float, optional
+        Dead time in seconds, finite and non-negative, for ``'refractory'``.
+        Default 0.002.
+    running_intervals : array_like, shape (n_bouts, 2), optional
+        Running bouts, as given to ``draw_network_events``; they set the speed,
+        the theta and delta, and the stretches of rest a local delay keeps a
+        ripple in. Default None: at rest throughout.
+    peak_speed : float, optional
+        As in ``simulate_session``. Default 30.
+    theta_amplitude, delta_amplitude : float, optional
+        As in ``simulate_session``, added to every channel. Default 4 each.
+    rng : int or numpy.random.Generator, optional
+        Seed, or a Generator. One draw from it seeds eight independent
+        streams, in this order: noise, ripple phases, spatial profiles, noise
+        modulation, baseline rates, burst participants, non-events (reserved),
+        spikes; each is used in table order. So a noise-only rendering (an
+        empty table) with the same seed has the same noise, and the spike
+        model or spatial profile does not change anything drawn from another
+        stream.
+    sampling_frequency : float, optional
+        As in ``simulate_LFP``. Recorded in the result.
+
+    Returns
+    -------
+    SimulatedSession
+        ``lfps`` the pyramidal-layer channels, ``raw_lfp`` channel 0,
+        ``sharp_wave_lfp`` the radiatum channel, ``multiunit`` the spike
+        counts per sample; ``events`` the table sorted, with
+        ``n_participants`` (place and pyramidal units recruited) filled in
+        on burst rows; ``ripple_channels`` every ripple's gain and delay on
+        every channel; ``unit_types``, ``baseline_rates`` and
+        ``running_intervals``; and one ``ripple_times``,
+        ``ripple_durations`` and ``ripple_frequencies`` entry per ripple
+        row, so ``ripple_windows`` is each ripple's span at three side
+        scales.
+
+    Raises
+    ------
+    ValueError
+        If ``time`` is not 1-D with two or more samples; ``events`` lacks a
+        column, has an unknown type or expression, a non-finite time or
+        amplitude, a side scale that is not positive, an envelope power other
+        than 2 or 4, a ripple frequency outside (0, Nyquist), a non-positive
+        ripple SNR, or a burst with participation outside [0, 1] or a gain
+        below 1; there are ripples and ``noise_amplitude`` is 0 (an SNR
+        needs a background); ``n_channels`` is below 1, ``channel_gains`` has
+        the wrong length, ``unit_counts`` names an unknown type or a count
+        that is not a non-negative integer, or gives no unit;
+        ``baseline_rate`` names an unknown type or a range that is not
+        non-negative; ``spatial_profile`` or ``spike_model`` is unknown;
+        ``channel_occupancy`` lies outside (0, 1]; ``channel_gain_range`` is
+        not a non-negative range; ``channel_delay``, ``noise_log_amplitude``
+        or ``refractory_period`` is negative or not finite;
+        ``noise_modulation_period`` is not positive; ``interneuron_gain`` is
+        below 1; or the running intervals or noise settings are invalid, as
+        in ``simulate_session``.
+
+    See Also
+    --------
+    draw_network_events : draws the table and records where its reference
+        values come from.
+    truth_windows : each event's or component's interval at any fraction of
+        its envelope's peak.
+
+    Notes
+    -----
+    A ripple's ``amplitude`` is its nominal SNR: the peak of the unit
+    ripple, as rendered, after ``filter_ripple_band`` over the standard
+    deviation of the filtered stationary noise on channel 0, before channel
+    gains and noise modulation (``simulate_LFP``'s ``ripple_snr``). The
+    carrier's phase at the ripple's centre is drawn uniformly.
+
+    Examples
+    --------
+    >>> time = simulate_time(60 * 1500, 1500)
+    >>> events = draw_network_events(time, running_intervals=[(20.0, 35.0)], rng=0)
+    >>> session = simulate_network_session(
+    ...     time, events, running_intervals=[(20.0, 35.0)], rng=1
+    ... )
+    >>> session.lfps.shape, session.multiunit.shape
+    ((90000, 4), (90000, 60))
+    >>> session.unit_types[[0, 40, 50]].tolist()
+    ['place', 'pyramidal', 'interneuron']
+
+    """
+    time = np.asarray(time, dtype=float)
+    if time.ndim != 1 or time.size < 2:
+        msg = f"time must be 1-D with at least two samples, got shape {time.shape}."
+        raise ValueError(msg)
+    rate = _sampling_rate(time, sampling_frequency)
+    table = _check_event_table(events, nyquist=rate / 2)
+    if n_channels < 1:
+        msg = f"n_channels must be at least 1, got {n_channels}."
+        raise ValueError(msg)
+    gains = _channel_gains(channel_gains, n_channels)
+    unit_types, rate_ranges = _unit_layout(unit_counts, baseline_rate)
+    _check_choice("spatial_profile", spatial_profile, SPATIAL_PROFILES)
+    _check_choice("spike_model", spike_model, SPIKE_MODELS)
+    if not 0 < channel_occupancy <= 1:
+        msg = f"channel_occupancy must lie in (0, 1], got {channel_occupancy}."
+        raise ValueError(msg)
+    gain_range = _check_range("channel_gain_range", channel_gain_range, lower=0)
+    channel_delay = _check_scalar("channel_delay", channel_delay)
+    _validate_sizes(None, None, noise_amplitude)
+    noise_log_amplitude = _check_scalar("noise_log_amplitude", noise_log_amplitude)
+    noise_modulation_period = _check_scalar(
+        "noise_modulation_period", noise_modulation_period, lower_strict=True
+    )
+    interneuron_gain = _check_scalar("interneuron_gain", interneuron_gain, lower=1.0)
+    refractory_period = _check_scalar("refractory_period", refractory_period)
+    ripples = table[table.expression == "ripple"]
+    if len(ripples) and noise_amplitude <= 0:
+        msg = "Ripples are sized against the background: noise_amplitude must be > 0."
+        raise ValueError(msg)
+    bouts = (
+        np.empty((0, 2))
+        if running_intervals is None
+        else _running_intervals(running_intervals)
+    )
+    seeds = _generator(rng).integers(np.iinfo(np.int64).max, size=len(_RENDER_STREAMS))
+    streams = {
+        name: np.random.default_rng(int(seed))
+        for name, seed in zip(_RENDER_STREAMS, seeds, strict=True)
+    }
+
+    stationary = _correlated_noise(
+        time.size, n_channels + 1, noise_type, noise_amplitude, shared_noise_fraction,
+        streams["noise"],
+    )  # fmt: skip
+    modulation_phase = streams["noise_modulation"].uniform(0.0, 2 * np.pi)
+    channels = (
+        stationary
+        * _noise_modulation(
+            time, noise_log_amplitude, noise_modulation_period, modulation_phase
+        )[:, np.newaxis]
+    )
+    lfps, radiatum = channels[:, :n_channels], channels[:, n_channels]
+
+    band_noise_sd = (
+        float(filter_ripple_band(stationary[:, 0], sampling_frequency=rate).std())
+        if len(ripples)
+        else np.nan
+    )
+    rest = _rest_intervals(time, bouts)
+    channel_rows = []
+    for ripple in ripples.itertuples():
+        phase = streams["ripple_phases"].uniform(0.0, 2 * np.pi)
+        render = (
+            ripple.rise_sigma, ripple.decay_sigma, ripple.frequency_start,
+            ripple.frequency_end, phase, ripple.envelope_power,
+        )  # fmt: skip
+        window, latent = _render_ripple(time, ripple.center_time, *render)
+        scale = _scale_to_snr(latent, ripple.amplitude, band_noise_sd, rate)
+        radiatum[window] += ripple_leak * scale * latent
+        ripple_gains, delays = _spatial_profile(
+            pd.Series(ripple._asdict()), rest, gains,
+            local=spatial_profile == "local", occupancy=channel_occupancy,
+            gain_range=gain_range, maximum_delay=channel_delay,
+            rng=streams["spatial_profiles"],
+        )  # fmt: skip
+        for channel in range(n_channels):
+            channel_rows.append(
+                (
+                    ripple.event_id,
+                    ripple.component,
+                    channel,
+                    ripple_gains[channel],
+                    delays[channel],
+                )
+            )
+            if ripple_gains[channel] == 0:
+                continue
+            if delays[channel] == 0:
+                shifted_window, shifted = window, latent
+            else:
+                shifted_window, shifted = _render_ripple(
+                    time, ripple.center_time + delays[channel], *render
+                )
+            lfps[shifted_window, channel] += ripple_gains[channel] * scale * shifted
+
+    for sharp_wave in table[table.expression == "sharp_wave"].itertuples():
+        window, envelope = _event_envelope(
+            time, sharp_wave.center_time, sharp_wave.rise_sigma, sharp_wave.decay_sigma,
+            sharp_wave.envelope_power,
+        )  # fmt: skip
+        radiatum[window] -= sharp_wave.amplitude * envelope
+        lfps[window, 0] += sharp_wave_leak * sharp_wave.amplitude * envelope
+
+    if theta_amplitude > 0 or delta_amplitude > 0:
+        slow = simulate_theta_delta(
+            time, bouts, theta_amplitude=theta_amplitude, delta_amplitude=delta_amplitude
+        )
+        lfps = lfps + slow[:, np.newaxis]
+        radiatum = radiatum + slow
+    speed = simulate_speed(time, bouts, peak_speed=peak_speed)
+
+    baseline_rates, multiunit, n_participants = _draw_units(
+        time, table, unit_types, rate_ranges,
+        interneuron_gain=interneuron_gain, spike_model=spike_model,
+        refractory_period=refractory_period, streams=streams,
+    )  # fmt: skip
+    table.loc[table.expression == "burst", "n_participants"] = n_participants
+    ripple_channels = (
+        _table(
+            _RIPPLE_CHANNEL_COLUMNS,
+            dict(zip(_RIPPLE_CHANNEL_COLUMNS, zip(*channel_rows, strict=True), strict=True)),
+        )
+        if channel_rows
+        else _empty_ripple_channels()
+    )
+    return SimulatedSession(
+        time=time,
+        lfps=lfps,
+        raw_lfp=lfps[:, 0].copy(),
+        sharp_wave_lfp=radiatum,
+        multiunit=multiunit,
+        speed=speed,
+        ripple_times=(
+            ripples.center_time + 1.5 * (ripples.decay_sigma - ripples.rise_sigma)
+        ).to_numpy(),
+        ripple_durations=(3 * (ripples.rise_sigma + ripples.decay_sigma)).to_numpy(),
+        ripple_frequencies=ripples.frequency_start.to_numpy(),
+        artifact_times=np.empty(0),
+        sampling_frequency=rate,
+        events=table,
+        unit_types=unit_types,
+        baseline_rates=baseline_rates,
+        running_intervals=bouts,
+        ripple_channels=ripple_channels,
+    )

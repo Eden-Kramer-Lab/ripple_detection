@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from scipy import stats
+from scipy.signal import hilbert
 
 from ripple_detection import filter_ripple_band
 from ripple_detection.simulate import (
@@ -14,6 +15,7 @@ from ripple_detection.simulate import (
     NOISE_FUNCTION,
     SimulatedSession,
     _draw_per_ripple,
+    _render_ripple,
     brown,
     draw_network_events,
     mean_squared,
@@ -22,6 +24,7 @@ from ripple_detection.simulate import (
     simulate_LFP,
     simulate_multichannel_LFP,
     simulate_multiunit,
+    simulate_network_session,
     simulate_session,
     simulate_sharp_wave_ripple_pair,
     simulate_speed,
@@ -1503,3 +1506,532 @@ class TestDrawNetworkEvents:
     def test_time_must_be_a_sampled_axis(self):
         with pytest.raises(ValueError, match="time must be 1-D"):
             draw_network_events(np.zeros((10, 2)))
+
+
+def _one_event_table(event_type, *, event_id=0, center_time=5.0, **overrides):
+    """One latent event built by hand, its components centred on
+    ``center_time``: a ripple of span 0.09 s chirping from 200 to 180 Hz at
+    SNR 4, a sharp wave of span 0.08 s and amplitude 5, a burst of span 0.12 s
+    at gain 40 and participation 0.5 (a weak ripple: SNR 1.5, amplitude 2.5,
+    participation 0.05; a doublet: a second ripple and sharp wave 0.1 s later
+    under one burst). ``overrides`` set a column on every row, or, keyed by
+    expression (``ripple={"amplitude": 3.0}``), on that expression's rows."""
+    nan = np.nan
+    ripple = {
+        "expression": "ripple", "rise_sigma": 0.015, "decay_sigma": 0.015,
+        "amplitude": 4.0, "frequency_start": 200.0, "frequency_end": 180.0,
+        "participation": nan,
+    }  # fmt: skip
+    sharp_wave = {
+        "expression": "sharp_wave", "rise_sigma": 0.08 / 6, "decay_sigma": 0.08 / 6,
+        "amplitude": 5.0, "frequency_start": nan, "frequency_end": nan, "participation": nan,
+    }  # fmt: skip
+    burst = {
+        "expression": "burst", "rise_sigma": 0.02, "decay_sigma": 0.02, "amplitude": 40.0,
+        "frequency_start": nan, "frequency_end": nan, "participation": 0.5,
+    }  # fmt: skip
+    doublet_burst = {**burst, "rise_sigma": 0.19 / 6, "decay_sigma": 0.19 / 6}
+    weak = {"amplitude": 1.5}, {"amplitude": 2.5}, {"participation": 0.05}
+    components = {  # (row, component, offset of its centre)
+        "swr": [(ripple, 0, 0.0), (sharp_wave, 0, 0.0), (burst, 0, 0.0)],
+        "weak_ripple": [
+            ({**ripple, **weak[0]}, 0, 0.0),
+            ({**sharp_wave, **weak[1]}, 0, 0.0),
+            ({**burst, **weak[2]}, 0, 0.0),
+        ],
+        "burst_only": [(burst, 0, 0.0)],
+        "sharp_wave_only": [(sharp_wave, 0, 0.0)],
+        "ripple_doublet": [
+            (ripple, 0, 0.0),
+            (ripple, 1, 0.1),
+            (sharp_wave, 0, 0.0),
+            (sharp_wave, 1, 0.1),
+            (doublet_burst, 0, 0.05),
+        ],
+    }[event_type]
+    rows = []
+    for row, component, offset in components:
+        row = {
+            **row,
+            "event_id": event_id,
+            "event_type": event_type,
+            "component": component,
+            "center_time": center_time + offset,
+            "envelope_power": 2,
+            "n_participants": 0,
+        }
+        for key, value in overrides.items():
+            if key in EXPRESSION_ORDER:
+                if row["expression"] == key:
+                    row.update(value)
+            else:
+                row[key] = value
+        rows.append(row)
+    return pd.DataFrame(rows)[list(EVENT_COLUMNS)]
+
+
+def _event_tables(*tables):
+    """Hand-built tables as one, numbered in order."""
+    return pd.concat(
+        [table.assign(event_id=i) for i, table in enumerate(tables)], ignore_index=True
+    )
+
+
+QUIET = {"theta_amplitude": 0.0, "delta_amplitude": 0.0}
+
+
+class TestSimulateNetworkSession:
+    FS = 1500
+    TIME = simulate_time(FS * 30, FS)
+
+    @staticmethod
+    @pytest.fixture(scope="class")
+    def drawn():
+        time, running = TestSimulateNetworkSession.TIME, [(12.0, 18.0)]
+        events = draw_network_events(time, event_rate=1.0, running_intervals=running, rng=0)
+        return events, simulate_network_session(time, events, running_intervals=running, rng=1)
+
+    def _render(self, events, **kwargs):
+        return simulate_network_session(self.TIME, events, **{"rng": 5, **QUIET, **kwargs})
+
+    def test_shapes_and_types(self, drawn):
+        events, session = drawn
+        n_time = self.TIME.size
+        assert session.lfps.shape == (n_time, 4)
+        assert session.raw_lfp.shape == session.sharp_wave_lfp.shape == (n_time,)
+        np.testing.assert_array_equal(session.raw_lfp, session.lfps[:, 0])
+        assert session.multiunit.shape == (n_time, 60)
+        assert (
+            session.unit_types.tolist()
+            == ["place"] * 40 + ["pyramidal"] * 10 + ["interneuron"] * 10
+        )
+        np.testing.assert_array_equal(session.running_intervals, [[12.0, 18.0]])
+        assert session.speed.max() == pytest.approx(30.0, rel=1e-3)
+        _assert_schema(session.events, EVENT_COLUMNS)
+        pd.testing.assert_frame_equal(
+            session.events.drop(columns="n_participants"),
+            events.drop(columns="n_participants"),
+        )
+        burst = session.events.expression == "burst"
+        assert burst.any()
+        assert (session.events.n_participants[burst] > 0).any()
+        assert (session.events.n_participants[~burst] == 0).all()
+        assert (session.events.n_participants[burst] <= 50).all()
+        assert (events.n_participants == 0).all()  # the input is not modified
+        _assert_schema(session.ripple_channels, RIPPLE_CHANNEL_COLUMNS)
+        n_ripples = (events.expression == "ripple").sum()
+        assert len(session.ripple_channels) == 4 * n_ripples
+        assert session.non_events.empty
+
+    def test_participants_follow_participation(self):
+        """Place units join with the row's probability, other pyramidal units
+        with half of it; about 40 * 0.5 + 10 * 0.25 = 22.5 per burst."""
+        tables = [_one_event_table("burst_only", center_time=2.0 + 0.5 * i) for i in range(50)]
+        session = self._render(_event_tables(*tables))
+        n = session.events.n_participants.to_numpy()
+        assert abs(n.mean() - 22.5) < 4 * np.sqrt(40 * 0.25 + 10 * 0.1875) / np.sqrt(50)
+        none = self._render(_one_event_table("burst_only", burst={"participation": 0.0}))
+        assert none.events.n_participants.item() == 0
+
+    def test_baseline_rates_are_kept(self, drawn):
+        _, session = drawn
+        rates = session.baseline_rates
+        assert rates.shape == (60,)
+        ranges = {"place": (0.1, 0.5), "pyramidal": (0.5, 1.5), "interneuron": (2.0, 5.0)}
+        for unit_type, (low, high) in ranges.items():
+            of_type = rates[session.unit_types == unit_type]
+            assert ((of_type >= low) & (of_type <= high)).all(), unit_type
+        other = simulate_network_session(self.TIME, _empty_table(), rng=2)
+        assert not np.array_equal(other.baseline_rates, rates)
+
+    def test_unit_counts_and_rates(self):
+        session = self._render(
+            _empty_table(),
+            unit_counts={"interneuron": 3, "place": 2},
+            baseline_rate={"place": (1.0, 1.0)},
+        )
+        assert session.unit_types.tolist() == ["place", "place"] + ["interneuron"] * 3
+        np.testing.assert_array_equal(session.baseline_rates[:2], [1.0, 1.0])
+        assert ((session.baseline_rates[2:] >= 2) & (session.baseline_rates[2:] <= 5)).all()
+
+    def test_an_empty_table_renders_noise_only(self):
+        session = self._render(_empty_table())
+        assert session.ripple_times.shape == (0,)
+        assert session.ripple_windows.shape == (0, 2)
+        assert session.ripple_channels.empty
+        _assert_schema(session.ripple_channels, RIPPLE_CHANNEL_COLUMNS)
+        assert session.events.empty
+
+    def test_the_table_is_rendered_in_its_sorted_order(self):
+        events = _event_tables(
+            _one_event_table("swr", center_time=3.0), _one_event_table("ripple_doublet")
+        )
+        shuffled = events.sample(frac=1.0, random_state=0)
+        a, b = self._render(events), self._render(shuffled)
+        np.testing.assert_array_equal(a.lfps, b.lfps)
+        pd.testing.assert_frame_equal(a.events, b.events)
+
+    def test_ripple_snr_is_met(self):
+        """The filtered peak over the filtered noise's SD, in each isolated
+        ripple's window, is its SNR; noise adds to the peak, so the median
+        ratio is compared, within 20%."""
+        snr = np.linspace(3.0, 6.0, 20)
+        events = _event_tables(
+            *(
+                _one_event_table("swr", center_time=2.0 + 1.3 * i, ripple={"amplitude": a})
+                for i, a in enumerate(snr)
+            )
+        )
+        events = events[events.expression == "ripple"].reset_index(drop=True)
+        session = self._render(events)
+        noise = self._render(_empty_table())
+        filtered = filter_ripple_band(session.lfps[:, 0], sampling_frequency=self.FS)
+        sd = filter_ripple_band(noise.lfps[:, 0], sampling_frequency=self.FS).std()
+        peaks = [
+            np.abs(filtered[(start <= self.TIME) & (end >= self.TIME)]).max() / sd
+            for start, end in session.ripple_windows
+        ]
+        assert np.median(np.asarray(peaks) / snr) == pytest.approx(1.0, rel=0.2)
+
+    def test_ripple_windows_match_components(self, drawn):
+        events, session = drawn
+        ripples = events[events.expression == "ripple"]
+        np.testing.assert_allclose(
+            session.ripple_windows[:, 0], ripples.center_time - 3 * ripples.rise_sigma
+        )
+        np.testing.assert_allclose(
+            session.ripple_windows[:, 1], ripples.center_time + 3 * ripples.decay_sigma
+        )
+        np.testing.assert_array_equal(session.ripple_frequencies, ripples.frequency_start)
+
+    def test_sharp_wave_sign_and_leak(self):
+        """Noise-free, the radiatum deflection peaks at -amplitude and channel
+        0 at +leak times it, on the sample at the centre."""
+        events = _one_event_table("sharp_wave_only", sharp_wave={"amplitude": 6.0})
+        session = self._render(events, noise_amplitude=0.0, sharp_wave_leak=0.25)
+        centre = np.searchsorted(self.TIME, 5.0)
+        assert session.sharp_wave_lfp.min() == pytest.approx(-6.0)
+        assert np.argmin(session.sharp_wave_lfp) == centre
+        assert session.lfps[:, 0].max() == pytest.approx(0.25 * 6.0)
+        assert np.argmax(session.lfps[:, 0]) == centre
+        assert (session.lfps[:, 1:] == 0).all()
+
+    def test_sharp_wave_envelope_power(self):
+        """At power 4 the deflection is flatter at the top and steeper at the
+        edges, with the same half-maximum width."""
+        radiatum = {
+            power: -self._render(
+                _one_event_table("sharp_wave_only", envelope_power=power), noise_amplitude=0.0
+            ).sharp_wave_lfp
+            / 5.0
+            for power in (2, 4)
+        }
+        above_half = {power: (trace >= 0.5).sum() for power, trace in radiatum.items()}
+        assert abs(above_half[2] - above_half[4]) <= 2
+        sigma = 0.08 / 6
+        near_top = np.abs(self.TIME - 5.0 - sigma) < 0.5 / self.FS
+        far = np.abs(self.TIME - 5.0 - 2.5 * sigma) < 0.5 / self.FS
+        assert radiatum[4][near_top] > radiatum[2][near_top]
+        assert radiatum[4][far] < radiatum[2][far]
+
+
+def _empty_table():
+    return draw_network_events(simulate_time(100, 1500), event_rate=0.0)
+
+
+def _ripple_only(*tables):
+    """The ripple rows of hand-built events, numbered in order."""
+    events = _event_tables(*tables)
+    return events[events.expression == "ripple"].reset_index(drop=True)
+
+
+def _envelope_centroid(signal, time):
+    """The power-weighted mean time of the Hilbert envelope; moves with the
+    signal by fractions of a sample."""
+    power = np.abs(hilbert(signal)) ** 2
+    return float(np.sum(time * power) / np.sum(power))
+
+
+class TestNetworkSessionVariants:
+    FS = 1500
+    TIME = simulate_time(FS * 12, FS)
+
+    def _render(self, events, **kwargs):
+        return simulate_network_session(self.TIME, events, **{"rng": 7, **QUIET, **kwargs})
+
+    def test_global_profile_stores_the_channel_gains(self):
+        events = _ripple_only(
+            _one_event_table("swr", center_time=4.0), _one_event_table("swr")
+        )
+        session = self._render(events, channel_gains=[1.0, 0.8, 0.6, 0.4])
+        table = session.ripple_channels
+        assert table[["event_id", "component", "channel"]].to_numpy().tolist() == [
+            [event, 0, channel] for event in range(2) for channel in range(4)
+        ]
+        np.testing.assert_array_equal(table.gain, np.tile([1.0, 0.8, 0.6, 0.4], 2))
+        assert (table.delay_s == 0).all()
+
+    @pytest.mark.parametrize(
+        ("n_channels", "occupancy", "n_selected"),
+        [(4, 0.5, 2), (4, 1.0, 4), (4, 0.01, 1), (1, 0.5, 1)],
+    )
+    def test_spatial_profile(self, n_channels, occupancy, n_selected):
+        """Each ripple on the stated number of channels, one of them an anchor
+        at the channel gain with no delay, the rest at gains from the range;
+        each channel carries the ripple moved by its stored delay and scaled
+        by its gain, and the channels without it carry nothing."""
+        centres = 2.0 + 0.9 * np.arange(10)
+        events = _ripple_only(*(_one_event_table("swr", center_time=c) for c in centres))
+        gains = np.linspace(1.0, 0.7, n_channels)
+        options = {
+            "n_channels": n_channels, "channel_gains": gains, "spatial_profile": "local",
+            "channel_occupancy": occupancy, "channel_gain_range": (0.5, 0.9),
+            "channel_delay": 0.002,
+        }  # fmt: skip
+        session = self._render(events, **options)
+        noise = self._render(_empty_table(), **options)
+        ripple = session.lfps - noise.lfps
+        for (event_id, _), rows in session.ripple_channels.groupby(["event_id", "component"]):
+            selected = rows[rows.gain > 0]
+            assert len(selected) == n_selected
+            assert (rows.delay_s[rows.gain == 0] == 0).all()
+            relative = selected.gain.to_numpy() / gains[selected.channel]
+            anchor = selected[np.isclose(relative, 1.0) & (selected.delay_s == 0)]
+            assert len(anchor) >= 1
+            others = selected.drop(anchor.index[:1])
+            assert (relative[np.isin(selected.index, others.index)] >= 0.5 - 1e-12).all()
+            assert (relative[np.isin(selected.index, others.index)] <= 0.9 + 1e-12).all()
+            assert (np.abs(selected.delay_s) <= 0.002).all()
+            centre = centres[event_id]
+            near = np.abs(self.TIME - centre) < 0.2
+            reference = anchor.iloc[0]
+            reference_trace = ripple[near, int(reference.channel)]
+            reference_energy = np.sum(reference_trace**2)
+            reference_time = _envelope_centroid(reference_trace, self.TIME[near])
+            for row in rows.itertuples():
+                trace = ripple[near, row.channel]
+                if row.gain == 0:
+                    assert (trace == 0).all()
+                    continue
+                ratio = np.sqrt(np.sum(trace**2) / reference_energy)
+                assert ratio == pytest.approx(row.gain / reference.gain, rel=2e-3)
+                shift = _envelope_centroid(trace, self.TIME[near]) - reference_time
+                assert shift == pytest.approx(row.delay_s, abs=1e-4)
+        if n_selected < n_channels:
+            assert (session.ripple_channels.gain == 0).any()
+
+    def test_local_delays_stay_in_rest(self):
+        """A ripple against a running bout is delayed only away from it."""
+        events = _ripple_only(_one_event_table("swr", center_time=6.0 + 4 * 0.015 + 0.001))
+        options = {
+            "spatial_profile": "local", "channel_delay": 0.05, "running_intervals": [(4.0, 6.0)],
+        }  # fmt: skip
+        delays = []
+        for seed in range(10):
+            session = self._render(events, rng=seed, **options)
+            delays.extend(session.ripple_channels.delay_s)
+        delays = np.asarray(delays)
+        assert delays.min() >= -0.001 - 1e-12
+        assert delays.max() > 0.01
+
+    def test_spatial_profile_changes_only_its_own_draws(self):
+        events = _one_event_table("swr")
+        local = self._render(events, spatial_profile="local", channel_occupancy=0.5)
+        default = self._render(events)
+        np.testing.assert_array_equal(local.sharp_wave_lfp, default.sharp_wave_lfp)
+        np.testing.assert_array_equal(local.multiunit, default.multiunit)
+        assert not np.array_equal(local.lfps, default.lfps)
+
+    def test_noise_modulation(self):
+        """Matched noise-only renders differ by the slow gain, the same on
+        every channel: log-amplitude a, period T, unit RMS. Events keep their
+        size whatever the gain, so their local SNR changes."""
+        a, period = 0.35, 4.0
+        stationary = self._render(_empty_table())
+        varying = self._render(
+            _empty_table(), noise_log_amplitude=a, noise_modulation_period=period
+        )
+        ratio = varying.lfps / stationary.lfps
+        np.testing.assert_allclose(ratio, np.repeat(ratio[:, :1], 4, axis=1), rtol=1e-9)
+        np.testing.assert_allclose(
+            varying.sharp_wave_lfp / stationary.sharp_wave_lfp, ratio[:, 0]
+        )
+        gain = ratio[:, 0]
+        assert np.sqrt(np.mean(gain**2)) == pytest.approx(1.0, rel=1e-9)
+        assert np.log(gain).max() - np.log(gain).min() == pytest.approx(2 * a, rel=1e-4)
+        one_period = int(period * self.FS)
+        np.testing.assert_allclose(gain[one_period:], gain[:-one_period], rtol=1e-9)
+
+        other_period = self._render(_empty_table(), noise_modulation_period=17.0)
+        np.testing.assert_array_equal(other_period.lfps, stationary.lfps)
+
+        events = _event_tables(
+            _one_event_table("swr", center_time=3.0), _one_event_table("swr")
+        )
+        with_events = self._render(events)
+        modulated = self._render(events, noise_log_amplitude=a, noise_modulation_period=period)
+        np.testing.assert_allclose(
+            modulated.lfps - varying.lfps, with_events.lfps - stationary.lfps, atol=1e-12
+        )
+
+    def test_refractory_spikes(self):
+        """At most one spike per sample and none within the dead time of the
+        last; the LFP, units and recruitment are the Poisson rendering's."""
+        events = _event_tables(
+            *(_one_event_table("swr", center_time=2.0 + 0.8 * i) for i in range(10))
+        )
+        poisson = self._render(events)
+        refractory = self._render(events, spike_model="refractory", refractory_period=0.002)
+        assert refractory.multiunit.max() == 1
+        for unit in range(refractory.multiunit.shape[1]):
+            spike_times = self.TIME[refractory.multiunit[:, unit] > 0]
+            assert (np.diff(spike_times) >= 0.002 - 1e-9).all()
+        np.testing.assert_array_equal(refractory.lfps, poisson.lfps)
+        np.testing.assert_array_equal(refractory.sharp_wave_lfp, poisson.sharp_wave_lfp)
+        np.testing.assert_array_equal(refractory.baseline_rates, poisson.baseline_rates)
+        np.testing.assert_array_equal(refractory.unit_types, poisson.unit_types)
+        pd.testing.assert_frame_equal(refractory.events, poisson.events)
+        assert poisson.multiunit.max() >= 1
+
+    def test_refractory_rate_follows_the_renewal_model(self):
+        """At a constant intensity lambda, a spike blocks the next k - 1
+        samples (k steps span the dead time) and each later sample fires with
+        probability p = 1 - exp(-lambda dt): the mean interval is k - 1 + 1/p
+        samples, below the Poisson rate."""
+        intensity, dead_time = 60.0, 0.002
+        session = self._render(
+            _empty_table(),
+            unit_counts={"interneuron": 20},
+            baseline_rate={"interneuron": (intensity, intensity)},
+            spike_model="refractory",
+            refractory_period=dead_time,
+        )
+        k = int(np.ceil(dead_time * self.FS - 1e-9))
+        p = -np.expm1(-intensity / self.FS)
+        expected = self.FS / (k - 1 + 1 / p)
+        duration = self.TIME[-1] - self.TIME[0]
+        realized = session.multiunit.sum() / (20 * duration)
+        standard_error = np.sqrt(expected / (20 * duration))
+        assert abs(realized - expected) < 4 * standard_error
+        assert intensity - realized > 8 * standard_error
+
+    def test_chirp(self):
+        """The Hilbert instantaneous frequency of a unit ripple follows the
+        linear chirp at -2 and +2 side scales, at both envelope powers."""
+        time = simulate_time(self.FS * 2, self.FS)
+        rise, decay, start, end = 0.02, 0.03, 210.0, 170.0
+        for power in (2, 4):
+            window, wave = _render_ripple(time, 1.0, rise, decay, start, end, 0.3, power)
+            phase = np.unwrap(np.angle(hilbert(wave)))
+            frequency = np.gradient(phase, time[window]) / (2 * np.pi)
+            for offset in (-2 * rise, 2 * decay):
+                sample = np.argmin(np.abs(time[window] - 1.0 - offset))
+                expected = start + (end - start) * (offset + 3 * rise) / (3 * rise + 3 * decay)
+                assert frequency[sample] == pytest.approx(expected, abs=5.0), (power, offset)
+
+    def test_a_delayed_ripple_is_the_same_waveform_moved(self):
+        time = simulate_time(self.FS * 2, self.FS)
+        shift = 3 / self.FS
+        window, wave = _render_ripple(time, 1.0, 0.015, 0.02, 200.0, 180.0, 1.1)
+        moved_window, moved = _render_ripple(time, 1.0 + shift, 0.015, 0.02, 200.0, 180.0, 1.1)
+        full, moved_full = np.zeros(time.size), np.zeros(time.size)
+        full[window], moved_full[moved_window] = wave, moved
+        np.testing.assert_allclose(moved_full[3:], full[:-3], atol=1e-9)
+
+    @pytest.mark.parametrize("power", [2, 4])
+    def test_burst_follows_its_envelope(self, power):
+        """Summed over many recruited units, spikes in 5 ms bins match the
+        integrated intensity, baseline plus the burst's envelope at its
+        power; every place unit is recruited (participation 1), so only the
+        Poisson counts vary. The two powers' expectations differ by more
+        than the tolerance, so the test tells them apart."""
+        n_units, rate, sigma, centre = 3000, 2.0, 0.02, 1.0
+        time = simulate_time(self.FS * 2, self.FS)
+        events = _one_event_table(
+            "burst_only",
+            center_time=centre,
+            envelope_power=power,
+            burst={"participation": 1.0, "rise_sigma": sigma, "decay_sigma": sigma},
+        )
+        session = simulate_network_session(
+            time,
+            events,
+            unit_counts={"place": n_units},
+            baseline_rate={"place": (rate, rate)},
+            rng=7,
+            **QUIET,
+        )
+        assert session.events.n_participants.item() == n_units
+        edges = centre + np.arange(-0.1, 0.1001, 0.005)
+        bins = np.digitize(time, edges) - 1
+        inside = (bins >= 0) & (bins < edges.size - 1)
+        observed = np.bincount(bins[inside], session.multiunit[inside].sum(axis=1))
+
+        def expected_counts(p):
+            scaled = np.abs(time - centre) / (np.sqrt(2 * np.log(2)) * sigma)
+            envelope = np.exp(-np.log(2) * scaled**p)
+            intensity = rate / self.FS * (1 + 39.0 * envelope)
+            return n_units * np.bincount(bins[inside], intensity[inside])
+
+        expected = expected_counts(power)
+        z = (observed - expected) / np.sqrt(expected)
+        assert np.abs(z).max() < 4.5
+        other = expected_counts(6 - power)
+        assert np.abs((other - expected) / np.sqrt(expected)).max() > 8
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"spatial_profile": "patchy"}, "spatial_profile"),
+            ({"spike_model": "bursting"}, "spike_model"),
+            ({"channel_occupancy": 0.0}, "channel_occupancy"),
+            ({"channel_occupancy": 1.5}, "channel_occupancy"),
+            ({"channel_gain_range": (0.9, 0.5)}, "channel_gain_range"),
+            ({"channel_gain_range": (-0.5, 0.5)}, "channel_gain_range"),
+            ({"channel_delay": -0.001}, "channel_delay"),
+            ({"channel_delay": np.inf}, "channel_delay"),
+            ({"noise_log_amplitude": -0.1}, "noise_log_amplitude"),
+            ({"noise_modulation_period": 0.0}, "noise_modulation_period"),
+            ({"refractory_period": -0.001}, "refractory_period"),
+            ({"refractory_period": np.nan}, "refractory_period"),
+            ({"interneuron_gain": 0.5}, "interneuron_gain"),
+            ({"n_channels": 0}, "n_channels"),
+            ({"channel_gains": [1.0, 1.0]}, "channel_gains"),
+            ({"unit_counts": {"granule": 3}}, "unit_counts"),
+            ({"unit_counts": {"place": -1}}, "unit_counts"),
+            ({"unit_counts": {"place": 1.5}}, "unit_counts"),
+            ({"unit_counts": {"place": 0}}, "at least one unit"),
+            ({"baseline_rate": {"place": (1.0, 0.5)}}, "baseline_rate"),
+            ({"baseline_rate": {"basket": (1.0, 2.0)}}, "baseline_rate"),
+            ({"noise_amplitude": -1.0}, "noise_amplitude"),
+            ({"noise_amplitude": 0.0}, "noise_amplitude must be > 0"),
+            ({"shared_noise_fraction": 1.5}, "shared_noise_fraction"),
+            ({"running_intervals": [(5.0, 2.0)]}, "start before its end"),
+        ],
+    )
+    def test_variant_validation(self, kwargs, message):
+        with pytest.raises(ValueError, match=message):
+            self._render(_one_event_table("swr"), **kwargs)
+
+    @pytest.mark.parametrize(
+        ("events", "message"),
+        [
+            (_one_event_table("swr").drop(columns="amplitude"), "missing the columns"),
+            (_one_event_table("swr").assign(event_type="ripple_train"), "event_type"),
+            (_one_event_table("swr", expression="spindle"), "expression"),
+            (_one_event_table("swr", rise_sigma=0.0), "rise_sigma"),
+            (_one_event_table("swr", center_time=np.nan), "finite"),
+            (_one_event_table("swr", envelope_power=3), "envelope_power"),
+            (_one_event_table("swr", ripple={"frequency_start": 900.0}), "Nyquist"),
+            (_one_event_table("swr", ripple={"amplitude": 0.0}), "SNR"),
+            (_one_event_table("swr", burst={"participation": 1.5}), "participation"),
+            (_one_event_table("swr", burst={"amplitude": 0.5}), "participation"),
+        ],
+    )
+    def test_event_table_validation(self, events, message):
+        with pytest.raises(ValueError, match=message):
+            self._render(events)
+
+    def test_time_must_be_a_sampled_axis(self):
+        with pytest.raises(ValueError, match="time must be 1-D"):
+            simulate_network_session(np.zeros(1), _empty_table())
