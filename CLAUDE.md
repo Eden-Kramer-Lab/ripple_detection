@@ -53,6 +53,9 @@ uv run python examples/simulation_study.py
 # overwrites examples/literature_recipes_results.csv). Widloski 2022 has none:
 # its replay is defined by decoding (literature_methods.NOT_REPRODUCED)
 uv run python examples/literature_recipes.py
+
+# The measured-data walkthrough for literature_methods (seconds; the tests run it)
+uv run python examples/measured_walkthrough.py
 ```
 
 ## Architecture
@@ -61,7 +64,7 @@ uv run python examples/literature_recipes.py
 
 The package lives under `src/` (the Scientific Python guide's layout, so tests import the installed package, never the checkout) and is organized into six modules, one of them a package:
 
-1. **[src/ripple_detection/core.py](src/ripple_detection/core.py)** - Low-level signal processing utilities
+1. **[src/ripple_detection/core.py](src/ripple_detection/core.py)** - Low-level signal processing utilities, and the event and interval rules (`merge_close_events`, `require_overlap`, `require_inside`, `intervals_to_mask`, `intersect_intervals`, ...). Intervals are inclusive, sorted and disjoint; event bounds are closed intervals on recorded timestamps
 
 2. **[src/ripple_detection/detectors/](src/ripple_detection/detectors/)** - High-level detection algorithms, a package whose `__init__` re-exports the public names so `from ripple_detection.detectors import Kay_ripple_detector` still works
    - `_validation.py` - shape, length, unit and duration-limit checks
@@ -98,8 +101,10 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
    - [docs/literature/README.md](docs/literature/README.md) defines the current survey conventions: the packaged CSV owns values, `evidence.csv` owns field statuses/citations, `sources.md` owns source versions/fingerprints, and one note per paper explains methods and uncertainties. Git preserves correction history.
 
 6. **[src/ripple_detection/literature_methods.py](src/ripple_detection/literature_methods.py)** - Packaged paper/protocol methods
-   - `Recording.from_arrays`, native population grids, `list_methods` and `run_method`
+   - `Recording.from_arrays`, native population grids, `list_methods`, `check_method`, `run_method`, `save_events` and `load_events`
    - Primary recipes and separate ripple/HFE/MUA/protocol inventories, identified by function name, DOI and output role
+   - Each method declares its requirements (`Requirement`, `Precondition`) once, in its registration; `list_methods` reports them and `check_method`/`run_method` check them, and a test runs every method with exactly its declared inputs and with each removed. `behavior_intervals` are a per-call argument, not a `Recording` field
+   - Every result starts with the same six columns, and its `attrs` (method, options, grid, inputs, diagnostics) are plain JSON types
    - The simulation script only supplies demonstration inputs; [implementation.md](docs/literature/implementation.md) owns usage and current implementation limits
 
 Two private modules serve callers rather than detection: [_call_hints.py](src/ripple_detection/_call_hints.py) wraps the public functions so a call written for 1.x fails with the 2.0 change behind it (add a removed or renamed argument to `REMOVED_ARGUMENTS` there, keyed by function, and only for a name a release shipped: users upgrade from a release, so a name that changed between releases gets no hint; `SAME_ROLE` maps other detectors' and libraries' names for a parameter by what it does), and [_descriptions.py](src/ripple_detection/_descriptions.py) holds what `describe()` reports. Warnings go through `core._warn_at_caller`, which attributes them to the first frame outside the package, so no function passes a `stacklevel`.

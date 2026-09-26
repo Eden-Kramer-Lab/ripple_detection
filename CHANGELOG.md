@@ -53,7 +53,7 @@ here is relative to 1.7.1.
   `minimum_event_duration` (on the whole event), `speed_rule` (including
   `"restrict"`, detection on slow samples only), `close_event_rule="merge"`, a
   per-sample `threshold` array, and `bound_search_window` with fallback
-  `bound_threshold` levels.
+  `bound_threshold` levels. `speed=None` is accepted with the speed rule off.
 - `carey_spectral_ripple_score`, the van der Meer lab's spectral ripple score
   (`SWRfreak` and `amSWR`), and `ripple_score` and `threshold_method="mean"` on
   `Carey_candidate_detector`, which together reproduce the rule behind the
@@ -69,16 +69,25 @@ here is relative to 1.7.1.
 - `ripple_detection.literature_methods`: each surveyed paper's candidate-event
   rule, and its secondary ripple, HFE and MUA inventories, on measured data.
   `Recording.from_arrays` takes the selected signals, cells and curated
-  intervals; `list_methods()` gives each method's DOI, role and required options;
-  `run_method(name, recording, **options)` returns events whose `attrs` record
-  the method and the options it used. Choices a paper leaves open are explicit
-  options, a method that needs an input it was not given (speed, a baseline,
-  sleep or behavioral intervals) raises rather than substituting one, and the
+  intervals; `list_methods()` gives each method's DOI, role, stages, grid and
+  requirements (signals, cell selections, curated intervals, external inputs,
+  options needed on measured data, a fixed sampling rate); `check_method` lists
+  everything a call lacks without running it; `run_method(name, recording,
+  behavior_intervals=..., **options)` returns events with a common set of columns
+  whose `attrs` record the method, resolved options, grid, inputs and diagnostics
+  as plain JSON types, and `save_events` / `load_events` keep that provenance with
+  the table. Choices a paper leaves open are explicit options, a method that needs
+  an input it was not given raises and names every missing input rather than
+  substituting one, and the
   [implementation guide](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/docs/literature/implementation.md)
-  sets out what remains unverified. `examples/literature_recipes.py` runs the
-  default methods on a simulated session.
+  sets out what remains unverified. `examples/measured_walkthrough.py` works
+  through a measured recording end to end, and `examples/literature_recipes.py`
+  runs the default methods on a simulated session.
 - `trim_events_to_trace` and `trim_events_to_spike_windows`, which narrow events
   to where a trace stays high or to edge windows holding enough spikes.
+- `require_inside` (events wholly inside intervals), `intervals_to_mask` and
+  `intersect_intervals`, for restricting events or statistics to a state or to
+  curated epochs. Event helpers given a DataFrame return one.
 - `require_trace_peak` and `require_times_inside`, which confirm one signal's
   events with another (a ripple z-score inside a burst, a ripple peak inside it),
   and `windows_around_times`, fixed windows around peaks or crossings.
@@ -96,7 +105,9 @@ here is relative to 1.7.1.
   `spec.keyword_inputs` name the signals (`RIPPLE_BAND_LFP`, `RAW_LFP`,
   `MULTIUNIT`), whose `spec.parameters`, `spec.check_parameters(mapping)` and
   `spec.check_inputs(*signals, **keyword_signals)` check a call, and whose
-  `spec.describe()` gives it all as JSON-ready data.
+  `spec.describe()` gives it all as JSON-ready data. `check_parameters` runs the
+  detector's own range, type and unit checks and names removed or misspelled
+  parameters, so a stored parameter set can be checked before any data is loaded.
 - Simulation: `ripple_snr`, `rng` and `(low, high)` ranges for
   `ripple_frequency` and `ripple_duration` on `simulate_LFP`, and `simulate_multichannel_LFP`,
   `simulate_sharp_wave_ripple_pair`, `simulate_multiunit` and
@@ -183,7 +194,15 @@ here is relative to 1.7.1.
   and event arrays, rates passed as spike counts, and tunables that are NaN,
   negative, reversed or given in milliseconds; [MIGRATING.md](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/MIGRATING.md#inputs-that-now-raise)
   lists them.
-- `speed_threshold=np.inf` no longer warns that speed "appears very small".
+- `speed_threshold=np.inf` no longer warns that speed "appears very small", and a
+  session in cm/s that is mostly at rest no longer triggers it.
+- Mistakes the checks can see get a message that names the fix: ripple-band
+  detectors warn when their input does not look filtered; timestamps in samples,
+  in milliseconds, or disagreeing with `sampling_frequency` get distinct errors
+  (`filter_ripple_band(time=)` checks the rate too); a transposed signal, float32
+  timestamps at large values, speed on its own clock, a non-numeric rate, 2-D
+  times passed to `require_times_inside`, and a 0/1 integer array passed as
+  `units` each get their own message.
 - `get_Kay_ripple_consensus_trace` says to reshape a 1-D input instead of raising
   NumPy's `AxisError`, and splits at gaps in `time`.
 - `filter_ripple_band`'s length check was one sample too permissive, so a signal
