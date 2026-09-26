@@ -9,6 +9,7 @@ from ripple_detection.core import (
     BoolArray,
     FloatArray,
     _boolean_run_bounds,
+    _check_non_negative,
     _is_immobile_at_endpoints,
     normalize_signal,
     sample_count_within,
@@ -140,6 +141,26 @@ def _two_threshold_events(
     keep &= sample_count_within(n_samples, time, minimum_duration, maximum_duration)
     events, peaks, clipped = events[keep], peaks[keep], clipped[keep]
     return np.column_stack([time[events[:, 0]], time[events[:, 1]]]), time[peaks], clipped
+
+
+def _check_zugaro_parameters(
+    *,
+    speed_threshold: float,
+    low_threshold: float,
+    high_threshold: float,
+    minimum_inter_ripple_interval: float,
+    minimum_duration: float,
+    maximum_duration: float | None,
+    smoothing_window: float,
+) -> None:
+    """The checks on ``Zugaro_ripple_detector``'s tunables that need no data
+    (a window shorter than a sample needs the rate).
+    ``DetectorSpec.check_parameters`` runs them too."""
+    _check_non_negative(speed_threshold=speed_threshold)
+    _validate_duration_limits(minimum_duration, maximum_duration)
+    _check_thresholds("low_threshold", low_threshold, "high_threshold", high_threshold)
+    _check_gap(minimum_inter_ripple_interval=minimum_inter_ripple_interval)
+    _check_smoothing_sigma(smoothing_window=smoothing_window)
 
 
 @explain_call_errors
@@ -284,10 +305,15 @@ def Zugaro_ripple_detector(
     (True, True)
 
     """
-    _validate_duration_limits(minimum_duration, maximum_duration)
-    _check_thresholds("low_threshold", low_threshold, "high_threshold", high_threshold)
-    _check_gap(minimum_inter_ripple_interval=minimum_inter_ripple_interval)
-    _check_smoothing_sigma(smoothing_window=smoothing_window)
+    _check_zugaro_parameters(
+        speed_threshold=speed_threshold,
+        low_threshold=low_threshold,
+        high_threshold=high_threshold,
+        minimum_inter_ripple_interval=minimum_inter_ripple_interval,
+        minimum_duration=minimum_duration,
+        maximum_duration=maximum_duration,
+        smoothing_window=smoothing_window,
+    )
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )

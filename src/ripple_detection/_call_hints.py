@@ -177,30 +177,7 @@ def _explain(
         for parameter in parameters.values()
         if parameter.kind is inspect.Parameter.KEYWORD_ONLY
     ]
-    notes = []
-    for key in kwargs:
-        if key in parameters:
-            continue
-        if (name, key) in REMOVED_ARGUMENTS:
-            notes.append(f"{key} {REMOVED_ARGUMENTS[name, key]}.")
-            continue
-        roles = [group for group in SAME_ROLE if key in group]
-        same_role = [
-            parameter for group in roles for parameter in group if parameter in parameters
-        ]
-        if roles:
-            notes.append(
-                f"{name} takes no {key}; did you mean {' or '.join(same_role)}?"
-                if same_role
-                else f"{name} takes no {key}; its parameters are {', '.join(parameters)}."
-            )
-            continue
-        close = difflib.get_close_matches(key, list(parameters), n=1, cutoff=0.6)
-        notes.append(
-            f"{name} takes no {key}; did you mean {close[0]}?"
-            if close
-            else f"{name} takes no {key}; its parameters are {', '.join(parameters)}."
-        )
+    notes = keyword_notes(name, list(parameters), list(kwargs))
     if len(args) > len(positional) and name in TOO_MANY_POSITIONAL_1X:
         notes.append(TOO_MANY_POSITIONAL_1X[name])
     takes_positionally = (
@@ -243,6 +220,54 @@ def _explain(
     if missing:
         notes.extend(since_2 or [f"{takes_positionally}."])
     return f"{name}(): {error}." + (f" {' '.join(notes)}" if notes else "")
+
+
+def keyword_notes(name: str, parameters: list[str], keys: list[str]) -> list[str]:
+    """What each of ``keys`` that ``name`` does not take was meant to be:
+    the 2.0 change that removed it, the parameter with the same role, or the
+    closest spelling.
+
+    Parameters
+    ----------
+    name : str
+        The function's name.
+    parameters : list of str
+        The names it takes.
+    keys : list of str
+        The names a call or a stored parameter set gave; those it takes are
+        skipped.
+
+    Returns
+    -------
+    notes : list of str
+        One sentence per key it does not take.
+
+    """
+    notes = []
+    for key in keys:
+        if key in parameters:
+            continue
+        if (name, key) in REMOVED_ARGUMENTS:
+            notes.append(f"{key} {REMOVED_ARGUMENTS[name, key]}.")
+            continue
+        roles = [group for group in SAME_ROLE if key in group]
+        same_role = [
+            parameter for group in roles for parameter in group if parameter in parameters
+        ]
+        if roles:
+            notes.append(
+                f"{name} takes no {key}; did you mean {' or '.join(same_role)}?"
+                if same_role
+                else f"{name} takes no {key}; its parameters are {', '.join(parameters)}."
+            )
+            continue
+        close = difflib.get_close_matches(key, parameters, n=1, cutoff=0.6)
+        notes.append(
+            f"{name} takes no {key}; did you mean {close[0]}?"
+            if close
+            else f"{name} takes no {key}; its parameters are {', '.join(parameters)}."
+        )
+    return notes
 
 
 def _short(value: object) -> str:

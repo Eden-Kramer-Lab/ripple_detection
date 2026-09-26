@@ -16,6 +16,8 @@ from ripple_detection.core import (
     IntArray,
     _boolean_run_bounds,
     _check_choice,
+    _check_non_negative,
+    _check_number,
     _event_bounds,
     _is_immobile,
     _unit_area_gaussian,
@@ -44,6 +46,7 @@ from ripple_detection.detectors._validation import (
     _check_positive,
     _check_smoothing_sigma,
     _check_thresholds,
+    _check_whole_number,
     _validate_detector_inputs,
     _validate_duration_limits,
     _validate_multiunit,
@@ -419,6 +422,46 @@ def carey_spectral_ripple_score(
     return score / mean
 
 
+def _check_carey_parameters(
+    *,
+    speed_threshold: float,
+    low_threshold: float,
+    high_threshold: float,
+    minimum_duration: float,
+    minimum_active_units: int,
+    ripple_smoothing_sigma: float,
+    spike_smoothing_sigma: float,
+    spike_cap: float,
+    baseline_smoothing_sigma: float,
+    baseline_cap: float,
+    theta_threshold: float,
+    state_merge_gap: float,
+    minimum_state_duration: float,
+    maximum_duration: float | None,
+    threshold_method: str,
+) -> None:
+    """The checks on ``Carey_candidate_detector``'s tunables that need no
+    data (the theta band needs the rate, ``minimum_active_units`` against the
+    number of units the spikes). ``DetectorSpec.check_parameters`` runs them
+    too."""
+    _check_non_negative(speed_threshold=speed_threshold)
+    _validate_duration_limits(minimum_duration, maximum_duration)
+    _check_thresholds("low_threshold", low_threshold, "high_threshold", high_threshold)
+    _check_smoothing_sigma(
+        ripple_smoothing_sigma=ripple_smoothing_sigma,
+        spike_smoothing_sigma=spike_smoothing_sigma,
+        baseline_smoothing_sigma=baseline_smoothing_sigma,
+    )
+    _check_positive(spike_cap=spike_cap, baseline_cap=baseline_cap)
+    _check_gap(state_merge_gap=state_merge_gap, minimum_state_duration=minimum_state_duration)
+    _check_number(theta_threshold=theta_threshold)
+    if not np.isfinite(theta_threshold):
+        msg = f"theta_threshold must be finite, got {theta_threshold}."
+        raise ValueError(msg)
+    _check_choice("threshold_method", threshold_method, CAREY_THRESHOLD_METHODS)
+    _check_whole_number("minimum_active_units", minimum_active_units, 0)
+
+
 @explain_call_errors
 def Carey_candidate_detector(
     time: ArrayLike,
@@ -628,19 +671,23 @@ def Carey_candidate_detector(
     True
 
     """
-    _validate_duration_limits(minimum_duration, maximum_duration)
-    _check_thresholds("low_threshold", low_threshold, "high_threshold", high_threshold)
-    _check_smoothing_sigma(
+    _check_carey_parameters(
+        speed_threshold=speed_threshold,
+        low_threshold=low_threshold,
+        high_threshold=high_threshold,
+        minimum_duration=minimum_duration,
+        minimum_active_units=minimum_active_units,
         ripple_smoothing_sigma=ripple_smoothing_sigma,
         spike_smoothing_sigma=spike_smoothing_sigma,
+        spike_cap=spike_cap,
         baseline_smoothing_sigma=baseline_smoothing_sigma,
+        baseline_cap=baseline_cap,
+        theta_threshold=theta_threshold,
+        state_merge_gap=state_merge_gap,
+        minimum_state_duration=minimum_state_duration,
+        maximum_duration=maximum_duration,
+        threshold_method=threshold_method,
     )
-    _check_positive(spike_cap=spike_cap, baseline_cap=baseline_cap)
-    _check_gap(state_merge_gap=state_merge_gap, minimum_state_duration=minimum_state_duration)
-    if not np.isfinite(theta_threshold):
-        msg = f"theta_threshold must be finite, got {theta_threshold}."
-        raise ValueError(msg)
-    _check_choice("threshold_method", threshold_method, CAREY_THRESHOLD_METHODS)
     one_of_the_two = (
         "Pass filtered_lfps, from which the Hilbert ripple score is formed, or "
         "ripple_score with filtered_lfps=None; exactly one of the two."

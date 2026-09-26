@@ -1745,7 +1745,9 @@ def _gap_tolerance(close_event_threshold: float, scale: float) -> float:
 def _check_non_negative(**values: float) -> None:
     """Raise for a value that is NaN or negative. Infinity passes: it is how a
     caller turns the speed criterion off. A gap or ceiling must be finite, which
-    ``_check_gap`` and ``_validate_duration_limits`` enforce."""
+    ``_check_gap`` and ``_validate_duration_limits`` enforce. ``TypeError``
+    for a value that is no number."""
+    _check_number(**values)
     for name, value in values.items():
         if not value >= 0:
             msg = f"{name} must be non-negative, got {value}."

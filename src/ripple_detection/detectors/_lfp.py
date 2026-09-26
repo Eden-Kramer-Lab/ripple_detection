@@ -14,6 +14,7 @@ from ripple_detection.core import (
     FloatArray,
     IntArray,
     NormalizationMethod,
+    _check_non_negative,
     _is_immobile,
     _is_immobile_at_endpoints,
     _is_immobile_by_majority,
@@ -333,6 +334,99 @@ def _extract_Yu_ripple_events(
     return np.asarray(event_times, dtype=float).reshape(-1, 2), n_suprathreshold
 
 
+def _check_threshold_parameters(
+    *,
+    speed_threshold: float,
+    minimum_duration: float,
+    maximum_duration: float | None,
+    close_ripple_threshold: float,
+    smoothing_sigma: float,
+    zscore_threshold: float | None = None,
+) -> None:
+    """The checks on the envelope detectors' tunables that need no data:
+    types, ranges, and durations that look like milliseconds. Yu has no
+    ``zscore_threshold``. ``DetectorSpec.check_parameters`` runs them too."""
+    _check_non_negative(speed_threshold=speed_threshold)
+    _validate_duration_limits(minimum_duration, maximum_duration)
+    if zscore_threshold is not None:
+        _check_finite_non_negative(zscore_threshold=zscore_threshold)
+    _check_gap(close_ripple_threshold=close_ripple_threshold)
+    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
+
+
+def _check_shvartsman_parameters(
+    *,
+    speed_threshold: float,
+    minimum_duration: float,
+    maximum_duration: float | None,
+    zscore_threshold: float,
+    close_ripple_threshold: float,
+    smoothing_sigma: float,
+    normalization_method: str,
+    normalization_mask: object,
+    channel_baselines: object,
+    channel_deviations: object,
+    minimum_participating_channels: int | None,
+    minimum_participating_fraction: float | None,
+) -> None:
+    """``_check_threshold_parameters`` and the normalization and
+    participation options of ``Shvartsman_ripple_detector``: which go
+    together, and their ranges."""
+    if normalization_method not in ("zscore", "median_mad", "manual"):
+        msg = (
+            "normalization_method must be 'zscore', 'median_mad' or 'manual', "
+            f"got {normalization_method!r}."
+        )
+        raise ValueError(msg)
+    if normalization_method == "manual":
+        if channel_baselines is None or channel_deviations is None:
+            msg = (
+                "normalization_method='manual' needs channel_baselines and "
+                "channel_deviations, one entry per channel."
+            )
+            raise ValueError(msg)
+        if normalization_mask is not None:
+            msg = (
+                "normalization_mask has no meaning with normalization_method='manual': "
+                "the statistics are the ones supplied. Drop one or the other."
+            )
+            raise ValueError(msg)
+    elif channel_baselines is not None or channel_deviations is not None:
+        msg = (
+            "channel_baselines and channel_deviations apply only with "
+            f"normalization_method='manual', not {normalization_method!r}."
+        )
+        raise ValueError(msg)
+    if (
+        minimum_participating_channels is not None
+        and minimum_participating_fraction is not None
+    ):
+        msg = (
+            "Give minimum_participating_channels or minimum_participating_fraction, not both."
+        )
+        raise ValueError(msg)
+    if minimum_participating_channels is not None:
+        _check_whole_number(
+            "minimum_participating_channels", minimum_participating_channels, 0
+        )
+    if minimum_participating_fraction is not None and not (
+        0.0 <= minimum_participating_fraction <= 1.0
+    ):
+        msg = (
+            f"minimum_participating_fraction must lie in [0, 1], got "
+            f"{minimum_participating_fraction}."
+        )
+        raise ValueError(msg)
+    _check_threshold_parameters(
+        speed_threshold=speed_threshold,
+        minimum_duration=minimum_duration,
+        maximum_duration=maximum_duration,
+        close_ripple_threshold=close_ripple_threshold,
+        smoothing_sigma=smoothing_sigma,
+        zscore_threshold=zscore_threshold,
+    )
+
+
 @explain_call_errors
 def Shvartsman_ripple_detector(
     time: ArrayLike,
@@ -509,56 +603,20 @@ def Shvartsman_ripple_detector(
     True
 
     """
-    if normalization_method not in ("zscore", "median_mad", "manual"):
-        msg = (
-            "normalization_method must be 'zscore', 'median_mad' or 'manual', "
-            f"got {normalization_method!r}."
-        )
-        raise ValueError(msg)
-    manual = normalization_method == "manual"
-    if manual:
-        if channel_baselines is None or channel_deviations is None:
-            msg = (
-                "normalization_method='manual' needs channel_baselines and "
-                "channel_deviations, one entry per channel."
-            )
-            raise ValueError(msg)
-        if normalization_mask is not None:
-            msg = (
-                "normalization_mask has no meaning with normalization_method='manual': "
-                "the statistics are the ones supplied. Drop one or the other."
-            )
-            raise ValueError(msg)
-    elif channel_baselines is not None or channel_deviations is not None:
-        msg = (
-            "channel_baselines and channel_deviations apply only with "
-            f"normalization_method='manual', not {normalization_method!r}."
-        )
-        raise ValueError(msg)
-    if (
-        minimum_participating_channels is not None
-        and minimum_participating_fraction is not None
-    ):
-        msg = (
-            "Give minimum_participating_channels or minimum_participating_fraction, not both."
-        )
-        raise ValueError(msg)
-    if minimum_participating_channels is not None:
-        _check_whole_number(
-            "minimum_participating_channels", minimum_participating_channels, 0
-        )
-    if minimum_participating_fraction is not None and not (
-        0.0 <= minimum_participating_fraction <= 1.0
-    ):
-        msg = (
-            f"minimum_participating_fraction must lie in [0, 1], got "
-            f"{minimum_participating_fraction}."
-        )
-        raise ValueError(msg)
-    _validate_duration_limits(minimum_duration, maximum_duration)
-    _check_finite_non_negative(zscore_threshold=zscore_threshold)
-    _check_gap(close_ripple_threshold=close_ripple_threshold)
-    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
+    _check_shvartsman_parameters(
+        speed_threshold=speed_threshold,
+        minimum_duration=minimum_duration,
+        maximum_duration=maximum_duration,
+        zscore_threshold=zscore_threshold,
+        close_ripple_threshold=close_ripple_threshold,
+        smoothing_sigma=smoothing_sigma,
+        normalization_method=normalization_method,
+        normalization_mask=normalization_mask,
+        channel_baselines=channel_baselines,
+        channel_deviations=channel_deviations,
+        minimum_participating_channels=minimum_participating_channels,
+        minimum_participating_fraction=minimum_participating_fraction,
+    )
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
@@ -772,10 +830,14 @@ def Kay_ripple_detector(
        doi:10.1038/nature17144
 
     """
-    _validate_duration_limits(minimum_duration, maximum_duration)
-    _check_finite_non_negative(zscore_threshold=zscore_threshold)
-    _check_gap(close_ripple_threshold=close_ripple_threshold)
-    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
+    _check_threshold_parameters(
+        speed_threshold=speed_threshold,
+        minimum_duration=minimum_duration,
+        maximum_duration=maximum_duration,
+        close_ripple_threshold=close_ripple_threshold,
+        smoothing_sigma=smoothing_sigma,
+        zscore_threshold=zscore_threshold,
+    )
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
@@ -929,9 +991,13 @@ def Yu_ripple_detector(
     True
 
     """
-    _validate_duration_limits(minimum_duration, maximum_duration)
-    _check_gap(close_ripple_threshold=close_ripple_threshold)
-    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
+    _check_threshold_parameters(
+        speed_threshold=speed_threshold,
+        minimum_duration=minimum_duration,
+        maximum_duration=maximum_duration,
+        close_ripple_threshold=close_ripple_threshold,
+        smoothing_sigma=smoothing_sigma,
+    )
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
@@ -1145,10 +1211,14 @@ def Karlsson_ripple_detector(
     ('event_number', True)
 
     """
-    _validate_duration_limits(minimum_duration, maximum_duration)
-    _check_finite_non_negative(zscore_threshold=zscore_threshold)
-    _check_gap(close_ripple_threshold=close_ripple_threshold)
-    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
+    _check_threshold_parameters(
+        speed_threshold=speed_threshold,
+        minimum_duration=minimum_duration,
+        maximum_duration=maximum_duration,
+        close_ripple_threshold=close_ripple_threshold,
+        smoothing_sigma=smoothing_sigma,
+        zscore_threshold=zscore_threshold,
+    )
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )
@@ -1316,10 +1386,14 @@ def Roumis_ripple_detector(
     ('event_number', True)
 
     """
-    _validate_duration_limits(minimum_duration, maximum_duration)
-    _check_finite_non_negative(zscore_threshold=zscore_threshold)
-    _check_gap(close_ripple_threshold=close_ripple_threshold)
-    _check_smoothing_sigma(smoothing_sigma=smoothing_sigma)
+    _check_threshold_parameters(
+        speed_threshold=speed_threshold,
+        minimum_duration=minimum_duration,
+        maximum_duration=maximum_duration,
+        close_ripple_threshold=close_ripple_threshold,
+        smoothing_sigma=smoothing_sigma,
+        zscore_threshold=zscore_threshold,
+    )
     time, filtered_lfps, speed = _validate_detector_inputs(
         time, filtered_lfps, speed, sampling_frequency, speed_threshold
     )

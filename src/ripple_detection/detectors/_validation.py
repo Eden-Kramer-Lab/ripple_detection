@@ -301,7 +301,9 @@ def _validate_detector_inputs(
 
 
 def _check_finite_non_negative(**values: float) -> None:
-    """Raise for a value that is NaN, infinite or negative."""
+    """Raise for a value that is NaN, infinite or negative, and ``TypeError``
+    for one that is no number."""
+    _check_number(**values)
     for name, value in values.items():
         if not 0 <= value < np.inf:
             msg = f"{name} must be finite and non-negative, got {value}."
@@ -369,6 +371,7 @@ def _check_thresholds(
     """Two thresholds, each finite and at or above ``minimum``, the first not
     above the second (a bounds threshold above the peak threshold disables
     the peak test)."""
+    _check_number(**{low_name: low, high_name: high})
     for name, value in ((low_name, low), (high_name, high)):
         if not minimum <= value < np.inf:
             msg = f"{name} must be finite and at least {minimum}, got {value}."
@@ -380,6 +383,7 @@ def _check_thresholds(
 
 def _check_whole_number(name: str, value: float, minimum: int) -> None:
     """Raise unless ``value`` is a whole number at or above ``minimum``."""
+    _check_number(**{name: value})
     if not (np.isfinite(value) and value == int(value) and value >= minimum):
         msg = f"{name} must be a whole number of at least {minimum}, got {value}."
         raise ValueError(msg)
@@ -454,6 +458,7 @@ def _validate_duration_limits(
     )
     if maximum_duration is None:
         return
+    _check_number(**{maximum_name: maximum_duration})
     if not 0 < maximum_duration < np.inf:
         msg = (
             f"{maximum_name} must be positive and finite, or None for no ceiling; "

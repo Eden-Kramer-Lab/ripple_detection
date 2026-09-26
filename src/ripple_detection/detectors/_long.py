@@ -11,6 +11,8 @@ from scipy.ndimage import convolve1d
 from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import (
     FloatArray,
+    _check_non_negative,
+    _check_number,
     _generator,
     _is_immobile_at_endpoints,
     _unit_area_gaussian,
@@ -87,6 +89,61 @@ def _one_channel(name: str, signal: ArrayLike, hint: str = "") -> FloatArray:
         )
         raise ValueError(msg)
     return array
+
+
+def _check_long_parameters(
+    *,
+    speed_threshold: float,
+    sharp_wave_percentile: float,
+    ripple_power_percentile: float,
+    window_size: float,
+    local_window: float,
+    sharp_wave_thresholds: tuple[float, float],
+    ripple_thresholds: tuple[float, float],
+    minimum_separation: float,
+    minimum_sharp_wave_duration: float,
+    maximum_sharp_wave_duration: float,
+    minimum_ripple_duration: float,
+) -> None:
+    """The checks on ``Long_sharp_wave_ripple_detector``'s tunables that need
+    neither data nor the sampling rate (the bands need the rate).
+    ``DetectorSpec.check_parameters`` runs them too."""
+    _check_non_negative(speed_threshold=speed_threshold)
+    _validate_duration_limits(
+        minimum_sharp_wave_duration,
+        maximum_sharp_wave_duration,
+        names=("minimum_sharp_wave_duration", "maximum_sharp_wave_duration"),
+    )
+    _validate_duration_limits(
+        minimum_ripple_duration, None, names=("minimum_ripple_duration", "")
+    )
+    _check_thresholds(
+        "sharp_wave_thresholds[0]",
+        sharp_wave_thresholds[0],
+        "sharp_wave_thresholds[1]",
+        sharp_wave_thresholds[1],
+    )
+    _check_thresholds(
+        "ripple_thresholds[0]",
+        ripple_thresholds[0],
+        "ripple_thresholds[1]",
+        ripple_thresholds[1],
+    )
+    for name, percentile in (
+        ("sharp_wave_percentile", sharp_wave_percentile),
+        ("ripple_power_percentile", ripple_power_percentile),
+    ):
+        _check_number(**{name: percentile})
+        if not 0 < percentile < 100:
+            msg = f"{name} must lie in (0, 100), got {percentile}."
+            raise ValueError(msg)
+    _check_positive(window_size=window_size, local_window=local_window)
+    _check_seconds(
+        MAXIMUM_PLAUSIBLE_MINIMUM,
+        "is longer than any sharp-wave ripple",
+        window_size=window_size,
+    )
+    _check_gap(minimum_separation=minimum_separation)
 
 
 @explain_call_errors
@@ -260,13 +317,18 @@ def Long_sharp_wave_ripple_detector(
     (True, True)
 
     """
-    _validate_duration_limits(
-        minimum_sharp_wave_duration,
-        maximum_sharp_wave_duration,
-        names=("minimum_sharp_wave_duration", "maximum_sharp_wave_duration"),
-    )
-    _validate_duration_limits(
-        minimum_ripple_duration, None, names=("minimum_ripple_duration", "")
+    _check_long_parameters(
+        speed_threshold=speed_threshold,
+        sharp_wave_percentile=sharp_wave_percentile,
+        ripple_power_percentile=ripple_power_percentile,
+        window_size=window_size,
+        local_window=local_window,
+        sharp_wave_thresholds=sharp_wave_thresholds,
+        ripple_thresholds=ripple_thresholds,
+        minimum_separation=minimum_separation,
+        minimum_sharp_wave_duration=minimum_sharp_wave_duration,
+        maximum_sharp_wave_duration=maximum_sharp_wave_duration,
+        minimum_ripple_duration=minimum_ripple_duration,
     )
     ripple_channel = _one_channel(
         "raw_lfp",
@@ -286,32 +348,6 @@ def Long_sharp_wave_ripple_detector(
     )
     _check_band("sharp_wave_band", sharp_wave_band, sampling_frequency)
     _check_band("ripple_band", ripple_band, sampling_frequency)
-    _check_thresholds(
-        "sharp_wave_thresholds[0]",
-        sharp_wave_thresholds[0],
-        "sharp_wave_thresholds[1]",
-        sharp_wave_thresholds[1],
-    )
-    _check_thresholds(
-        "ripple_thresholds[0]",
-        ripple_thresholds[0],
-        "ripple_thresholds[1]",
-        ripple_thresholds[1],
-    )
-    for name, percentile in (
-        ("sharp_wave_percentile", sharp_wave_percentile),
-        ("ripple_power_percentile", ripple_power_percentile),
-    ):
-        if not 0 < percentile < 100:
-            msg = f"{name} must lie in (0, 100), got {percentile}."
-            raise ValueError(msg)
-    _check_positive(window_size=window_size, local_window=local_window)
-    _check_seconds(
-        MAXIMUM_PLAUSIBLE_MINIMUM,
-        "is longer than any sharp-wave ripple",
-        window_size=window_size,
-    )
-    _check_gap(minimum_separation=minimum_separation)
     n_time = len(time)
     is_valid, blocks = _valid_blocks(time, lfp)
     _reject_flat_channels(lfp[:, :1], blocks, "raw_lfp")
