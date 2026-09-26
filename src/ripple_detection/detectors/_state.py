@@ -192,9 +192,10 @@ def state_intervals(
 
     For state rules such as "theta/delta ratio below 2", "speed below 1 cm/s
     for at least 5 minutes" or "non-REM epochs longer than 120 s, gaps under
-    1 s bridged". The intervals feed :func:`require_overlap` or
-    :func:`exclude_overlap` to keep or drop events, or a detector's
-    ``normalization_mask`` through ``(time >= start) & (time <= end)``.
+    1 s bridged". The intervals feed :func:`require_inside` (events wholly
+    inside one), :func:`require_overlap` or :func:`exclude_overlap` to keep or
+    drop events, or a detector's ``normalization_mask`` through
+    :func:`intervals_to_mask`; :func:`intersect_intervals` combines two states.
 
     Parameters
     ----------

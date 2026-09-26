@@ -521,6 +521,22 @@ class TestTimeOrigin:
             origin,
         )
 
+        # every other event as an interval, read off each clock's own samples,
+        # which round apart from the moved events by a few ulps
+        own = index[::2]
+        kept = rd.require_inside(events, time[own])
+        assert len(kept) == len(own)
+        assert_times_shifted(rd.require_inside(moved, shifted[own]), kept, origin)
+        np.testing.assert_array_equal(
+            rd.intervals_to_mask(shifted, shifted[own]), rd.intervals_to_mask(time, time[own])
+        )
+        later = np.minimum(index + 3, len(time) - 1)[::2]
+        assert_times_shifted(
+            rd.intersect_intervals(shifted[own], shifted[later]),
+            rd.intersect_intervals(time[own], time[later]),
+            origin,
+        )
+
         speed = moving_session.speed
         for rule in ("endpoints", "all", "mean", "median"):
             assert_times_shifted(

@@ -2477,6 +2477,227 @@ def require_times_inside(
     return events[keep]
 
 
+def _bound_tolerance(*arrays: FloatArray) -> float:
+    """How far a bound may round from a timestamp and still count as equal to
+    it: a few ulps of the largest finite magnitude among ``arrays`` (2.4e-7 s
+    at a Unix time), and at least 1e-9 s."""
+    largest = max(
+        (float(np.max(np.abs(array[np.isfinite(array)]), initial=0.0)) for array in arrays),
+        default=0.0,
+    )
+    return max(1e-9, 4 * float(np.spacing(largest)))
+
+
+def _checked_intervals(intervals: ArrayLike | pd.DataFrame, name: str) -> FloatArray:
+    """``[start, end]`` rows that are finite, each start no later than its
+    end, sorted by start and disjoint: each start after the previous end."""
+    bounds = _event_bounds(intervals)
+    bad = ~np.isfinite(bounds).all(axis=1) | (bounds[:, 1] < bounds[:, 0])
+    if bad.any():
+        row = int(np.flatnonzero(bad)[0])
+        msg = (
+            f"{name} row {row} is {bounds[row].tolist()}: every start and end must be "
+            "finite, with the start no later than the end."
+        )
+        raise ValueError(msg)
+    if np.any(np.diff(bounds[:, 0]) < 0):
+        msg = f"{name} must be sorted by start time: {name}[np.argsort({name}[:, 0])]."
+        raise ValueError(msg)
+    clash = np.flatnonzero(bounds[1:, 0] <= bounds[:-1, 1])
+    if clash.size:
+        row = int(clash[0])
+        msg = (
+            f"{name} rows {row} and {row + 1} overlap or touch "
+            f"({bounds[row].tolist()}, {bounds[row + 1].tolist()}); the intervals must be "
+            f"disjoint. Take their union first: merge_close_events({name})."
+        )
+        raise ValueError(msg)
+    return bounds
+
+
+def intervals_to_mask(time: ArrayLike, intervals: ArrayLike | pd.DataFrame) -> BoolArray:
+    """Which samples lie inside any of a set of intervals, bounds included.
+
+    For a detector's ``normalization_mask`` or any per-sample selection from
+    intervals such as :func:`state_intervals`' output: "normalize over the
+    sleep epochs" is ``normalization_mask=intervals_to_mask(time, sleep)``.
+
+    Parameters
+    ----------
+    time : array_like, shape (n_time,)
+        Sample timestamps, in any order. NaN is in no interval.
+    intervals : array_like, shape (n_intervals, 2), or pd.DataFrame
+        ``[start, end]`` per interval, sorted by start and disjoint, or a
+        DataFrame with ``start_time`` and ``end_time`` columns. A sample
+        within a few ulps of the largest timestamp of a bound counts as on
+        it, so a bound that rounded off its sample still holds it.
+
+    Returns
+    -------
+    mask : ndarray of bool, shape (n_time,)
+        True where ``start <= time <= end`` for some interval.
+
+    Raises
+    ------
+    ValueError
+        If `time` is not 1-D, or `intervals` is not ``(n_intervals, 2)``,
+        holds a bound that is not finite or an interval that ends before it
+        starts, or is not sorted and disjoint (``merge_close_events`` gives
+        the union of overlapping intervals).
+
+    See Also
+    --------
+    intersect_intervals : Intervals in both of two sets.
+    require_inside : Events wholly inside one interval.
+
+    Examples
+    --------
+    >>> time = np.arange(10.0)
+    >>> intervals_to_mask(time, [(1.0, 3.0), (7.0, 8.0)]).astype(int)
+    array([0, 1, 1, 1, 0, 0, 0, 1, 1, 0])
+
+    """
+    time = np.asarray(time, dtype=float)
+    if time.ndim != 1:
+        msg = f"time must be 1-D, one timestamp per sample; got shape {time.shape}."
+        raise ValueError(msg)
+    bounds = _checked_intervals(intervals, "intervals")
+    if not len(bounds):
+        return np.zeros(time.shape, dtype=bool)
+    tolerance = _bound_tolerance(time, bounds)
+    which = np.searchsorted(bounds[:, 0], time + tolerance, side="right") - 1
+    inside = (which >= 0) & (time <= bounds[np.clip(which, 0, None), 1] + tolerance)
+    return np.asarray(inside, dtype=bool)
+
+
+def require_inside(
+    event_times: ArrayLike | pd.DataFrame,
+    intervals: ArrayLike | pd.DataFrame,
+) -> FloatArray | pd.DataFrame:
+    """Keep the events that lie wholly inside one interval, bounds included.
+
+    For state rules such as "ripples during immobility periods" or "events
+    within sleep epochs": ``require_inside(ripples, state_intervals(speed,
+    time, 4.0))``. :func:`require_overlap` keeps events that merely touch an
+    interval's inside; this keeps only those that start and end in the same
+    interval.
+
+    Parameters
+    ----------
+    event_times : array_like, shape (n_events, 2), or pd.DataFrame
+        ``[start_time, end_time]`` per event, or a detector's DataFrame,
+        returned filtered with every column and its index.
+    intervals : array_like, shape (n_intervals, 2), or pd.DataFrame
+        ``[start, end]`` per interval, sorted by start and disjoint. A bound
+        within a few ulps of the largest timestamp of an interval's edge
+        counts as on it, so bounds on a Unix clock that rounded apart still
+        match.
+
+    Returns
+    -------
+    kept_events : ndarray, shape (n_kept, 2), or pd.DataFrame
+        The events inside an interval, in the input's type and order.
+
+    Raises
+    ------
+    ValueError
+        If an event or an interval holds a bound that is not finite or ends
+        before it starts, or the intervals are not sorted and disjoint.
+
+    See Also
+    --------
+    intervals_to_mask : The samples inside the intervals.
+
+    Examples
+    --------
+    >>> events = np.array([(1.0, 2.0), (2.5, 3.5), (6.0, 7.0)])
+    >>> still = np.array([(0.0, 3.0), (5.0, 8.0)])
+    >>> require_inside(events, still)
+    array([[1., 2.],
+           [6., 7.]])
+
+    """
+    events = _checked_bounds(event_times, "event_times")
+    bounds = _checked_intervals(intervals, "intervals")
+    if not (len(events) and len(bounds)):
+        keep = np.zeros(len(events), dtype=bool)
+    else:
+        tolerance = _bound_tolerance(events, bounds)
+        which = np.searchsorted(bounds[:, 0], events[:, 0] + tolerance, side="right") - 1
+        keep = (which >= 0) & (events[:, 1] <= bounds[np.clip(which, 0, None), 1] + tolerance)
+    if isinstance(event_times, pd.DataFrame):
+        return event_times.iloc[np.flatnonzero(keep)].copy()
+    return events[keep]
+
+
+def _checked_bounds(event_times: ArrayLike | pd.DataFrame, name: str) -> FloatArray:
+    """Event bounds that are finite, each start no later than its end."""
+    events = _event_bounds(event_times)
+    bad = ~np.isfinite(events).all(axis=1) | (events[:, 1] < events[:, 0])
+    if bad.any():
+        row = int(np.flatnonzero(bad)[0])
+        msg = (
+            f"{name} row {row} is {events[row].tolist()}: every start and end must be "
+            "finite, with the start no later than the end."
+        )
+        raise ValueError(msg)
+    return events
+
+
+def intersect_intervals(
+    intervals: ArrayLike | pd.DataFrame, other_intervals: ArrayLike | pd.DataFrame
+) -> FloatArray:
+    """The intervals in both of two sets, for a conjunction of states.
+
+    "Low theta and still" is ``intersect_intervals(state_intervals(ratio,
+    time, 2.0), state_intervals(speed, time, 4.0))``. Bounds are inclusive,
+    so ``intervals_to_mask`` of the result equals the ``&`` of the two masks,
+    and intervals that share only an endpoint give a zero-length interval at
+    it.
+
+    Parameters
+    ----------
+    intervals, other_intervals : array_like, shape (n, 2), or pd.DataFrame
+        ``[start, end]`` per interval, each set sorted by start and disjoint.
+
+    Returns
+    -------
+    intersection : ndarray, shape (n_intersections, 2)
+        ``[max(starts), min(ends)]`` for every pair that meets, sorted by
+        start. Shape ``(0, 2)`` when none do.
+
+    Raises
+    ------
+    ValueError
+        If either set holds a bound that is not finite or an interval that
+        ends before it starts, or is not sorted and disjoint.
+
+    Examples
+    --------
+    >>> low_theta = np.array([(0.0, 5.0), (10.0, 15.0)])
+    >>> still = np.array([(3.0, 12.0)])
+    >>> intersect_intervals(low_theta, still)
+    array([[ 3.,  5.],
+           [10., 12.]])
+
+    """
+    first_set = _checked_intervals(intervals, "intervals")
+    second_set = _checked_intervals(other_intervals, "other_intervals")
+    if not (len(first_set) and len(second_set)):
+        return np.empty((0, 2))
+    # both sets are sorted and disjoint, so their ends are sorted too, and
+    # the intervals of the second meeting one of the first form a run
+    first = np.searchsorted(second_set[:, 1], first_set[:, 0], side="left")
+    last = np.searchsorted(second_set[:, 0], first_set[:, 1], side="right")
+    counts = np.maximum(last - first, 0)
+    run_offsets = np.cumsum(counts) - counts
+    which_first = np.repeat(np.arange(len(first_set)), counts)
+    which_second = np.repeat(first - run_offsets, counts) + np.arange(counts.sum())
+    starts = np.maximum(first_set[which_first, 0], second_set[which_second, 0])
+    ends = np.minimum(first_set[which_first, 1], second_set[which_second, 1])
+    return np.column_stack([starts, ends]).reshape(-1, 2)
+
+
 def windows_around_times(
     times: ArrayLike,
     before: float,

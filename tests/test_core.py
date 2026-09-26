@@ -21,6 +21,8 @@ from ripple_detection.core import (
     get_envelope,
     get_multiunit_population_firing_rate,
     histogram_minimum_threshold,
+    intersect_intervals,
+    intervals_to_mask,
     merge_close_events,
     merge_overlapping_ranges,
     merge_overlapping_ranges_track_participation,
@@ -29,6 +31,7 @@ from ripple_detection.core import (
     noise_threshold_diagnostics,
     normalize_signal,
     normalize_signal_manually,
+    require_inside,
     require_isolation,
     require_overlap,
     require_times_inside,
@@ -1603,6 +1606,141 @@ class TestRequireTimesInside:
     def test_nan_times_raise(self):
         with pytest.raises(ValueError, match="NaN or infinity"):
             require_times_inside(self.EVENTS, [0.1, np.nan])
+
+
+ORIGINS = [0.0, 1.7e9]  # a clock from zero; a Unix time
+
+
+def _random_intervals(rng, time, n_intervals):
+    """Sorted, disjoint intervals whose bounds are samples of ``time``."""
+    edges = np.sort(rng.choice(len(time), 2 * n_intervals, replace=False))
+    return time[edges.reshape(-1, 2)]
+
+
+class TestIntervalsToMask:
+    def test_inclusive_bounds(self):
+        time = np.arange(10.0)
+        mask = intervals_to_mask(time, [(1.0, 3.0), (5.0, 5.0), (7.0, 9.0)])
+        expected = np.array([0, 1, 1, 1, 0, 1, 0, 1, 1, 1], dtype=bool)
+        np.testing.assert_array_equal(mask, expected)
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_matches_the_union_of_per_interval_masks(self, origin):
+        rng = np.random.default_rng(0)
+        time = origin + np.arange(5000) / 1500
+        intervals = _random_intervals(rng, time, 20)
+        expected = np.zeros(len(time), dtype=bool)
+        for start, end in intervals:
+            expected |= (time >= start) & (time <= end)
+        np.testing.assert_array_equal(intervals_to_mask(time, intervals), expected)
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_a_bound_an_ulp_off_a_sample_still_holds_it(self, origin):
+        time = origin + np.arange(3000) / 1500
+        start = np.nextafter(time[100], np.inf)
+        end = np.nextafter(time[200], -np.inf)
+        mask = intervals_to_mask(time, [(start, end)])
+        assert np.flatnonzero(mask).tolist() == list(range(100, 201))
+
+    def test_a_detector_frame_and_no_intervals(self):
+        time = np.arange(10.0)
+        frame = pd.DataFrame({"start_time": [2.0], "end_time": [4.0]})
+        assert np.flatnonzero(intervals_to_mask(time, frame)).tolist() == [2, 3, 4]
+        assert not intervals_to_mask(time, np.empty((0, 2))).any()
+
+    @pytest.mark.parametrize(
+        ("intervals", "match"),
+        [
+            ([(5.0, 6.0), (1.0, 2.0)], "sorted"),
+            ([(1.0, 4.0), (3.0, 6.0)], "overlap"),
+            ([(1.0, 3.0), (3.0, 6.0)], "overlap"),
+            ([(2.0, 1.0)], "start no later than the end"),
+            ([(1.0, np.nan)], "finite"),
+            ([1.0, 2.0, 3.0], r"\(n_events, 2\)"),
+        ],
+    )
+    def test_invalid_intervals_raise(self, intervals, match):
+        with pytest.raises(ValueError, match=match):
+            intervals_to_mask(np.arange(10.0), intervals)
+
+
+class TestRequireInside:
+    INTERVALS = np.array([(0.0, 3.0), (5.0, 8.0)])
+
+    def test_keeps_events_wholly_inside_one_interval(self):
+        events = np.array([(1.0, 2.0), (2.5, 3.5), (6.0, 7.0), (0.0, 3.0), (4.0, 4.5)])
+        np.testing.assert_array_equal(
+            require_inside(events, self.INTERVALS), events[[0, 2, 3]]
+        )
+
+    def test_an_event_across_two_intervals_is_in_neither(self):
+        intervals = np.array([(0.0, 1.0), (1.2, 2.0)])
+        events = np.array([(0.5, 1.5), (0.5, 1.0), (1.2, 1.5)])
+        np.testing.assert_array_equal(require_inside(events, intervals), events[1:])
+
+    def test_a_frame_keeps_its_columns_and_index(self):
+        frame = pd.DataFrame(
+            {"start_time": [1.0, 4.0, 6.0], "end_time": [2.0, 4.5, 7.0], "x": [1, 2, 3]},
+            index=pd.Index([1, 2, 3], name="event_number"),
+        )
+        kept = require_inside(frame, self.INTERVALS)
+        pd.testing.assert_frame_equal(kept, frame.loc[[1, 3]])
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_bounds_an_ulp_outside_are_inside(self, origin):
+        time = origin + np.arange(3000) / 1500
+        intervals = np.array([(time[100], time[200])])
+        events = np.array(
+            [
+                (np.nextafter(time[100], -np.inf), np.nextafter(time[200], np.inf)),
+                (time[99], time[150]),
+            ]
+        )
+        np.testing.assert_array_equal(require_inside(events, intervals), events[:1])
+
+    def test_no_events_or_no_intervals_keep_nothing(self):
+        assert require_inside(np.empty((0, 2)), self.INTERVALS).shape == (0, 2)
+        assert require_inside(np.array([(1.0, 2.0)]), np.empty((0, 2))).shape == (0, 2)
+
+    def test_an_event_ending_before_it_starts_raises(self):
+        with pytest.raises(ValueError, match="start no later than the end"):
+            require_inside(np.array([(2.0, 1.0)]), self.INTERVALS)
+
+
+class TestIntersectIntervals:
+    def test_pairwise_intersections(self):
+        low_theta = np.array([(0.0, 5.0), (10.0, 15.0), (20.0, 21.0)])
+        still = np.array([(3.0, 12.0), (14.0, 14.5)])
+        np.testing.assert_array_equal(
+            intersect_intervals(low_theta, still),
+            [(3.0, 5.0), (10.0, 12.0), (14.0, 14.5)],
+        )
+
+    def test_touching_intervals_share_their_one_point(self):
+        np.testing.assert_array_equal(
+            intersect_intervals([(0.0, 1.0)], [(1.0, 2.0)]), [(1.0, 1.0)]
+        )
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_its_mask_is_the_and_of_the_masks(self, origin):
+        rng = np.random.default_rng(1)
+        time = origin + np.arange(5000) / 1500
+        a = _random_intervals(rng, time, 15)
+        b = _random_intervals(rng, time, 25)
+        both = intersect_intervals(a, b)
+        np.testing.assert_array_equal(
+            intervals_to_mask(time, both),
+            intervals_to_mask(time, a) & intervals_to_mask(time, b),
+        )
+        assert np.all(np.diff(both[:, 0]) >= 0)
+
+    def test_either_empty_gives_none(self):
+        assert intersect_intervals(np.empty((0, 2)), [(0.0, 1.0)]).shape == (0, 2)
+        assert intersect_intervals([(0.0, 1.0)], []).shape == (0, 2)
+
+    def test_overlapping_input_raises(self):
+        with pytest.raises(ValueError, match="overlap"):
+            intersect_intervals([(0.0, 2.0), (1.0, 3.0)], [(0.0, 1.0)])
 
 
 class TestWindowsAroundTimes:
