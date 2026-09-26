@@ -241,3 +241,9 @@ def test_walkthrough_bins_only_spikes_within_recorded_samples():
     assert counts.sum() == len(inside)
     assert counts[-1, 0] == 1  # only the spike at 2.9994 s, not those after the end
     assert counts[999, 0] == 1  # only 0.999 s, not the spike in the gap at 1.5 s
+    # A sample's period runs to the next timestamp, which rounding at a Unix
+    # origin can put past one median step: spikes just before it still count.
+    continuous = origin + np.arange(15_000) / 1500
+    edge = np.nextafter(continuous[1:], -np.inf)
+    counts = walkthrough.spike_counts(continuous, [edge])
+    np.testing.assert_array_equal(counts[:-1, 0], 1)

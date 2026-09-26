@@ -88,16 +88,23 @@ def spike_counts(time: np.ndarray, spike_times: list[np.ndarray]) -> np.ndarray:
     """Count each unit's spikes per LFP sample, shape (n_time, n_units).
 
     A spike belongs to the sample at or before it, and only while it falls
-    within that sample's period: spikes before the first sample, after the
-    last sample's period, or inside a gap in the timestamps (spike sorting
-    often covers more than the selected LFP) are not counted.
+    within that sample's period: up to the next timestamp, or one median step
+    across a gap (a step over 1.5 median steps, the detectors' rule) and after
+    the last sample. Spikes before the first sample, after the last sample's
+    period, or inside a gap (spike sorting often covers more than the selected
+    LFP) are not counted.
     """
-    sample_period = np.median(np.diff(time))
+    step = np.diff(time)
+    sample_period = np.median(step)
+    period_end = np.append(
+        np.where(step <= 1.5 * sample_period, time[1:], time[:-1] + sample_period),
+        time[-1] + sample_period,
+    )
     counts = np.zeros((len(time), len(spike_times)), dtype=np.uint8)
     for unit, times in enumerate(spike_times):
         sample = np.searchsorted(time, times, side="right") - 1
         recorded = sample >= 0
-        recorded[recorded] = times[recorded] < time[sample[recorded]] + sample_period
+        recorded[recorded] = times[recorded] < period_end[sample[recorded]]
         np.add.at(counts[:, unit], sample[recorded], 1)
     return counts
 
