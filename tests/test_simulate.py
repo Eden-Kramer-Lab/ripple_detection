@@ -1398,7 +1398,9 @@ class TestDrawNetworkEvents:
         bursts = spans[spans.expression == "burst"].set_index("event_id")
         np.testing.assert_allclose(bursts.start, ripples.start.min(), rtol=0, atol=1e-12)
         np.testing.assert_allclose(bursts.end, ripples.end.max(), rtol=0, atol=1e-12)
-        earlier_ends_last = ripples.apply(lambda r: r.end.iloc[:-1].max() > r.end.iloc[-1])
+        earlier_ends_last = ripples["end"].apply(
+            lambda end: end.iloc[:-1].max() > end.iloc[-1]
+        )
         assert earlier_ends_last.any()
 
     def test_rate(self):
