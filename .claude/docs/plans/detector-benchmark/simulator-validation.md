@@ -30,6 +30,11 @@ gated. Targets from a state other than the reference's (awake immobility) have `
 "none" and are reported beside it. `lower` and `upper` already include the allowance for
 sampling and figure-reading error stated in each `rationale`; a check passes when its statistic,
 pooled over the validation replicates, lies within them.
+"Noise-free" measurements are taken on a rendering minus the matched noise-only rendering (the
+same seed and options with an empty event table; the fixed substreams make the noise identical),
+of tables with isolated components where overlap would matter. Some targets check inputs more
+than rendering (the doublet spacing, the correlations, the sharp-wave width, the interneuron
+gain); they still confirm that the rendered session carries what the table states.
 
 Use the source's measurement convention. The plan's nominal duration is `3 * (rise_sigma +
 decay_sigma)`: at envelope power 2, its half-maximum duration is only about 0.392 times that

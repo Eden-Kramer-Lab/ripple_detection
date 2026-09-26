@@ -55,7 +55,8 @@ ripples has five (two ripples, two sharp waves, one burst).
 
 Invariants (do not weaken):
 
-- Sorted by (`event_id`, `expression`, `component`); index is a RangeIndex.
+- Sorted by `event_id`, then `expression` in `EXPRESSIONS` order (ripple, sharp_wave, burst;
+  not lexical), then `component`; index is a RangeIndex.
 - Every component's ±4-sigma span lies inside the recording, so benchmark truth windows need no clipping.
 - The ±3/4/8-sigma terminology denotes nominal side scales at both envelope powers. Fractional
   truth uses the power-specific formula; containment is guaranteed for benchmark fractions

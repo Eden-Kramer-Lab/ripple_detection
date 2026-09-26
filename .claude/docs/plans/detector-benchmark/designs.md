@@ -49,7 +49,7 @@ six alternative model conditions and validation report are specified in
 | Ripple span (±3 sigma) | (0.03, 0.15) s | Ripples 30-150 ms, skewed (Buzsáki 2015, "Definition of Pathological Events"), convention unstated; a nominal span, not a threshold-crossing duration. |
 | Ripple skew | fraction of the span after the peak (0.5, 0.7) | Assumed (decay slower than rise). |
 | Ripple frequency at onset | (160, 220) Hz | Ripples 140-220 Hz (Sullivan et al. 2011, doi:10.1523/JNEUROSCI.0294-11.2011, abstract); modal per-event spectral peaks 167/177/187 Hz in sleep/quiet waking/maze immobility (Buzsáki 2015, Fig. 4C caption). "Onset" is the model's convention. |
-| Ripple chirp | decline over the span (0, 30) Hz | Median decline of about 15-20 Hz from shortly before the envelope peak (Nguyen et al. 2009, Results and Fig. 2C, read from figure); about 25% of ripples rise instead (Discussion), which the model omits (assumed). |
+| Ripple chirp | decline over the span (0, 30) Hz | Deceleration supported (Nguyen et al. 2009, Results; Sullivan et al. 2011, Results), but recorded ripples fall about 15-20 Hz over some 15 ms from shortly before the peak (Nguyen, Fig. 2C, read from figure), where this linear chirp falls about 2.5 Hz over those 15 ms; about 25% rise instead (Discussion). Both are recorded limitations. |
 | Ripple SNR | swr and doublet (2.5, 6.0); weak_ripple (1.2, 2.2) | Assumed; `simulate_session`'s 4.0 lies inside. |
 | Sharp wave | span (0.04, 0.12) s, symmetric; amplitude (3, 8) signal units; centre lag N(0, 0.01 s) from the ripple | Amplitude after `literature_recipes.py:68` (6, above delta); span `simulate_session`'s 0.08 inside; lag assumed. |
 | Burst | span = ripple span × (1.0, 1.5); centre lag N(0, 0.01 s); place-cell gain 40; participation swr/doublet (0.2, 0.6), weak_ripple (0.02, 0.1), burst_only (0.2, 0.6) with span (0.05, 0.3) s | Gain `literature_recipes.py:65`. Participation is a latent probability, assumed; observed: about 10% of CA1 pyramidal cells fire in a 50 ms window, 0-40% by event (Ylinen et al. 1995, doi:10.1523/JNEUROSCI.15-01-00030.1995, p. 35), about 30% in the largest events (Csicsvari et al. 2000, doi:10.1016/S0896-6273(00)00135-5, Fig. 3C, read from figure). Rest assumed. |
@@ -124,8 +124,11 @@ Algorithm:
    to recording time (draw `n ~ Poisson(rate * rest_duration)`, then `n` sorted uniform positions
    in concatenated rest time).
 3. Types: `rng.choice(EVENT_TYPES, size=n, p=...)`, the probabilities normalized.
-4. Per event, draw its components (the order of draws is fixed and documented in the docstring:
-   types, then per event in time order shared strength, ripple(s), sharp wave(s), burst):
+4. Per event, draw its components. The order of draws is fixed and documented in the docstring:
+   types, then an `(n_events, 15)` array of standard normals and an `(n_events, 18)` array of
+   uniforms, one row per event in time order. Every event draws the same block whatever its
+   type (slots for up to three ripples and sharp waves), so changing one parameter or the type
+   mix moves no other event's values:
    Use the marginal-preserving correlated draws in
    [coupled event strengths](simulator-validation.md#coupled-event-strengths) for SNR, onset
    frequency, sharp-wave amplitude and participation; rho=0 retains independent marginals.
