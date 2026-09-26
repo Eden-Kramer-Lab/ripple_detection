@@ -46,6 +46,9 @@ jobs:
         uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482  # v0.6.4
         with:
           persona: regular
+          # report in the log and fail on findings; uploading to code scanning
+          # would need security-events: write, which this workflow does not grant
+          advanced-security: false
 
   lockfile:
     name: uv.lock is current
