@@ -203,13 +203,18 @@ def _explain(
         )
     if len(args) > len(positional) and name in TOO_MANY_POSITIONAL_1X:
         notes.append(TOO_MANY_POSITIONAL_1X[name])
+    takes_positionally = (
+        f"{name} takes {', '.join(item.name for item in positional)} positionally"
+    )
+    if len(args) > len(positional) and not keyword_only and positional:
+        notes.append(f"{takes_positionally}.")
     if len(args) > len(positional) and keyword_only:
         extra = args[len(positional) :]
         order = POSITIONAL_ORDER_1X.get(name)
         if order is None:
             notes.append(
-                f"Every argument after {positional[-1].name} is keyword-only; pass the "
-                f"{len(extra)} extra value(s) by name."
+                f"{takes_positionally}; every argument after {positional[-1].name} is "
+                f"keyword-only, so pass the {len(extra)} extra value(s) by name."
             )
         else:
             named = ", ".join(
@@ -236,10 +241,7 @@ def _explain(
         if (name, parameter) in REQUIRED_SINCE_2
     ]
     if missing:
-        notes.extend(
-            since_2
-            or [f"{name} takes {', '.join(item.name for item in positional)} positionally."]
-        )
+        notes.extend(since_2 or [f"{takes_positionally}."])
     return f"{name}(): {error}." + (f" {' '.join(notes)}" if notes else "")
 
 

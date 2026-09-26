@@ -270,6 +270,20 @@ class TestCallsWrittenFor1x:
             in str(raised.value)
         )
 
+    def test_too_many_positional_arguments_name_the_positional_ones(self, inputs):
+        """The silence detector takes no speed; a call that passes one
+        shifts the rate out of its slot, and the message says what the
+        positions are."""
+        time, _, speed = inputs
+        with pytest.raises(TypeError) as raised:
+            ripple_detection.detect_silence_bounded_events(
+                time, np.zeros((len(time), 3)), speed, 1500
+            )
+        assert (
+            "detect_silence_bounded_events takes time, multiunit, sampling_frequency "
+            "positionally" in str(raised.value)
+        )
+
     def test_normalize_signal_with_time(self, inputs):
         time, lfps, _ = inputs
         with pytest.raises(TypeError, match="no longer takes time"):
