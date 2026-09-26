@@ -234,7 +234,7 @@ def _restrict_to_slow(
 def detect_events_from_trace(
     time: ArrayLike,
     trace: ArrayLike,
-    speed: ArrayLike,
+    speed: ArrayLike | None,
     sampling_frequency: float,
     *,
     threshold: float | ArrayLike = 2.0,
@@ -273,10 +273,12 @@ def detect_events_from_trace(
         tetrodes of the ripple-band envelope. NaN or infinity marks a missing
         sample: nothing is smoothed, normalized, thresholded or merged across
         it, and no event spans it.
-    speed : array_like, shape (n_time,)
+    speed : array_like, shape (n_time,), or None
         The animal's speed in **cm/s**. NaN is an unknown speed, which splits
         nothing; ``speed_rule`` says how it is treated (``'restrict'`` treats
-        it as not slow).
+        it as not slow). None is no speed recorded, unknown everywhere,
+        allowed only with ``speed_threshold=np.inf``; the speed columns are
+        then NaN.
     sampling_frequency : float
         Sampling rate in Hz.
     threshold : float or array_like of shape (n_time,), optional
@@ -367,7 +369,8 @@ def detect_events_from_trace(
     Raises
     ------
     ValueError
-        If the trace is not one value per sample, the lengths differ, a
+        If ``speed`` is None while ``speed_threshold`` is finite, the trace
+        is not one value per sample, the lengths differ, a
         threshold array is not one value per sample, ``bound_threshold``
         exceeds ``threshold``, fallback levels are given without
         ``bound_search_window``, a choice is not one of
@@ -429,6 +432,15 @@ def detect_events_from_trace(
         )
         raise ValueError(msg)
 
+    if speed is None:
+        if not np.isposinf(speed_threshold):
+            msg = (
+                f"speed is None, so no event can be tested against speed_threshold "
+                f"({speed_threshold} cm/s). Pass the speed, or speed_threshold=np.inf to "
+                "detect without a speed rule."
+            )
+            raise ValueError(msg)
+        speed = np.full(np.shape(time)[:1], np.nan)
     time, values, speed = _validate_detector_inputs(
         time, _one_trace(trace), speed, sampling_frequency, speed_threshold
     )

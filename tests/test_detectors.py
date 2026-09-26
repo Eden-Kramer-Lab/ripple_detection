@@ -4821,6 +4821,34 @@ class TestDetectEventsFromTrace:
     def _time(self, n_time):
         return np.arange(n_time) / self.FS
 
+    def test_no_speed_with_the_speed_rule_off(self):
+        """speed=None is no speed recorded: allowed when np.inf turns the rule
+        off, giving the events of any speed with unknown speed statistics."""
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(5000)
+        trace = self._bumps(5000, [1.0, 3.0], [0.03, 0.03])
+        without = detect_events_from_trace(
+            time, trace, None, self.FS, speed_threshold=np.inf, minimum_duration=0.0
+        )
+        with_speed = detect_events_from_trace(
+            time, trace, np.full(5000, 2.0), self.FS, speed_threshold=np.inf,
+            minimum_duration=0.0,
+        )  # fmt: skip
+        assert len(without) == 2
+        pd.testing.assert_frame_equal(
+            without[["start_time", "end_time", "peak_time"]],
+            with_speed[["start_time", "end_time", "peak_time"]],
+        )
+        assert without.speed_at_start.isna().all()
+
+    def test_no_speed_with_the_speed_rule_on_raises(self):
+        from ripple_detection import detect_events_from_trace
+
+        time = self._time(5000)
+        with pytest.raises(ValueError, match=r"speed is None[\s\S]*speed_threshold=np\.inf"):
+            detect_events_from_trace(time, self._bumps(5000, [1.0], [0.03]), None, self.FS)
+
     def test_matches_kay_on_kays_trace(
         self, dual_lfp_with_ripples, time_3s, stationary_speed, sampling_frequency
     ):
