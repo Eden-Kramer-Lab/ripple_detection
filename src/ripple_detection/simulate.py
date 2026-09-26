@@ -8,17 +8,32 @@ with the ground truth, for testing detectors against known events.
 """
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import numpy as np
+import pandas as pd
 from numpy.typing import ArrayLike
 
 from ripple_detection._call_hints import explain_call_errors
-from ripple_detection.core import FloatArray, _generator, filter_ripple_band
+from ripple_detection.core import FloatArray, StrArray, _generator, filter_ripple_band
 
 RIPPLE_FREQUENCY = 200
 NoiseType = Literal["white", "pink", "brown"]
+
+EVENT_TYPES = ("swr", "weak_ripple", "burst_only", "ripple_doublet", "sharp_wave_only")
+"""The kinds of latent network event ``draw_network_events`` draws."""
+
+NON_EVENT_TYPES = ("spike_leakage", "emg", "fast_gamma", "theta_burst")
+"""The kinds of activity a detector should not report."""
+
+EXPRESSIONS = ("ripple", "sharp_wave", "burst")
+"""How a network event shows: a ripple in the pyramidal-layer LFP, a sharp wave
+in the stratum radiatum LFP, a population burst in the spikes."""
+
+UNIT_TYPES = ("place", "pyramidal", "interneuron")
+"""Unit labels in ``SimulatedSession.unit_types``; place units are pyramidal
+units with place fields."""
 
 
 def simulate_time(n_samples: int, sampling_frequency: float) -> FloatArray:
@@ -1090,9 +1105,73 @@ def simulate_theta_delta(
     return signal
 
 
+_EVENT_COLUMNS: dict[str, type | str] = {
+    "event_id": "int64",
+    "event_type": str,
+    "expression": str,
+    "component": "int64",
+    "center_time": "float64",
+    "rise_sigma": "float64",
+    "decay_sigma": "float64",
+    "envelope_power": "int64",
+    "amplitude": "float64",
+    "frequency_start": "float64",
+    "frequency_end": "float64",
+    "participation": "float64",
+    "n_participants": "int64",
+}
+_NON_EVENT_COLUMNS: dict[str, type | str] = {
+    "non_event_id": "int64",
+    "non_event_type": str,
+    "center_time": "float64",
+    "rise_sigma": "float64",
+    "decay_sigma": "float64",
+    "envelope_power": "int64",
+    "amplitude": "float64",
+    "frequency": "float64",
+    "snr_band_low": "float64",
+    "snr_band_high": "float64",
+    "channel": "int64",
+    "n_units": "int64",
+    "n_spikes": "int64",
+    "isi": "float64",
+}
+_RIPPLE_CHANNEL_COLUMNS: dict[str, type | str] = {
+    "event_id": "int64",
+    "component": "int64",
+    "channel": "int64",
+    "gain": "float64",
+    "delay_s": "float64",
+}
+
+
+def _table(columns: dict[str, type | str], values: dict[str, ArrayLike]) -> pd.DataFrame:
+    """A frame with exactly ``columns``, in order, cast to their dtypes, so an
+    empty table and a filled one agree under every pandas version (``str``
+    is ``object`` before pandas 3 and the string dtype from it)."""
+    frame = pd.DataFrame({name: np.asarray(values[name]) for name in columns})
+    return frame.astype(columns)
+
+
+def _empty_events() -> pd.DataFrame:
+    """The latent event table with no rows."""
+    return _table(_EVENT_COLUMNS, {name: [] for name in _EVENT_COLUMNS})
+
+
+def _empty_non_events() -> pd.DataFrame:
+    """The non-event table with no rows."""
+    return _table(_NON_EVENT_COLUMNS, {name: [] for name in _NON_EVENT_COLUMNS})
+
+
+def _empty_ripple_channels() -> pd.DataFrame:
+    """The per-channel ripple table with no rows."""
+    return _table(_RIPPLE_CHANNEL_COLUMNS, {name: [] for name in _RIPPLE_CHANNEL_COLUMNS})
+
+
 @dataclass(frozen=True, eq=False)
 class SimulatedSession:
-    """Every signal ``simulate_session`` produced, with the ground truth.
+    """Every signal ``simulate_session`` or ``simulate_network_session``
+    produced, with the ground truth.
 
     Attributes
     ----------
@@ -1113,15 +1192,43 @@ class SimulatedSession:
         rising to ``peak_speed``, and 0 between them.
     ripple_times, ripple_durations, ripple_frequencies : ndarray, shape (n_ripples,)
         Centre, duration (six standard deviations of the envelope) and
-        frequency of each ripple, in the order the ripples were given.
+        frequency of each ripple, in the order the ripples were given. For a
+        network session, one entry per ripple component of ``events``: the
+        middle of its span ``[center_time - 3 rise_sigma, center_time + 3
+        decay_sigma]``, the span's length and ``frequency_start``, so
+        ``ripple_windows`` gives each ripple's span.
     artifact_times : ndarray, shape (n_artifacts,)
     sampling_frequency : float
+    events : pandas.DataFrame
+        The latent event table, one row per component (ripple, sharp wave,
+        burst) of each network event; see ``draw_network_events``. Empty,
+        with the same columns and dtypes, for ``simulate_session``.
+    non_events : pandas.DataFrame
+        One row per rendered non-event, activity a detector should not
+        report; empty with its columns when there is none.
+    unit_types : ndarray of str, shape (n_units,)
+        Each unit's type, one of ``UNIT_TYPES``. Empty when the simulator did
+        not assign types (``simulate_session``).
+    baseline_rates : ndarray, shape (n_units,)
+        Each unit's drawn baseline intensity in spikes/s, before event
+        modulation; realized rates can be lower under refractory spiking.
+        Empty when the simulator did not record them (``simulate_session``).
+    running_intervals : ndarray, shape (n_bouts, 2)
+        The running bouts, start and end in seconds; ``(0, 2)`` when the
+        animal is still throughout.
+    ripple_channels : pandas.DataFrame
+        One row per ripple component and pyramidal-layer channel, sorted by
+        ``event_id``, ``component``, ``channel``: the ``gain`` the ripple has
+        on that channel (the recording-wide channel gain included; 0 where the
+        ripple is absent) and its ``delay_s``. The ripple's bounds on a channel
+        are its latent bounds plus the delay. Empty for ``simulate_session``.
 
     Raises
     ------
     ValueError
-        If the signals do not share ``time``'s length or the per-ripple
-        arrays do not share one length.
+        If the signals do not share ``time``'s length, the per-ripple arrays
+        do not share one length, or ``unit_types`` or ``baseline_rates`` is
+        neither empty nor one entry per unit.
 
     """
 
@@ -1136,6 +1243,12 @@ class SimulatedSession:
     ripple_frequencies: FloatArray
     artifact_times: FloatArray
     sampling_frequency: float
+    events: pd.DataFrame = field(default_factory=_empty_events)
+    non_events: pd.DataFrame = field(default_factory=_empty_non_events)
+    unit_types: StrArray = field(default_factory=lambda: np.empty(0, dtype="<U11"))
+    baseline_rates: FloatArray = field(default_factory=lambda: np.empty(0))
+    running_intervals: FloatArray = field(default_factory=lambda: np.empty((0, 2)))
+    ripple_channels: pd.DataFrame = field(default_factory=_empty_ripple_channels)
 
     def __post_init__(self) -> None:
         n_time = self.time.shape[0]
@@ -1147,6 +1260,12 @@ class SimulatedSession:
         if not self.ripple_durations.shape == self.ripple_frequencies.shape == n_ripples:
             msg = "ripple_times, ripple_durations and ripple_frequencies differ in length."
             raise ValueError(msg)
+        n_units = self.multiunit.shape[1]
+        for name in ("unit_types", "baseline_rates"):
+            length = len(getattr(self, name))
+            if length not in (0, n_units):
+                msg = f"{name} has {length} entries; multiunit has {n_units} units."
+                raise ValueError(msg)
 
     @property
     def ripple_windows(self) -> FloatArray:
@@ -1333,4 +1452,9 @@ def simulate_session(
             [] if artifact_times is None else artifact_times, dtype=float
         ),
         sampling_frequency=_sampling_rate(time, sampling_frequency),
+        running_intervals=(
+            np.empty((0, 2))
+            if running_intervals is None
+            else _running_intervals(running_intervals)
+        ),
     )

@@ -4,6 +4,7 @@ import dataclasses
 import hashlib
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from ripple_detection import filter_ripple_band
@@ -1144,3 +1145,105 @@ class TestSessionStates:
             atol=1e-12,
         )
         np.testing.assert_array_equal(stated.multiunit, plain.multiunit)
+
+
+EVENT_COLUMNS = {
+    "event_id": "int64",
+    "event_type": "str",
+    "expression": "str",
+    "component": "int64",
+    "center_time": "float64",
+    "rise_sigma": "float64",
+    "decay_sigma": "float64",
+    "envelope_power": "int64",
+    "amplitude": "float64",
+    "frequency_start": "float64",
+    "frequency_end": "float64",
+    "participation": "float64",
+    "n_participants": "int64",
+}
+NON_EVENT_COLUMNS = {
+    "non_event_id": "int64",
+    "non_event_type": "str",
+    "center_time": "float64",
+    "rise_sigma": "float64",
+    "decay_sigma": "float64",
+    "envelope_power": "int64",
+    "amplitude": "float64",
+    "frequency": "float64",
+    "snr_band_low": "float64",
+    "snr_band_high": "float64",
+    "channel": "int64",
+    "n_units": "int64",
+    "n_spikes": "int64",
+    "isi": "float64",
+}
+RIPPLE_CHANNEL_COLUMNS = {
+    "event_id": "int64",
+    "component": "int64",
+    "channel": "int64",
+    "gain": "float64",
+    "delay_s": "float64",
+}
+
+
+def _assert_schema(table, columns):
+    """``table`` has exactly ``columns``, in order, with their dtypes; "str" is
+    object before pandas 3 and the string dtype from it."""
+    assert list(table.columns) == list(columns)
+    for name, dtype in columns.items():
+        if dtype == "str":
+            assert pd.api.types.is_string_dtype(table[name]), name
+        else:
+            assert table[name].dtype == np.dtype(dtype), name
+
+
+class TestSimulatedSessionFields:
+    FS = 1500
+
+    def _session(self, **fields):
+        n_time = 300
+        return SimulatedSession(
+            time=simulate_time(n_time, self.FS),
+            lfps=np.zeros((n_time, 2)),
+            raw_lfp=np.zeros(n_time),
+            sharp_wave_lfp=np.zeros(n_time),
+            multiunit=np.zeros((n_time, 3)),
+            speed=np.zeros(n_time),
+            ripple_times=np.empty(0),
+            ripple_durations=np.empty(0),
+            ripple_frequencies=np.empty(0),
+            artifact_times=np.empty(0),
+            sampling_frequency=float(self.FS),
+            **fields,
+        )
+
+    def test_defaults_keep_old_constructors_working(self):
+        session = self._session()
+        _assert_schema(session.events, EVENT_COLUMNS)
+        _assert_schema(session.non_events, NON_EVENT_COLUMNS)
+        _assert_schema(session.ripple_channels, RIPPLE_CHANNEL_COLUMNS)
+        assert len(session.events) == len(session.non_events) == 0
+        assert len(session.ripple_channels) == 0
+        assert session.unit_types.shape == (0,)
+        assert session.baseline_rates.shape == (0,)
+        assert session.running_intervals.shape == (0, 2)
+
+    def test_defaults_are_not_shared_between_sessions(self):
+        assert self._session().events is not self._session().events
+
+    def test_unit_types_length_is_checked(self):
+        self._session(unit_types=np.array(["place"] * 3), baseline_rates=np.ones(3))
+        with pytest.raises(ValueError, match="unit_types has 2 entries; multiunit has 3"):
+            self._session(unit_types=np.array(["place", "interneuron"]))
+        with pytest.raises(ValueError, match="baseline_rates has 4 entries"):
+            self._session(baseline_rates=np.ones(4))
+
+    def test_simulate_session_records_running_intervals(self):
+        time = simulate_time(self.FS * 6, self.FS)
+        running = simulate_session(time, [1.0], running_intervals=[(2, 4)], rng=0)
+        np.testing.assert_array_equal(running.running_intervals, [[2.0, 4.0]])
+        still = simulate_session(time, [1.0], rng=0)
+        assert still.running_intervals.shape == (0, 2)
+        assert len(still.events) == 0
+        assert still.unit_types.shape == still.baseline_rates.shape == (0,)

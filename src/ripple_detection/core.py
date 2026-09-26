@@ -32,6 +32,9 @@ BoolArray = NDArray[np.bool_]
 IntArray = NDArray[np.integer]
 """A NumPy array of integers, usually sample indices."""
 
+StrArray = NDArray[np.str_]
+"""A NumPy array of strings, such as labels."""
+
 DEFAULT_RIPPLE_BAND = (150.0, 250.0)
 """Default passband in Hz, the most common choice in the replay literature."""
 
