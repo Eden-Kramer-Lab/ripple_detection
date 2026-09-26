@@ -5,6 +5,9 @@ that share a ripple and part of their noise, ``simulate_sharp_wave_ripple_pair``
 the raw two-channel input of the Long detector, ``simulate_multiunit`` spike
 trains that burst with the ripples, and ``simulate_session`` all of them at once
 with the ground truth, for testing detectors against known events.
+``draw_network_events`` draws latent network events of known types,
+``simulate_network_session`` renders them into every detector input, and
+``truth_windows`` gives their windows at any fraction of each envelope's peak.
 """
 
 from collections.abc import Mapping, Sequence
@@ -33,7 +36,8 @@ EVENT_TYPES = ("swr", "weak_ripple", "burst_only", "ripple_doublet", "sharp_wave
 """The kinds of latent network event ``draw_network_events`` draws."""
 
 NON_EVENT_TYPES = ("spike_leakage", "emg", "fast_gamma", "theta_burst")
-"""The kinds of activity a detector should not report."""
+"""The kinds of activity a detector should not report; no simulator renders
+them yet, so ``SimulatedSession.non_events`` is always empty."""
 
 EXPRESSIONS = ("ripple", "sharp_wave", "burst")
 """How a network event shows: a ripple in the pyramidal-layer LFP, a sharp wave
@@ -1212,8 +1216,8 @@ class SimulatedSession:
         burst) of each network event; see ``draw_network_events``. Empty,
         with the same columns and dtypes, for ``simulate_session``.
     non_events : pandas.DataFrame
-        One row per rendered non-event, activity a detector should not
-        report; empty with its columns when there is none.
+        One row per non-event, activity a detector should not report. No
+        simulator renders non-events yet: always empty, with its columns.
     unit_types : ndarray of str, shape (n_units,)
         Each unit's type, one of ``UNIT_TYPES``. Empty when the simulator did
         not assign types (``simulate_session``).
@@ -1222,7 +1226,7 @@ class SimulatedSession:
         modulation; realized rates can be lower under refractory spiking.
         Empty when the simulator did not record them (``simulate_session``).
     running_intervals : ndarray, shape (n_bouts, 2)
-        The running bouts, start and end in seconds; ``(0, 2)`` when the
+        The running bouts, start and end in seconds; shape (0, 2) when the
         animal is still throughout.
     ripple_channels : pandas.DataFrame
         One row per ripple component and pyramidal-layer channel, sorted by
@@ -1268,18 +1272,30 @@ class SimulatedSession:
         if not self.ripple_durations.shape == self.ripple_frequencies.shape == n_ripples:
             msg = "ripple_times, ripple_durations and ripple_frequencies differ in length."
             raise ValueError(msg)
-        n_units = self.multiunit.shape[1]
-        for name in ("unit_types", "baseline_rates"):
-            length = len(getattr(self, name))
-            if length not in (0, n_units):
-                msg = f"{name} has {length} entries; multiunit has {n_units} units."
+        if len(self.unit_types) or len(self.baseline_rates):
+            if self.multiunit.ndim != 2:
+                msg = "multiunit must be (n_time, n_units) to have unit types or rates."
                 raise ValueError(msg)
+            n_units = self.multiunit.shape[1]
+            for name in ("unit_types", "baseline_rates"):
+                length = len(getattr(self, name))
+                if length not in (0, n_units):
+                    msg = f"{name} has {length} entries; multiunit has {n_units} units."
+                    raise ValueError(msg)
+        unknown = sorted(set(self.unit_types.tolist()) - set(UNIT_TYPES))
+        if unknown:
+            msg = f"unit_types has unknown labels {unknown}; use {', '.join(UNIT_TYPES)}."
+            raise ValueError(msg)
 
     @property
     def ripple_windows(self) -> FloatArray:
-        """Start and end of each ripple, shape (n_ripples, 2): the centre plus
-        or minus half the duration, where the envelope is at 1 percent of its
-        peak, clipped to the recording.
+        """Start and end of each ripple, shape (n_ripples, 2):
+        ``ripple_times`` plus or minus half ``ripple_durations``, clipped to
+        the recording. For ``simulate_session`` that is where the Gaussian
+        envelope is at 1 percent of its peak; for ``simulate_network_session``
+        each ripple's latent span at three side scales, without channel
+        delays (far below 1 percent at envelope power 4). ``truth_windows``
+        gives windows at a chosen fraction of the peak.
 
         In the order the ripples were given. Windows of ripples closer than
         their durations overlap; each is still one ripple to find.
@@ -1475,6 +1491,13 @@ _REFERENCE_TYPE_PROBABILITIES = {
     "ripple_doublet": 0.10,
     "sharp_wave_only": 0.10,
 }
+_TYPE_EXPRESSIONS = {
+    "swr": ("ripple", "sharp_wave", "burst"),
+    "weak_ripple": ("ripple", "sharp_wave", "burst"),
+    "burst_only": ("burst",),
+    "ripple_doublet": ("ripple", "sharp_wave", "burst"),
+    "sharp_wave_only": ("sharp_wave",),
+}
 _MAX_RIPPLES = 3
 _TRIPLET_PROBABILITY = 0.3
 # Columns of each event's fixed blocks of variates (see draw_network_events'
@@ -1509,7 +1532,10 @@ def _check_range(
         bounds = (
             f"{'(' if lower_strict else '['}{lower:g}, {upper:g}{')' if upper_strict else ']'}"
         )
-        msg = f"{name} must be a finite (low, high) range with low <= high in {bounds}, got {value}."
+        msg = (
+            f"{name} must be a finite (low, high) range with low <= high in {bounds}, "
+            f"got {value}."
+        )
         raise ValueError(msg)
     return low, high
 
@@ -1524,6 +1550,23 @@ def _check_scalar(
         msg = f"{name} must be finite and {relation} {lower:g}, got {value}."
         raise ValueError(msg)
     return number
+
+
+def _checked_time(time: ArrayLike) -> FloatArray:
+    """``time`` as a 1-D float array of two or more evenly spaced, increasing
+    samples (no step over 1.5 times the median, the detectors' gap rule)."""
+    time = np.asarray(time, dtype=float)
+    if time.ndim != 1 or time.size < 2:
+        msg = f"time must be 1-D with at least two samples, got shape {time.shape}."
+        raise ValueError(msg)
+    steps = np.diff(time)
+    if not np.all(steps > 0):
+        msg = "time must be strictly increasing."
+        raise ValueError(msg)
+    if steps.max() > 1.5 * np.median(steps):
+        msg = "time must be evenly sampled, without gaps; simulate each block separately."
+        raise ValueError(msg)
+    return time
 
 
 def _rest_intervals(time: FloatArray, running_intervals: ArrayLike | None) -> FloatArray:
@@ -1615,10 +1658,11 @@ def draw_network_events(
     Parameters
     ----------
     time : array_like, shape (n_time,)
-        Sample timestamps in seconds, increasing.
+        Sample timestamps in seconds, increasing and evenly spaced.
     event_rate : float, optional
-        Events per second of rest, before events too close to the previous
-        one are dropped. Default 0.3, awake immobility (see Notes).
+        Events per second of rest, before events are dropped for being too
+        close to the previous one or for not fitting in their stretch of
+        rest. Default 0.3, awake immobility (see Notes).
     type_probabilities : mapping of str to float, optional
         Relative frequency of each event type; a type left out never occurs,
         and the values are normalized. Default None: swr 0.55, weak_ripple
@@ -1629,7 +1673,8 @@ def draw_network_events(
     ripple_duration : (float, float), optional
         Range of a ripple's nominal span, ``3 (rise_sigma + decay_sigma)``
         seconds. Its width at half maximum is about 0.39 times the span.
-        Default (0.03, 0.15).
+        ``simulate_network_session`` needs each side scale to be at least one
+        sample. Default (0.03, 0.15).
     ripple_skew : (float, float), optional
         Range of the fraction of the span after the peak, in (0, 1); above
         0.5 decays more slowly than it rises. Default (0.5, 0.7).
@@ -1657,10 +1702,12 @@ def draw_network_events(
         ripple's. Default 0.01.
     burst_duration_ratio : (float, float), optional
         Range of a burst's span relative to its ripple's; the burst takes the
-        ripple's skew. Default (1.0, 1.5).
+        ripple's skew. For ``swr`` and ``weak_ripple``: a ``ripple_doublet``'s
+        burst is symmetric, from its earliest ripple's start to its latest
+        ripple's end (three side scales). Default (1.0, 1.5).
     burst_lag : float, optional
-        Standard deviation in seconds of a burst's centre about its ripple's.
-        Default 0.01.
+        Standard deviation in seconds of a burst's centre about its ripple's;
+        not applied to a ``ripple_doublet``'s burst. Default 0.01.
     burst_gain : float, optional
         Peak intensity of a recruited unit relative to its baseline, at least
         1. Default 40.
@@ -1725,9 +1772,11 @@ def draw_network_events(
     Raises
     ------
     ValueError
-        If ``time`` is not 1-D with two or more samples, a rate, lag, gain or
-        separation is negative or not finite, ``type_probabilities`` names an
-        unknown type or has no positive weight, a range is not a finite
+        If ``time`` is not 1-D with two or more increasing, evenly spaced
+        samples, a rate, lag or separation is negative or not finite,
+        ``burst_gain`` is below 1 or not finite, ``type_probabilities`` names
+        an unknown type or has a negative or non-finite weight or none
+        positive, a range is not a finite
         ``(low, high)`` tuple with ``low <= high`` inside its bounds (positive
         durations, SNRs and intervals, skew in (0, 1), participation in
         [0, 1], frequencies and the frequency after the chirp between 0 and
@@ -1738,12 +1787,17 @@ def draw_network_events(
     -----
     Draw order: the event count (Poisson, ``event_rate`` times the rest
     time), their positions on the concatenated rest time, their types; then
-    one row per event, in time order, of 15 standard normals and then one of
-    18 uniforms. Every event draws the same block whatever its type or the
-    parameters, and an event too close to the previous kept event, or whose
-    span at four side scales leaves its stretch of rest, is dropped, not
-    redrawn. So changing one parameter changes only the values it governs:
-    the other events and columns stay where they were.
+    an (n_events, 15) array of standard normals and after it an (n_events,
+    18) array of uniforms, one row per event in time order. Every event draws
+    the same block whatever its type or the parameters, and an event too
+    close to the previous kept event, or whose span at four side scales
+    leaves its stretch of rest, is dropped, not redrawn. So a parameter that
+    sets only a size, frequency, participation, the type mix or the strength
+    correlation changes only the values it governs. One that moves a span or
+    centre (durations, skew, lags, ratios, ``doublet_interval``,
+    ``minimum_separation``) can also change which events are dropped, and so
+    later events' ``event_id``; ``event_rate``, ``running_intervals`` and
+    ``time`` change the draws themselves.
 
     The normals are the shared strength ``z``; per ripple slot (up to three)
     the residuals for its SNR and onset frequency; per sharp-wave slot its
@@ -1783,9 +1837,10 @@ def draw_network_events(
       Results), but faster and later than this model does. Their frequency
       starts to fall shortly before the envelope's peak, by about 15-20 Hz
       in the median over some 15 ms (Nguyen et al. 2009, Fig. 2C, read from
-      the figure), where the model falls about 2.5 Hz over the 15 ms around
-      the peak. About a quarter of ripples rise instead (Nguyen et al. 2009,
-      Discussion); the model omits them. Both are limitations.
+      the figure), where the model, at the middle of the default ranges (15
+      Hz over 0.09 s), falls about 2.5 Hz in any 15 ms. About a quarter of
+      ripples rise instead (Nguyen et al. 2009, Discussion); the model omits
+      them. Both are limitations.
     - Sharp-wave span, 0.04-0.12 s: sharp waves of 40-100 ms (Buzsáki 2015,
       Introduction), convention unstated; the nominal span is wider than the
       visible deflection, and the upper end, 0.12 s, is assumed.
@@ -1801,8 +1856,9 @@ def draw_network_events(
       ripples or, with probability 0.3, three: assumed.
     - Strength correlation, 0: an assumed, independent control. Sharp-wave
       magnitude correlates with ripple power, r = 0.47 (0.30-0.55 by
-      animal; Sullivan et al. 2011, Results), which the coupled setting
-      (0.6, an assumed stress value) stands in for.
+      animal; Sullivan et al. 2011, Results), which ``strength_correlation``
+      above 0 stands in for (0.6 in the simulator's validation, an assumed
+      stress value).
     - Units, 40 place (0.1-0.5 Hz) and 10 other pyramidal (0.5-1.5 Hz):
       within CA1 pyramidal rates, lognormal over 0.001-10 Hz (Mizuseki &
       Buzsáki 2013, doi:10.1016/j.celrep.2013.07.039, Results), with a
@@ -1815,9 +1871,10 @@ def draw_network_events(
       assumed: interneuron types differ, some falling silent (Klausberger et
       al. 2003, doi:10.1038/nature01374, p. 846, under anaesthesia).
     - Assumed: the type mix, the 0.05 s separation, ripple skew, the ripple
-      and weak-ripple SNR ranges, sharp-wave amplitudes (3-8, above the
-      delta of ``examples/literature_recipes.py``) and lags, the burst gain
-      of 40 (``examples/literature_recipes.py``), span ratio and lag, the
+      and weak-ripple SNR ranges, sharp-wave amplitudes (3-8, around and
+      above the delta amplitude, 4, of ``examples/literature_recipes.py``)
+      and lags, the burst gain of 40 (``examples/literature_recipes.py``),
+      span ratio and lag, the
       ``burst_only`` span, the weak-ripple values, and the renderer's noise,
       leaks, channel count and theta and delta amplitudes
       (``simulate_session``'s and ``examples/literature_recipes.py``'s).
@@ -1834,10 +1891,7 @@ def draw_network_events(
     False
 
     """
-    time = np.asarray(time, dtype=float)
-    if time.ndim != 1 or time.size < 2:
-        msg = f"time must be 1-D with at least two samples, got shape {time.shape}."
-        raise ValueError(msg)
+    time = _checked_time(time)
     nyquist = 0.5 / float(np.median(np.diff(time)))
     event_rate = _check_scalar("event_rate", event_rate)
     probabilities = _type_probabilities(type_probabilities)
@@ -2183,7 +2237,13 @@ def _spatial_profile(
     anchor_u = rng.random()
     gain_u, delay_u = rng.random(n_channels), rng.random(n_channels)
     selected = order[: max(1, int(np.ceil(occupancy * n_channels)))]
-    anchor = selected[int(anchor_u * selected.size)]
+    # the anchor carries the ripple: a selected channel of positive gain, else
+    # the first such channel in the permutation, added to the selection
+    carrying = selected[gains[selected] > 0]
+    if carrying.size == 0:
+        carrying = order[gains[order] > 0][:1]
+        selected = np.append(selected, carrying)
+    anchor = carrying[int(anchor_u * carrying.size)]
     start = ripple.center_time - 4 * ripple.rise_sigma
     end = ripple.center_time + 4 * ripple.decay_sigma
     stretch = _rest_interval_of(rest, start, end)
@@ -2206,9 +2266,10 @@ def _check_event_table(events: pd.DataFrame, time: FloatArray, rate: float) -> p
     if missing:
         msg = f"events is missing the columns {missing}; build it with draw_network_events."
         raise ValueError(msg)
-    keys = events[["event_id", "component"]].to_numpy(dtype=float)
+    whole = ["event_id", "component", "envelope_power", "n_participants"]
+    keys = events[whole].to_numpy(dtype=float)
     if not np.all(np.isfinite(keys) & (keys == np.round(keys))):
-        msg = "events.event_id and events.component must be whole numbers."
+        msg = f"events columns {', '.join(whole)} must hold whole numbers."
         raise ValueError(msg)
     table = _sorted_events(
         _table(_EVENT_COLUMNS, {name: events[name] for name in _EVENT_COLUMNS})
@@ -2236,6 +2297,7 @@ def _check_event_table(events: pd.DataFrame, time: FloatArray, rate: float) -> p
     if table[["event_id", "event_type"]].drop_duplicates()["event_id"].duplicated().any():
         msg = "Each event_id must have one event_type; events mixes types under one id."
         raise ValueError(msg)
+    _check_components(table)
     start = table.center_time - 4 * table.rise_sigma
     end = table.center_time + 4 * table.decay_sigma
     if not ((start >= time[0]) & (end <= time[-1])).all():
@@ -2263,7 +2325,34 @@ def _check_event_table(events: pd.DataFrame, time: FloatArray, rate: float) -> p
     if not (bursts.participation.between(0, 1).all() and (bursts.amplitude >= 1).all()):
         msg = "A burst needs participation in [0, 1] and amplitude (its gain) of at least 1."
         raise ValueError(msg)
+    if not (table.amplitude[table.expression == "sharp_wave"] >= 0).all():
+        msg = "A sharp wave's amplitude must be non-negative; it is rendered negative."
+        raise ValueError(msg)
     return table
+
+
+def _check_components(table: pd.DataFrame) -> None:
+    """Raise if an event has a component its type does not: a ripple on a
+    ``burst_only`` or ``sharp_wave_only`` event, a burst on a
+    ``sharp_wave_only`` one, and so on, or a component numbered above 0 on any
+    type but ``ripple_doublet``. Components may be left out, to render one
+    expression alone; the event keeps its type."""
+    allowed = table.event_type.map(_TYPE_EXPRESSIONS)
+    has = [
+        expression in expressions
+        for expression, expressions in zip(table.expression, allowed, strict=True)
+    ]
+    single = (table.event_type != "ripple_doublet") | (table.expression == "burst")
+    wrong = ~np.asarray(has, dtype=bool) | (single & (table.component != 0)).to_numpy()
+    if wrong.any():
+        row = table[wrong].iloc[0]
+        msg = (
+            f"Event {row.event_id}, a {row.event_type}, has a {row.expression} component "
+            f"{row.component}; a {row.event_type} has "
+            f"{', '.join(_TYPE_EXPRESSIONS[row.event_type])}, numbered 0 unless a "
+            "doublet's ripples and sharp waves."
+        )
+        raise ValueError(msg)
 
 
 def _unit_layout(
@@ -2309,20 +2398,19 @@ def _draw_units(
     step: float,
     streams: Mapping[str, np.random.Generator],
 ) -> tuple[FloatArray, FloatArray, IntArray]:
-    """Baseline rates, spike counts ``(n_time, n_units)`` and the place and
-    pyramidal participants of each burst row.
+    """Baseline rates, spike counts ``(n_time, n_units)`` and the number of
+    place and pyramidal participants of each burst row.
 
     Participants: per burst row in table order, one uniform per unit; a place
     unit takes part below ``participation``, another pyramidal unit below
     half of it. A participant's intensity gains ``(amplitude - 1)`` times the
     burst's envelope; every interneuron gains ``(interneuron_gain - 1)`` times
     the envelope of each event's ripples (their maximum, for a doublet).
-    Spikes, unit by unit: Poisson counts of the intensity times ``step``, the
-    sampling interval of the resolved rate (not the timestamps' spacing, which
-    rounds far from zero), or,
-    for ``"refractory"``, at most one per sample, emitted with probability
-    ``1 - exp(-intensity step)`` once ``refractory_period`` has passed since
-    the unit's last spike.
+    Spikes, unit by unit: Poisson counts of the intensity times ``step`` (the
+    sampling interval of the resolved rate, not the timestamps' spacing,
+    which rounds far from zero), or, for ``"refractory"``, at most one per
+    sample, emitted with probability ``1 - exp(-intensity step)`` once
+    ``refractory_period`` has passed since the unit's last spike.
     """
     n_time, n_units = time.size, unit_types.size
     rates = np.empty(n_units)
@@ -2426,8 +2514,10 @@ def simulate_network_session(
         Sample timestamps in seconds, increasing.
     events : pandas.DataFrame
         A latent event table, as ``draw_network_events`` returns; rendered in
-        its sorted order whatever the order given. Columns beyond the table's
-        are not kept.
+        its sorted order whatever the order given. Components may be left
+        out, to render one expression alone; ``event_id`` values are kept as
+        given, so a filtered table's ids need not run from 0. Columns beyond
+        the table's are not kept.
     n_channels : int, optional
         Pyramidal-layer channels; the radiatum channel is separate. Default 4.
     unit_counts : mapping of str to int, optional
@@ -2448,16 +2538,20 @@ def simulate_network_session(
         one of them the anchor at gain 1 and no delay, the others at a gain
         from ``channel_gain_range`` and a delay uniform on
         ``[-channel_delay, channel_delay]``, narrowed so the delayed ripple's
-        span at four side scales stays in its stretch of rest; all times the
-        recording-wide ``channel_gains``. Default 'global'.
+        span at four side scales stays in its stretch of rest (a ripple
+        outside every stretch is not delayed); all times the recording-wide
+        ``channel_gains``, the anchor always on a channel of positive gain.
+        At the defaults of the next three options, 'local' renders as
+        'global'. Default 'global'.
     channel_occupancy : float, optional
-        Fraction of channels a local ripple is on, in (0, 1]. Default 1.
+        Fraction of channels a local ripple is on, in (0, 1]; used only with
+        ``'local'``. Default 1.
     channel_gain_range : (float, float), optional
-        Range of a local ripple's non-anchor gains, non-negative. Default
-        (1, 1).
+        Range of a local ripple's non-anchor gains, non-negative; used only
+        with ``'local'``. Default (1, 1).
     channel_delay : float, optional
         Largest delay in seconds of a local ripple on a non-anchor channel;
-        the whole waveform moves. Default 0.
+        the whole waveform moves. Used only with ``'local'``. Default 0.
     shared_noise_fraction, noise_type, noise_amplitude : optional
         As in ``simulate_multichannel_LFP``; the radiatum channel's noise is
         drawn with the others. Defaults 0.5, 'pink', 1.3.
@@ -2467,9 +2561,11 @@ def simulate_network_session(
         noise only. Ripples are sized against the stationary noise, so their
         local SNR rises and falls with it. Default 0: stationary.
     noise_modulation_period : float, optional
-        ``T`` in seconds, positive. Default 60.
+        ``T`` in seconds, positive; no effect when ``noise_log_amplitude`` is
+        0. Default 60.
     sharp_wave_leak, ripple_leak : float, optional
-        As in ``simulate_sharp_wave_ripple_pair``. Default 0.3 each.
+        As in ``simulate_sharp_wave_ripple_pair``, finite and non-negative.
+        Default 0.3 each.
     interneuron_gain : float, optional
         Every interneuron's peak intensity during a ripple relative to its
         baseline, at least 1. Default 3.
@@ -2481,8 +2577,8 @@ def simulate_network_session(
         spike; the dead time lowers the realized rate below the intensity.
         Default 'poisson'.
     refractory_period : float, optional
-        Dead time in seconds, finite and non-negative, for ``'refractory'``.
-        Default 0.002.
+        Dead time in seconds, finite and non-negative; used only with
+        ``'refractory'``. Default 0.002.
     running_intervals : array_like, shape (n_bouts, 2), optional
         Running bouts, as given to ``draw_network_events``; they set the speed,
         the theta and delta, and the stretches of rest a local delay keeps a
@@ -2490,20 +2586,23 @@ def simulate_network_session(
     peak_speed : float, optional
         As in ``simulate_session``. Default 30.
     theta_amplitude, delta_amplitude : float, optional
-        As in ``simulate_session``, added to every channel. Default 4 each.
+        As in ``simulate_session``, finite and non-negative, added to every
+        channel. Default 4 each.
     rng : int or numpy.random.Generator, optional
         Seed, or a Generator. One draw from it seeds eight independent
         streams, in this order: noise, ripple phases, spatial profiles, noise
-        modulation, baseline rates, burst participants, non-events (reserved),
-        spikes; each is used in table order. So a noise-only rendering (an
-        empty table) with the same seed has the same noise, and the spike
+        modulation, baseline rates, burst participants, one kept for
+        non-events (so adding them leaves the others unchanged), spikes;
+        each is used in table order. So a noise-only rendering (an empty
+        table) with the same seed has the same noise, and the spike
         model or spatial profile does not change anything drawn from another
         stream.
     sampling_frequency : float, optional
         As in ``simulate_LFP``. Recorded in the result. Give it when the
         timestamps lie far from zero (a Unix time): there they round, the
         median step no longer gives the rate exactly, and the ripples are
-        sized with a filter designed for the rate inferred.
+        sized with a filter designed for the rate inferred. It must agree
+        with the timestamps' step.
 
     Returns
     -------
@@ -2522,19 +2621,25 @@ def simulate_network_session(
     Raises
     ------
     ValueError
-        If ``time`` is not 1-D with two or more samples; ``events`` lacks a
-        column, has an ``event_id`` or ``component`` that is not a whole
-        number, a duplicate (``event_id``, ``expression``, ``component``) row,
-        an ``event_id`` of two types, an unknown type or expression, a
-        non-finite time or amplitude, a side scale that is not positive, a
-        component whose span at four side scales leaves the recording, an
-        envelope power other than 2 or 4, a ripple frequency outside (0,
-        Nyquist), a ripple side scale under one sample, a non-positive ripple
-        SNR, or a burst with participation outside [0, 1] or a gain below 1;
-        there are ripples and ``noise_amplitude`` is 0 (an SNR needs a
-        background); ``n_channels`` is below 1, ``channel_gains`` has the
-        wrong length or an entry that is negative or not finite, ``unit_counts`` names an unknown type or a count
-        that is not a non-negative integer, or gives no unit;
+        If ``time`` is not 1-D with two or more increasing, evenly spaced
+        samples, or ``sampling_frequency`` disagrees with its step; ``events``
+        lacks a column, has an ``event_id``, ``component``,
+        ``envelope_power`` or ``n_participants`` that is not a whole number,
+        a component its event type does not have, a duplicate (``event_id``,
+        ``expression``, ``component``) row, an ``event_id`` of two types, an
+        unknown type or expression, a non-finite time or amplitude, a side
+        scale that is not positive, a component whose span at four side
+        scales leaves the recording, an envelope power other than 2 or 4, a
+        ripple frequency outside (0,
+        Nyquist) or outside the ripple band its SNR is measured in, a ripple
+        side scale under one sample, a non-positive ripple SNR, a negative
+        sharp-wave amplitude, or a burst with participation outside [0, 1] or
+        a gain below 1; there are ripples and ``noise_amplitude`` is 0 (an
+        SNR needs a background) or every channel gain is 0; ``n_channels`` is
+        below 1, ``channel_gains`` has the wrong length or an entry that is
+        negative or not finite; a leak or the theta or delta amplitude is
+        negative or not finite; ``unit_counts`` names an unknown type or a
+        count that is not a non-negative integer, or gives no unit;
         ``baseline_rate`` names an unknown type or a range that is not
         non-negative; ``spatial_profile`` or ``spike_model`` is unknown;
         ``channel_occupancy`` lies outside (0, 1]; ``channel_gain_range`` is
@@ -2572,11 +2677,15 @@ def simulate_network_session(
     ['place', 'pyramidal', 'interneuron']
 
     """
-    time = np.asarray(time, dtype=float)
-    if time.ndim != 1 or time.size < 2:
-        msg = f"time must be 1-D with at least two samples, got shape {time.shape}."
-        raise ValueError(msg)
+    time = _checked_time(time)
     rate = _sampling_rate(time, sampling_frequency)
+    step = float(np.median(np.diff(time)))
+    if abs(1 / rate - step) > max(4 * float(np.spacing(np.abs(time).max())), 1e-6 * step):
+        msg = (
+            f"sampling_frequency {sampling_frequency} Hz disagrees with time's step, "
+            f"{step:.6g} s ({1 / step:.6g} Hz)."
+        )
+        raise ValueError(msg)
     table = _check_event_table(events, time, rate)
     if n_channels < 1:
         msg = f"n_channels must be at least 1, got {n_channels}."
@@ -2585,6 +2694,16 @@ def simulate_network_session(
     if not np.all(np.isfinite(gains) & (gains >= 0)):
         msg = f"channel_gains must be finite and non-negative, got {gains}."
         raise ValueError(msg)
+    if (table.expression == "ripple").any() and not (gains > 0).any():
+        msg = "channel_gains are all 0: no channel would carry the ripples."
+        raise ValueError(msg)
+    for name, value in (
+        ("sharp_wave_leak", sharp_wave_leak),
+        ("ripple_leak", ripple_leak),
+        ("theta_amplitude", theta_amplitude),
+        ("delta_amplitude", delta_amplitude),
+    ):
+        _check_scalar(name, value)
     unit_types, rate_ranges = _unit_layout(unit_counts, baseline_rate)
     _check_choice("spatial_profile", spatial_profile, SPATIAL_PROFILES)
     _check_choice("spike_model", spike_model, SPIKE_MODELS)
@@ -2643,6 +2762,14 @@ def simulate_network_session(
         )  # fmt: skip
         window, latent = _render_ripple(time, ripple.center_time, *render)
         scale = _scale_to_snr(latent, ripple.amplitude, band_noise_sd, rate)
+        # the filter's gain on the ripple: its SNR is measured in the ripple band
+        if ripple.amplitude * band_noise_sd / (scale * np.abs(latent).max()) < 0.1:
+            msg = (
+                f"The ripple of event {ripple.event_id} at {ripple.frequency_start:g}-"
+                f"{ripple.frequency_end:g} Hz lies outside the ripple band its SNR is "
+                "measured in (filter_ripple_band): sizing it would magnify it without bound."
+            )
+            raise ValueError(msg)
         radiatum[window] += ripple_leak * scale * latent
         ripple_gains, delays = _spatial_profile(
             pd.Series(ripple._asdict()), rest, gains,
@@ -2691,6 +2818,7 @@ def simulate_network_session(
         interneuron_gain=interneuron_gain, spike_model=spike_model,
         refractory_period=refractory_period, step=1 / rate, streams=streams,
     )  # fmt: skip
+    table["n_participants"] = 0
     table.loc[table.expression == "burst", "n_participants"] = n_participants
     ripple_channels = (
         _table(
@@ -2762,7 +2890,7 @@ def truth_windows(
         Columns ``id`` (``event_id`` or ``non_event_id``), ``type``
         (``event_type`` or ``non_event_type``), ``start_time``,
         ``end_time`` and ``peak_time`` (the envelope's peak; for a network
-        event its ripple's, the first for a doublet, else its burst's, else
+        event its ripple's, component 0's for a doublet, else its burst's, else
         its sharp wave's), and, per component of the event table,
         ``expression`` and ``component``. Rows are in the table's order, or
         by ``id`` for ``'network'``, and in the same order at every
@@ -2772,8 +2900,8 @@ def truth_windows(
     ------
     ValueError
         If ``fraction`` is not in (0, 1), ``expression`` is not one of the
-        choices, or is given for a non-event table, or ``table`` is neither
-        table.
+        choices, or is given for a non-event table, ``table`` is neither
+        table, or an envelope power is not 2 or 4.
 
     Examples
     --------
@@ -2783,7 +2911,8 @@ def truth_windows(
     >>> list(ripples.columns)
     ['id', 'type', 'start_time', 'end_time', 'peak_time', 'expression', 'component']
     >>> half = truth_windows(events, 0.5, expression="ripple")
-    >>> bool(((half.end_time - half.start_time) < (ripples.end_time - ripples.start_time)).all())
+    >>> narrower = (half.end_time - half.start_time) < (ripples.end_time - ripples.start_time)
+    >>> bool(narrower.all())
     True
     >>> list(truth_windows(events, expression="network").columns)
     ['id', 'type', 'start_time', 'end_time', 'peak_time']
@@ -2792,12 +2921,18 @@ def truth_windows(
     if not 0 < fraction < 1:
         msg = f"fraction must lie in (0, 1), got {fraction}."
         raise ValueError(msg)
-    if "event_id" in table.columns:
+    if "event_type" in table.columns:
         id_column, type_column = "event_id", "event_type"
-    elif "non_event_id" in table.columns:
+    elif "non_event_type" in table.columns:
         id_column, type_column = "non_event_id", "non_event_type"
     else:
-        msg = "table must be a simulated event or non-event table (event_id or non_event_id)."
+        msg = (
+            "table must be a simulated event or non-event table (with event_type or "
+            "non_event_type)."
+        )
+        raise ValueError(msg)
+    if not table["envelope_power"].isin([2, 4]).all():
+        msg = "table.envelope_power must be 2 or 4."
         raise ValueError(msg)
     events = id_column == "event_id"
     if not events and expression is not None:
