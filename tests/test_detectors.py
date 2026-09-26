@@ -4810,6 +4810,20 @@ class TestUnfilteredInputWarns:
             warnings.simplefilter("error")
             _call_lfp_consumer(name, time, filtered, session.speed, fs, session.multiunit)
 
+    def test_a_rate_too_low_for_a_ripple_band_is_not_judged(self):
+        time = np.arange(3000) / 300
+        slow = np.sin(2 * np.pi * 10 * time)[:, np.newaxis]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            get_Kay_ripple_consensus_trace(slow, 300)
+
+    def test_no_stretch_of_finite_rows_long_enough_is_not_judged(self, session):
+        raw = session.lfps.copy()
+        raw[::200] = np.nan  # no quarter second free of missing rows
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            get_Kay_ripple_consensus_trace(raw, 1500)
+
     def test_missing_rows_are_skipped(self, session):
         """Missing rows are skipped, not read as low-frequency power."""
         filtered = filter_ripple_band(session.lfps, 1500)

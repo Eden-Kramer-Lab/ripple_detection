@@ -1674,6 +1674,10 @@ class TestIntervalsToMask:
         with pytest.raises(ValueError, match=match):
             intervals_to_mask(np.arange(10.0), intervals)
 
+    def test_time_that_is_not_1d_raises(self):
+        with pytest.raises(ValueError, match="1-D"):
+            intervals_to_mask(np.zeros((5, 2)), [(0.0, 1.0)])
+
 
 class TestRequireInside:
     INTERVALS = np.array([(0.0, 3.0), (5.0, 8.0)])
