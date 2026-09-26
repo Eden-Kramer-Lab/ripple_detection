@@ -2450,7 +2450,9 @@ def require_times_inside(
     Raises
     ------
     ValueError
-        If `times` holds NaN or infinity, which no event could contain.
+        If `times` holds NaN or infinity, which no event could contain, or
+        is not 1-D, such as ``(n, 2)`` intervals: those are asked with
+        :func:`require_overlap` or :func:`require_inside`.
 
     Examples
     --------
@@ -2459,7 +2461,16 @@ def require_times_inside(
     array([[0.5, 0.9]])
 
     """
-    points = np.sort(np.asarray(times, dtype=float).ravel())
+    values = np.asarray(times, dtype=float)
+    if any(length != 1 for length in values.shape[1:]):  # a column is one time per row
+        msg = (
+            f"times must be 1-D, one time per entry; got shape {values.shape}. For "
+            "intervals, keep the events that overlap one with require_overlap(event_times, "
+            "intervals), or that lie wholly inside one with require_inside(event_times, "
+            "intervals)."
+        )
+        raise ValueError(msg)
+    points = np.sort(values.ravel())
     if not np.all(np.isfinite(points)):
         msg = (
             "times holds NaN or infinity; drop those before asking which events contain them."

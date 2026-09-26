@@ -1607,6 +1607,17 @@ class TestRequireTimesInside:
         with pytest.raises(ValueError, match="NaN or infinity"):
             require_times_inside(self.EVENTS, [0.1, np.nan])
 
+    def test_intervals_as_times_raise_naming_the_interval_rules(self):
+        """(n, 2) intervals were flattened into 2n points before, so events
+        between the bounds but containing neither were silently dropped."""
+        with pytest.raises(ValueError, match=r"require_overlap[\s\S]*require_inside"):
+            require_times_inside(self.EVENTS, np.array([(0.0, 2.0)]))
+
+    def test_a_column_of_times_is_one_time_per_row(self):
+        np.testing.assert_allclose(
+            require_times_inside(self.EVENTS, np.array([[0.7], [2.0]])), self.EVENTS[[1]]
+        )
+
 
 ORIGINS = [0.0, 1.7e9]  # a clock from zero; a Unix time
 
