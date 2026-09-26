@@ -49,6 +49,7 @@ from ripple_detection.detectors._validation import (
     _validate_detector_inputs,
     _validate_duration_limits,
     _validate_lfp_dimensions,
+    _warn_if_not_ripple_band,
 )
 
 
@@ -76,7 +77,8 @@ def get_Kay_ripple_consensus_trace(
     Parameters
     ----------
     ripple_filtered_lfps : array_like, shape (n_time, n_channels)
-        Bandpass filtered LFP signals in the ripple band (150-250 Hz).
+        Bandpass filtered LFP signals in the ripple band (150-250 Hz). Input with most of its
+        power below 100 Hz, as raw LFP and ADC counts have, warns.
     sampling_frequency : float
         Sampling rate in Hz.
     smoothing_sigma : float, optional
@@ -116,6 +118,7 @@ def get_Kay_ripple_consensus_trace(
     if not np.any(is_valid):
         msg = "No sample has finite values in every channel."
         raise ValueError(msg)
+    _warn_if_not_ripple_band(ripple_filtered_lfps, sampling_frequency, "ripple_filtered_lfps")
     blocks = _contiguous_valid_blocks(is_valid, time_array)
     return _kay_consensus(ripple_filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
 
@@ -173,7 +176,8 @@ def get_Yu_ripple_consensus_trace(
     Parameters
     ----------
     ripple_filtered_lfps : array_like, shape (n_time, n_channels)
-        Bandpass filtered LFP signals in the ripple band (150-250 Hz).
+        Bandpass filtered LFP signals in the ripple band (150-250 Hz). Input with most of its
+        power below 100 Hz, as raw LFP and ADC counts have, warns.
     sampling_frequency : float
         Sampling rate in Hz.
     smoothing_sigma : float, optional
@@ -219,6 +223,7 @@ def get_Yu_ripple_consensus_trace(
     if not np.any(is_valid):
         msg = "No sample has finite values in every channel."
         raise ValueError(msg)
+    _warn_if_not_ripple_band(ripple_filtered_lfps, sampling_frequency, "ripple_filtered_lfps")
     return _yu_consensus(
         ripple_filtered_lfps,
         is_valid,
@@ -364,6 +369,8 @@ def Shvartsman_ripple_detector(
     filtered_lfps : array_like, shape (n_time, n_channels)
         LFP signals **already bandpass filtered** to ripple band (150-250 Hz).
         Must be pre-filtered using `filter_ripple_band()` before calling this detector.
+        Input with most of its power below 100 Hz, as raw LFP and ADC counts
+        have, warns.
     speed : array_like, shape (n_time,)
         Animal's running speed at each time point in **cm/s**.
     sampling_frequency : float
@@ -560,6 +567,7 @@ def Shvartsman_ripple_detector(
         raise ValueError(msg)
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
     _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
+    _warn_if_not_ripple_band(filtered_lfps, sampling_frequency)
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     if normalization_method == "manual":
@@ -644,6 +652,8 @@ def Kay_ripple_detector(
     filtered_lfps : array_like, shape (n_time, n_channels)
         LFP signals **already bandpass filtered** to ripple band (150-250 Hz).
         Must be pre-filtered using `filter_ripple_band()` before calling this detector.
+        Input with most of its power below 100 Hz, as raw LFP and ADC counts
+        have, warns.
     speed : array_like, shape (n_time,)
         Animal's running speed at each time point in **cm/s**.
     sampling_frequency : float
@@ -764,6 +774,7 @@ def Kay_ripple_detector(
     )
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
     _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
+    _warn_if_not_ripple_band(filtered_lfps, sampling_frequency)
 
     consensus = _kay_consensus(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     return _detect_from_trace(
@@ -821,7 +832,8 @@ def Yu_ripple_detector(
         Time values for each sample in seconds.
     filtered_lfps : array_like, shape (n_time, n_channels)
         LFP signals already bandpass filtered to the ripple band (150-250 Hz),
-        e.g. with ``filter_ripple_band``. NaN marks missing samples.
+        e.g. with ``filter_ripple_band``. NaN marks missing samples. Input with
+        most of its power below 100 Hz, as raw LFP and ADC counts have, warns.
     speed : array_like, shape (n_time,)
         Animal's running speed in cm/s.
     sampling_frequency : float
@@ -918,6 +930,7 @@ def Yu_ripple_detector(
     )
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
     _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
+    _warn_if_not_ripple_band(filtered_lfps, sampling_frequency)
 
     consensus = _yu_consensus(
         filtered_lfps,
@@ -1020,6 +1033,8 @@ def Karlsson_ripple_detector(
     filtered_lfps : array_like, shape (n_time, n_channels)
         LFP signals **already bandpass filtered** to ripple band (150-250 Hz).
         Must be pre-filtered using `filter_ripple_band()` before calling this detector.
+        Input with most of its power below 100 Hz, as raw LFP and ADC counts
+        have, warns.
     speed : array_like, shape (n_time,)
         Animal's running speed at each time point in **cm/s**.
     sampling_frequency : float
@@ -1132,6 +1147,7 @@ def Karlsson_ripple_detector(
     )
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
     _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
+    _warn_if_not_ripple_band(filtered_lfps, sampling_frequency)
 
     smoothed = _smoothed_envelope(filtered_lfps, blocks, sampling_frequency, smoothing_sigma)
     mask = _normalization_mask_over_valid(len(time), is_valid, normalization_mask)
@@ -1191,6 +1207,8 @@ def Roumis_ripple_detector(
     filtered_lfps : array_like, shape (n_time, n_channels)
         LFP signals **already bandpass filtered** to ripple band (150-250 Hz).
         Must be pre-filtered using `filter_ripple_band()` before calling this detector.
+        Input with most of its power below 100 Hz, as raw LFP and ADC counts
+        have, warns.
     speed : array_like, shape (n_time,)
         Animal's running speed at each time point in **cm/s**.
     sampling_frequency : float
@@ -1300,6 +1318,7 @@ def Roumis_ripple_detector(
     )
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
     _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
+    _warn_if_not_ripple_band(filtered_lfps, sampling_frequency)
 
     smoothed_power = _smoothed_envelope(
         filtered_lfps, blocks, sampling_frequency, smoothing_sigma, square=True

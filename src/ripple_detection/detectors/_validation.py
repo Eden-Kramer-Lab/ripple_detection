@@ -181,6 +181,89 @@ def _validate_speed_units(speed: FloatArray, speed_threshold: float) -> None:
         )
 
 
+UNFILTERED_CUTOFF = 100.0
+"""Hz. A ripple-band signal, at any published lower edge (80 Hz and up),
+has little power below this; raw LFP has most of its power there."""
+
+_UNFILTERED_POWER_FRACTION = 0.5
+"""Share of power below ``UNFILTERED_CUTOFF`` above which a channel is taken
+for unfiltered. Measured on simulated sessions at 1000 to 30000 Hz: raw pink
+noise holds 0.65-0.86 of its power there, with theta and delta 0.87-0.94, ADC
+counts with an offset 0.996; the 150-250 Hz filter's output under 0.001, an
+80-250 Hz band's about 0.25, and white noise at 1500 Hz 0.13."""
+
+_SPECTRUM_BUDGET = 2**20
+"""Most samples, over every channel, the unfiltered-input check reads."""
+
+_SPECTRUM_SEGMENTS = 32
+"""Most stretches of the recording the unfiltered-input check reads."""
+
+
+def _warn_if_not_ripple_band(
+    filtered_lfps: FloatArray, sampling_frequency: float, name: str = "filtered_lfps"
+) -> None:
+    """Warn when a signal meant to be ripple-band LFP has most of its power
+    below ``UNFILTERED_CUTOFF``, as raw LFP and ADC counts do.
+
+    Raw LFP passes every shape check and gives events that follow the slow
+    waves rather than the ripples. The spectrum is estimated on at most
+    ``_SPECTRUM_SEGMENTS`` stretches of finite rows, spread over the
+    recording, each about a quarter of a second long, so the check stays
+    cheap on hours of data. No DC is removed: an offset is low-frequency
+    power, and a filtered signal has none.
+
+    Parameters
+    ----------
+    filtered_lfps : ndarray, shape (n_time, n_channels)
+    sampling_frequency : float
+        In Hz. A rate whose Nyquist frequency is under twice the cutoff
+        cannot hold a ripple band, so it is not judged.
+    name : str, optional
+        The argument's name, for the message.
+
+    Warns
+    -----
+    UserWarning
+        If any channel has more than ``_UNFILTERED_POWER_FRACTION`` of its
+        power below ``UNFILTERED_CUTOFF``.
+
+    """
+    if sampling_frequency < 4 * UNFILTERED_CUTOFF:
+        return
+    n_time, n_channels = filtered_lfps.shape
+    # a power of two about a quarter second long resolves 4 Hz or finer
+    length = min(n_time, int(2 ** np.ceil(np.log2(sampling_frequency / 4))))
+    if length < 64 or n_channels == 0:
+        return
+    missing_before = np.concatenate(
+        [[0], np.cumsum(~np.all(np.isfinite(filtered_lfps), axis=1))]
+    )
+    starts = np.flatnonzero(missing_before[length:] == missing_before[:-length])
+    if not starts.size:
+        return
+    n_segments = int(np.clip(_SPECTRUM_BUDGET // (length * n_channels), 1, _SPECTRUM_SEGMENTS))
+    chosen = np.unique(starts[np.linspace(0, starts.size - 1, n_segments).round().astype(int)])
+    segments = filtered_lfps[chosen[:, np.newaxis] + np.arange(length)]
+    tapered = segments * np.hanning(length)[:, np.newaxis]
+    power = (np.abs(np.fft.rfft(tapered, axis=1)) ** 2).sum(axis=0)
+    frequencies = np.fft.rfftfreq(length, 1 / sampling_frequency)
+    total = power.sum(axis=0)
+    low = power[frequencies < UNFILTERED_CUTOFF].sum(axis=0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        share = low / total  # a silent channel is 0/0, NaN, and never flagged
+    flagged = np.flatnonzero(share > _UNFILTERED_POWER_FRACTION)
+    if flagged.size:
+        shown = ", ".join(str(int(channel)) for channel in flagged[:5])
+        _warn_at_caller(
+            f"{name} does not look filtered to the ripple band: "
+            f"{100 * np.max(share[flagged]):.0f}% of the power of channel(s) "
+            f"[{shown}{', ...' if flagged.size > 5 else ''}] lies below "
+            f"{UNFILTERED_CUTOFF:g} Hz, where a ripple-band signal has almost none. On raw "
+            "LFP or ADC counts the events follow the slow waves, not the ripples. Filter "
+            f"first: {name} = filter_ripple_band(lfps, sampling_frequency)."
+        )
+
+
 def _validate_detector_inputs(
     time: ArrayLike,
     signal: ArrayLike,

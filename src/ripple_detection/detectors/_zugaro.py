@@ -28,6 +28,7 @@ from ripple_detection.detectors._validation import (
     _check_thresholds,
     _validate_detector_inputs,
     _validate_duration_limits,
+    _warn_if_not_ripple_band,
 )
 
 ZUGARO_SMOOTHING_WINDOW = 11 / 1250
@@ -211,7 +212,8 @@ def Zugaro_ripple_detector(
         documents 100-200 Hz input, buzcode filters 130-200 Hz, neurocode
         80-250 Hz; this package's ``filter_ripple_band`` gives 150-250 Hz.
         Channels are squared and summed, as the original does. NaN marks
-        missing samples.
+        missing samples. Input with most of its power below 100 Hz, as raw
+        LFP and ADC counts have, warns.
     speed : array_like, shape (n_time,)
         Animal's running speed in cm/s.
     sampling_frequency : float
@@ -299,6 +301,7 @@ def Zugaro_ripple_detector(
     window = _zugaro_smoothing_samples(smoothing_window, sampling_frequency)
     is_valid, blocks = _valid_blocks(time, filtered_lfps, minimum_duration=minimum_duration)
     _reject_flat_channels(filtered_lfps, blocks, "filtered_lfps")
+    _warn_if_not_ripple_band(filtered_lfps, sampling_frequency)
     blocks = _drop_short_blocks(blocks, is_valid, window, "the smoothing window")
 
     kernel = np.ones(window) / window

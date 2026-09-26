@@ -48,6 +48,7 @@ from ripple_detection.detectors._validation import (
     _validate_duration_limits,
     _validate_multiunit,
     _validate_time_units,
+    _warn_if_not_ripple_band,
 )
 
 
@@ -526,7 +527,8 @@ def Carey_candidate_detector(
         Time values for each sample in seconds.
     filtered_lfps : array_like, shape (n_time, n_channels), or None
         Ripple-band-filtered LFP; the original uses 140-250 Hz on one channel.
-        None when ``ripple_score`` is given instead.
+        None when ``ripple_score`` is given instead. Input with most of its
+        power below 100 Hz, as raw LFP and ADC counts have, warns.
     multiunit : array_like, shape (n_time, n_units)
         Spike counts (or indicators) per sample per unit, non-negative whole
         numbers, not a rate; clusterless marks per tetrode work, with the
@@ -691,6 +693,8 @@ def Carey_candidate_detector(
     _reject_flat_channels(
         filtered_lfps, blocks, "filtered_lfps" if ripple_score is None else "ripple_score"
     )
+    if ripple_score is None:
+        _warn_if_not_ripple_band(filtered_lfps, sampling_frequency)
 
     # ripple score, rescaled to mean 1: given, or OldWizard ('amplitude',
     # 'wizard' kernel) from the ripple-band LFP

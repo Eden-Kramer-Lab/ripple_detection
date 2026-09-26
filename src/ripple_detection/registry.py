@@ -324,7 +324,8 @@ class DetectorSpec:
         whole numbers. It cannot tell raw LFP from ripple-band LFP; both are
         floats of the same shape, and no property of the numbers settles it
         for every recording. That remains the caller's responsibility, which
-        is why :attr:`inputs` states it.
+        is why :attr:`inputs` states it; the detectors warn when ripple-band
+        input has most of its power below 100 Hz, as raw LFP has.
 
         Parameters
         ----------

@@ -3226,7 +3226,8 @@ class TestKayConsensusTraceMissingSamples:
         time = np.arange(n_time) / sampling_frequency
         rng = np.random.default_rng(0)
         lfps = rng.normal(0.0, 0.1, (n_time, 2))
-        lfps[2000:2400] += 10.0  # a strong block right before the gap
+        # a strong ripple-band block right before the gap
+        lfps[2000:2400] += 10.0 * np.sin(2 * np.pi * 200.0 * time[2000:2400, np.newaxis])
         lfps[2400:2600, :] = np.nan
         trace = get_Kay_ripple_consensus_trace(
             lfps, sampling_frequency, smoothing_sigma=0.004, time=time
@@ -4647,6 +4648,92 @@ class TestValidationPaths:
         mask[:1000] = True
         with pytest.raises(ValueError, match="no sample that is finite"):
             Kay_ripple_detector(time, lfps, stationary, self.FS, normalization_mask=mask)
+
+
+def _call_lfp_consumer(name, time, lfps, speed, fs, multiunit):
+    """Call one of the functions that take ripple-band LFP, by name."""
+    if name == "Carey":
+        return Carey_candidate_detector(
+            time, lfps, multiunit, speed, fs, minimum_active_units=0
+        )
+    if name == "Shvartsman":
+        return Shvartsman_ripple_detector(time, lfps, speed, fs)
+    if name == "Kay_trace":
+        return get_Kay_ripple_consensus_trace(lfps, fs)
+    if name == "Yu_trace":
+        return get_Yu_ripple_consensus_trace(lfps, fs)
+    detector = {
+        "Kay": Kay_ripple_detector,
+        "Karlsson": Karlsson_ripple_detector,
+        "Roumis": Roumis_ripple_detector,
+        "Yu": Yu_ripple_detector,
+        "Zugaro": Zugaro_ripple_detector,
+    }[name]
+    return detector(time, lfps, speed, fs)
+
+
+LFP_CONSUMERS = [
+    "Kay",
+    "Karlsson",
+    "Roumis",
+    "Shvartsman",
+    "Yu",
+    "Zugaro",
+    "Carey",
+    "Kay_trace",
+    "Yu_trace",
+]
+
+
+class TestUnfilteredInputWarns:
+    """Raw LFP, or ADC counts, where ripple-band LFP belongs gives events that
+    follow the slow waves; every function that takes ripple-band LFP says so."""
+
+    @staticmethod
+    @pytest.fixture(scope="class")
+    def session():
+        from ripple_detection.simulate import simulate_session, simulate_time
+
+        time = simulate_time(30_000, 1500)
+        return simulate_session(time, [4.0, 8.0, 12.0, 16.0], rng=0)
+
+    @pytest.mark.parametrize("name", LFP_CONSUMERS)
+    def test_raw_lfp_warns(self, session, name):
+        with (
+            pytest.warns(UserWarning, match="does not look filtered to the ripple band"),
+            contextlib.suppress(ValueError),
+        ):
+            _call_lfp_consumer(
+                name, session.time, session.lfps, session.speed, 1500, session.multiunit
+            )
+
+    @pytest.mark.parametrize("name", LFP_CONSUMERS)
+    def test_integer_counts_warn(self, session, name):
+        counts = np.round(session.lfps * 200 + 1200).astype(np.int16)
+        with pytest.warns(UserWarning, match=r"below 100 Hz"), contextlib.suppress(ValueError):
+            _call_lfp_consumer(
+                name, session.time, counts, session.speed, 1500, session.multiunit
+            )
+
+    @pytest.mark.parametrize("name", LFP_CONSUMERS)
+    @pytest.mark.parametrize("fs", [1000, 1500, 2000, 30_000])
+    def test_filtered_lfp_does_not_warn(self, name, fs):
+        from ripple_detection.simulate import simulate_session, simulate_time
+
+        time = simulate_time(int(20 * fs), fs)
+        session = simulate_session(time, [5.0, 10.0, 15.0], rng=1, n_channels=2, n_units=10)
+        filtered = filter_ripple_band(session.lfps, fs)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            _call_lfp_consumer(name, time, filtered, session.speed, fs, session.multiunit)
+
+    def test_missing_rows_are_skipped(self, session):
+        """Missing rows are skipped, not read as low-frequency power."""
+        filtered = filter_ripple_band(session.lfps, 1500)
+        filtered[::997] = np.nan
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            get_Kay_ripple_consensus_trace(filtered, 1500)
 
 
 class TestDetectEventsFromTrace:
