@@ -1936,8 +1936,9 @@ def draw_network_events(
                      sharp_wave_sigma, sharp_wave_sigma, amplitude, np.nan, np.nan, np.nan)
                 )  # fmt: skip
             if event_type == "ripple_doublet":
-                first, last = ripples[0], ripples[-1]
-                start, end = first[0] - 3 * first[1], last[0] + 3 * last[2]
+                # every ripple's span: an earlier, longer ripple can end last
+                start = min(center - 3 * rise for center, rise, *_ in ripples)
+                end = max(center + 3 * decay for center, _, decay, *_ in ripples)
                 burst_center, burst_rise = (start + end) / 2, (end - start) / 6
                 burst_decay = burst_rise
             else:

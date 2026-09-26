@@ -1336,13 +1336,12 @@ class TestDrawNetworkEvents:
             ripples = event[event.expression == "ripple"]
             np.testing.assert_array_equal(ripples.component, np.arange(n_ripples))
             (burst,) = event[event.expression == "burst"].itertuples()
-            first, last = ripples.iloc[0], ripples.iloc[-1]
             assert burst.rise_sigma == pytest.approx(burst.decay_sigma)
             assert burst.center_time - 3 * burst.rise_sigma == pytest.approx(
-                first.center_time - 3 * first.rise_sigma
+                (ripples.center_time - 3 * ripples.rise_sigma).min()
             )
             assert burst.center_time + 3 * burst.decay_sigma == pytest.approx(
-                last.center_time + 3 * last.decay_sigma
+                (ripples.center_time + 3 * ripples.decay_sigma).max()
             )
             assert np.all(np.diff(ripples.center_time) >= 0.06)
         assert n_ripples_seen == {2, 3}
@@ -1383,6 +1382,24 @@ class TestDrawNetworkEvents:
         union = spans.groupby("event_id").agg(start=("start", "min"), end=("end", "max"))
         gaps = union.start.to_numpy()[1:] - union.end.to_numpy()[:-1]
         assert gaps.min() >= 0.05
+
+    def test_a_doublet_burst_spans_every_ripple(self):
+        """The burst runs from the earliest ripple start to the latest end,
+        though an earlier, longer ripple can end after the last one, as one
+        does in this draw."""
+        events = draw_network_events(
+            simulate_time(self.FS * 600, self.FS),
+            type_probabilities={"ripple_doublet": 1.0},
+            rng=1,
+        )
+        ripple_start, ripple_end = _spans(events, 3)
+        spans = events.assign(start=ripple_start, end=ripple_end)
+        ripples = spans[spans.expression == "ripple"].groupby("event_id")
+        bursts = spans[spans.expression == "burst"].set_index("event_id")
+        np.testing.assert_allclose(bursts.start, ripples.start.min(), rtol=0, atol=1e-12)
+        np.testing.assert_allclose(bursts.end, ripples.end.max(), rtol=0, atol=1e-12)
+        earlier_ends_last = ripples.apply(lambda r: r.end.iloc[:-1].max() > r.end.iloc[-1])
+        assert earlier_ends_last.any()
 
     def test_rate(self):
         time = simulate_time(1000 * 3600, 1000)

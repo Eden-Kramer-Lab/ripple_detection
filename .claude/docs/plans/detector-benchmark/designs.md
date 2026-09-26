@@ -72,7 +72,7 @@ rows above.
 | `swr` | ✓ | ✓ | ✓ | reference |
 | `weak_ripple` | ✓ weak SNR | ✓ amplitude × 0.5 | ✓ weak participation | |
 | `burst_only` | | | ✓ | burst span (0.05, 0.3) s, centred on the event time |
-| `ripple_doublet` | ✓ 2-3 | ✓ one per ripple | ✓ one spanning all ripples | burst ±3-sigma span = first ripple's start to last ripple's end, symmetric |
+| `ripple_doublet` | ✓ 2-3 | ✓ one per ripple | ✓ one spanning all ripples | burst ±3-sigma span = the earliest ripple start to the latest ripple end (a longer earlier ripple can end last), symmetric |
 | `sharp_wave_only` | | ✓ | | |
 
 ## Drawing network events
