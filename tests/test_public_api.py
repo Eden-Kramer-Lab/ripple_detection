@@ -512,6 +512,7 @@ def test_the_readme_quick_start_runs_and_finds_the_simulated_ripples(capsys):
     """Every block of the Quick Start, in order, in one namespace, as a reader
     copies them; the Basic Usage events include every simulated ripple (at
     2 SD on pink noise Kay also finds a few noise events, as it should)."""
+    import importlib.util
     import re
     from pathlib import Path
 
@@ -520,7 +521,10 @@ def test_the_readme_quick_start_runs_and_finds_the_simulated_ripples(capsys):
         text.index("## Quick Start") : text.index("\n## ", text.index("## Quick Start"))
     ]
     namespace: dict[str, object] = {}
+    has_matplotlib = importlib.util.find_spec("matplotlib") is not None
     for block in re.findall(r"```python\n(.*?)```", section, re.DOTALL):
+        if "import matplotlib" in block and not has_matplotlib:
+            continue  # a plot only; the dependency-floor job installs no plotting library
         exec(block, namespace)
     events, session = namespace["ripple_times"], namespace["session"]
     for low, high in session.ripple_windows:
