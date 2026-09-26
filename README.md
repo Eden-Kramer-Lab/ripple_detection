@@ -703,12 +703,13 @@ print(list(network.columns))  # ['id', 'type', 'start_time', 'end_time', 'peak_t
 ```
 
 The session holds the detectors' inputs as `simulate_session`'s does, plus `session.events`
-(with the number of cells each burst recruited), `session.unit_types` (place, other pyramidal,
+(with the number of place and other pyramidal units each burst recruited), `session.unit_types` (place, other pyramidal,
 interneuron), `session.baseline_rates` and, per ripple and channel, `session.ripple_channels`.
 Windows at two fractions pair up by row. `draw_network_events`' Notes give each reference
 value and its source; the options cover alternatives to the reference model: coupled event
 strengths (`strength_correlation`), a flatter envelope (`envelope_power=4`), ripples on only
-some channels with delays (`spatial_profile="local"`), slowly varying background noise
+some channels with delays (`spatial_profile="local"` with `channel_occupancy` below 1 and
+`channel_delay` above 0), slowly varying background noise
 (`noise_log_amplitude`) and refractory spiking (`spike_model="refractory"`).
 
 See the [examples](https://github.com/Eden-Kramer-Lab/ripple_detection/tree/master/examples/) directory for Jupyter notebooks demonstrating:

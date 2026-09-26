@@ -117,15 +117,17 @@ here is relative to 1.7.1.
   running bouts with theta and rest with delta.
 - Simulated sessions with known event types: `draw_network_events` draws latent
   network events (sharp-wave ripples, weak ripples, bursts without a ripple,
-  ripple doublets, sharp waves without a ripple; `EVENT_TYPES`) as a table of
+  ripple doublets, sharp waves without a ripple; `EVENT_TYPES`, with
+  `EXPRESSIONS`, `UNIT_TYPES` and `NON_EVENT_TYPES`) as a table of
   their ripple, sharp-wave and burst components; `simulate_network_session`
   renders it into every detector input, with options for coupled event strengths,
   a second envelope shape, local ripples, varying background noise and refractory
   spiking; `truth_windows` gives each component's or event's window at any
   fraction of its envelope's peak. `SimulatedSession` gains `events`,
   `non_events`, `unit_types`, `baseline_rates`, `running_intervals` and
-  `ripple_channels`, empty or defaulted for `simulate_session`, whose signals
-  are unchanged.
+  `ripple_channels`; `simulate_session` fills `running_intervals` and leaves
+  the others empty, and its signals are unchanged. No simulator renders
+  non-events yet.
 - `load_literature_parameters`, the detection parameters of 57 replay papers,
   and a simulation study comparing every detector (`examples/simulation_study.py`).
 - `load_literature_datasets`, a separate packaged catalog of public recording
