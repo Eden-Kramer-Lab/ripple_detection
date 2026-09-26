@@ -2236,6 +2236,36 @@ def test_list_methods_defines_every_column_once():
 
 # ---------------------------------------------------------------- declared requirements
 
+CORE_COLUMNS = [
+    "start_time",
+    "end_time",
+    "duration",
+    "peak_time",
+    "clipped_start",
+    "clipped_end",
+]
+
+
+def _assert_output_core(events, recording):
+    """Every result leads with the same columns, numbered from 1, with its grid."""
+    assert list(events.columns[:6]) == CORE_COLUMNS, list(events.columns)
+    assert events.index.name == "event_number"
+    np.testing.assert_array_equal(events.index, np.arange(1, len(events) + 1))
+    assert events.clipped_start.dtype == bool
+    assert events.clipped_end.dtype == bool
+    assert events.peak_time.dtype == float
+    assert (events.start_time <= events.end_time).all()
+    np.testing.assert_array_equal(events.duration, events.end_time - events.start_time)
+    peaks = events.peak_time.dropna()
+    assert (peaks >= events.start_time[peaks.index] - 1e-9).all()
+    grid = events.attrs["grid"]
+    assert grid["input_sampling_frequency"] == recording.fs
+    entry = lm._ENTRIES[events.attrs["method"]]
+    assert grid["bin_width"] == entry.bin_width
+    assert "duration" in grid
+    assert ("bin_limits" in grid) is (entry.bin_width is not None)
+    assert isinstance(events.attrs["clipping_tracked"], bool)
+
 
 def _defaults(name):
     """The implementation's keyword defaults, for evaluating ``when`` conditions."""
@@ -2315,9 +2345,9 @@ def test_each_method_runs_with_exactly_its_declared_requirements(name, index, mo
     monkeypatch.setattr(lm, "population_trace", spy)
     rec, options = _declared_call(name, index)
     events = lm.run_method(name, rec, **options)
-    assert isinstance(events, pd.DataFrame)
+    _assert_output_core(events, rec)
     declared = lm._ENTRIES[name].bin_width
-    assert set(widths) <= {declared}, (name, widths, declared)
+    assert set(widths) == ({declared} if declared else set()), (name, widths, declared)
 
 
 @pytest.mark.parametrize(("name", "index", "missing"), REQUIREMENT_CASES)
@@ -2473,3 +2503,32 @@ def test_harvey_code_without_radiatum_names_the_channel_and_the_alternative():
     ) as error:
         lm.harvey_2023_code(rec)
     assert "harvey_2023_no_radiatum" in str(error.value)
+
+
+def test_output_core_fills_what_a_method_does_not_report(measured):
+    # Krause returns bare bounds: no peak, no clipping flags.
+    inputs, options = _method_inputs("krause_2022")
+    rec = lm.Recording.from_arrays(**inputs)
+    events = lm.run_method("krause_2022", rec, **options)
+    assert len(events)
+    _assert_output_core(events, rec)
+    assert events.peak_time.isna().all()
+    assert not events.clipped_start.any()
+    assert events.attrs["clipping_tracked"] is False
+    # Karlsson's detector reports all of them, and its own columns follow.
+    events = lm.karlsson_2009(measured)
+    _assert_output_core(events, measured)
+    assert events.peak_time.notna().all()
+    assert events.attrs["clipping_tracked"] is True
+    assert "max_zscore" in events.columns[6:]
+
+
+def test_a_native_grid_reports_bins_and_elapsed_duration():
+    rec, _, _ = _burst_recording(0.0, 1000.0, speed=np.zeros(20_000))
+    events = lm.run_method("widloski_2025_bursts", rec)
+    assert events.attrs["grid"]["bin_width"] == 0.001
+    assert events.attrs["grid"]["native_sampling_frequency"] == 1000.0
+    moving, _, _ = _burst_recording(0.0, 1000.0, speed=np.full(20_000, 100.0))
+    empty = lm.run_method("denovellis_2021_mua", moving)  # speed <=4 at both ends
+    assert empty.empty
+    _assert_output_core(empty, rec)

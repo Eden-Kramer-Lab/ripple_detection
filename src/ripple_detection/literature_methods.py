@@ -2306,7 +2306,6 @@ def _pfeiffer_2015_swrs(
         ),
         Requirement("speed", unless="external_ripples"),
     ),
-    bin_width=0.003,
 )
 def krause_2022(rec: Recording) -> FloatArray:
     """Supplied or Pfeiffer-style SWRs trimmed using per-SWR 3 ms place-cell bins.
@@ -2719,7 +2718,6 @@ def gridchyn_2020(
             "baseline_intervals", "the normalization epoch (unspecified in the paper)"
         ),
     ),
-    bin_width=0.02,
 )
 def kaefer_2020(rec: Recording) -> pd.DataFrame:
     """Secondary SWR label: reference-subtracted 240 ms FFT chunks every 20 ms.
@@ -5007,11 +5005,12 @@ def list_methods() -> pd.DataFrame:
             The ``stage`` values accepted: ``("detection",)``, or also
             ``"decoding_candidates"`` for methods with a decoding-candidate stage.
         bin_width
-            The native bin width in seconds of the grid the events are found on
-            (population bins, Krause's per-SWR bins, Kaefer's FFT stride), or
-            NaN for the input samples. On a bin grid, duration limits count
-            bins while ``duration`` is the elapsed time between the closed
-            bounds (see ``run_method``).
+            The bin width in seconds of the population grid the events are
+            found on (``population_trace``), or NaN when they come from the
+            input samples or a grid the docstring describes (Kaefer's 20 ms
+            FFT stride, Krause's per-SWR 3 ms bins). On a population grid the
+            detection's duration limits count bins while ``duration`` is the
+            elapsed time between the closed bounds (see ``run_method``).
         interpretation
             The method's docstring: its rule, interpretation and assumptions.
     """
@@ -5226,14 +5225,31 @@ def run_method(
     Returns
     -------
     events : pandas.DataFrame
-        At least start_time, end_time and duration (elapsed seconds), retaining
-        any method-specific peak, channel, trigger and clipping columns.
-        ``attrs`` holds ``method`` (the name), ``doi``, ``output`` (the
-        trigger), ``role``, ``inventory``, ``interpretation`` (the docstring),
-        ``options`` (every keyword option, defaults resolved),
-        ``behavior_intervals`` (the array supplied, or None) and
-        ``input_sampling_frequency`` (Hz), plus any the method adds
-        (Gridchyn: ``threshold_updates`` and ``expected_count``).
+        Indexed by ``event_number`` from 1. Every method's result starts with
+        ``start_time`` and ``end_time`` (seconds; closed bounds),
+        ``duration`` (``end_time - start_time``), ``peak_time`` (NaN where
+        the method defines no peak) and ``clipped_start``/``clipped_end``
+        (an edge cut by missing data or the recording's edge; False where the
+        method does not track clipping, see ``clipping_tracked``), then the
+        method's own columns (channel, trigger, statistics).
+
+        ``attrs`` holds ``method``, ``doi``, ``output``, ``role``,
+        ``inventory`` and ``interpretation`` (defined in ``list_methods``);
+        ``options`` (every keyword option, defaults resolved);
+        ``behavior_intervals`` (the array supplied, or None); ``grid``;
+        ``clipping_tracked`` (whether the method reports clipping); plus any
+        the method adds (Gridchyn: ``threshold_updates`` and
+        ``expected_count``).
+
+        ``grid`` holds ``input_sampling_frequency`` (Hz), ``bin_width``
+        (seconds of the population grid, or None for the input samples),
+        ``native_sampling_frequency`` (its reciprocal, or the input rate),
+        ``duration`` (the convention above) and, on a population grid,
+        ``bin_limits``. On a grid, duration limits count bins while
+        ``duration`` is elapsed time between the first and last samples the
+        bins counted: spikes filling 10.000-10.049 s at 1000 Hz make five
+        10 ms bins, reported as 10.000-10.049 s with ``duration`` 0.049 s,
+        and a 50 ms minimum (five bins) keeps the event.
 
     Raises
     ------
@@ -5267,8 +5283,8 @@ def run_method(
     )
     if eligible is not None:
         result = result.loc[_within_intervals_mask(bounds(result), eligible)].copy()
-    if "duration" not in result:
-        result["duration"] = result.end_time - result.start_time
+    clipping_tracked = {"clipped_start", "clipped_end"} <= set(result.columns)
+    result = _output_core(result)
     result.attrs.update(
         {
             "method": name,
@@ -5283,10 +5299,74 @@ def run_method(
                 if key not in {"rec", "behavior_intervals"}
             },
             "behavior_intervals": eligible,
-            "input_sampling_frequency": recording.fs,
+            "grid": _grid(entry, recording.fs),
+            "clipping_tracked": clipping_tracked,
         }
     )
     return result
+
+
+_CORE_COLUMNS = [
+    "start_time",
+    "end_time",
+    "duration",
+    "peak_time",
+    "clipped_start",
+    "clipped_end",
+]
+
+
+def _output_core(events: pd.DataFrame) -> pd.DataFrame:
+    """The shared columns first, then the method's own, numbered from 1."""
+    core = pd.DataFrame(
+        {
+            "start_time": events.start_time.to_numpy(dtype=float),
+            "end_time": events.end_time.to_numpy(dtype=float),
+            "duration": (events.end_time - events.start_time).to_numpy(dtype=float),
+            "peak_time": (
+                events.peak_time.to_numpy(dtype=float)
+                if "peak_time" in events
+                else np.full(len(events), np.nan)
+            ),
+            **{
+                flag: (
+                    events[flag].to_numpy(dtype=bool)
+                    if flag in events
+                    else np.zeros(len(events), dtype=bool)
+                )
+                for flag in ("clipped_start", "clipped_end")
+            },
+        }
+    )
+    extra = events.drop(columns=[c for c in _CORE_COLUMNS if c in events]).reset_index(
+        drop=True
+    )
+    result = pd.concat([core, extra], axis=1)
+    result.index = pd.RangeIndex(1, len(result) + 1, name="event_number")
+    result.attrs = dict(events.attrs)  # what the method adds (Gridchyn's updates)
+    return result
+
+
+def _grid(entry: Recipe, sampling_frequency: float) -> dict[str, Any]:
+    """The sample or bin grid of a method's events and its duration convention."""
+    grid: dict[str, Any] = {
+        "input_sampling_frequency": sampling_frequency,
+        "bin_width": entry.bin_width,
+        "native_sampling_frequency": (
+            sampling_frequency if entry.bin_width is None else 1 / entry.bin_width
+        ),
+        "duration": (
+            "end_time - start_time: elapsed seconds between the closed bounds, one "
+            "sample period less than the samples they hold span"
+        ),
+    }
+    if entry.bin_width is not None:
+        grid["bin_limits"] = (
+            "the population detection's duration limits count bins: n bins last n * "
+            "bin_width, so an event of n whole bins has a duration near n * bin_width "
+            "- 1 / input_sampling_frequency"
+        )
+    return grid
 
 
 __all__ = [

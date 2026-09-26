@@ -122,12 +122,24 @@ independent LFP/spike clocks and streaming acquisition are not yet supported.
 Single-channel rules use the first selected LFP channel. Automatic channel
 ranking, cell classification and tetrode membership must be supplied upstream.
 
-`run_method` and direct named methods always return a DataFrame with start/end times and elapsed duration,
-retaining available peak, channel, trigger and clipping columns. Its `attrs`
-record the method, DOI, output role, interpretation, resolved options and input
-sampling rate. Gridchyn also records threshold updates. Array-returning internal
-compositions do not retain every diagnostic column of the underlying detector.
-Preserve attrs explicitly if exporting to a format such as CSV that drops them.
+`run_method` and direct named methods always return a DataFrame indexed by
+`event_number` from 1 whose first columns are `start_time`, `end_time`,
+`duration`, `peak_time` (NaN where the method defines no peak), `clipped_start`
+and `clipped_end` (False where the method does not track clipping;
+`attrs["clipping_tracked"]` says which), followed by the method's own columns.
+Its `attrs` record the method, DOI, output, role, interpretation, resolved
+options, the call's `behavior_intervals` and the `grid`. Gridchyn also records
+threshold updates. Array-returning internal compositions do not retain every
+diagnostic column of the underlying detector. Preserve attrs explicitly if
+exporting to a format such as CSV that drops them.
+
+`attrs["grid"]` states the events' sample or bin grid: the input rate, the
+population `bin_width` (None for the input samples), and the duration
+convention. Bounds are closed and `duration` is `end_time - start_time`. On a
+population grid the detection's duration limits count bins instead. For
+example, spikes filling 10.000–10.049 s at 1000 Hz fill five 10 ms bins; the
+event is reported at the first and last counted samples, 10.000 and 10.049 s,
+so `duration` is 0.049 s, while a 50 ms minimum duration (five bins) keeps it.
 
 The [simulation script](../../examples/literature_recipes.py) supplies synthetic
 cell groups, templates, reference and a baseline spanning the initial 0–12 s
