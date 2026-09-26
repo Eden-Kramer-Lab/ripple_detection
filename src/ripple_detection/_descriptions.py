@@ -75,7 +75,8 @@ PARAMETERS = {
         "s",
         (
             "Shortest run at or above the threshold that makes an event, before the event "
-            "is extended to the mean; applied as a round-half-up sample count."
+            "is extended to the mean; applied as a round-half-up sample count. Not the "
+            "whole event's duration."
         ),
     ),
     "maximum_duration": (

@@ -112,12 +112,15 @@ def multiunit_HSE_detector(
         by 100. To disable movement exclusion, pass ``np.inf``, which also
         keeps events whose speed is unknown (NaN).
     minimum_duration : float, optional
-        Minimum event duration in **seconds**. Default is 0.015 (15 milliseconds).
-        The firing rate must stay at or above ``zscore_threshold`` for at least
-        ``minimum_sample_count(time, minimum_duration)`` consecutive samples,
-        rounded half up from the median timestamp step (23 at 1500 Hz and 15 ms);
-        the event is then extended to the surrounding mean-crossings, so the reported
-        ``duration`` is typically longer.
+        Minimum time above threshold in **seconds**. Default is 0.015 (15
+        milliseconds). The firing rate must stay at or above ``zscore_threshold``
+        for at least ``minimum_sample_count(time, minimum_duration)`` consecutive
+        samples, rounded half up from the median timestamp step (23 at 1500 Hz
+        and 15 ms); the event is then extended to the surrounding mean-crossings,
+        so the reported ``duration`` is typically longer.
+        It is the time above threshold, not the whole event's duration; for a
+        minimum on the whole event, which most published minimums mean, see
+        ``detect_events_from_trace(minimum_event_duration=)``.
         Typical range: 0.015 - 0.100 s (15-100 ms). Lower values detect shorter
         events but may increase false positives.
     zscore_threshold : float, optional
