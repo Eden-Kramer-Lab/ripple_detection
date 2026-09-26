@@ -1,6 +1,6 @@
 # Detector Benchmark Implementation Plan
 
-**Status:** Not started.
+**Status:** Phase 1a done (2026-09-26, commits a326acf..cd37f7e on `detector-benchmark`, independently reviewed). Its reference-value changes (event rate 0.3/s, interneurons 8-15 Hz) are in [designs.md#parameter-sources](designs.md#parameter-sources). Next: phase 1b or phase 2.
 
 A systematic evaluation of how well ripple_detection's nine detectors and the literature recipes
 (`ripple_detection.literature_methods`) capture events, on simulated sessions whose truth is known: do
