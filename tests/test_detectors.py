@@ -4613,6 +4613,36 @@ class TestGapRule:
         with pytest.raises(ValueError, match="times the interval sampling_frequency"):
             detector(time, lfps, np.full(20_000, 2.0), factor * fs)
 
+    def test_time_in_milliseconds_says_milliseconds(self):
+        fs = 1500
+        time = np.arange(20_000) / fs
+        lfps = _synthetic_ripple_band(20_000, fs, [(4000, 4060, 20.0)])
+        with pytest.raises(ValueError, match=r"milliseconds[\s\S]*time / 1000") as error:
+            Kay_ripple_detector(time * 1000, lfps, np.full(20_000, 2.0), fs)
+        assert "sample" not in str(error.value).split("\n")[0]
+
+    def test_time_in_samples_says_samples(self):
+        fs = 1500
+        lfps = _synthetic_ripple_band(20_000, fs, [(4000, 4060, 20.0)])
+        with pytest.raises(ValueError, match=r"in samples[\s\S]*/ 1500"):
+            Kay_ripple_detector(np.arange(20_000.0), lfps, np.full(20_000, 2.0), fs)
+
+    def test_at_1000_hz_samples_and_milliseconds_are_one_step(self):
+        fs = 1000
+        lfps = _synthetic_ripple_band(20_000, fs, [(4000, 4060, 20.0)])
+        with pytest.raises(ValueError, match="in samples or in milliseconds"):
+            Kay_ripple_detector(np.arange(20_000.0), lfps, np.full(20_000, 2.0), fs)
+
+    def test_a_wrong_rate_gives_the_ratio_not_a_units_hint(self):
+        """30000 Hz stated for 1500 Hz timestamps is a wrong rate, not time in samples."""
+        fs = 1500
+        time = np.arange(20_000) / fs
+        lfps = _synthetic_ripple_band(20_000, fs, [(4000, 4060, 20.0)])
+        with pytest.raises(ValueError, match="times the interval sampling_frequency") as error:
+            Kay_ripple_detector(time, lfps, np.full(20_000, 2.0), 30_000)
+        assert "samples, not seconds" not in str(error.value)
+        assert "1500 Hz" in str(error.value)
+
     def test_a_nan_timestamp_raises_and_says_so(self):
         time = np.arange(5000) / 1000.0
         time[100] = np.nan

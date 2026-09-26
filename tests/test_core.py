@@ -1309,6 +1309,30 @@ class TestFilterRippleBandLengthGuard:
             filter_ripple_band(np.random.default_rng(0).normal(size=len(kernel) - 1), 1500)
 
 
+class TestFilterRippleBandChecksTheRate:
+    """With ``time``, the stated rate is checked against the timestamps, as
+    the detectors check it: the filter is designed for the stated rate."""
+
+    def test_a_rate_the_timestamps_contradict_raises(self):
+        time = np.arange(6000) / 1500
+        data = np.random.default_rng(0).normal(size=6000)
+        with pytest.raises(ValueError, match="times the interval sampling_frequency"):
+            filter_ripple_band(data, 30_000, time=time)
+
+    def test_time_in_milliseconds_raises_saying_so(self):
+        time = np.arange(6000) / 1500
+        data = np.random.default_rng(0).normal(size=6000)
+        with pytest.raises(ValueError, match="milliseconds"):
+            filter_ripple_band(data, 1500, time=time * 1000)
+
+    def test_matching_timestamps_filter_as_without_them(self):
+        time = 1.7e9 + np.arange(6000) / 1500
+        data = np.random.default_rng(0).normal(size=6000)
+        np.testing.assert_array_equal(
+            filter_ripple_band(data, 1500, time=time), filter_ripple_band(data, 1500)
+        )
+
+
 class TestFilterRippleBandPadLength:
     def test_the_fir_pad_length_gives_filtfilt_s_default_output_exactly(self):
         """A run only needs as many samples as the kernel has taps because a

@@ -3,7 +3,12 @@
 import numpy as np
 from numpy.typing import ArrayLike
 
-from ripple_detection.core import FloatArray, _check_non_negative, _warn_at_caller
+from ripple_detection.core import (
+    FloatArray,
+    _check_non_negative,
+    _check_sampling_interval,
+    _warn_at_caller,
+)
 
 
 def _validate_lfp_dimensions(filtered_lfps: FloatArray) -> None:
@@ -83,9 +88,10 @@ def _validate_time_units(time: FloatArray, sampling_frequency: float) -> None:
     ------
     ValueError
         If time holds NaN or infinity, is not increasing, has a median step
-        that is not positive (most timestamps repeat), appears to be in
-        samples instead of seconds, or has a median step more than 10 percent
-        away from ``1 / sampling_frequency``.
+        that is not positive (most timestamps repeat), or has a median step
+        more than 10 percent away from ``1 / sampling_frequency``; the
+        message names time in samples, time in milliseconds, or the rate the
+        timestamps imply (``core._check_sampling_interval``).
 
     Warnings
     --------
@@ -108,47 +114,14 @@ def _validate_time_units(time: FloatArray, sampling_frequency: float) -> None:
                 "detecting: the event and speed lookups assume time order."
             )
             raise ValueError(msg)
-        median_dt = np.median(steps)
-        expected_dt = 1.0 / sampling_frequency
+        median_dt = float(np.median(steps))
         if not median_dt > 0:
             msg = (
                 f"The median time step is {median_dt}: most timestamps repeat, so no "
                 "duration can be measured in samples. Check the time array."
             )
             raise ValueError(msg)
-
-        # Check if time appears to be in samples instead of seconds
-        if median_dt > 10 * expected_dt:
-            msg = (
-                f"Time array appears to be in samples, not seconds.\n"
-                f"Median time step: {median_dt:.6f} (expected ~{expected_dt:.6f} for {sampling_frequency} Hz)\n"
-                f"\n"
-                f"Solution: Convert sample indices to seconds:\n"
-                f"  time_seconds = time_samples / {sampling_frequency}"
-            )
-            raise ValueError(msg)
-        # The nominal rate sets the smoothing widths and windows and the
-        # timestamps set the sample counts. Beyond 10 % the two describe
-        # different recordings (a stated 300 Hz on 1500 Hz data changed the
-        # event count by a quarter), so raise; from 2 % warn, since a nominal
-        # rate can differ from an acquisition system's true one by a few percent
-        # while clocks drift by far less.
-        if not np.isclose(median_dt, expected_dt, rtol=0.10):
-            msg = (
-                f"The median time step ({median_dt:.6g} s) is "
-                f"{median_dt / expected_dt:.3g} times the interval sampling_frequency "
-                f"implies ({expected_dt:.6g} s at {sampling_frequency} Hz). Pass the rate "
-                "the timestamps were recorded at, and time in seconds."
-            )
-            raise ValueError(msg)
-        if not np.isclose(median_dt, expected_dt, rtol=0.02):
-            _warn_at_caller(
-                f"Time array step ({median_dt:.6f} s) differs from expected sampling interval "
-                f"({expected_dt:.6f} s at {sampling_frequency} Hz).\n"
-                f"Verify that:\n"
-                f"  1. time is in seconds (not milliseconds or samples)\n"
-                f"  2. sampling_frequency ({sampling_frequency} Hz) is correct",
-            )
+        _check_sampling_interval(median_dt, sampling_frequency)
 
 
 def _validate_speed_units(speed: FloatArray, speed_threshold: float) -> None:

@@ -168,6 +168,82 @@ def _warn_at_caller(message: str) -> None:
     warnings.warn(message, UserWarning, stacklevel=stacklevel)
 
 
+def _check_sampling_interval(median_step: float, sampling_frequency: float) -> None:
+    """Raise, or warn, when the timestamps' median step and the stated rate
+    describe different recordings.
+
+    The nominal rate sets filter designs, smoothing widths and windows, and
+    the timestamps set the sample counts. Beyond 10 % the two describe
+    different recordings (a stated 300 Hz on 1500 Hz data changed the event
+    count by a quarter), so this raises, naming the likely slip: time in
+    samples (a step of 1), time in milliseconds (a step of ``1000 /
+    sampling_frequency``), or a rate the timestamps contradict. From 2 % it
+    warns, since a nominal rate can differ from an acquisition system's true
+    one by a few percent while clocks drift by far less.
+
+    Parameters
+    ----------
+    median_step : float
+        Median step between timestamps, positive.
+    sampling_frequency : float
+        The stated rate, in Hz.
+
+    Raises
+    ------
+    ValueError
+        If ``median_step`` is more than 10 % from ``1 / sampling_frequency``.
+
+    Warns
+    -----
+    UserWarning
+        If it is more than 2 % and at most 10 % from it.
+
+    """
+    expected = 1.0 / sampling_frequency
+    if np.isclose(median_step, expected, rtol=0.02):
+        return
+    if np.isclose(median_step, expected, rtol=0.10):
+        _warn_at_caller(
+            f"Time array step ({median_step:.6f} s) differs from expected sampling interval "
+            f"({expected:.6f} s at {sampling_frequency} Hz).\n"
+            f"Verify that:\n"
+            f"  1. time is in seconds (not milliseconds or samples)\n"
+            f"  2. sampling_frequency ({sampling_frequency} Hz) is correct",
+        )
+        return
+    in_samples = bool(np.isclose(median_step, 1.0, rtol=0.10))
+    in_milliseconds = bool(np.isclose(median_step, 1000 * expected, rtol=0.10))
+    measured = (
+        f"Median time step: {median_step:.6g} (expected ~{expected:.6g} s for "
+        f"{sampling_frequency:g} Hz)."
+    )
+    if in_samples and in_milliseconds:
+        msg = (
+            f"time appears to be in samples or in milliseconds, not seconds.\n{measured}\n"
+            "Convert it to seconds: time = sample_index / "
+            f"{sampling_frequency:g}, or time = time_ms / 1000."
+        )
+    elif in_samples:
+        msg = (
+            f"time appears to be in samples, not seconds.\n{measured}\n"
+            f"Convert sample indices to seconds: time = sample_index / {sampling_frequency:g}."
+        )
+    elif in_milliseconds:
+        msg = (
+            f"time appears to be in milliseconds, not seconds.\n{measured}\n"
+            "Convert it to seconds: time = time / 1000."
+        )
+    else:
+        msg = (
+            f"The median time step ({median_step:.6g} s) is "
+            f"{median_step / expected:.3g} times the interval sampling_frequency "
+            f"implies ({expected:.6g} s at {sampling_frequency:g} Hz); the timestamps "
+            f"imply {1 / median_step:.6g} Hz. Pass the rate the timestamps were recorded "
+            "at, and time in seconds."
+        )
+    raise ValueError(msg)
+
+
 def _generator(seed: int | np.random.Generator | None) -> np.random.Generator:
     """``numpy.random.default_rng(seed)``, refusing the legacy ``RandomState``
     that 1.x's noise functions took: ``default_rng`` accepts one and silently
@@ -377,7 +453,8 @@ def filter_ripple_band(
         their outputs differ by up to 0.8 SD).
     time : array_like, shape (n_time,), optional
         Increasing sample timestamps in seconds. When supplied, filtering also
-        splits wherever a timestamp step exceeds 1.5 times the median step.
+        splits wherever a timestamp step exceeds 1.5 times the median step,
+        and ``sampling_frequency`` is checked against the median step.
         Default None assumes a regular sample grid.
 
     Returns
@@ -393,14 +470,17 @@ def filter_ripple_band(
         edge plus the transition band reaches the Nyquist frequency (from
         ``ripple_bandpass_filter``), or if no run of present rows is long
         enough to filter. Also if ``time`` does not have one entry per row,
-        holds a nonfinite or decreasing timestamp, or has a median step of
-        zero.
+        holds a nonfinite or decreasing timestamp, has a median step of
+        zero, or has a median step more than 10 percent from ``1 /
+        sampling_frequency`` (the message names time in samples, time in
+        milliseconds, or the rate the timestamps imply).
 
     Warns
     -----
     UserWarning
         If some run of present rows is too short to filter and is returned as
-        NaN.
+        NaN, or the median step of ``time`` is 2 to 10 percent from ``1 /
+        sampling_frequency``.
 
     See Also
     --------
@@ -444,6 +524,11 @@ def filter_ripple_band(
     padlen = len(filter_numerator) - 1
     min_required_length = len(filter_numerator)
     runs = np.asarray(_contiguous_valid_blocks(is_present, time), dtype=int).reshape(-1, 2)
+    if time is not None and len(data_array) > 1:
+        # the filter is designed for the stated rate, so the timestamps must agree
+        _check_sampling_interval(
+            float(np.median(np.diff(np.asarray(time, dtype=float)))), sampling_frequency
+        )
     long_enough = (runs[:, 1] - runs[:, 0]) >= min_required_length
     if not np.any(long_enough):
         longest = int((runs[:, 1] - runs[:, 0]).max()) if len(runs) else 0
