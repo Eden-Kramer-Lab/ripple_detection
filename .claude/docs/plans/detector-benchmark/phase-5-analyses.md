@@ -28,6 +28,8 @@ detection does to event rates and participation.
 [operating curves](designs.md#operating-curves),
 [bootstrap and permutation tests](designs.md#bootstrap-and-permutation-tests),
 [rates and participation](designs.md#rates-and-participation).
+See also [simulator validation](simulator-validation.md) for the six required model alternatives
+and the interpretation limits of the reference condition.
 
 ## Tasks
 
@@ -73,6 +75,17 @@ detection does to event rates and participation.
       paired by replicate (common random numbers); the two crossed pairs as heatmaps per method. Methods whose recall changes by more than 0.1 across a factor's levels
       are listed in `summary.md`.
   11. **Rates and participation**: per the design.
+- For all six model alternatives, report paired changes from reference in recall at common
+  attainable false-positive rates, onset/offset error and observed participation. List method
+  order reversals with uncertainty; an unsupported FP target stays missing. Show which stated
+  conclusions survive each alternative and which depend on it. Include the validation report's
+  changed observable statistics (such as realized rates under refractory spiking) when interpreting
+  effects. Spatial-case timing errors use the documented latent anchor; local delays are known
+  parts of that comparison. Nearby gamma is a declared negative class for this benchmark.
+- Add a dedicated `model_sensitivity.csv` and figure plus a section in `summary.md`; do not
+  pool these conditions into one overall winning detector. One-factor sensitivity does not
+  establish robustness to combinations of assumptions. Reference-only phase-6 attribution
+  remains conditional on the reference simulator.
 - **Spot checks before reporting any trend** (a trend is reported only after its underlying events
   have been looked at): for every trend written into
   `summary.md` or the README, a figure of 6 underlying events (re-simulated by seed, truth windows
@@ -112,6 +125,7 @@ detection does to event rates and participation.
 | `test_false_positive_labels` | A hand-built session: an event over a leakage burst is labelled `spike_leakage`, one over a `burst_only` burst `burst_only:burst`, one over nothing `background`. |
 | `test_profile_and_consensus_on_tiny_run` | A two-session hand-built output directory (written by a fixture): detection profile and consensus tables equal hand values. |
 | `test_results_size_limit` | Writing a file over 1 MB raises. |
+| `test_model_sensitivity_includes_all_variants` | A hand-built set of paired conditions includes every model alternative, preserves a known method-order reversal, and leaves unattainable FP targets missing; reference-only results cannot masquerade as model robustness. |
 | manual | Every trend in `summary.md` has a spot-check figure and a sentence on it. |
 
 ## Fixtures

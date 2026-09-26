@@ -20,7 +20,7 @@ Each was asked and answered; do not reopen them without asking.
 5. **Event types:** canonical SWR with a burst; ripple with weak participation; burst without a
    ripple; long burst spanning a ripple doublet or triplet; sharp wave without a ripple.
    **Non-events:** spike-waveform leakage into the LFP, broadband EMG/chewing artifacts, fast-gamma
-   bursts (60-100 Hz), theta-state population bursts during running. The maintainer accepted this
+   bursts (60-100 Hz reference plus a 90-140 Hz challenge), theta-state population bursts during running. The maintainer accepted this
    taxonomy "for now"; prevalences are condition parameters, not fixed.
 6. **Scope, layered.** The nine package detectors, each swept over its threshold (operating
    curves); then the published recipes placed as points on those curves.
@@ -49,6 +49,12 @@ Each was asked and answered; do not reopen them without asking.
     be verified ([phase 7](phase-7-reference-recordings.md)). Released events are another
     pipeline's output: they test implementation parity, not detection quality, and decision 2
     still governs the benchmark's truth.
+13. **Simulator validation and sensitivity (2026-09-26).** Following scientific review, the
+    maintainer requested rendered-measurement validation and six alternatives: coupled event
+    strengths, spatial ripple variability, changing background variance, nearby gamma,
+    refractory spiking and a second envelope shape. The latent-event model and fully synthetic
+    scope remain the basis. [simulator-validation.md](simulator-validation.md) defines the
+    measurements, source conventions, model options and report required before benchmark runs.
 
 Defaults chosen by the planner, open to override, recorded in [Open Questions](#open-questions):
 no new dependencies (outputs as `.csv.gz`, estimators in NumPy, `concurrent.futures` for
@@ -84,6 +90,8 @@ were checked against `master` on 2026-09-26.
   known, including events a detector should *not* report.
 - Evaluation functions users can call on any two event inventories, with or without a truth.
 - A reproducible benchmark answering the questions in decision 7, re-runnable with one command.
+- A simulator validation report based on published measurement definitions, with explicit
+  assumptions and sensitivity results showing which detector conclusions depend on the model.
 
 ### Non-Goals
 
@@ -112,17 +120,19 @@ imports them, so CI and the dependency-floors job are unaffected.
 
 ## Metrics
 
-- Phase 1a/1b: truth windows computed analytically equal those measured on the rendered signal
-  (envelope threshold crossings) to within one sample; defaults of existing functions unchanged
-  (existing tests pass untouched).
+- Phase 1a/1b: analytic truth crossings agree with the explicit rendered modulation envelope
+  within one sample at both envelope powers. Measure differences from the sampled Hilbert
+  envelope rather than assuming exact agreement. Existing simulator defaults remain unchanged.
 - Phase 2: on hand-built cases, every metric equals its hand-computed value exactly. The
   examples' scorers become one-to-one, so their recall and precision can fall where one event
   overlapped two windows or two events one window; the PR shows the old and new README tables side
   by side.
 - Phase 3: every configured call equals its direct public method call, including
   event diagnostics and metadata; every catalog method is configured or explicitly excluded.
-- Phase 4: the smoke test's measured runtime and output size, and the extrapolation to the full
-  grid, are recorded in the PR; outputs follow the [output schema](shared-contracts.md#benchmark-outputs).
+- Phase 4: a ready [simulator report](simulator-validation.md) precedes detector runs. The smoke
+  test's runtime/output size and extrapolation to all 43 conditions (440 benchmark sessions,
+  plus validation simulations) are recorded; outputs follow the
+  [output schema](shared-contracts.md#benchmark-outputs).
 - Phase 5/6: every summary table is regenerated from outputs by one command; every reported
   interval is a 95% bootstrap interval over sessions (replicates, across conditions), except the
   Sobol indices', which resample the sample rows because each value already averages sessions.
@@ -131,8 +141,9 @@ imports them, so CI and the dependency-floors job are unaffected.
 
 | Risk | Mitigation |
 | --- | --- |
-| The simulator's choices decide the winners ("tuned to the benchmark"). | Parameters are set from published ranges in [designs.md](designs.md#parameter-sources) *before* running detectors; the robustness grid (phase 4-5) varies each; conclusions are reported per condition, not only at the reference. |
-| Truth bounds are a convention (where does a ripple start?). | Truth windows are analytic functions of the envelope, evaluated at 10%, 25% and 50% of peak; boundary errors are reported at all three. |
+| The simulator's choices decide the winners ("tuned to the benchmark"). | Fix source-based targets and assumed stress settings before detector results; validate rendered measurements, then report all six structural alternatives alongside reference. Limit conclusions to the tested assumptions. |
+| Plausible parameter ranges yield implausible observations. | Check duration definitions, observed participation, realized rates after rejection, spatial structure and joint distributions in the simulator report. Mark unsupported properties explicitly. |
+| Truth bounds are a convention (where does a ripple start?). | Use analytic envelopes at 10%, 25% and 50% of peak, and compare powers 2 and 4 at matched half-maximum widths; disclose Hilbert-envelope discrepancies and spatial delays. |
 | MUA detectors judged against ripple bounds, or ripple detectors against burst bounds. | Every method is scored against every expression and the network event; headline numbers use the method's [primary expression](shared-contracts.md#primary-expression). |
 | Benchmark calls drift from package methods. | Phase 3 calls the package directly and verifies input/options and output parity. Phase 6 experimental templates require separate equivalence checks. |
 | Recipes that cannot be decomposed (Kay, Karlsson, Zugaro, Long, Carey, silence-bounded) break attribution. | They are fixed points in agreement analyses and excluded from the Sobol factor space; phase 6 says so. |
@@ -170,9 +181,10 @@ each phase adds, which use short sessions.
 
 ## Estimated Effort
 
-Phase 1a ~600 LOC src + ~400 tests; 1b ~300 + ~200; phase 2 ~450 + ~450; phase 3 estimate must be revised for thin call configurations and explicit input
-policies; no detector executor rewrite; phase 4 ~400 + ~100; phase 5 ~600 +
-`examples/benchmark/README.md`; phase 6 ~400 + a README section. Compute: the full grid
-([designs.md#conditions-grid](designs.md#conditions-grid)) is estimated at 10-15 core-hours before
-the smoke test, and about 0.5 GB of memory per worker for 600 s sessions; phase 6 at about 1 core-hour per
-family.
+Earlier LOC estimates for phases 1a, 1b, 4 and 5 predate the simulator validation and model
+alternatives and must be re-estimated during implementation. Phase 2 ~450 LOC + ~450 tests;
+phase 3 uses thin call configurations and explicit input policies; phase 6 ~400 + a README section.
+The previous 10–15 core-hour estimate covered 380 benchmark sessions. The grid now has 440,
+plus 215 simulator-only validation sessions at default settings; measure their separate costs
+before the full run. The prior memory estimate was about 0.5 GB per worker at 600 s, and phase 6
+about 1 core-hour per family; both remain provisional pending smoke measurements.

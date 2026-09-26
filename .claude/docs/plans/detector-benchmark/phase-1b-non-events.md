@@ -10,7 +10,7 @@ can be attributed to its cause.
 **Inputs to read first:**
 
 - Phase 1a's merged code in `src/ripple_detection/simulate.py`: `draw_network_events`,
-  `simulate_network_session`, `_render_ripple`, `_scale_to_snr`, `_half_gaussians`, `truth_windows`.
+  `simulate_network_session`, `_render_ripple`, `_scale_to_snr`, `_event_envelope`, `truth_windows`.
 - [src/ripple_detection/simulate.py:589-601](../../../../src/ripple_detection/simulate.py) — `_add_common_mode_artifacts`, the pattern EMG generalizes (asymmetric envelope, high-passed noise).
 - [src/ripple_detection/core.py](../../../../src/ripple_detection/core.py) — `filter_ripple_band(..., band=(60, 100))` designs a FIR for a non-default band; used to size fast gamma.
 
@@ -34,8 +34,11 @@ can be attributed to its cause.
   participants, before spikes; leakage spikes added after the Poisson draw so the Poisson counts do
   not move). With `non_events=None` the output must be identical to phase 1a's for the same seed.
 - Record the table in `SimulatedSession.non_events`.
-- Fast gamma is sized with `_scale_to_snr(..., band=(60.0, 100.0))` (the `band` argument 1a added);
-  without it the burst would be scaled by its ripple-band residue and come out far too large.
+- Fast gamma is sized with `_scale_to_snr` using each row's stored sizing band for both
+  background SD and burst filtering: 60–100 Hz in the reference and 90–140 Hz in the nearby-gamma
+  condition ([design](simulator-validation.md#nearby-gamma)). Validate and persist
+  `snr_band_low`, `snr_band_high` and `envelope_power=2`. Scaling by ripple-band or old-band residue
+  would inflate amplitudes.
 - `truth_windows` already handles the non-event table (1a); add tests for that branch here if 1a
   did not.
 - Export `draw_non_events`; update `tests/test_public_api.py`.
@@ -64,6 +67,7 @@ can be attributed to its cause.
 | `TestNonEventRendering::test_spike_leakage_adds_ripple_band_power_on_one_channel` | Noise-free: `filter_ripple_band` power inside the window rises on `channel` only; the leaking units' spike counts rise by exactly the burst's spikes. |
 | `TestNonEventRendering::test_emg_is_common_mode_and_high_passed` | Noise-free: identical on every channel and the radiatum; < 5% of its power below 80 Hz. |
 | `TestNonEventRendering::test_fast_gamma_snr_and_band` | Filtered 60-100 Hz peak over the 60-100 Hz noise SD within 20% of `amplitude`; ripple-band (150-250 Hz) power inside the window < 10% of the 60-100 Hz power. |
+| `TestNonEventRendering::test_nearby_gamma_uses_its_band` | The stored 90–140 Hz band controls both scaling and noise SD and reaches nominal SNR on isolated stationary-noise examples. Measure ripple-band spillover; do not impose the reference case's <10% bound on the harder condition. Invalid/inconsistent sizing bands raise. |
 | `TestNonEventRendering::test_theta_burst_modulates_only_its_units` | Summed over seeds, the chosen place units' rate peaks at the centre; other units unchanged; no LFP change. |
 | `TestTruthWindows::test_non_event_table` | One row per non-event, analytic windows; passing `expression` raises. |
 | doctest | `draw_non_events`' example runs. |

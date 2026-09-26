@@ -27,6 +27,9 @@ decompositions of the difference between particular recipes.
   `duration_s`), never from current defaults. Each regenerated session's seed and duration must
   equal `conditions/reference/sessions.csv.gz`, and its truth table must equal that directory's
   `truth.csv.gz` rows for the session; any difference stops attribution.
+  Also compare `ripple_channels.csv.gz` and validate the run's simulator report fingerprints
+  before executing attribution methods. Its conclusions apply to the reference model; phase 5
+  reports whether detector comparisons change under alternative simulator assumptions.
 - [Benchmark outputs](shared-contracts.md#benchmark-outputs) — attribution writes under `output/<run_name>/attribution/` and `results/<run_name>/attribution/`.
 
 **Designs referenced:** [attribution](designs.md#attribution).

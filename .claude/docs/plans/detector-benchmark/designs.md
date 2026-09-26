@@ -6,6 +6,7 @@ Per-component algorithms, with code where the implementation is not obvious. Typ
 schemas are in [shared-contracts.md](shared-contracts.md); this file does not repeat them.
 
 - [Parameter sources](#parameter-sources)
+- [Simulator validation and sensitivity conditions](simulator-validation.md)
 - [Event types](#event-types)
 - [Drawing network events](#drawing-network-events)
 - [Rendering a network session](#rendering-a-network-session)
@@ -29,7 +30,9 @@ sessions** (overview risk 1). Ranges are `(low, high)` drawn uniformly per event
 convention (`_draw_per_ripple`, `simulate.py:221`). "Assumed" means no source; "verify" means the
 planner recalls a source but did not check it. Phase 1a replaces each "verify" with a citation
 and page, or changes it to "assumed", before merging, and records the table in the
-`draw_network_events` docstring's Notes.
+`draw_network_events` docstring's Notes. The rendered-measurement targets, source conventions,
+six alternative model conditions and validation report are specified in
+[simulator-validation.md](simulator-validation.md); those checks precede benchmark detector runs.
 
 | Parameter | Reference | Source |
 | --- | --- | --- |
@@ -54,7 +57,7 @@ and page, or changes it to "assumed", before merging, and records the table in t
 | Non-event rates (per minute) | spike_leakage 2 (rest), emg 1 (any), fast_gamma 2 (any), theta_burst 6 (running) | Assumed. |
 | Spike leakage | 1-3 pyramidal units, 3-8 spikes each at ISI (3, 6) ms, waveform peak 2.0 on one channel | Verify: complex-spike bursts with 3-6 ms ISIs (Ranck 1973); amplitude assumed. |
 | EMG | span (0.05, 0.5) s, white noise high-passed at 100 Hz, peak SD 1.5, all channels | Assumed. |
-| Fast gamma | 60-100 Hz, span (0.05, 0.15) s, SNR (1.5, 4) against 60-100 Hz noise | Verify: fast gamma 65-140 Hz, distinct from ripples (Colgin et al. 2009; Sullivan et al. 2011). |
+| Fast gamma | Reference 60-100 Hz; nearby condition 90-140 Hz; span (0.05, 0.15) s, SNR (1.5, 4) against the corresponding band noise | 60-100 Hz is an assumed control; Sullivan et al. 2011 reports 90-140 Hz ([abstract and Fig. 1](https://pubmed.ncbi.nlm.nih.gov/21653864/)). Non-event status is a benchmark assumption. |
 | Theta burst | 5-15 place units, gain 10, span (0.1, 0.3) s, running only | Assumed. |
 
 ## Event types
@@ -100,12 +103,15 @@ def draw_network_events(
     burst_only_duration: tuple[float, float] = (0.05, 0.3),
     doublet_interval: tuple[float, float] = (0.06, 0.12),
     minimum_separation: float = 0.05,
+    strength_correlation: float = 0.0,
+    envelope_power: int = 2,               # 2 or 4, equal half-maximum widths
     rng: int | np.random.Generator | None = None,
 ) -> pd.DataFrame:
 ```
 
 Returns the [latent event table](shared-contracts.md#latent-event-table) with `n_participants`
-0: participants are drawn when the session is rendered, which knows the units. A tuple
+0: participants are drawn when the session is rendered, which knows the units. Each row also
+stores `envelope_power`. A tuple
 `(x, x)` fixes a value; `ripple_chirp=(0, 0)` gives constant-frequency ripples.
 
 Algorithm:
@@ -117,7 +123,10 @@ Algorithm:
    in concatenated rest time).
 3. Types: `rng.choice(EVENT_TYPES, size=n, p=...)`, the probabilities normalized.
 4. Per event, draw its components (the order of draws is fixed and documented in the docstring:
-   types, then per event in time order ripple(s), sharp wave(s), burst):
+   types, then per event in time order shared strength, ripple(s), sharp wave(s), burst):
+   Use the marginal-preserving correlated draws in
+   [coupled event strengths](simulator-validation.md#coupled-event-strengths) for SNR, onset
+   frequency, sharp-wave amplitude and participation; rho=0 retains independent marginals.
    - ripple: span `s ~ U(ripple_duration)`, skew `q ~ U(ripple_skew)`,
      `rise_sigma = s (1 - q) / 3`, `decay_sigma = s q / 3`, `frequency_start ~ U(ripple_frequency)`,
      `frequency_end = frequency_start - U(ripple_chirp)`, amplitude from the type's SNR range.
@@ -138,7 +147,8 @@ Algorithm:
 6. Renumber `event_id` in time order; sort as the contract requires.
 
 Validation: `event_rate >= 0`; probabilities non-negative, keys in `EVENT_TYPES`, positive sum;
-every range `low <= high`, durations and SNRs positive; frequencies below Nyquist; `ValueError`
+every range `low <= high`, durations and SNRs positive; frequencies below Nyquist;
+`strength_correlation` in [0, 1], `envelope_power` in {2, 4}; `ValueError`
 naming the parameter otherwise.
 
 ## Rendering a network session
@@ -154,12 +164,20 @@ def simulate_network_session(
     unit_counts: Mapping[str, int] | None = None,   # None: {"place": 40, "pyramidal": 10, "interneuron": 10}
     baseline_rate: Mapping[str, tuple[float, float]] | None = None,  # None: the reference rates per type
     channel_gains: Sequence[float] | FloatArray | None = None,
+    spatial_profile: str = "global",
+    channel_occupancy: float = 1.0,
+    channel_gain_range: tuple[float, float] = (1.0, 1.0),
+    channel_delay: float = 0.0,
     shared_noise_fraction: float = 0.5,
     noise_type: NoiseType = "pink",
     noise_amplitude: float = 1.3,
+    noise_log_amplitude: float = 0.0,
+    noise_modulation_period: float = 60.0,
     sharp_wave_leak: float = 0.3,
     ripple_leak: float = 0.3,
     interneuron_gain: float = 3.0,
+    spike_model: str = "poisson",
+    refractory_period: float = 0.002,
     running_intervals: ArrayLike | None = None,
     peak_speed: float = 30.0,
     theta_amplitude: float = 4.0,
@@ -169,24 +187,29 @@ def simulate_network_session(
 ) -> SimulatedSession:
 ```
 
-Order of random draws (documented in the docstring): noise (`_correlated_noise`,
-`simulate.py:565`, `n_channels + 1` channels, the radiatum last), ripple initial phases, unit
-baseline rates, burst participants, non-event randomness (phase 1b), spike counts.
+Allocate a fixed set of child RNGs at entry, in this documented order: noise, ripple phases,
+spatial profiles, noise modulation, unit baseline rates, burst participants, non-events, spikes.
+Derive their seeds from a fixed-size draw from the supplied RNG, even when an option is disabled.
+Within each stream use component/table order. This permits matched noise-only renders and keeps
+an alternative spike model from changing the LFP. The existing `simulate_session` draw order is
+unchanged. Store the new spatial metadata as specified in the shared contracts.
 
 Steps:
 
-1. **Noise.** `_correlated_noise(n_time, n_channels + 1, ...)`.
-2. **Ripples.** Band noise SD `sd = filter_ripple_band(noise[:, 0], sampling_frequency=rate).std()`
+1. **Noise.** `stationary_noise = _correlated_noise(n_time, n_channels + 1, ...)`, radiatum last. Keep its stationary
+   band SD for signal sizing, then apply the optional unit-RMS noise modulation from
+   [changing background variance](simulator-validation.md#changing-background-variance).
+2. **Ripples.** Band noise SD `sd = filter_ripple_band(stationary_noise[:, 0], sampling_frequency=rate).std()`
    (the reference channel, as `_ripple_waveform` does, `simulate.py:433-435`). Per ripple component:
 
    ```python
-   def _render_ripple(time, center, rise_sigma, decay_sigma, f_start, f_end, phase):
+   def _render_ripple(time, center, rise_sigma, decay_sigma, f_start, f_end, phase, power=2):
        """Unit-peak asymmetric, linearly chirped burst over center -8 rise .. +8 decay."""
        first, last = np.searchsorted(time, [center - 8 * rise_sigma, center + 8 * decay_sigma])
        window = slice(int(first), max(int(last), int(first) + 1))
        t = time[window] - center
        sigma = np.where(t < 0, rise_sigma, decay_sigma)
-       envelope = np.exp(-(t**2) / (2 * sigma**2))
+       envelope = np.exp(-np.log(2) * (np.abs(t) / (np.sqrt(2*np.log(2)) * sigma))**power)
        # frequency linear from f_start at -3 rise to f_end at +3 decay, constant outside
        t0, t1 = -3 * rise_sigma, 3 * decay_sigma
        u = np.clip((t - t0) / (t1 - t0), 0.0, 1.0)
@@ -199,11 +222,15 @@ Steps:
    scaled with `_scale_to_snr(burst, snr, sd, rate, band=None)`, **extracted** from
    `_add_ripple_bursts` (`simulate.py:550-559`, the padded filter-peak scaling) so both paths
    share it. `band=None` calls `filter_ripple_band(padded, sampling_frequency=rate)` exactly as
-   today (the shipped kernel at 1500 Hz); a band calls it with `band=band` (fast gamma, phase 1b). The scaled burst is added to channel `c` times `channel_gains[c]` and to the
-   radiatum times `ripple_leak`.
-3. **Sharp waves.** Asymmetric Gaussian of peak `-amplitude` on the radiatum and
+   today (the shipped kernel at 1500 Hz); a band calls it with `band=band` (fast gamma, phase 1b).
+   Apply the [spatial profile](simulator-validation.md#spatial-ripple-structure) to the scaled
+   burst, multiplying by `channel_gains[c]`; add the latent waveform to the radiatum times
+   `ripple_leak`. Nominal SNR precedes spatial gains and background modulation. Noise-free test
+   fixtures render unit-amplitude components directly through the waveform helpers: finite SNR
+   against zero noise does not define a nonzero waveform.
+3. **Sharp waves.** The row's envelope of peak `-amplitude` on the radiatum and
    `+sharp_wave_leak * amplitude` on channel 0 (`_add_sharp_wave_pair`'s convention,
-   `simulate.py:741-753`, generalized to rise/decay sigmas by a helper `_half_gaussians`).
+   `simulate.py:741-753`, generalized to side scales and powers by `_event_envelope`).
 4. **Slow field and speed.** `simulate_theta_delta` (`simulate.py:998`) added to every channel
    and the radiatum; `simulate_speed` (`simulate.py:941`), exactly as `simulate_session` does
    (`simulate.py:1280-1295`).
@@ -213,13 +240,14 @@ Steps:
    Modulation starts at 1 per unit and sample. Per burst component: participants are place units
    with probability `participation` and other pyramidal units with `participation / 2` (a Bernoulli
    draw per unit); `n_participants` is recorded in the returned events table (pyramidal and place
-   together); participants' modulation gains `(amplitude - 1) * envelope`, `envelope` the burst's
-   asymmetric Gaussian. Per event with a ripple: every interneuron gains
+   together); participants' modulation gains `(amplitude - 1) * envelope`, using the burst row's
+   `envelope_power`. Per event with a ripple: every interneuron gains
    `(interneuron_gain - 1) * envelope` on the ripple's envelope (the union for a doublet: the
    elementwise max). Spikes: `rng.poisson(rates * step * modulation)`, as `simulate_multiunit`
-   (`simulate.py:918-919`).
+   (`simulate.py:918-919`) in the reference. The alternative uses
+   [refractory spiking](simulator-validation.md#refractory-spiking) with the same intensity.
 6. **Session.** `SimulatedSession` with `raw_lfp = lfps[:, 0].copy()`, `sharp_wave_lfp` the
-   radiatum, the events table (with `n_participants`), `unit_types`, `baseline_rates`,
+   radiatum, the events table (with `n_participants`), `ripple_channels`, `unit_types`, `baseline_rates`,
    `running_intervals`, and the
    ripple arrays derived as in [SimulatedSession additions](shared-contracts.md#simulatedsession-additions).
 
@@ -244,6 +272,7 @@ def draw_non_events(
     emg_duration: tuple[float, float] = (0.05, 0.5),
     emg_amplitude: float = 1.5,
     fast_gamma_frequency: tuple[float, float] = (60.0, 100.0),
+    fast_gamma_band: tuple[float, float] = (60.0, 100.0),
     fast_gamma_duration: tuple[float, float] = (0.05, 0.15),
     fast_gamma_snr: tuple[float, float] = (1.5, 4.0),
     theta_burst_units: tuple[int, int] = (5, 15),
@@ -272,7 +301,7 @@ participants, before the spikes, in `non_event_id` order):
 | --- | --- |
 | `spike_leakage` | Picks `n_units` pyramidal or place units; adds their burst spikes to the spike counts (after the Poisson draw, so the Poisson counts do not change); adds at each spike sample a biphasic waveform `amplitude * (w)` on `channel`, `w = [-1.0, 0.45, 0.2]` over three samples (a 1500 Hz rendering of a ~1 ms spike and its after-hyperpolarization). |
 | `emg` | White noise high-passed at 100 Hz (4th-order Butterworth, `sosfiltfilt`), times the asymmetric envelope, times `amplitude`, added identically to every channel and the radiatum. |
-| `fast_gamma` | `_render_ripple` with `f_start = f_end = frequency`, scaled by `_scale_to_snr(..., band=(60.0, 100.0))` against the SD of channel 0's noise filtered to 60-100 Hz (`filter_ripple_band(noise[:, 0], sampling_frequency=rate, band=(60.0, 100.0))`), added to every channel with the channel gains. |
+| `fast_gamma` | `_render_ripple` with `f_start = f_end = frequency`, power 2, scaled by `_scale_to_snr` using the row's stored `(snr_band_low, snr_band_high)` for both burst filtering and the stationary noise SD; added to every channel with the recording-wide channel gains. |
 | `theta_burst` | Picks `n_units` place units; multiplies their modulation by `1 + (amplitude - 1) * envelope`. |
 
 ## Truth windows
@@ -282,7 +311,6 @@ participants, before the spikes, in `non_event_id` order):
 def truth_windows(table, fraction=0.1, expression=None):
     if not 0 < fraction < 1:
         raise ValueError(f"fraction must lie in (0, 1), got {fraction}.")
-    k = np.sqrt(-2.0 * np.log(fraction))
     events = "event_id" in table.columns
     if not events and expression is not None:
         raise ValueError("A non-event table has no expressions; leave expression as None.")
@@ -290,6 +318,7 @@ def truth_windows(table, fraction=0.1, expression=None):
     if expression not in (None, "network"):
         _check_choice("expression", expression, (*EXPRESSIONS, "network"))
         rows = table[table.expression == expression]
+    k = np.sqrt(2 * np.log(2)) * (np.log(1 / fraction) / np.log(2)) ** (1 / rows.envelope_power.to_numpy())
     windows = pd.DataFrame({
         "id": rows["event_id" if events else "non_event_id"].to_numpy(),
         "type": rows["event_type" if events else "non_event_type"].to_numpy(),
@@ -492,7 +521,11 @@ end is dropped. So a session shorter than 35 s has no bout.
 for every condition. Replicate `k` of two conditions shares its schedule and, where the factor does
 not change the draw count, its event times (the drop-not-redraw rule in
 [drawing network events](#drawing-network-events)), so robustness comparisons are paired by
-replicate. Draw order within a session: schedule, events, non-events, render.
+replicate. Draw order within a session: schedule, events, non-events, render. The six model
+alternatives change no draw count: the strength variates are drawn at every correlation and
+the renderer's substreams are allocated whether or not an option is active, so each
+alternative's replicate `k` has the reference's event times, unit baseline rates and
+recruitment, and their comparison is paired.
 
 **Condition ids** use only `[A-Za-z0-9_.=,-]`: `"reference"`, `f"{factor}={label}"` for one
 factor, `f"{factor1}={label1},{factor2}={label2}"` for a crossed cell. Labels are the column
@@ -524,8 +557,14 @@ values. Numeric labels are the value as written (`n_units=30`, `emg_rate=0`).
 Crossed pairs (3 × 3 each, the four one-factor points and the reference shared with the grid):
 `ripple_snr × participation`, `ripple_snr × spike_leakage_rate`.
 
-Totals: 1 reference + 28 one-factor levels + 8 new crossed cells = 37 conditions. Replicates: 20
-for the reference, 10 for every other condition = 380 sessions.
+Add the six one-factor alternatives in
+[simulator-validation.md](simulator-validation.md#six-sensitivity-conditions), using that table's
+factor names, labels and exact overrides. Their reference defaults are part of `REFERENCE` and
+every saved resolved specification, including options inactive in the reference.
+
+Totals: 1 reference + 28 original one-factor levels + 6 model alternatives + 8 new crossed
+cells = 43 conditions. Replicates: 20 for the reference, 10 for every other condition = 440
+sessions. Validation simulations are additional and use separate replicates.
 
 ## Runner
 
@@ -533,8 +572,15 @@ for the reference, 10 for every other condition = 380 sessions.
 
 ```
 uv run python examples/benchmark/run.py --run-name NAME [--conditions all|ID,ID] [--replicates N]
-    [--duration S] [--workers N] [--resume] [--smoke]
+    [--duration S] [--workers N] [--resume] [--smoke] [--combine] [--validation-report PATH]
 ```
+
+`--validation-report` is required for every run that simulates or detects (`--smoke`, a full
+run, `--resume`); `--combine` alone needs none.
+
+Before detector execution, verify the ready report and simulation settings per
+[simulator validation](simulator-validation.md#validation-report-and-execution-order).
+`--combine` only rebuilds saved outputs and does not run this preflight.
 
 Per session, in a worker (`ProcessPoolExecutor`, default `os.cpu_count() - 1` workers):
 

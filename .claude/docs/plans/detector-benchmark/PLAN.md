@@ -21,18 +21,21 @@ For agent invocation, **load only the slice you need**:
 2. **Need shared semantics?** [shared-contracts.md](shared-contracts.md).
 3. **Need a per-component design?** [designs.md](designs.md).
 4. **Need broader scope / decisions / risks / dependency policy?** [overview.md](overview.md).
+5. **Implementing or assessing simulator validity?** [simulator-validation.md](simulator-validation.md),
+   including rendered-measurement targets, six model alternatives and the pre-benchmark report.
 
 ## Files
 
 - [overview.md](overview.md) — every decision made while designing the benchmark, integration points, goals and non-goals, dependency policy, risks
 - [shared-contracts.md](shared-contracts.md) — the truth table, non-event table, event-table input, matching result, recipe config, and benchmark output schemas
 - [designs.md](designs.md) — generator algorithms, matching, agreement statistics, public-method adapter, Sobol and Shapley estimators, bootstrap
+- [simulator-validation.md](simulator-validation.md) — source/measurement conventions, structural sensitivity conditions and validation report requirements
 - Phases (each ships as a separable PR):
   - [phase-1a-network-events.md](phase-1a-network-events.md) — latent-event simulator: event types and per-expression truth, in `simulate.py`
   - [phase-1b-non-events.md](phase-1b-non-events.md) — spike-waveform leakage, EMG artifacts, fast-gamma and theta-state bursts
   - [phase-2-evaluation.md](phase-2-evaluation.md) — `ripple_detection.evaluate`: matching, overlap, signed boundary errors, agreement, consensus
   - [phase-3-recipe-configs.md](phase-3-recipe-configs.md) — benchmark call configurations using the installed paper methods
-  - [phase-4-runner.md](phase-4-runner.md) — benchmark runner: conditions, threshold sweeps, recipes, event-level outputs
+  - [phase-4-runner.md](phase-4-runner.md) — simulator validation report, then benchmark conditions, threshold sweeps, recipes and event-level outputs
   - [phase-5-analyses.md](phase-5-analyses.md) — agreement, boundaries, operating curves, robustness, rates and participation
   - [phase-6-attribution.md](phase-6-attribution.md) — one-component-at-a-time, Sobol and Shapley attribution of disagreement
   - [phase-7-reference-recordings.md](phase-7-reference-recordings.md) — real recordings with released events: verify inputs, run the package method, match and explain differences

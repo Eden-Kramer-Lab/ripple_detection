@@ -5,7 +5,7 @@
 A command-line runner in `examples/benchmark/` that simulates sessions for every condition, runs
 the nine detectors at their defaults and along their threshold sweeps plus every recipe, scores
 each against every truth expression, and writes event-level outputs and per-session metrics. Then
-the smoke test, the extrapolation, and the full run.
+the simulator validation report, smoke test, extrapolation, and full run.
 
 **Inputs to read first:**
 
@@ -24,7 +24,8 @@ the smoke test, the extrapolation, and the full run.
 - [Benchmark outputs](shared-contracts.md#benchmark-outputs) — written here; phases 5 and 6 read these schemas, do not weaken.
 - [Truth windows](shared-contracts.md#truth-windows), [Matching and pair metrics](shared-contracts.md#matching-and-pair-metrics) — used per session.
 
-**Designs referenced:** [conditions grid](designs.md#conditions-grid), [runner](designs.md#runner).
+**Designs referenced:** [conditions grid](designs.md#conditions-grid), [runner](designs.md#runner),
+[simulator validation](simulator-validation.md).
 
 ## Tasks
 
@@ -33,6 +34,12 @@ the smoke test, the extrapolation, and the full run.
   [designs.md#conditions-grid](designs.md#conditions-grid) define them (values, labels, the
   factor-to-keyword table, the schedule, the seeding and the draw order live there).
   `simulate_condition` applies a condition's dotted-key overrides to a deep copy of `REFERENCE`.
+- `examples/benchmark/validate_simulator.py`: implement the measurements, acceptance checks,
+  report and source/target fingerprints in
+  [validation report and execution order](simulator-validation.md#validation-report-and-execution-order).
+  Run it on all 43 conditions before benchmark detectors. It calls no detector or recipe and
+  uses separate validation replicates. Commit the small report artifacts and show assumptions
+  and deviations explicitly. Source comparisons use the precommitted target definitions.
 - `examples/benchmark/run.py`: `THRESHOLD_SWEEPS`, `DETECTOR_EXPRESSION`, `method_calls(session)`
   (detector defaults, sweep points and recipes as `(method, setting, callable)`;
   build each method recording from its input policy, and expand Long's
@@ -40,7 +47,9 @@ the smoke test, the extrapolation, and the full run.
   returning the session's `truth`, `units`, `methods`, `events`, `metrics`, `failures` frames and timings, and
   the CLI in [designs.md#runner](designs.md#runner) with `ProcessPoolExecutor`, per-condition writes,
   `--resume` (validated against `run_spec.json`, skipping only conditions whose directory has
-  a valid `done.json`), `--combine` (builds `combined/`), `--smoke`, and `manifest.json`.
+  a valid `done.json`), `--combine` (builds `combined/`), `--smoke`, `--validation-report`, and `manifest.json`.
+  Verify report readiness, coverage and fingerprints before any detector call; save its path
+  and hash in `run_spec.json`. Derived-table combination needs no new simulator validation.
   Each condition writes only its own `conditions/<condition_id>/` directory, via a
   `.partial` directory renamed into place after `done.json`. Every method call is guarded by `except Exception`
   (the design's runner step 3), so no recipe or detector can abort a run. Metrics per the output schema, using
@@ -49,28 +58,35 @@ the smoke test, the extrapolation, and the full run.
   and `attrs`), alongside the `events.csv.gz` summary with `n_active_units` and `n_active_principal`,
   and the observed counts within every truth window of every expression in
   `truth_counts.csv.gz`.
+- Persist `ripple_channels.csv.gz` alongside truth, including realized gains and delays, and
+  retain `envelope_power` and gamma sizing bands when writing/reloading truth tables.
 - Persist `methods.csv` with the resolved public-call metadata and input policy for
   each session/configuration. Reports separate output roles and stages; failed or
   excluded methods never count as successful zero-event calls.
 - `.gitignore`: add `examples/benchmark/output/`.
 - **Smoke test.** Check capacity first (`sysctl -n hw.ncpu` on macOS or `nproc`; `df -h .`; no other
-  heavy job running). Run `uv run python examples/benchmark/run.py --run-name smoke --smoke`.
+  heavy job running). Run `uv run python examples/benchmark/run.py --run-name smoke --smoke
+  --validation-report examples/benchmark/validation/v1/spec.json`.
   Record per-method runtime, simulate time, peak memory, rows and bytes per table, and the
   extrapolation, and apply the smoke-test decision rules in [designs.md#runner](designs.md#runner)
   (session length, sweep events, worker count from memory). Write the measured numbers and any rule
-  applied into the PR description and `examples/benchmark/README.md`.
+  applied into the PR description and `examples/benchmark/README.md`. Include validation cost
+  and all 440 benchmark sessions in the extrapolation. A smoke-driven duration change requires
+  a report for the revised simulation settings before detector runs are repeated.
 - **Spot check before the full run** (look at individual events before trusting aggregates): from the smoke
   session, plot 6 true events of each type with the truth windows at the three fractions and the
   events of Kay, Karlsson, HSE and two recipes (`examples/benchmark/spot_check.py`, re-simulating by
   seed; PNGs to the run's output directory, not committed). Look for misalignment, unit errors,
   missing events; fix before continuing.
 - **Full run**, only after the smoke test and spot check: in a `tmux` session named `benchmark`,
-  `uv run python examples/benchmark/run.py --run-name v1 --conditions all --workers N`. Record the
+  `uv run python examples/benchmark/run.py --run-name v1 --conditions all --workers N
+  --validation-report examples/benchmark/validation/v1/spec.json`. Record the
   command, wall time and output size in `examples/benchmark/README.md`. The run is by hand; it is
   not part of CI.
 - `examples/benchmark/README.md`: a "Running the benchmark" section (commands, outputs and their
   schemas by link to the column lists in `run.py`'s module docstring, the smoke-test numbers,
-  resuming).
+  resuming). Include the preceding `validate_simulator.py --validation-id v1 --conditions all`
+  command and explain how to regenerate the report after changes to simulation settings.
 - **Docs:** CLAUDE.md Development Commands: the smoke and full-run commands beside the simulation
   study's. README "How the detectors compare on simulated data" (`README.md:245`): one sentence
   pointing to `examples/benchmark/README.md` for the full benchmark. `tests/CLAUDE.md`: an item
@@ -78,7 +94,8 @@ the smoke test, the extrapolation, and the full run.
 
 ## Deliberately not in this phase
 
-- Any analysis or figure beyond the spot check — phase 5.
+- Detector analyses and figures beyond the spot check — phase 5. Simulator-only validation
+  figures are required here before detector execution.
 - Attribution runs (Sobol, Shapley) — phase 6; the runner has no factor-space code.
 - Removing `examples/simulation_study.py` and its notebook. It stays as the fast study CI runs and
   the README cites. Revisit when the benchmark's reference results make the study's README table
@@ -93,8 +110,11 @@ the smoke test, the extrapolation, and the full run.
 | Test | Asserts |
 | --- | --- |
 | `tests/test_benchmark.py::test_conditions_are_unique_and_complete` | The condition count in [designs.md#conditions-grid](designs.md#conditions-grid), unique ids in the allowed characters, the reference first; each one-factor condition overrides exactly the keys its factor sets, each crossed cell those of two factors. |
-| `test_common_random_numbers` | `session_seed(k)` is the same for every condition; replicate 0 of `reference` and of `ripple_snr=high` have identical running schedules and event centre times, and different ripple amplitudes. |
+| `test_common_random_numbers` | `session_seed(k)` is the same for every condition; replicate 0 of `reference` and of `ripple_snr=high` have identical running schedules and event centre times, and different ripple amplitudes. Replicate 0 of each of the six model alternatives has the reference's event centre times, baseline rates and burst participants. |
 | `test_running_schedule` | Sorted, non-overlapping bouts inside the session, rest first and last, bout and rest lengths in range. |
+| `test_simulator_validation_measurements` | Known envelopes and deterministic spike fixtures give hand-computed widths, observed participation and silent gaps; latent recruitment is not substituted for observed participation. Target checks use the recorded measurement convention. |
+| `test_simulator_validation_preflight` | Missing, failed, stale-source, changed-target or uncovered-settings reports stop before the first detector call; matching reports pass. Detector-only source edits leave the simulation fingerprint unchanged. No detector execution occurs while building a simulator report. |
+| `test_model_metadata_round_trip` | Spatial profiles, envelope powers and gamma sizing bands survive output/reload, and power-4 truth windows recompute identically. |
 | `test_run_session_schema` | A 60 s reference session (long enough for one bout: see the schedule) with two detectors, one sweep point and two recipes including Gridchyn 2020: every frame has exactly the contract's columns; `metrics` has one row per method × setting × expression. |
 | `test_metrics_agree_with_match_events` | For one method, the metrics row equals `match_events` called directly on the written events and `truth_windows`. |
 | `test_results_round_trip` | For a recipe with diagnostics and a detector, the reloaded `results/` frames equal the originals exactly (`check_exact=True`) and their `attrs` are equal. |
@@ -104,7 +124,7 @@ the smoke test, the extrapolation, and the full run.
 | `test_resume_after_two_finished_and_one_interrupted` | Conditions A and B finished, C interrupted (a `.partial` directory): `--resume` runs only C; A's and B's directories are byte-identical before and after and their markers still verify; `combined/` then holds all three. |
 | `test_combine_is_derived` | Deleting `combined/` and running `--combine` reproduces it exactly; `--resume` ignores `combined/`. |
 | `test_resume_rejects_a_changed_specification` | Resuming with a different `--duration`, replicate count or method list stops with the differing keys and writes nothing. |
-| manual | Smoke-test numbers and extrapolation recorded; spot-check PNGs inspected. |
+| manual | Ready simulator report committed; source/measurement comparisons and variant plots inspected; smoke-test numbers and extrapolation recorded; spot-check PNGs inspected. |
 
 The tests load `examples/benchmark` modules through a module-scoped fixture that prepends the
 directory to `sys.path` and removes it afterwards (as phase 3's adapter tests do). Keep the suite in

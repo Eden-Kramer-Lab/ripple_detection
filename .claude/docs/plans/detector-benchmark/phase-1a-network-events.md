@@ -20,13 +20,16 @@ at any envelope fraction. Public, because users can test a detector on it.
 
 - [Vocabularies](shared-contracts.md#vocabularies) — defines `EVENT_TYPES`, `EXPRESSIONS`, `UNIT_TYPES` (`NON_EVENT_TYPES` too, used in 1b).
 - [Latent event table](shared-contracts.md#latent-event-table) — produced here; do not weaken the ordering, span and empty-table invariants.
-- [SimulatedSession additions](shared-contracts.md#simulatedsession-additions) — all five fields land here (`non_events` stays empty until 1b).
+- [SimulatedSession additions](shared-contracts.md#simulatedsession-additions) — all six fields land here (`non_events` stays empty until 1b).
 - [Truth windows](shared-contracts.md#truth-windows) — implemented here; same-row-order-for-every-fraction is load-bearing for phases 2 and 4.
 
 **Designs referenced:** [parameter sources](designs.md#parameter-sources),
 [event types](designs.md#event-types), [drawing network events](designs.md#drawing-network-events),
 [rendering a network session](designs.md#rendering-a-network-session),
 [truth windows](designs.md#truth-windows).
+The model alternatives and measurement targets are defined in
+[simulator-validation.md](simulator-validation.md); phase 1a implements their network-event and
+renderer options, and phase 4 runs the validation report before benchmark detection.
 
 ## Tasks
 
@@ -36,6 +39,11 @@ at any envelope fraction. Public, because users can test a detector on it.
   row to "assumed". Put the final table in `draw_network_events`' docstring under Notes. No detector
   is run on network sessions before this is committed (overview risk 1); running the simulator to
   check its own truth is fine.
+- Commit `examples/benchmark/simulator_targets.csv` with source populations, measurement
+  definitions, acceptance ranges and explicit assumptions specified in
+  [evidence and measurement conventions](simulator-validation.md#evidence-and-measurement-conventions).
+  Translate published duration and participation measurements to observable quantities;
+  simulator input ranges alone do not establish those targets.
 - **Behavior-preserving extraction:** move the padded filter-peak scaling at
   `simulate.py:550-559` into `_scale_to_snr(burst, snr, band_noise_sd, rate, band=None) -> float`
   (`band=None` filters exactly as today; see [designs.md#rendering-a-network-session](designs.md#rendering-a-network-session)) and call it
@@ -44,18 +52,21 @@ at any envelope fraction. Public, because users can test a detector on it.
 - Add the vocabularies to `simulate.py` and `StrArray = NDArray[np.str_]` to `core.py`'s alias
   block (`core.py:26-32`, beside `FloatArray`).
 - Extend `SimulatedSession` (`simulate.py:1077`) with `events`, `non_events`, `unit_types`,
-  `baseline_rates`, `running_intervals` per the contract: `field(default_factory=...)` defaults,
-  an `_empty_events()` / `_empty_non_events()` pair building the typed empty frames, the
+  `baseline_rates`, `running_intervals`, `ripple_channels` per the contract: `field(default_factory=...)` defaults,
+  `_empty_events()`, `_empty_non_events()` and `_empty_ripple_channels()` building typed empty frames, the
   `unit_types` and `baseline_rates` length checks in `__post_init__` (`simulate.py:1124`), and
   docstring entries.
 - `simulate_session` passes `running_intervals` (empty `(0, 2)` for None) into the result. Nothing
   else in it changes.
 - Implement `draw_network_events` per [designs.md#drawing-network-events](designs.md#drawing-network-events),
-  including validation, the fixed draw order and the drop-not-redraw rejection.
+  including validation, fixed draw order, correlated strength draws, per-row envelope powers
+  and drop-not-redraw rejection.
 - Implement `simulate_network_session` per [designs.md#rendering-a-network-session](designs.md#rendering-a-network-session),
-  without the `non_events` parameter (1b adds it). Helpers: `_render_ripple`, `_half_gaussians`
-  (asymmetric Gaussian over ±8 sigma, the sharp-wave and burst envelope), `_draw_units`. Fill
-  `n_participants` in the returned events table and derive the `ripple_*` arrays.
+  without the `non_events` parameter (1b adds it). Helpers: `_render_ripple`, `_event_envelope`
+  (powers 2 and 4 over ±8 side scales, shared by sharp waves and bursts), `_draw_units`. Implement
+  fixed renderer RNG substreams, spatial profiles, background modulation and refractory spiking.
+  Fill `n_participants` and `ripple_channels`, and derive the `ripple_*` arrays. Preserve old
+  simulator helper behavior.
 - Implement `truth_windows` per [designs.md#truth-windows](designs.md#truth-windows), in
   `simulate.py` (it reads the simulator's tables).
 - Export `draw_network_events`, `simulate_network_session`, `truth_windows`, `EVENT_TYPES`,
@@ -91,7 +102,7 @@ at any envelope fraction. Public, because users can test a detector on it.
 | --- | --- |
 | existing `tests/test_simulate.py`, `tests/test_snapshots.py` | Pass with no edits and no snapshot updates (the extraction and the new fields change nothing). |
 | CI | Green, including the dependency-floors job (overview Rollout Strategy). |
-| `TestSimulatedSessionFields::test_defaults_keep_old_constructors_working` | A `SimulatedSession(...)` built with only the 11 original fields has empty `events`/`non_events` with the contract's columns and dtypes, `unit_types.shape == (0,)`, `running_intervals.shape == (0, 2)`. |
+| `TestSimulatedSessionFields::test_defaults_keep_old_constructors_working` | A `SimulatedSession(...)` built with only the 11 original fields has typed empty `events`, `non_events` and `ripple_channels`, empty unit types/baseline intensities, and `running_intervals.shape == (0, 2)`. |
 | `TestSimulatedSessionFields::test_unit_types_length_is_checked` | `unit_types` or `baseline_rates` of the wrong length raises `ValueError`. |
 | `TestSimulateNetworkSession::test_baseline_rates_are_kept` | `baseline_rates` has one entry per unit, each inside its type's `baseline_rate` range, and differs between two seeds. |
 | `TestSimulatedSessionFields::test_simulate_session_records_running_intervals` | `simulate_session(..., running_intervals=[(2, 4)])` returns them as a `(1, 2)` array, and `(0, 2)` for None. Signals are guarded by the existing `test_the_defaults_are_unchanged`, which must pass unedited. |
@@ -100,16 +111,21 @@ at any envelope fraction. Public, because users can test a detector on it.
 | `TestDrawNetworkEvents::test_events_only_at_rest_and_inside` | No component's ±4-sigma span touches a running interval or the first/last second. |
 | `TestDrawNetworkEvents::test_rate` | With nothing to drop (`minimum_separation=0`, only `swr`, `ripple_duration=(0.01, 0.01)`, `sharp_wave_duration=(0.01, 0.01)`, `burst_duration_ratio=(1, 1)`, no running), 3600 s at rate 0.5 gives a count within 4 SD of 1800 (fixed seed). |
 | `TestDrawNetworkEvents::test_seeded_and_parameter_local` | Same seed → identical table; changing `sharp_wave_amplitude` leaves every event time and ripple column unchanged. |
+| `TestDrawNetworkEvents::test_strength_dependence` | Large fixed-seed candidate draws retain marginal ranges/quantiles at rho=0 and 0.6, with positive within-type rank correlations in the coupled case; tolerances account for sampling error. Check candidates before rejection; report retained-event statistics separately. |
 | `TestDrawNetworkEvents::test_validation` | Negative rate, unknown type key, `low > high`, frequency above Nyquist each raise `ValueError` naming the parameter. |
 | `TestSimulateNetworkSession::test_shapes_and_types` | `lfps (n_time, n_channels)`, `multiunit (n_time, 60)`, `unit_types` 40/10/10 in order, `n_participants` filled for burst rows and 0 elsewhere. |
 | `TestSimulateNetworkSession::test_ripple_snr_is_met` | For isolated ripples, peak of `filter_ripple_band(lfps[:, 0])` within the window over the band-noise SD is within 20% of `amplitude` (noise adds; single seed, 20 ripples, median ratio). |
+| `TestSimulateNetworkSession::test_spatial_profile` | Selected-channel counts, stored gains/delays and zero-gain channels match the isolated rendering; local bounds equal latent bounds plus delay; an anchor is present; shifted spans stay inside rest. Include one-channel and boundary cases. |
+| `TestSimulateNetworkSession::test_noise_modulation` | Matched noise-only renders follow the variance modulation; zero modulation preserves stationary output. Identical isolated event amplitudes are retained across local noise levels, so local SNR changes. |
+| `TestSimulateNetworkSession::test_refractory_spikes` | Without injected leakage, no endogenous ISI is below the dead time and no bin exceeds one spike; constant-intensity realized rates agree with the discrete renewal model within sampling tolerance. LFPs, units and recruitment equal the paired Poisson case. |
+| `TestSimulateNetworkSession::test_variant_validation` | Unknown spatial/spike model, occupancy outside (0,1], invalid gain ranges, negative/nonfinite delays, invalid noise period/amplitude, and negative/nonfinite refractory period raise named errors. |
 | `TestSimulateNetworkSession::test_chirp` | Instantaneous frequency (Hilbert phase derivative of the noise-free rendering) at −2 and +2 sigma matches the linear chirp within 5 Hz. |
-| `TestSimulateNetworkSession::test_burst_follows_its_envelope` | Summed spike rate over 200 simulated copies of one `burst_only` event (different seeds, fixed table) peaks within 5 ms of the burst centre and exceeds baseline only inside the 0.01-fraction window. |
+| `TestSimulateNetworkSession::test_burst_follows_its_envelope` | Ensemble spike counts for a fixed `burst_only` table agree with the integrated Poisson intensity in time bins at both envelope powers, within predeclared Monte Carlo tolerance. Account for recruitment randomness; Gaussian tails are not exactly zero outside a fractional window. |
 | `TestSimulateNetworkSession::test_sharp_wave_sign_and_leak` | Radiatum deflection negative with peak `amplitude`, channel 0 positive at `sharp_wave_leak` of it (noise-free: `noise_amplitude=0`). |
 | `TestSimulateNetworkSession::test_ripple_windows_match_components` | `session.ripple_windows` equals the ripple rows' ±3-sigma spans. |
-| `TestTruthWindows::test_fraction_formula` | Windows equal `center ∓ sqrt(-2 ln f) sigma` for f in (0.1, 0.25, 0.5); narrower as f rises. |
+| `TestTruthWindows::test_fraction_formula` | Windows use the power-specific formula for powers 2 and 4 and f in (0.1, 0.25, 0.5); equal half-maximum widths at equal scales; narrower as f rises. |
 | `TestTruthWindows::test_row_order_is_the_same_for_every_fraction` | `id` (and `expression`, `component`) columns identical across fractions. |
-| `TestTruthWindows::test_measured_on_the_rendered_envelope` | Noise-free rendering: the samples where the ripple's Hilbert envelope is ≥ f × peak span the analytic window within one sample (f = 0.1, 0.25, 0.5). |
+| `TestTruthWindows::test_measured_on_the_rendered_envelope` | The explicit noise-free modulation envelope crosses f × peak within one sample of analytic bounds at both powers. Hilbert-envelope deviations on short/chirped components are measured in the validation report, not assumed to vanish. |
 | `TestTruthWindows::test_network_union_and_peak` | Network row spans the union of components; `peak_time` is the ripple's centre, else the burst's, else the sharp wave's. |
 | `TestTruthWindows::test_validation` | `fraction` 0 or 1 raises; unknown expression raises. |
 | doctests | Each new public function's example runs. |
@@ -118,7 +134,8 @@ at any envelope fraction. Public, because users can test a detector on it.
 
 All synthesized in the tests: short sessions (10-60 s at 1500 Hz) with fixed seeds, and
 hand-built event tables for the noise-free checks (`noise_amplitude=0`, `theta_amplitude=0`,
-`delta_amplitude=0`). Add a module-level helper `_one_event_table(event_type, **overrides)` in
+`delta_amplitude=0` for sharp waves; ripple/chirp envelope checks call unit-amplitude waveform
+helpers directly because SNR sizing requires positive background). Add a module-level helper `_one_event_table(event_type, **overrides)` in
 `tests/test_simulate.py` to build single-event tables. No real data: the simulator is the truth.
 
 ## Review

@@ -46,8 +46,9 @@ ripples has five (two ripples, two sharp waves, one burst).
 | `expression` | str | One of `EXPRESSIONS`. |
 | `component` | int64 | `0 ..` within (`event_id`, `expression`); above 0 only for the extra ripples and sharp waves of a `ripple_doublet`. |
 | `center_time` | float64 | Seconds; the envelope's peak. |
-| `rise_sigma`, `decay_sigma` | float64 | Seconds; SD of the half-Gaussian before and after the peak. |
-| `amplitude` | float64 | Ripple: target SNR (peak after `filter_ripple_band` over the ripple-band noise SD). Sharp wave: peak deflection on the radiatum channel in signal units (rendered negative). Burst: peak rate gain of a participating unit (multiplier of baseline). |
+| `rise_sigma`, `decay_sigma` | float64 | Seconds; envelope side scales, Gaussian SDs when `envelope_power=2`. |
+| `envelope_power` | int64 | 2 (Gaussian) or 4; the formula and equal-half-maximum-width convention are in [simulator validation](simulator-validation.md#alternative-envelopes-and-truth). |
+| `amplitude` | float64 | Ripple: nominal SNR before channel gains and noise modulation (filtered peak over stationary ripple-band noise SD). Sharp wave: peak deflection on the radiatum channel in signal units (rendered negative). Burst: peak intensity gain of a recruited unit (multiplier of baseline). |
 | `frequency_start`, `frequency_end` | float64 | Hz, ripple rows only (linear chirp over the component's ±3-sigma span); NaN otherwise. |
 | `participation` | float64 | Burst rows: probability a pyramidal unit takes part. NaN otherwise. |
 | `n_participants` | int64 | Burst rows: place and pyramidal units that took part, drawn and filled in by `simulate_network_session` (`draw_network_events` leaves 0). 0 otherwise. |
@@ -55,7 +56,10 @@ ripples has five (two ripples, two sharp waves, one burst).
 Invariants (do not weaken):
 
 - Sorted by (`event_id`, `expression`, `component`); index is a RangeIndex.
-- Every component's ±4-sigma span lies inside the recording, so truth windows never need clipping.
+- Every component's ±4-sigma span lies inside the recording, so benchmark truth windows need no clipping.
+- The ±3/4/8-sigma terminology denotes nominal side scales at both envelope powers. Fractional
+  truth uses the power-specific formula; containment is guaranteed for benchmark fractions
+  (0.1, 0.25, 0.5), not for arbitrarily small positive fractions.
 - An empty table has exactly these columns and dtypes (`simulate_session` returns it so).
 - `center_time` of an event's components may differ (the coupling lags); `event_id` ties them.
 
@@ -68,8 +72,10 @@ Invariants (do not weaken):
 | `non_event_id` | int64 | `0 ..` in order of `center_time`. |
 | `non_event_type` | str | One of `NON_EVENT_TYPES`. |
 | `center_time`, `rise_sigma`, `decay_sigma` | float64 | As in the event table. |
-| `amplitude` | float64 | `spike_leakage`: peak waveform amplitude in signal units; `emg`: peak SD of the broadband burst in signal units; `fast_gamma`: target SNR as for ripples, against the 60-100 Hz band noise; `theta_burst`: peak rate gain. |
+| `envelope_power` | int64 | 2 for every non-event. |
+| `amplitude` | float64 | `spike_leakage`: peak waveform amplitude in signal units; `emg`: peak SD of the broadband burst in signal units; `fast_gamma`: nominal SNR against stationary noise in its stored sizing band; `theta_burst`: peak intensity gain. |
 | `frequency` | float64 | `fast_gamma` only, Hz; NaN otherwise. |
+| `snr_band_low`, `snr_band_high` | float64 | Hz; the gamma row's sizing-band edges, used for both burst scaling and stationary background SD; NaN otherwise. |
 | `channel` | int64 | `spike_leakage`: the LFP channel the leaking units sit on; -1 (all channels) otherwise. |
 | `n_units` | int64 | `spike_leakage` and `theta_burst`: units involved; 0 otherwise. |
 | `n_spikes` | int64 | `spike_leakage`: spikes per leaking unit; 0 otherwise. |
@@ -79,7 +85,7 @@ Same ordering, span and empty-table invariants as the event table.
 
 ## SimulatedSession additions
 
-`src/ripple_detection/simulate.py:1077` gains five fields **after** `sampling_frequency`, each
+`src/ripple_detection/simulate.py:1077` gains six fields **after** `sampling_frequency`, each
 with a default so every existing constructor call keeps working:
 
 ```python
@@ -88,18 +94,25 @@ non_events: pd.DataFrame = field(default_factory=_empty_non_events)  # non-event
 unit_types: StrArray = field(default_factory=lambda: np.empty(0, dtype="<U11"))  # (n_units,)
 baseline_rates: FloatArray = field(default_factory=lambda: np.empty(0))  # (n_units,) spikes/s
 running_intervals: FloatArray = field(default_factory=lambda: np.empty((0, 2)))  # (n_bouts, 2)
+ripple_channels: pd.DataFrame = field(default_factory=_empty_ripple_channels)
 ```
 
 - `unit_types[i]` is one of `UNIT_TYPES`; `"place"` units are pyramidal units with place fields
   (a subset in meaning, a distinct label in the array). Empty when the simulator did not assign
   types (`simulate_session`).
-- `baseline_rates[i]` is unit `i`'s realized baseline rate in spikes/s, as drawn by the
-  renderer; the runner writes it to `units.csv.gz`. Empty when the simulator did not record
-  them (`simulate_session`).
+- `baseline_rates[i]` is unit `i`'s drawn baseline intensity in spikes/s; the runner writes it
+  to `units.csv.gz`. Realized firing rates are measured separately, especially with refractory
+  spiking. Empty when the simulator did not record them (`simulate_session`).
 - `simulate_session` sets `running_intervals` from its argument (empty for None) and leaves the
-  other four at their defaults. Its signals are unchanged.
+  other five at their defaults. Its signals are unchanged.
 - `__post_init__` checks `unit_types` and `baseline_rates` are each empty or have
   `multiunit.shape[1]` entries.
+- `ripple_channels` has one row per ripple component × pyramidal-layer LFP channel, sorted by
+  (`event_id`, `component`, `channel`), with int64 keys and float64 `gain`, `delay_s`.
+  `gain` includes the recording-wide channel gain; zero denotes an unselected channel, with
+  delay 0. Global profiles store the fixed gains and zero delays. Empty frames have the same
+  dtypes. Bounds on a channel are the latent component bounds plus `delay_s`; the shared truth
+  stays anchored to the latent component. The table makes realized spatial draws auditable.
 - For network sessions, `ripple_times`, `ripple_durations`, `ripple_frequencies` hold one entry per
   ripple component: `ripple_times = center + 1.5 (decay_sigma - rise_sigma)`,
   `ripple_durations = 3 (rise_sigma + decay_sigma)`, `ripple_frequencies = frequency_start`, so
@@ -120,8 +133,11 @@ def truth_windows(
 - `table` is an event table or a non-event table.
 - Returns columns `id`, `type`, `start_time`, `end_time`, `peak_time`, and for the event table
   `expression` and `component`.
-- A component's window is where its envelope is at or above `fraction` of its peak:
-  `[center - k rise_sigma, center + k decay_sigma]`, `k = sqrt(-2 ln fraction)`.
+- A component's window is where its latent modulation envelope is at or above `fraction` of
+  peak: `[center - k rise_sigma, center + k decay_sigma]`, where
+  `k = sqrt(2 ln 2) * (ln(1/fraction) / ln 2)**(1/envelope_power)`.
+  At power 2 this is `sqrt(-2 ln fraction)`. These are latent bounds; sampled Hilbert-envelope
+  bounds and channel-local delays are measured separately during simulator validation.
 - `expression="ripple"`, `"sharp_wave"` or `"burst"`: one row per component of that expression.
 - `expression="network"`: one row per `event_id`, spanning the union of its components' windows.
   `peak_time` is the ripple's centre when there is one (the first ripple for a doublet), else the
@@ -332,7 +348,7 @@ class Condition:
     params: Params                # overrides of REFERENCE by dotted key, e.g. "events.ripple_snr"
 
 REFERENCE: dict[str, dict[str, Any]]  # "session", "events", "non_events", "render" -> keywords
-def conditions() -> tuple[Condition, ...]: ...   # reference + one-factor grid + crossed pairs
+def conditions() -> tuple[Condition, ...]: ...   # reference + one-factor grid (incl. six model variants) + crossed pairs
 def session_seed(replicate: int) -> int: ...     # the same for every condition
 def running_schedule(duration_s: float, rng: np.random.Generator) -> FloatArray: ...
 def simulate_condition(condition: Condition, replicate: int) -> SimulatedSession: ...
@@ -342,6 +358,9 @@ Invariant (do not weaken): replicate `k` has the same seed in every condition (c
 numbers), so comparisons across conditions pair by replicate, and phase 6 finds the reference
 sessions by replicate. Values, labels, the factor-to-keyword mapping, the schedule and the draw
 order are in [designs.md#conditions-grid](designs.md#conditions-grid).
+The additional model options and validation report contract are in
+[simulator-validation.md](simulator-validation.md). Save every resolved option, including inactive
+reference defaults. A report covers simulation settings independently of the detector list.
 
 ## Benchmark outputs
 
@@ -363,13 +382,14 @@ and 6. Every table is CSV; `.csv.gz` for the large ones.
 | File | One row per | Columns |
 | --- | --- | --- |
 | `manifest.json` | run | `run_name`, `git_commit`, `package_version`, `numpy_version`, `scipy_version`, `command`, `started`, `finished`, `n_workers` |
-| `run_spec.json` | run | the resolved specification `--resume` checks: every condition's parameters after overrides, `replicates`, seeds, every method and setting with its resolved options, `package_version`, `git_commit` |
+| `run_spec.json` | run | the resolved specification `--resume` checks: every condition's parameters after overrides, `replicates`, seeds, every method and setting with its resolved options, `package_version`, `git_commit`, validation report path and hash, simulator source fingerprint and target-table hash |
 | `conditions/<condition_id>/done.json` | finished condition | row count and SHA-256 of every other file in the condition's directory; written last, before the directory is renamed into place |
 | `conditions/<condition_id>/methods.csv` | session × method × setting | `session_id`, `method`, `setting`, `doi`, `role`, `inventory`, `stage`, `primary_expression`, `resolved_options` (JSON), `input_policy` (JSON or references), `assumptions` (JSON), `interpretation` |
 | `conditions.csv` | condition | `condition_id`, `factor`, `level`, `params` (JSON of the full parameter set after the condition's and the command line's overrides, such as `--duration`; phase 6 regenerates sessions from it) |
 | `conditions/<condition_id>/sessions.csv.gz` | session | `session_id` (`f"{condition_id}/{replicate}"`), `condition_id`, `replicate`, `seed`, `duration_s`, `rest_s`, `event_time_s` (union of network windows at 0.1), `n_events_<type>` per `EVENT_TYPES`, `n_non_events_<type>` per `NON_EVENT_TYPES`, `simulate_s`, `detect_s` |
 | `conditions/<condition_id>/truth.csv.gz` | truth component | `session_id`, `table` (`"event"`/`"non_event"`), `id`, `type`, `expression`, `component`, then the remaining columns of the event or non-event table (NaN where not applicable) |
 | `conditions/<condition_id>/truth_counts.csv.gz` | truth window × expression | `session_id`, `expression` (`ripple`, `sharp_wave`, `burst`, `network`), `row` (position in `truth_windows(events, 0.1, expression)`, the rows matching uses), `n_active_units`, `n_active_principal` (observed within that window) |
+| `conditions/<condition_id>/ripple_channels.csv.gz` | ripple component × channel | `session_id`, then every column of `SimulatedSession.ripple_channels` |
 | `conditions/<condition_id>/units.csv.gz` | session × unit | `session_id`, `unit`, `unit_type`, `baseline_rate` (from `SimulatedSession.baseline_rates`) |
 | `conditions/<condition_id>/events.csv.gz` | detected event | `session_id`, `method`, `setting`, `event_index`, `start_time`, `end_time`, `peak_time`, `n_active_units`, `n_active_principal` |
 | `conditions/<condition_id>/results/<method_slug>__<setting>.csv.gz` and `.json` | detected event, complete | `session_id`, then every column the method returned, in its order (clipping flags, per-event statistics, method-specific columns); the JSON sidecar holds each column's dtype and, per `session_id`, the result's complete `attrs` (recipes: method, DOI, resolved options, grid, inputs, diagnostics such as adaptive threshold updates, `ripple_detection_version`; detectors: name, resolved parameters, version). `method_slug` is `method` with `:` replaced by `--`. |
