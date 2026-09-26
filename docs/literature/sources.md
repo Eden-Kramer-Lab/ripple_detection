@@ -569,10 +569,10 @@ generic application page as proof of a dataset. This checks link resolution
 and record identity, not access to every data file. The earlier file/header
 inspections above were not repeated.
 
-All 13 distinct `source_note` URLs returned 404 on GitHub `master` at this
-check: these notes have not yet been merged there. Their paths and anchors
-were verified in this branch. They need publication on `master` to work for
-installed-package users; this is separate from external dataset availability.
+All 13 distinct `source_note` URLs returned 200 on GitHub `master` on
+September 26, after the catalog was merged there (PR #25), so the links work
+from an installed package. `tests/test_literature.py` checks their paths and
+anchors in the repository.
 
 ## Artifact fingerprints
 
