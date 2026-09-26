@@ -204,3 +204,23 @@ def test_the_implementation_guide_lists_every_method(recipes):
     table = guide.read_text().split("## Per-paper entry points")[1]
     listed = set(re.findall(r"`([a-z0-9_]+)`", table))
     assert listed == set(recipes.list_methods().name)
+
+
+def test_the_measured_data_walkthrough_runs(tmp_path):
+    """examples/measured_walkthrough.py, from loaders to saved provenance."""
+    path = SCRIPT.with_name("measured_walkthrough.py")
+    spec = importlib.util.spec_from_file_location("measured_walkthrough", path)
+    assert spec is not None
+    assert spec.loader is not None
+    walkthrough = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(walkthrough)
+    results = walkthrough.main(tmp_path)
+    assert all(len(events) for events in results.values()), {
+        name: len(events) for name, events in results.items()
+    }
+    assert results["shin_2019_candidates"].attrs["options"]["stage"] == "decoding_candidates"
+    chenani = results["chenani_2019"]
+    assert chenani.attrs["behavior_intervals"] is not None
+    for name in results:
+        assert (tmp_path / f"{name}.csv").exists()
+        assert (tmp_path / f"{name}.json").exists()

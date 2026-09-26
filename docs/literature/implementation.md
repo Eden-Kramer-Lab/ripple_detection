@@ -33,6 +33,13 @@ detector configuration. Git retains the previous assessment and corrections.
 
 ## Use measured recordings
 
+[examples/measured_walkthrough.py](../../examples/measured_walkthrough.py) is a
+complete, executable walkthrough, run by the test suite: preparing raw LFP,
+spike counts and speed on one clock, selecting channels and cells, curating
+baseline, sleep and per-call behavior intervals, discovering methods and
+checking a call, choosing a stage, running several methods, reading their
+diagnostics and saving the events with their provenance. In brief:
+
 ```python
 from ripple_detection.literature_methods import (
     Recording,
