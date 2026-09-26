@@ -1709,7 +1709,7 @@ def test_each_entry_records_its_inventory():
 
 
 def test_grosmark_rejects_an_unknown_stage(measured):
-    with pytest.raises(ValueError, match="stage must be"):
+    with pytest.raises(ValueError, match="stage='replay' - expected"):
         lm.grosmark_2016(
             lm.Recording.from_arrays(**_method_inputs("grosmark_2016")[0]),
             stage="replay",
@@ -2383,3 +2383,48 @@ def test_the_catalog_reports_the_declared_requirements():
     assert krause["lfps"]["unless"] == "external_ripples"
     assert krause["place_cells"]["kind"] == "cells"
     assert catalog.loc["bendor_2012", "signals"] == ("multiunit",)
+
+
+def test_check_method_reports_everything_a_call_lacks_at_once():
+    """Yang on a bare measured recording used to take one run per missing input."""
+    inputs = _measured_inputs()
+    rec = lm.Recording.from_arrays(
+        inputs["time"], 1500, lfps=inputs["lfps"], multiunit=inputs["multiunit"]
+    )
+    problems = lm.check_method("yang_2024", rec)
+    named = [problem.split(" - ")[0].split(":")[0] for problem in problems]
+    assert named == ["pyramidal", "sleep_intervals", "behavior_intervals", "external_ripples"]
+    with pytest.raises(ValueError, match="cannot run") as error:
+        lm.run_method("yang_2024", rec)
+    for problem in problems:
+        assert problem in str(error.value)
+
+
+def test_check_method_is_empty_for_a_runnable_call_and_never_runs_it(monkeypatch):
+    inputs, options = _method_inputs("yang_2024")
+    rec = lm.Recording.from_arrays(**inputs)
+
+    import functools
+
+    @functools.wraps(lm._IMPLEMENTATIONS["yang_2024"])
+    def never(*args, **kwargs):
+        raise AssertionError
+
+    monkeypatch.setitem(lm._IMPLEMENTATIONS, "yang_2024", never)
+    assert lm.check_method("yang_2024", rec, **options) == []
+
+
+def test_check_method_names_options_and_stages():
+    rec = lm.Recording.from_arrays(**_measured_inputs())
+    problems = lm.check_method("xu_2019_ripples", rec, window=0.1)
+    assert [p.split(" - ")[0] for p in problems] == ["window", "rms_window", "bound_threshold"]
+    assert "its options are: rms_window, bound_threshold" in problems[0]
+    assert lm.check_method("shin_2019", rec, stage="replay") == [
+        "stage='replay' - expected 'detection' or 'decoding_candidates'"
+    ]
+    # A signature problem is a TypeError that still lists the other problems.
+    bare = lm.Recording.from_arrays(rec.time, 1500)
+    with pytest.raises(TypeError, match=r"(?s)- window .*- lfps.*- speed"):
+        lm.run_method("karlsson_2009", bare, window=0.1)
+    with pytest.raises(KeyError, match="Unknown literature method"):
+        lm.check_method("unrecognized", rec)

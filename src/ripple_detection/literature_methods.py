@@ -5046,6 +5046,112 @@ def list_methods() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _option_problems(name: str, options: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+    """Options the method does not take or requires, and every option resolved
+    to its given or default value."""
+    parameters = {
+        key: parameter
+        for key, parameter in inspect.signature(_IMPLEMENTATIONS[name]).parameters.items()
+        if key not in {"rec", "behavior_intervals"}
+    }
+    accepted = ", ".join(parameters) or "none"
+    problems = [
+        f"{key} - not an option of {name}; its options are: {accepted}"
+        for key in options
+        if key not in parameters
+    ]
+    resolved = {}
+    for key, parameter in parameters.items():
+        if key in options:
+            resolved[key] = options[key]
+        elif parameter.default is inspect.Parameter.empty:
+            problems.append(f"{key} - a required option of {name}; pass {key}=")
+        else:
+            resolved[key] = parameter.default
+    return problems, resolved
+
+
+def _check(
+    name: str,
+    recording: Recording,
+    behavior_intervals: ArrayLike | None,
+    options: dict[str, Any],
+) -> tuple[list[str], list[str], dict[str, Any], FloatArray | None]:
+    """The call's option problems and input problems, the resolved options and
+    the validated behavior intervals."""
+    if name not in _ENTRIES:
+        msg = f"Unknown literature method {name!r}; inspect list_methods()."
+        raise KeyError(msg)
+    entry = _ENTRIES[name]
+    eligible = _interval_array(behavior_intervals)
+    option_problems, resolved = _option_problems(name, options)
+    input_problems = _requirement_problems(entry, recording, eligible, resolved)
+    stage = resolved.get("stage", "detection")
+    if stage not in {"detection", "decoding_candidates"}:
+        input_problems.append(
+            f"stage={stage!r} - expected 'detection' or 'decoding_candidates'"
+        )
+    return option_problems, input_problems, resolved, eligible
+
+
+def check_method(
+    name: str,
+    recording: Recording,
+    *,
+    behavior_intervals: ArrayLike | None = None,
+    **options: Any,
+) -> list[str]:
+    """List everything a call of a literature method would lack, without running it.
+
+    Parameters
+    ----------
+    name : str
+        Exact function name from ``list_methods()``.
+    recording : Recording
+        The inputs the call would use.
+    behavior_intervals : array_like, shape (n_intervals, 2), optional
+        The call's eligible epochs, as ``run_method`` takes them.
+    **options
+        The call's method options.
+
+    Returns
+    -------
+    problems : list of str
+        One line per problem, each starting with the input or option it
+        names: a declared requirement the call does not meet (see
+        ``list_methods``: signals, cell selections, curated intervals,
+        external inventories, options measured data must set), a required
+        rate the recording does not have, a keyword the method does not take,
+        a required option not given, or an unknown ``stage``. Empty when the
+        call can run; it can still fail on the data themselves (a constant
+        baseline, blocks too short for a filter).
+
+    Raises
+    ------
+    KeyError
+        Unknown method name.
+    ValueError
+        ``behavior_intervals`` are not sorted, disjoint start/end pairs.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from ripple_detection.literature_methods import Recording, check_method
+    >>> time = np.arange(3000) / 1500
+    >>> recording = Recording.from_arrays(time, 1500, multiunit=np.zeros((3000, 4)))
+    >>> for problem in check_method("yang_2024", recording):
+    ...     print(problem.split(" - ")[0])
+    pyramidal
+    sleep_intervals: curated NREM, the normalization epoch (measured data)
+    behavior_intervals: quiet-waking/NREM epochs (measured data)
+    external_ripples: ripple intervals, peaks as a third column (measured data)
+    """
+    option_problems, input_problems, _, _ = _check(
+        name, recording, behavior_intervals, options
+    )
+    return option_problems + input_problems
+
+
 def run_method(
     name: str,
     recording: Recording,
@@ -5090,24 +5196,24 @@ def run_method(
     KeyError
         Unknown method name.
     TypeError
-        Missing required method options or unknown keyword arguments.
+        A keyword the method does not take, or a required option missing.
+        The message lists every other problem ``check_method`` finds too.
     ValueError
-        Missing or invalid recording inputs for the selected method: every
-        unmet requirement (see ``list_methods``) is listed at once.
+        Missing or invalid inputs for the selected method: the message lists
+        every problem ``check_method`` finds, at once.
     """
-    if name not in _ENTRIES:
-        msg = f"Unknown literature method {name!r}; inspect list_methods()."
-        raise KeyError(msg)
+    option_problems, input_problems, resolved, eligible = _check(
+        name, recording, behavior_intervals, options
+    )
+    if option_problems or input_problems:
+        msg = f"{name} cannot run on this call:\n- " + "\n- ".join(
+            option_problems + input_problems
+        )
+        raise TypeError(msg) if option_problems else ValueError(msg)
     entry = _ENTRIES[name]
-    eligible = _interval_array(behavior_intervals)
     implementation = _IMPLEMENTATIONS[name]
-    call = inspect.signature(implementation).bind(recording, **options)
-    call.apply_defaults()
-    problems = _requirement_problems(entry, recording, eligible, dict(call.arguments))
-    if problems:
-        msg = f"{name} cannot run on this call:\n- " + "\n- ".join(problems)
-        raise ValueError(msg)
-    if "behavior_intervals" in call.arguments:
+    call = inspect.signature(implementation).bind(recording, **resolved)
+    if "behavior_intervals" in inspect.signature(implementation).parameters:
         call.arguments["behavior_intervals"] = eligible
     raw = implementation(*call.args, **call.kwargs)
     result = (
@@ -5153,6 +5259,7 @@ __all__ = [
     "Role",
     "Stage",
     "bounds",
+    "check_method",
     "list_methods",
     "population_trace",
     "run_method",

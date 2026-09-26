@@ -113,6 +113,7 @@ LITERATURE_HELPERS = [
     "Role",
     "Stage",
     "bounds",
+    "check_method",
     "list_methods",
     "population_trace",
     "run_method",

@@ -34,7 +34,12 @@ detector configuration. Git retains the previous assessment and corrections.
 ## Use measured recordings
 
 ```python
-from ripple_detection.literature_methods import Recording, list_methods, run_method
+from ripple_detection.literature_methods import (
+    Recording,
+    check_method,
+    list_methods,
+    run_method,
+)
 
 # Raw LFP and spike counts share time (seconds); speed is cm/s.
 # Select the intended channels and sorted populations before calling.
@@ -50,6 +55,7 @@ recording = Recording.from_arrays(
     artifact_intervals=artifact_intervals,
 )
 methods = list_methods()
+print(check_method("pfeiffer_2013_ripples", recording))  # [] when it can run
 events = run_method("pfeiffer_2013_ripples", recording)
 print(events.attrs["doi"], events.attrs["output"])
 ```
@@ -65,8 +71,10 @@ function's docstring and its paper note before choosing an entry: a burst
 candidate, a ripple control and a decoded replay are different objects.
 
 The requirements are declared once, with each method's registration
-(`Recipe.requirements`, `Requirement`), and `run_method` tests them before
-running: a call missing any fails listing every missing input. A test runs each
+(`Recipe.requirements`, `Requirement`). `check_method(name, recording,
+behavior_intervals=..., **options)` lists everything a call lacks without
+running it, and `run_method` uses it: a call missing several inputs fails once,
+listing all of them. A test runs each
 method on a recording holding exactly its declared inputs, then removes each in
 turn and checks the call fails naming it, so the catalog neither understates nor
 overstates what a method needs.
