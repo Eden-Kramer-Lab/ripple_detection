@@ -529,16 +529,24 @@ def input_policy(config: RecipeConfig) -> dict[str, Any]:
     -------
     policy : dict
         JSON-ready: the policy ``name``, the source of each supplied
-        ``Recording`` input (external detectors with their settings), the
-        source of the call's ``behavior_intervals`` (None when not passed),
-        and where the per-session values are recorded.
+        ``Recording`` input, the source of the call's ``behavior_intervals``
+        (None when not passed), and where the per-session values are
+        recorded. A detector behind an input is recorded with every tunable
+        of its signature, the configured value or the default. A non-finite
+        setting is written as its ``repr`` ("inf"), since None is already a
+        setting there (no limit, no mask); the method options in
+        ``resolved_options`` instead follow the package's attrs, which write
+        it as None.
     """
     inputs = policy_inputs(config)
+    sources = {name: _SOURCES[name] for name in inputs if name != "behavior_intervals"}
+    for name, source in sources.items():
+        if isinstance(source, dict):
+            defaults = rd.get_detector(source["detector"]).parameters
+            sources[name] = {**source, "options": {**defaults, **source["options"]}}
     return {
         "name": config.input_policy,
-        "recording": _json_ready(
-            {name: _SOURCES[name] for name in inputs if name != "behavior_intervals"}
-        ),
+        "recording": _json_ready(sources),
         "behavior_intervals": _SOURCES["behavior_intervals"]
         if "behavior_intervals" in inputs
         else None,

@@ -513,7 +513,10 @@ def test_external_inventories_record_their_detector(recipe_configs, session, con
         filtered = rd.filter_ripple_band(
             session.lfps, FS, band=tuple(spec["band"]), time=session.time
         )
-        options = {key: float(value) for key, value in spec["options"].items()}
+        options = {
+            key: float(value) if value in ("inf", "-inf", "nan") else value
+            for key, value in spec["options"].items()
+        }
         if source == "external_ripples":
             events = getattr(rd, detector)(
                 session.time,
@@ -532,6 +535,37 @@ def test_external_inventories_record_their_detector(recipe_configs, session, con
             found = recording.example_ripples
         assert len(expected)
         np.testing.assert_array_equal(found, expected)
+
+
+def test_input_policy_records_every_setting_of_each_detector(recipe_configs, configs):
+    recorded = {}
+    for name, source in (("yang_2024", "external_ripples"), ("carey_2019", "example_ripples")):
+        policy = json.loads(recipe_configs.method_record(configs[name])["input_policy"])
+        spec = policy["recording"][source]
+        assert set(spec["options"]) == set(rd.get_detector(spec["detector"]).parameters)
+        recorded[source] = spec["options"]
+    # Configured values replace the defaults; a non-finite value is its repr,
+    # since None is already a setting ("no limit", "no mask").
+    assert recorded["external_ripples"] == {
+        "speed_threshold": "inf",
+        "low_threshold": 2.0,
+        "high_threshold": 5.0,
+        "minimum_inter_ripple_interval": 0.03,
+        "minimum_duration": 0.02,
+        "maximum_duration": 0.2,
+        "smoothing_window": 0.0088,
+        "normalization_mask": None,
+    }
+    assert recorded["example_ripples"] == {
+        "speed_threshold": 4.0,
+        "minimum_duration": 0.015,
+        "zscore_threshold": 2.0,
+        "smoothing_sigma": 0.004,
+        "close_ripple_threshold": 0.0,
+        "normalization_method": "zscore",
+        "normalization_mask": None,
+        "maximum_duration": None,
+    }
 
 
 @pytest.mark.parametrize(
