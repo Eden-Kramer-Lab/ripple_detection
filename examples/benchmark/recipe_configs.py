@@ -23,7 +23,7 @@ import inspect
 import json
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -332,13 +332,8 @@ def policy_inputs(config: RecipeConfig) -> tuple[str, ...]:
     TypeError
         An option the method does not take.
     """
-    return _inputs(config.method, config.options)
-
-
-def _inputs(method: str, options: Params) -> tuple[str, ...]:
-    """``policy_inputs`` of a method with these options."""
-    requirements = _entry(method)["requirements"]
-    resolved = _resolved(method, options)
+    requirements = _entry(config.method)["requirements"]
+    resolved = _resolved(config.method, config.options)
     return tuple(
         dict.fromkeys(
             requirement["input"]
@@ -649,17 +644,17 @@ def method_record(config: RecipeConfig) -> dict[str, str]:
     }
 
 
-def _assumptions(method: str, options: Params) -> tuple[str, ...]:
-    """The benchmark choices a configuration of ``method`` with ``options``
-    relies on: the stand-in for each input the policy supplies that is not
-    an observation, and each unreported option set to a demonstration value."""
-    requirements = _entry(method)["requirements"]
+def _assumptions(config: RecipeConfig) -> tuple[str, ...]:
+    """The benchmark choices ``config`` relies on: the stand-in for each
+    input the policy supplies that is not an observation, and each
+    unreported option set to a demonstration value."""
+    requirements = _entry(config.method)["requirements"]
     meanings = {requirement["input"]: requirement["meaning"] for requirement in requirements}
     assumptions = [
         _ASSUMPTIONS[name].replace(":", f', for "{meanings[name]}":', 1)
         if meanings[name]
         else _ASSUMPTIONS[name]
-        for name in _inputs(method, options)
+        for name in policy_inputs(config)
         if name in _ASSUMPTIONS
     ]
     unreported = {
@@ -669,7 +664,7 @@ def _assumptions(method: str, options: Params) -> tuple[str, ...]:
     }
     assumptions += [
         f"{name}={value!r}: unreported in the paper; the package's demonstration value"
-        for name, value in options
+        for name, value in config.options
         if name in unreported
     ]
     return tuple(assumptions)
@@ -684,7 +679,7 @@ def _check_provenance(config: RecipeConfig) -> None:
             f"expected {INPUT_POLICY!r}. Build configurations with configure()."
         )
         raise ValueError(msg)
-    expected = _assumptions(config.method, config.options)
+    expected = _assumptions(config)
     if config.assumptions != expected:
         msg = (
             f"{config.config_id}'s assumptions are not those its method and options "
@@ -725,14 +720,14 @@ def configure(
     ValueError
         As ``RecipeConfig``.
     """
-    return RecipeConfig(
+    config = RecipeConfig(
         f"{method}.{label}" if label else method,
         method,
         primary_expression,
         tuple(options),
         INPUT_POLICY,
-        _assumptions(method, tuple(options)),
     )
+    return replace(config, assumptions=_assumptions(config))
 
 
 _DETECTION = ("stage", "detection")
