@@ -46,7 +46,7 @@ jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --exec
 jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/ripple_detection_tutorial.ipynb
 jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/simulation_study.ipynb
 
-# Re-run the simulation study sweep the notebook reads (about two minutes)
+# Re-run the simulation study sweep the notebook reads (about three minutes)
 uv run python examples/simulation_study.py
 
 # Run every surveyed paper's packaged method on a simulated session (seconds;

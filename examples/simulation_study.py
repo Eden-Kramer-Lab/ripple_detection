@@ -13,7 +13,7 @@ ripple size (``ripple_snr``), channel count (4, 16, 32) and seed, plus:
 Writes one row per detector and condition to ``simulation_study_results.csv`` beside
 this file; ``simulation_study.ipynb`` reads that file and plots it.
 
-Run with ``uv run python examples/simulation_study.py``; about a quarter of an hour.
+Run with ``uv run python examples/simulation_study.py``; about three minutes.
 """
 
 from __future__ import annotations
