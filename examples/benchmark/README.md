@@ -197,10 +197,12 @@ errors are measured against the windows at 10, 25 and 50 %. The reference condit
 20 replicates and every other condition 10: 440 sessions, replicate `k` with the same
 seed in every condition. A call's warnings change nothing but are each written to
 `warnings.csv` (the session, method and setting, the warning's class and message); a
-call that raises is written to `failures.csv`, with no events, results or scores, and
-the run goes on. A (session, method, setting) without scores is a failure, never zero
-events: a call that finds nothing still has its scores and an entry in its `results/`
-sidecar.
+method that raises is written to `failures.csv`, with no events, results or scores, and
+the run goes on. An error in the benchmark's own code (building a recipe's recording or
+eligible epochs, summarizing or scoring a result) stops the run instead: it is a bug to
+fix, not a method's failure. A (session, method, setting) without scores is a failure,
+never zero events: a call that finds nothing still has its scores and an entry in its
+`results/` sidecar.
 
 Run it from the repository root, in this order. First validate the simulator for the
 settings the run will use:

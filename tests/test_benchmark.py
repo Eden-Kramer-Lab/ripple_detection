@@ -255,6 +255,12 @@ def _union_seconds(bounds):
     return total
 
 
+def _call(run, session, method, setting):
+    """The result of the runner's call of ``method`` at ``setting``."""
+    prepare = next(c for c in run.method_calls(session) if c[:2] == (method, setting))[2]
+    return prepare()()
+
+
 def test_the_sweeps_and_expressions_are_the_contracts(run):
     assert run.MATCH_IOU_LEVELS == LEVELS
     assert run.TRUTH_FRACTIONS == (0.1, 0.25, 0.5)
@@ -313,8 +319,7 @@ def test_a_setting_resolves_every_tunable(run, session, method, setting, expecte
     assert options == {**defaults, **expected}
     assert "peak_thresholds" not in options
     # the call runs with them, and its result records them
-    call = next(c for c in run.method_calls(session) if c[:2] == (method, setting))[2]
-    assert call().attrs == {
+    assert _call(run, session, method, setting).attrs == {
         "method": method,
         "options": options,
         "ripple_detection_version": rd.__version__,
@@ -347,9 +352,10 @@ def test_sweep_values_and_speed_reach_the_detectors(run, session, method, settin
     def direct(speed, **given):
         return detector(session.time, *signals, speed, fs, **keywords, **given)
 
-    call = next(c for c in run.method_calls(session) if c[:2] == (method, setting))[2]
     expected = direct(session.speed, **options)
-    pd.testing.assert_frame_equal(call(), expected, check_exact=True)
+    pd.testing.assert_frame_equal(
+        _call(run, session, method, setting), expected, check_exact=True
+    )
     # at this point the value and the speed both change the events
     assert not direct(session.speed).equals(expected)
     assert not direct(np.zeros_like(session.speed), **options).equals(expected)
@@ -659,10 +665,12 @@ def test_model_metadata_round_trip(run, conditions_module, tmp_path):
 
 
 def _raises(error):
+    """A stub method call's preparation: the call raises ``error``."""
+
     def call():
         raise error
 
-    return call
+    return lambda: call
 
 
 def test_failures_are_recorded_not_raised(run, session, monkeypatch):
@@ -693,10 +701,8 @@ def test_failures_are_recorded_not_raised(run, session, monkeypatch):
 
 
 def _returns(frame):
-    def call():
-        return frame
-
-    return call
+    """A stub method call's preparation: the call returns ``frame``."""
+    return lambda: lambda: frame
 
 
 def test_a_sub_sample_event_is_kept_with_no_active_units(run, session, monkeypatch):
@@ -743,16 +749,21 @@ def test_warnings_are_recorded_not_raised(run, session, monkeypatch):
         msg = "bad value"
         raise ValueError(msg)
 
+    def prepares_with_a_warning():
+        warnings.warn("while preparing", UserWarning, stacklevel=1)
+        return lambda: found
+
     monkeypatch.setattr(
         run,
         "method_calls",
         lambda given: [
-            ("stub_warns", "default", warns),
-            ("stub_fails", "3.0", warns_then_fails),
+            ("stub_warns", "default", lambda: warns),
+            ("stub_fails", "3.0", lambda: warns_then_fails),
+            ("stub_prepares", "default", prepares_with_a_warning),
         ],
     )
     output = run.evaluate_session(session, "reference/0")
-    assert list(output.results) == [("stub_warns", "default")]
+    assert list(output.results) == [("stub_warns", "default"), ("stub_prepares", "default")]
     assert list(output.failures.method) == ["stub_fails"]
     key = {"session_id": "reference/0", "method": "stub_warns", "setting": "default"}
     assert output.warnings.to_dict("records") == [
@@ -766,6 +777,13 @@ def test_warnings_are_recorded_not_raised(run, session, monkeypatch):
             "category": "DeprecationWarning",
             "message": "before failing",
         },
+        # a warning building a call's inputs is the call's
+        {
+            **key,
+            "method": "stub_prepares",
+            "category": "UserWarning",
+            "message": "while preparing",
+        },
     ]
 
 
@@ -773,14 +791,14 @@ GRIDCHYN = (("recipe:gridchyn_2020", "literature"),)
 
 
 def test_gridchyn_without_a_valid_baseline_fails_explicitly(run, session, conditions_module):
-    # running throughout: no rest to stand in for the pre-rest baseline
+    # running throughout: no rest to stand in for the pre-rest baseline, which
+    # the policy cannot build (every benchmark session starts and ends at rest)
     no_rest = dataclasses.replace(
         session, running_intervals=np.array([[session.time[0], session.time[-1]]])
     )
-    failed = run.evaluate_session(no_rest, "s/0", GRIDCHYN).failures
-    assert failed.error.str.startswith("ValueError: The session has no rest").all()
-    assert len(failed) == 1
-    # a baseline without a spike
+    with pytest.raises(ValueError, match="The session has no rest"):
+        run.evaluate_session(no_rest, "s/0", GRIDCHYN)
+    # a baseline without a spike, which the method rejects
     silent = dataclasses.replace(session, multiunit=np.zeros_like(session.multiunit))
     failed = run.evaluate_session(silent, "s/0", GRIDCHYN).failures
     assert len(failed) == 1
@@ -792,6 +810,48 @@ def test_gridchyn_without_a_valid_baseline_fails_explicitly(run, session, condit
     output = run.evaluate_session(still, "s/0", GRIDCHYN)
     assert output.failures.empty
     assert list(output.results) == list(GRIDCHYN)
+
+
+def _broken(*args):
+    msg = "a bug in the benchmark's input code"
+    raise RuntimeError(msg)
+
+
+@pytest.mark.parametrize("step", ["recording input", "behavior_intervals", "integer counts"])
+def test_an_input_error_raises_rather_than_failing_the_method(
+    run, recipe_configs, session, monkeypatch, step
+):
+    """The inputs a recipe runs on are the benchmark's own: an error building
+    them is a bug to fix, never the method's failure."""
+    if step == "recording input":
+        method = GRIDCHYN[0]
+        policy = recipe_configs._POLICY["multiunit"]
+        broken = dataclasses.replace(policy, get=_broken)
+        monkeypatch.setitem(recipe_configs._POLICY, "multiunit", broken)
+    elif step == "behavior_intervals":
+        method = ("recipe:yang_2024", "literature")
+        policy = recipe_configs._POLICY["behavior_intervals"]
+        broken = dataclasses.replace(policy, get=_broken)
+        monkeypatch.setitem(recipe_configs._POLICY, "behavior_intervals", broken)
+    else:
+        method = GRIDCHYN[0]
+        monkeypatch.setattr(run, "_integer_counts", _broken)
+    with pytest.raises(RuntimeError, match="input code"):
+        run.evaluate_session(session, "reference/0", [method])
+
+
+def test_a_recipe_that_raises_is_a_failure(run, session, monkeypatch):
+    monkeypatch.setattr(run, "run_recipe", _broken)
+    output = run.evaluate_session(session, "reference/0", GRIDCHYN)
+    assert output.failures.to_dict("records") == [
+        {
+            "session_id": "reference/0",
+            "method": GRIDCHYN[0][0],
+            "setting": "literature",
+            "error": "RuntimeError: a bug in the benchmark's input code",
+        }
+    ]
+    assert output.results == {}
 
 
 def test_integer_counts_give_the_float_results(run, recipe_configs, session):

@@ -6,8 +6,9 @@ threshold sweeps (``THRESHOLD_SWEEPS``) and every configured literature method
 (``recipe_configs.RECIPES``), and scores each against the session's truth windows
 of every expression at every level of ``MATCH_IOU_LEVELS``. A method that raises is
 recorded in ``failures.csv`` and the run goes on; a missing (session, method,
-setting) is a failure, never zero events. A method's warnings change nothing:
-each is recorded in ``warnings.csv``.
+setting) is a failure, never zero events. An error in the runner's own code, such as
+building a recipe's inputs or scoring a result, stops the run. A method's warnings
+change nothing: each is recorded in ``warnings.csv``.
 
 Usage, from the repository root (see README.md, "Running the benchmark")::
 
@@ -349,7 +350,9 @@ TABLES: dict[str, tuple[str, ...]] = {
     "warnings.csv": WARNING_COLUMNS,
 }
 
-MethodCall = tuple[str, str, Callable[[], pd.DataFrame]]
+# (method, setting, prepare): prepare builds the call's inputs and returns the
+# method's call itself.
+MethodCall = tuple[str, str, Callable[[], Callable[[], pd.DataFrame]]]
 
 
 @dataclasses.dataclass
@@ -506,15 +509,16 @@ def method_records(methods: Collection[tuple[str, str]] | None = None) -> list[d
 
 def _detector_call(
     detector: Callable[[], pd.DataFrame], attrs: dict[str, Any]
-) -> Callable[[], pd.DataFrame]:
-    """``detector``'s call, its result's ``attrs`` set to ``attrs``."""
+) -> Callable[[], Callable[[], pd.DataFrame]]:
+    """``detector``'s call, its result's ``attrs`` set to ``attrs``; its
+    signals are ready, so preparing it builds nothing."""
 
     def call() -> pd.DataFrame:
         result = detector()
         result.attrs = attrs
         return result
 
-    return call
+    return lambda: call
 
 
 def _integer_counts(session: rd.SimulatedSession) -> rd.SimulatedSession:
@@ -532,13 +536,16 @@ def _recipe_call(
     config: RecipeConfig,
     session: rd.SimulatedSession,
     counted: Callable[[], rd.SimulatedSession],
-) -> Callable[[], pd.DataFrame]:
-    def call() -> pd.DataFrame:
-        # the recording is freed when the call returns
-        recording = make_recording(counted(), config)
-        return run_recipe(config, recording, behavior_intervals(session, config))
+) -> Callable[[], Callable[[], pd.DataFrame]]:
+    """Preparing builds the recording and the eligible epochs; the call runs
+    the method on them."""
 
-    return call
+    def prepare() -> Callable[[], pd.DataFrame]:
+        recording = make_recording(counted(), config)
+        intervals = behavior_intervals(session, config)
+        return functools.partial(run_recipe, config, recording, intervals)
+
+    return prepare
 
 
 def method_calls(session: rd.SimulatedSession) -> list[MethodCall]:
@@ -551,15 +558,18 @@ def method_calls(session: rd.SimulatedSession) -> list[MethodCall]:
 
     Returns
     -------
-    calls : list of (method, setting, callable)
-        In ``method_records`` order: each detector at its defaults and at each
-        point of its sweep, with the signals of its registry kinds (the
-        ripple band from ``filter_ripple_band``; Long's ``sharp_wave_lfp``;
-        Carey without ``theta_lfp``), its result's ``attrs`` set to its name,
-        resolved options and the package version; then each recipe, whose
-        call builds its recording (``make_recording``, with the spike counts
-        as integers), runs it with the policy's ``behavior_intervals`` and
-        releases it.
+    calls : list of (method, setting, prepare)
+        In ``method_records`` order. ``prepare()`` builds the call's inputs,
+        the benchmark's own code, and returns the method's call, which takes
+        no arguments and returns its result: each detector at its defaults
+        and at each point of its sweep, with the signals of its registry kinds
+        (the ripple band from ``filter_ripple_band``; Long's
+        ``sharp_wave_lfp``; Carey without ``theta_lfp``), its result's
+        ``attrs`` set to its name, resolved options and the package version;
+        then each recipe, whose preparation builds its recording
+        (``make_recording``, with the spike counts as integers) and the
+        policy's ``behavior_intervals``, and whose call runs the method on
+        them.
     """
     fs = session.sampling_frequency
     filtered = rd.filter_ripple_band(session.lfps, fs)
@@ -793,18 +803,20 @@ def evaluate_session(
     output : SessionOutput
         Its ``sessions`` row has ``session_id``, the session's times and
         counts and ``detect_s``; ``run_session`` adds the condition, replicate,
-        seed and simulation time. A call's warnings are recorded as
-        ``warnings`` rows and change nothing else; a call that raises gives a
-        ``failures`` row and no events, results or metrics rows.
+        seed and simulation time. A call's warnings, its inputs' included,
+        are recorded as ``warnings`` rows and change nothing else; a method
+        that raises gives a ``failures`` row and no events, results or
+        metrics rows.
 
     Raises
     ------
     ValueError
         A (method, setting) pair the runner does not run.
     Exception
-        Whatever summarizing or scoring a result raises: those steps are the
-        benchmark's own, so an error there is a bug to fix, never a method's
-        failure.
+        Whatever building a call's inputs (a recipe's recording and eligible
+        epochs, the integer spike counts), summarizing or scoring a result
+        raises: those steps are the benchmark's own, so an error there is a
+        bug to fix, never a method's failure.
     """
     started = wall_clock.perf_counter()
     fs = session.sampling_frequency
@@ -820,18 +832,21 @@ def evaluate_session(
     calls = [call for call in method_calls(session) if methods is None or call[:2] in selected]
     events, metrics, failures, results, runtimes = [], [], [], {}, {}
     warned: list[dict[str, str]] = []
-    for method, setting, call in calls:
+    for method, setting, prepare in calls:
         call_started = wall_clock.perf_counter()
         key = {"session_id": session_id, "method": method, "setting": setting}
         result: pd.DataFrame | None = None
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
+            # the inputs are the benchmark's own: an error building them raises
+            call = prepare()
             try:
                 result = call()
             except Exception as error:  # a method's failure is data, never the run's
                 failures.append(
                     {**key, "error": f"{type(error).__name__}: {error}"[:_ERROR_LENGTH]}
                 )
+            del call  # a recipe's recording, freed before the next one is built
         warned.extend(
             {
                 **key,
