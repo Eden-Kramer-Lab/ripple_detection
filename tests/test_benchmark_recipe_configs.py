@@ -410,66 +410,159 @@ def test_primary_expressions_have_the_inputs_their_expression_needs(recipe_confi
         assert expected, config.config_id
 
 
-def test_an_unknown_method_raises(recipe_configs, session, configs):
-    config = recipe_configs.RecipeConfig(
-        "not_a_method", "not_a_method", "ripple", input_policy=recipe_configs.INPUT_POLICY
+def _unknown_method(module):
+    return module.RecipeConfig(
+        "not_a_method", "not_a_method", "ripple", input_policy=module.INPUT_POLICY
     )
-    recording = recipe_configs.make_recording(session, configs["bendor_2012"])
-    for call in (
-        lambda: recipe_configs.make_recording(session, config),
-        lambda: recipe_configs.resolved_options(config),
-        lambda: recipe_configs.run_recipe(config, recording),
-    ):
-        with pytest.raises(KeyError, match="not_a_method"):
-            call()
 
 
-def test_a_missing_option_raises(recipe_configs, session):
-    config = _unconfigured(recipe_configs, "gridchyn_2020_ripples")
-    recording = recipe_configs.make_recording(session, config)
-    with pytest.raises(TypeError, match="rms_window"):
-        recipe_configs.run_recipe(config, recording)
-
-
-def test_an_option_the_method_does_not_take_raises(recipe_configs):
-    config = recipe_configs.RecipeConfig(
+def _option_not_taken(module):
+    return module.RecipeConfig(
         "karlsson_2009", "karlsson_2009", "ripple", (("threshold", 2.0),)
     )
-    for call in (recipe_configs.policy_inputs, recipe_configs.resolved_options):
-        with pytest.raises(TypeError, match="threshold"):
-            call(config)
 
 
-def test_a_missing_input_raises(recipe_configs, session, configs):
-    chenani = configs["chenani_2019"]
-    with pytest.raises(ValueError, match="behavior_intervals"):
-        recipe_configs.run_recipe(chenani, recipe_configs.make_recording(session, chenani))
-    bendor_inputs = recipe_configs.make_recording(session, configs["bendor_2012"])
-    with pytest.raises(ValueError, match="lfps"):
-        recipe_configs.run_recipe(configs["karlsson_2009"], bendor_inputs)
-
-
-def test_another_input_policy_is_refused(recipe_configs, session, configs):
-    config = dataclasses.replace(configs["karlsson_2009"], input_policy="measured")
-    with pytest.raises(ValueError, match="input policy"):
-        recipe_configs.make_recording(session, config)
-
-
-def test_a_configuration_whose_provenance_is_stale_raises(recipe_configs, session, configs):
-    # Changing the stage adds place_cells, whose stand-in the copied
-    # assumptions do not state; a bare configuration names no input policy.
-    stale = dataclasses.replace(
+def _stale(configs):
+    """Changing the stage adds place_cells, whose stand-in the copied
+    assumptions do not state."""
+    return dataclasses.replace(
         configs["grosmark_2016"], options=(("stage", "decoding_candidates"),)
     )
-    bare = recipe_configs.RecipeConfig("karlsson_2009", "karlsson_2009", "ripple")
-    for config, message in ((stale, "assumptions"), (bare, "input policy")):
-        for call in (
-            recipe_configs.input_policy,
-            recipe_configs.method_record,
-            lambda config: recipe_configs.make_recording(session, config),
-        ):
-            with pytest.raises(ValueError, match=message):
-                call(config)
+
+
+def _no_policy(module):
+    """A bare configuration names no input policy."""
+    return module.RecipeConfig("karlsson_2009", "karlsson_2009", "ripple")
+
+
+def _run_without_epochs(module, session, config):
+    return module.run_recipe(config, module.make_recording(session, config))
+
+
+# Each error path: a call of (module, session, configs), what it raises and
+# the message it matches.
+ERROR_PATHS = [
+    (
+        "unknown method: configure",
+        lambda m, s, c: m.configure("not_a_method", "ripple"),
+        KeyError,
+        "not_a_method",
+    ),
+    (
+        "unknown method: make_recording",
+        lambda m, s, c: m.make_recording(s, _unknown_method(m)),
+        KeyError,
+        "not_a_method",
+    ),
+    (
+        "unknown method: resolved_options",
+        lambda m, s, c: m.resolved_options(_unknown_method(m)),
+        KeyError,
+        "not_a_method",
+    ),
+    (
+        "unknown method: run_recipe",
+        lambda m, s, c: m.run_recipe(
+            _unknown_method(m), m.make_recording(s, c["bendor_2012"])
+        ),
+        KeyError,
+        "not_a_method",
+    ),
+    (
+        "missing option",
+        lambda m, s, c: _run_without_epochs(
+            m, s, m.configure("gridchyn_2020_ripples", "ripple")
+        ),
+        TypeError,
+        "rms_window",
+    ),
+    (
+        "option not taken: configure",
+        lambda m, s, c: m.configure("karlsson_2009", "ripple", ("threshold", 2.0)),
+        TypeError,
+        "threshold",
+    ),
+    (
+        "option not taken: policy_inputs",
+        lambda m, s, c: m.policy_inputs(_option_not_taken(m)),
+        TypeError,
+        "threshold",
+    ),
+    (
+        "option not taken: resolved_options",
+        lambda m, s, c: m.resolved_options(_option_not_taken(m)),
+        TypeError,
+        "threshold",
+    ),
+    (
+        "missing input: behavior_intervals",
+        lambda m, s, c: _run_without_epochs(m, s, c["chenani_2019"]),
+        ValueError,
+        "behavior_intervals",
+    ),
+    (
+        "missing input: lfps",
+        lambda m, s, c: m.run_recipe(
+            c["karlsson_2009"], m.make_recording(s, c["bendor_2012"])
+        ),
+        ValueError,
+        "lfps",
+    ),
+    (
+        "another input policy",
+        lambda m, s, c: m.make_recording(
+            s, dataclasses.replace(c["karlsson_2009"], input_policy="measured")
+        ),
+        ValueError,
+        "input policy",
+    ),
+    (
+        "stale assumptions: input_policy",
+        lambda m, s, c: m.input_policy(_stale(c)),
+        ValueError,
+        "assumptions",
+    ),
+    (
+        "stale assumptions: method_record",
+        lambda m, s, c: m.method_record(_stale(c)),
+        ValueError,
+        "assumptions",
+    ),
+    (
+        "stale assumptions: make_recording",
+        lambda m, s, c: m.make_recording(s, _stale(c)),
+        ValueError,
+        "assumptions",
+    ),
+    (
+        "no input policy: input_policy",
+        lambda m, s, c: m.input_policy(_no_policy(m)),
+        ValueError,
+        "input policy",
+    ),
+    (
+        "no input policy: method_record",
+        lambda m, s, c: m.method_record(_no_policy(m)),
+        ValueError,
+        "input policy",
+    ),
+    (
+        "no input policy: make_recording",
+        lambda m, s, c: m.make_recording(s, _no_policy(m)),
+        ValueError,
+        "input policy",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("call", "exception", "match"),
+    [row[1:] for row in ERROR_PATHS],
+    ids=[row[0] for row in ERROR_PATHS],
+)
+def test_error_paths_raise(recipe_configs, session, configs, call, exception, match):
+    with pytest.raises(exception, match=match):
+        call(recipe_configs, session, configs)
 
 
 def test_unit_selections_are_the_simulators_labels(recipe_configs, session, configs):
