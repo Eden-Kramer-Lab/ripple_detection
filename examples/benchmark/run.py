@@ -423,7 +423,7 @@ def _resolved_detector_options(name: str, setting: str) -> dict[str, Any]:
 _SIGNAL_SOURCES = {
     rd.RIPPLE_BAND_LFP: "session.lfps, every channel, filtered by filter_ripple_band "
     "(150-250 Hz)",
-    rd.RAW_LFP: "session.raw_lfp: the ripple channel, unfiltered",
+    rd.RAW_LFP: "channel 0 of session.lfps, unfiltered",
     rd.MULTIUNIT: "session.multiunit: every unit",
 }
 _KEYWORD_SOURCES = {"sharp_wave_lfp": "session.sharp_wave_lfp", "theta_lfp": None}

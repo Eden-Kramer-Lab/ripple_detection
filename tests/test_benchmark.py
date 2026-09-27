@@ -282,6 +282,11 @@ def test_every_method_and_setting_has_one_record_and_one_call(run, recipe_config
             assert record["primary_expression"] == DETECTOR_EXPRESSION[record["method"]]
             assert record["stage"] == "detection"
             assert record["doi"] == record["role"] == record["interpretation"] == ""
+    # Long's raw input is channel 0, which under a local profile need not carry a ripple
+    long = next(r for r in records if r["method"] == "Long_sharp_wave_ripple_detector")
+    policy = json.loads(long["input_policy"])
+    assert policy["positional"]["raw_lfp"] == "channel 0 of session.lfps, unfiltered"
+    np.testing.assert_array_equal(session.raw_lfp, session.lfps[:, 0])
 
 
 @pytest.mark.parametrize(
