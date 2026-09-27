@@ -40,6 +40,88 @@ METHOD_COLUMNS = [
     "interpretation",
 ]
 
+# The expression each configuration is headlined against, reviewed per
+# method against what its implemented events require.
+PRIMARY_EXPRESSIONS = {
+    "mallory_2025": "burst",
+    "widloski_2025": "ripple",
+    "yang_2024": "network",
+    "huelin_gorriz_2023": "network",
+    "harvey_2023_code": "ripple",
+    "harvey_2023_text": "ripple",
+    "liu_2023": "network",
+    "tirole_2022": "network",
+    "bush_2022": "burst",
+    "berners_lee_2022": "burst",
+    "krause_2022": "network",
+    "mou_2022": "burst",
+    "berners_lee_2021": "ripple",
+    "denovellis_2021": "ripple",
+    "gillespie_2021": "ripple",
+    "michon_2021": "network",
+    "igata_2021": "burst",
+    "gridchyn_2020": "burst",
+    "kaefer_2020": "ripple",
+    "bhattarai_2020": "network",
+    "stella_2019": "ripple",
+    "xu_2019": "burst",
+    "farooq_2019_neuron": "burst",
+    "farooq_2019_science": "burst",
+    "chenani_2019": "burst",
+    "michon_2019": "network",
+    "liu_2019": "burst",
+    "shin_2019": "ripple",
+    "carey_2019": "network",
+    "muessig_2019": "network",
+    "drieu_2018": "burst",
+    "maboudi_2018": "burst",
+    "olafsdottir_2017": "burst",
+    "olafsdottir_2017.trajectory": "burst",
+    "wu_2017": "burst",
+    "yamamoto_2017": "network",
+    "tang_2017": "ripple",
+    "grosmark_2016": "network",
+    "ambrose_2016": "ripple",
+    "jadhav_2016": "ripple",
+    "olafsdottir_2016": "burst",
+    "silva_2015": "burst",
+    "olafsdottir_2015": "burst",
+    "olafsdottir_2015.bayesian_candidates": "burst",
+    "pfeiffer_2015": "ripple",
+    "wu_2014": "burst",
+    "wikenheiser_2013": "ripple",
+    "pfeiffer_2013": "burst",
+    "carr_2012": "ripple",
+    "bendor_2012": "burst",
+    "gupta_2010": "ripple",
+    "karlsson_2009": "ripple",
+    "davidson_2009": "burst",
+    "diba_2007": "burst",
+    "ji_2007": "burst",
+    "foster_2006": "burst",
+    "lee_2002": "burst",
+    "nadasdy_1999": "ripple",
+    "kudrimoti_1999": "ripple",
+    "harvey_2023_no_radiatum": "ripple",
+    "mallory_2025_ripples": "ripple",
+    "igata_2021_ripples": "ripple",
+    "wu_2014_ripples": "ripple",
+    "pfeiffer_2013_ripples": "ripple",
+    "davidson_2009_ripples": "ripple",
+    "ji_2007_ripples": "ripple",
+    "lee_2002_ripples": "ripple",
+    "foster_2006_ripples": "ripple",
+    "widloski_2025_bursts": "burst",
+    "krause_2022_hse": "burst",
+    "denovellis_2021_mua": "burst",
+    "gillespie_2021_mua": "burst",
+    "maboudi_2018_open_field": "burst",
+    "muessig_2019_ripples": "ripple",
+    "bhattarai_2020_ripples": "ripple",
+    "farooq_2019_science_awake": "burst",
+    "liu_2019_awake": "burst",
+}
+
 # Inputs that are observations of the session; any other input a recording is
 # given stands in for something the simulation lacks, and must be stated.
 OBSERVED = {"lfps", "sharp_wave_lfp", "multiunit", "speed"}
@@ -303,7 +385,13 @@ def test_each_exclusion_is_what_check_method_reports(recipe_configs, session):
             assert problem.split(" - ")[0] in reason, (method, problem)
 
 
-def test_primary_expressions_follow_the_inputs_events_need(recipe_configs):
+def test_primary_expressions_are_the_reviewed_table(recipe_configs):
+    assert {
+        config.config_id: config.primary_expression for config in recipe_configs.RECIPES
+    } == PRIMARY_EXPRESSIONS
+
+
+def test_primary_expressions_have_the_inputs_their_expression_needs(recipe_configs):
     for config in recipe_configs.RECIPES:
         inputs = set(recipe_configs.policy_inputs(config))
         ripple = bool(inputs & {"lfps", "external_ripples"})
@@ -314,13 +402,6 @@ def test_primary_expressions_follow_the_inputs_events_need(recipe_configs):
             "network": ripple and burst,
         }[config.primary_expression]
         assert expected, config.config_id
-    expressions = {
-        config.config_id: config.primary_expression for config in recipe_configs.RECIPES
-    }
-    assert expressions["karlsson_2009"] == "ripple"
-    assert expressions["bendor_2012"] == "burst"
-    assert expressions["carey_2019"] == "network"
-    assert expressions["igata_2021"] == "burst"  # "SWR+MUA" in the catalog
 
 
 def test_an_unknown_method_raises(recipe_configs, session, configs):
