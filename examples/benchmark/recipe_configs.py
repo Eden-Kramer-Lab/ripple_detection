@@ -700,7 +700,9 @@ def configure(
     primary_expression : str
         ``"ripple"``, ``"sharp_wave"``, ``"burst"`` or ``"network"``.
     *options : (str, object) pairs
-        Method options.
+        Method options. A method with a ``"decoding_candidates"`` stage
+        (``list_methods()``'s ``stages``) gets ``("stage", "detection")``
+        first unless ``stage`` is among them.
     label : str, optional
         A protocol variant's label; the id is then ``"{method}.{label}"``.
 
@@ -727,10 +729,11 @@ def configure(
         tuple(options),
         INPUT_POLICY,
     )
+    staged = "decoding_candidates" in _entry(method)["stages"]
+    if staged and "stage" not in dict(config.options):
+        config = replace(config, options=(("stage", "detection"), *config.options))
     return replace(config, assumptions=_assumptions(config))
 
-
-_DETECTION = ("stage", "detection")
 
 # Primary expressions follow what each implemented inventory's events require:
 # "ripple" for LFP ripple or SWR events (a participation count or spiking veto
@@ -744,17 +747,17 @@ RECIPES: tuple[RecipeConfig, ...] = (
     configure("huelin_gorriz_2023", "network"),
     # Long's SWR detector on the pyramidal and radiatum channels, then a
     # pyramidal spiking veto near the ripple peak.
-    configure("harvey_2023_code", "ripple", _DETECTION),
+    configure("harvey_2023_code", "ripple"),
     # Difference-of-Gaussians ripples overlapping radiatum sharp waves; the
     # detection stage applies no spiking criterion.
-    configure("harvey_2023_text", "ripple", _DETECTION),
+    configure("harvey_2023_text", "ripple"),
     configure("liu_2023", "network"),
     configure("tirole_2022", "network"),
     configure("bush_2022", "burst"),
     configure("berners_lee_2022", "burst"),
     # SWRs trimmed to the stretch of place-cell activity inside them.
     configure("krause_2022", "network"),
-    configure("mou_2022", "burst", _DETECTION),
+    configure("mou_2022", "burst"),
     configure("berners_lee_2021", "ripple"),
     configure("denovellis_2021", "ripple"),
     configure("gillespie_2021", "ripple"),
@@ -777,19 +780,19 @@ RECIPES: tuple[RecipeConfig, ...] = (
     configure("chenani_2019", "burst"),
     configure("michon_2019", "network"),
     configure("liu_2019", "burst"),
-    configure("shin_2019", "ripple", _DETECTION),
+    configure("shin_2019", "ripple"),
     configure("carey_2019", "network"),
     configure("muessig_2019", "network"),
-    configure("drieu_2018", "burst", _DETECTION),
+    configure("drieu_2018", "burst"),
     configure("maboudi_2018", "burst"),
     configure("olafsdottir_2017", "burst"),
     configure("olafsdottir_2017", "burst", ("analysis", "trajectory"), label="trajectory"),
-    configure("wu_2017", "burst", _DETECTION),
+    configure("wu_2017", "burst"),
     configure("yamamoto_2017", "network"),
     configure("tang_2017", "ripple"),
-    configure("grosmark_2016", "network", _DETECTION),
+    configure("grosmark_2016", "network"),
     configure("ambrose_2016", "ripple"),
-    configure("jadhav_2016", "ripple", _DETECTION),
+    configure("jadhav_2016", "ripple"),
     configure("olafsdottir_2016", "burst"),
     configure("silva_2015", "burst"),
     configure("olafsdottir_2015", "burst"),
@@ -804,20 +807,20 @@ RECIPES: tuple[RecipeConfig, ...] = (
     # Ripple-power windows; >= 3 active units and >= 5 spikes is a gate.
     configure("wikenheiser_2013", "ripple", ("window_anchor", "samples")),
     configure("pfeiffer_2013", "burst"),
-    configure("carr_2012", "ripple", _DETECTION),
+    configure("carr_2012", "ripple"),
     configure("bendor_2012", "burst"),
     # A gate, not an event definition (role "candidate_gate"); scored as ripples.
     configure("gupta_2010", "ripple"),
     configure("karlsson_2009", "ripple"),
     configure("davidson_2009", "burst"),
     configure("diba_2007", "burst"),
-    configure("ji_2007", "burst", _DETECTION),
+    configure("ji_2007", "burst"),
     configure("foster_2006", "burst"),
     configure("lee_2002", "burst"),
     configure("nadasdy_1999", "ripple", ("rms_window", 0.004), ("bound_threshold", 0.0)),
     configure("kudrimoti_1999", "ripple", ("threshold_sd", 3.0)),
     # Zugaro's FindRipples branch with the same spiking veto as harvey_2023_code.
-    configure("harvey_2023_no_radiatum", "ripple", _DETECTION),
+    configure("harvey_2023_no_radiatum", "ripple"),
     configure("mallory_2025_ripples", "ripple"),
     configure("igata_2021_ripples", "ripple"),
     configure("wu_2014_ripples", "ripple"),

@@ -309,6 +309,11 @@ def test_every_method_with_stages_runs_its_detection_stage(recipe_configs, catal
             assert options.get("stage") == "detection", config.config_id
         else:
             assert "stage" not in options, config.config_id
+    # A stage given to configure is kept, not replaced.
+    config = recipe_configs.configure(
+        "harvey_2023_text", "ripple", ("stage", "decoding_candidates")
+    )
+    assert config.options == (("stage", "decoding_candidates"),)
 
 
 def test_every_configuration_can_run_under_the_policy(recipe_configs, session):

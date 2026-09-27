@@ -91,8 +91,8 @@ list every stand-in and demonstration value it relies on, and each result's
 
 ### Stages, roles and expressions
 
-Methods with a decoding-candidate stage run their detection stage
-(`stage="detection"`, set explicitly): selecting replay candidates is outside the
+Methods with a decoding-candidate stage run their detection stage (`configure` sets
+`stage="detection"` in the options): selecting replay candidates is outside the
 benchmark. Two protocol settings of the standalone demonstration are separate
 configurations, `olafsdottir_2015.bayesian_candidates` and
 `olafsdottir_2017.trajectory`, never pooled with their method's default.
