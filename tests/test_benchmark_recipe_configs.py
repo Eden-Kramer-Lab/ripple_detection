@@ -534,6 +534,31 @@ def test_external_inventories_record_their_detector(recipe_configs, session, con
         np.testing.assert_array_equal(found, expected)
 
 
+@pytest.mark.parametrize(
+    ("settings", "detector"),
+    [
+        ("EXTERNAL_RIPPLES", "Kay_ripple_detector"),
+        ("EXAMPLE_RIPPLES", "Karlsson_ripple_detector"),
+    ],
+)
+def test_the_recorded_detector_is_the_one_that_runs(
+    recipe_configs, session, monkeypatch, settings, detector
+):
+    spec = getattr(recipe_configs, settings)
+    monkeypatch.setitem(spec, "detector", detector)
+    monkeypatch.setitem(spec, "options", {})
+    filtered = rd.filter_ripple_band(session.lfps, FS, band=spec["band"], time=session.time)
+    if settings == "EXTERNAL_RIPPLES":
+        events = getattr(rd, detector)(session.time, filtered[:, :1], session.speed, FS)
+        expected = events[["start_time", "end_time", "peak_time"]].to_numpy()
+        found = recipe_configs.external_ripples(session)
+    else:
+        events = getattr(rd, detector)(session.time, filtered, session.speed, FS)
+        expected = bounds(events.nlargest(5, "max_zscore"))
+        found = recipe_configs.example_ripples(session)
+    np.testing.assert_array_equal(found, expected)
+
+
 def test_the_stand_ins_are_the_packages_simulation_proxies(
     recipe_configs, session, configs, results
 ):

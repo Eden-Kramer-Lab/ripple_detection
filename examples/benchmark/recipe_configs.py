@@ -351,7 +351,7 @@ def external_ripples(session: rd.SimulatedSession) -> FloatArray:
         time=session.time,
     )
     channel = EXTERNAL_RIPPLES["channel"]
-    events = rd.Zugaro_ripple_detector(
+    events = rd.get_detector(EXTERNAL_RIPPLES["detector"]).detector(
         session.time,
         filtered[:, channel : channel + 1],
         session.speed,
@@ -380,7 +380,7 @@ def example_ripples(session: rd.SimulatedSession) -> FloatArray:
         band=EXAMPLE_RIPPLES["band"],
         time=session.time,
     )
-    events = rd.Kay_ripple_detector(
+    events = rd.get_detector(EXAMPLE_RIPPLES["detector"]).detector(
         session.time,
         filtered,
         session.speed,
