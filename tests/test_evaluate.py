@@ -498,6 +498,35 @@ class TestCompareDetectors:
         ).iloc[0]
         assert np.isnan(constant.onset_error_correlation)
 
+    @pytest.mark.parametrize("origin", [0.0, 1.7e9])
+    def test_errors_microseconds_apart_are_not_tied(self, origin):
+        """Onset errors 1 and 2 us apart are four and eight ulps on a Unix
+        clock: distinct errors, perfectly correlated, at any origin."""
+        steps = np.arange(20.0)
+        truth = origin + np.column_stack([steps, steps + 0.1])
+        methods = {
+            "a": truth + (steps * 1e-6)[:, None],
+            "b": truth + (steps * 2e-6)[:, None],
+        }
+        row = compare_detectors(methods, truth=truth).iloc[0]
+        assert row.onset_error_correlation == pytest.approx(1.0)
+        assert row.offset_error_correlation == pytest.approx(1.0)
+
+    def test_a_tie_group_spans_no_more_than_the_rounding(self):
+        """Errors two ulps apart on a Unix clock are each within the rounding
+        of their neighbour but not of every other: they tie in pairs, not in
+        one group that would make them constant."""
+        origin = 1.7e9
+        ulp = np.spacing(origin)
+        steps = np.arange(20.0)
+        truth = origin + np.column_stack([steps, steps + 0.1])
+        methods = {
+            "a": truth + (2 * ulp * steps)[:, None],
+            "b": truth + (steps * 1e-3)[:, None],
+        }
+        row = compare_detectors(methods, truth=truth).iloc[0]
+        assert row.onset_error_correlation > 0.9
+
     def test_pair_order_and_columns(self):
         events = {
             "z": np.array([[0.0, 1.0]]),

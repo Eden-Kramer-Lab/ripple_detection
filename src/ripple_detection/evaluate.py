@@ -110,13 +110,18 @@ def _overlap_matrix(reference: FloatArray, detected: FloatArray) -> FloatArray:
     return np.asarray(np.clip(end - start, 0.0, None))
 
 
+def _ulp(*bounds: FloatArray) -> float:
+    """A unit in the last place (ulp) of the largest magnitude among the
+    bounds: each is stored to half of it, 1.2e-7 s on a Unix clock."""
+    scale = max((float(np.abs(b).max()) for b in bounds if b.size), default=0.0)
+    return float(np.spacing(scale))
+
+
 def _time_rounding(*bounds: FloatArray) -> float:
     """How far a length measured between two of these bounds can round from
-    its nominal value: each bound is stored to half a unit in the last place
-    (ulp) of the largest magnitude, and each subtraction adds about one more,
-    which is 2.4e-7 s on a Unix clock."""
-    scale = max((float(np.abs(b).max()) for b in bounds if b.size), default=0.0)
-    return 8 * float(np.spacing(scale))
+    its nominal value, with room: each bound is stored to half an ulp, and
+    each subtraction adds about one more."""
+    return 8 * _ulp(*bounds)
 
 
 def _check_mapping(events: object) -> None:
@@ -471,11 +476,21 @@ def _signed_summary(kind: str, difference: FloatArray) -> dict[str, float]:
 
 
 def _tied_ranks(values: FloatArray, tolerance: float) -> FloatArray:
-    """Ranks from 1, averaged over each run of sorted values that lie within
-    `tolerance` of their neighbour: errors read off sample times are whole
-    samples that round apart by a few ulps, and are ties, not an order."""
+    """Ranks from 1, averaged over each group of sorted values within
+    `tolerance` of the group's smallest: errors read off sample times are
+    whole samples that round apart by a few ulps, and are ties, not an order.
+    Measuring from the smallest, not from each neighbour, keeps a run of
+    values closer than `tolerance` in steps from tying as one group."""
     order = np.argsort(values, kind="stable")
-    group = np.cumsum(np.concatenate([[True], np.diff(values[order]) > tolerance])) - 1
+    ordered = values[order]
+    group = np.zeros(len(values), dtype=int)
+    start = 0
+    for i in range(1, len(ordered)):
+        if ordered[i] - ordered[start] > tolerance:
+            start = i
+            group[i] = group[i - 1] + 1
+        else:
+            group[i] = group[i - 1]
     position = np.arange(1.0, len(values) + 1)
     mean_rank = np.bincount(group, weights=position) / np.bincount(group)
     ranks = np.empty(len(values))
@@ -514,8 +529,10 @@ def _truth_columns(a: EventMatching, b: EventMatching, minimum_iou: float) -> di
     errors_b = b.pairs.set_index("reference_index")
     shared = np.intersect1d(errors_a.index, errors_b.index)
     errors_a, errors_b = errors_a.loc[shared], errors_b.loc[shared]
-    # an error is two bounds apart, so two errors are four
-    tolerance = _time_rounding(a.reference, a.detected, b.detected)
+    # an error is two bounds, each within half an ulp u, and a subtraction
+    # within u/2, so it is within 1.5u of its nominal value and two errors
+    # that are nominally equal are within 3u of each other
+    tolerance = 3 * _ulp(a.reference, a.detected, b.detected)
     return {
         "jaccard_true": _jaccard(int(true_a.sum()), int(true_b.sum()), len(both_true.pairs)),
         "jaccard_false": _jaccard(
