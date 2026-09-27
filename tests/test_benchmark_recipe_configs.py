@@ -331,6 +331,24 @@ def test_rest_is_the_recorded_samples_outside_every_running_bout(recipe_configs,
     )
 
 
+def test_a_session_without_rest_raises_rather_than_passing_no_epochs(
+    recipe_configs, session, configs
+):
+    # Running throughout leaves no rest to stand in for sleep, baseline or
+    # eligible epochs; an empty stand-in would give zero events, not an error.
+    running = dataclasses.replace(
+        session, running_intervals=np.array([[session.time[0], session.time[-1]]])
+    )
+    for call in (
+        lambda: recipe_configs.rest_intervals(running),
+        lambda: recipe_configs.make_recording(running, configs["yang_2024"]),
+        lambda: recipe_configs.make_recording(running, configs["gridchyn_2020"]),
+        lambda: recipe_configs.behavior_intervals(running, configs["chenani_2019"]),
+    ):
+        with pytest.raises(ValueError, match="no rest"):
+            call()
+
+
 def test_a_recording_holds_exactly_the_declared_inputs(recipe_configs, session):
     rest = recipe_configs.rest_intervals(session)
     configs = [

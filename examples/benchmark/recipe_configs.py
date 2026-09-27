@@ -305,9 +305,22 @@ def rest_intervals(session: rd.SimulatedSession) -> FloatArray:
         Sorted, disjoint ``[start, end]`` intervals on recorded timestamps,
         bounds included: the first and last sample of each stretch outside
         ``session.running_intervals``.
+
+    Raises
+    ------
+    ValueError
+        The running bouts cover every sample, so there is no rest to stand
+        in for a method's sleep, baseline or eligible epochs.
     """
     running = rd.intervals_to_mask(session.time, session.running_intervals)
-    return rd.state_intervals(running.astype(float), session.time, 0.5)
+    rest = rd.state_intervals(running.astype(float), session.time, 0.5)
+    if not len(rest):
+        msg = (
+            "The session has no rest: its running bouts cover every sample, and "
+            "rest stands in for sleep, baseline and eligible epochs."
+        )
+        raise ValueError(msg)
+    return rest
 
 
 def external_ripples(session: rd.SimulatedSession) -> FloatArray:
