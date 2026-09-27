@@ -22,7 +22,12 @@ from ripple_detection.detectors import (
     Roumis_ripple_detector,
     multiunit_HSE_detector,
 )
-from ripple_detection.simulate import simulate_LFP
+from ripple_detection.simulate import (
+    draw_network_events,
+    simulate_LFP,
+    simulate_network_session,
+    simulate_time,
+)
 
 
 @pytest.fixture
@@ -414,3 +419,25 @@ class TestNewDetectorSnapshots:
         lfps, multiunit = _synthetic_joint_inputs(n, self.FS, (3000, 7000, 11000, 15000))
         events = Carey_candidate_detector(time, lfps, multiunit, np.full(n, 2.0), self.FS)
         _pin(snapshot, events, "carey")
+
+
+class TestNetworkSessionSnapshot:
+    """Pins a seeded network session with no non-events: its signals at every
+    997th sample, its spike counts, participants and baseline rates."""
+
+    def test_network_session(self, snapshot):
+        time = simulate_time(8 * 1500, 1500)
+        running = [(3.0, 4.5)]
+        events = draw_network_events(time, event_rate=1.0, running_intervals=running, rng=0)
+        session = simulate_network_session(time, events, running_intervals=running, rng=1)
+        rows = np.arange(0, time.size, 997)
+        snapshot.assert_match(str(np.round(session.lfps[rows], 6).tolist()), "lfps")
+        snapshot.assert_match(
+            str(np.round(session.sharp_wave_lfp[rows], 6).tolist()), "sharp_wave_lfp"
+        )
+        spike_counts = session.multiunit.sum(axis=0).astype(int).tolist()
+        snapshot.assert_match(str(spike_counts), "spike_counts")
+        snapshot.assert_match(str(session.events.n_participants.tolist()), "n_participants")
+        snapshot.assert_match(
+            str(np.round(session.baseline_rates, 6).tolist()), "baseline_rates"
+        )
