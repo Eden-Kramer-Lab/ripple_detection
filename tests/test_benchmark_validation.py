@@ -15,6 +15,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from scipy import optimize, special
 
 import ripple_detection as rd
 from ripple_detection import evaluate, literature_methods, registry
@@ -94,6 +95,13 @@ def report(validate, tmp_path_factory):
     directory = root / "short"
     spec = json.loads((directory / "spec.json").read_text())
     return {"directory": directory, "spec": spec, "exit_code": exit_code}
+
+
+@pytest.fixture(scope="module")
+def measured(validate, conditions):
+    """The report's one session, measured again."""
+    reference = conditions.conditions()[0]
+    return validate.measure_session(reference, validate.FIRST_REPLICATE, OVERRIDES)
 
 
 @pytest.fixture
@@ -203,6 +211,63 @@ class TestMeasurements:
         rest = validate.rest_intervals(time, UNIX_ORIGIN + np.array([[3.0, 4.0], [6.5, 9.5]]))
         np.testing.assert_allclose(rest - UNIX_ORIGIN, [[1.0, 3.0], [4.0, 6.5]])
 
+    def test_rms_duration_of_a_noise_free_ripple(self, validate):
+        """A Gaussian-windowed 200 Hz ripple, alone on the channel: its RMS
+        run above the noise's mean + 2 SD is the analytic crossing width, to a
+        sample. The squared ripple averages A^2 / 2 exp(-u^2 / sigma^2), and a
+        window of W seconds integrates it, so the RMS crosses a level T where
+        (A^2 / 2) sigma sqrt(pi) / (2 W) [erf((t + W/2) / sigma) - erf((t - W/2)
+        / sigma)] = T^2."""
+        rate, amplitude, sigma = 1500.0, 20.0, 0.015
+        offset = np.arange(round(6 * rate)) / rate
+        time = UNIX_ORIGIN + offset
+        noise = np.random.default_rng(0).normal(size=offset.size)
+        # a strong ripple at 2 s and one too weak to cross at 4 s
+        channel = sum(
+            a
+            * np.exp(-((offset - c) ** 2) / (2 * sigma**2))
+            * np.sin(2 * np.pi * 200 * (offset - c))
+            for a, c in ((amplitude, 2.0), (0.05, 4.0))
+        )
+        events = pd.DataFrame(
+            {
+                "expression": "ripple",
+                "center_time": UNIX_ORIGIN + np.array([2.0, 4.0]),
+                "event_type": "swr",
+            }
+        )
+        out = validate._Collector()
+        validate._rms_durations(out, time, events, channel, noise, rate)
+        samples = pd.DataFrame(out.samples, columns=["quantity", "group", "x", "y"])
+        duration = samples[samples.quantity == "ripple_duration"].x.to_numpy()
+        # the threshold, from the noise alone, in a 17 ms window
+        n_window = round(0.017 * rate)
+        noise_rms = validate.moving_rms(
+            rd.filter_ripple_band(noise, sampling_frequency=rate, band=(100.0, 250.0)),
+            n_window,
+        )
+        level = noise_rms.mean() + 2 * noise_rms.std()
+        window = n_window / rate
+
+        def excess(t):
+            power = (amplitude**2 / 2) * sigma * np.sqrt(np.pi) / (2 * window)
+            spread = special.erf((t + window / 2) / sigma) - special.erf(
+                (t - window / 2) / sigma
+            )
+            return power * spread - level**2
+
+        width = 2 * optimize.brentq(excess, 0.0, 1.0)
+        assert abs(duration[0] / 1e3 - width) <= 1 / rate
+        assert np.isnan(duration[1])
+        # far above mean + 5 SD and longer than 20 ms: Patel's convention keeps it
+        sleep = samples[samples.quantity == "ripple_duration_sleep"].x.to_numpy()
+        assert sleep[0] == duration[0]
+        assert np.isnan(sleep[1])
+        never = pd.DataFrame(
+            out.measurements, columns=["quantity", "group", "statistic", "value", "n"]
+        )
+        assert never.set_index("statistic").loc["fraction_never_crossing", "value"] == 0.5
+
     def test_moving_rms_of_a_constant(self, validate):
         rms = validate.moving_rms(np.full(20, -3.0), 5)
         np.testing.assert_allclose(rms[2:-2], 3.0)
@@ -302,6 +367,39 @@ class TestTargets:
             samples = samples.iloc[:2]
         value, _ = validate._pooling(statistic)(samples)
         assert value == pytest.approx(expected)
+
+    def test_ripple_duration_pools_swr_ripples_alone(self, validate):
+        targets = validate.load_targets().set_index("quantity", drop=False)
+        target = next(targets.loc[["ripple_duration"]].itertuples())
+        samples = pd.DataFrame(
+            {
+                "quantity": "ripple_duration",
+                "group": ["swr", "weak_ripple", "swr", "weak_ripple", "swr", "weak_ripple"],
+                "x": [40.0, 10.0, 50.0, 10.0, 60.0, 10.0],
+                "y": np.nan,
+            }
+        )
+        assert validate.pooled_target(target, samples) == (50.0, 3)
+
+    def test_target_checks_are_their_measurements(self, validate, report, measured):
+        """The report's observed targets, recomputed from the measured samples
+        by each target's convention."""
+        checks = pd.read_csv(report["directory"] / "checks.csv").set_index("check")
+        samples = measured.samples
+        durations = samples[(samples.quantity == "ripple_duration") & (samples.group == "swr")]
+        finite = durations.x[np.isfinite(durations.x)]
+        assert checks.loc["ripple_duration", "observed"] == pytest.approx(
+            np.median(finite), rel=1e-12
+        )
+        assert checks.loc["ripple_duration", "n"] == len(finite)
+        rate = samples[samples.quantity == "ripple_event_rate"]
+        assert checks.loc["ripple_event_rate", "observed"] == pytest.approx(
+            rate.x.sum() / rate.y.sum(), rel=1e-12
+        )
+        interneurons = samples[samples.quantity == "interneuron_baseline_rate"]
+        assert checks.loc["interneuron_baseline_rate", "observed"] == pytest.approx(
+            np.mean(interneurons.x), rel=1e-12
+        )
 
     def test_ratio_and_correlation_pooling(self, validate):
         ratio = pd.DataFrame(
@@ -559,9 +657,9 @@ class TestReport:
         ):
             assert quantity in quantities, quantity
 
-    def test_participation_counts_spikes_not_recruitment(self, validate, conditions):
+    def test_participation_counts_spikes_not_recruitment(self, validate, conditions, measured):
         reference = conditions.conditions()[0]
-        result = validate.measure_session(reference, validate.FIRST_REPLICATE, OVERRIDES)
+        result = measured
         session = conditions.simulate_condition(reference, validate.FIRST_REPLICATE, OVERRIDES)
         events = session.events
         first = events[(events.expression == "ripple") & (events.component == 0)]
