@@ -881,12 +881,23 @@ class TestPreflight:
     def test_tampered_artifacts(self, validate, ready_copy, resolved):
         checks = ready_copy / "checks.csv"
         checks.write_text(checks.read_text().replace("True", "False", 1))
-        (ready_copy / "measurements.csv").unlink()
+        (ready_copy / "report.md").unlink()
+        measurements = ready_copy / "measurements.csv"
+        measurements.write_text(measurements.read_text() + "\n")
         with pytest.raises(validate.ReportNotReady) as raised:
             validate.require_ready_report(ready_copy / "spec.json", resolved)
         message = str(raised.value)
         assert "artifact checks.csv does not match" in message
-        assert "artifact measurements.csv is missing" in message
+        assert "artifact report.md is missing" in message
+        assert "artifact measurements.csv does not match" in message
+
+    def test_measurements_need_not_be_kept(self, validate, ready_copy, resolved):
+        """measurements.csv is too large to commit; a report without it still
+        backs a run, and a copy that is present must match."""
+        (ready_copy / "measurements.csv").unlink()
+        spec = ready_copy / "spec.json"
+        digest = hashlib.sha256(spec.read_bytes()).hexdigest()
+        assert validate.require_ready_report(spec, resolved) == digest
 
     def test_every_problem_is_listed_at_once(self, validate, ready_copy, resolved):
         spec = json.loads((ready_copy / "spec.json").read_text())

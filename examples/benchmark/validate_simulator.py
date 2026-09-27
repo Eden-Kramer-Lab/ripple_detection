@@ -21,7 +21,8 @@ writes ``<output-root>/<validation-id>/`` (by default
   with the reasons, and the SHA-256 of every other file here.
 - ``measurements.csv``: one row per condition, replicate, group, measured
   quantity and statistic (``condition_id, replicate, group, quantity,
-  statistic, value, n``).
+  statistic, value, n``). Not kept in the repository (``UNCOMMITTED_ARTIFACTS``):
+  its hash is recorded, and a run needs no copy of it.
 - ``checks.csv``: one row per check and condition (``check, kind,
   condition_id, applies, evidence_status, statistic, observed, lower, upper,
   n, note, passed``). ``kind`` is ``"target"`` (a row of the target table,
@@ -133,6 +134,9 @@ MODULATION_TOLERANCE = 0.05  # log amplitude
 RATE_Z = 4.0  # standard errors of a pooled spike count
 MINIMUM_MODULATION_PERIODS = 2.0
 ROUNDING = 1e-9  # relative: a statistic on a bound, to rounding, lies within it
+# Artifacts the repository does not keep (measurements.csv is tens of MB): their
+# hashes are recorded, a copy that is present must match, but none is required.
+UNCOMMITTED_ARTIFACTS = ("measurements.csv",)
 
 # The target table's labels of the six alternative models, and their condition ids.
 MODEL_LABELS = {
@@ -2243,7 +2247,8 @@ def require_ready_report(
         Listing every problem: no readable ``spec.json``; a status other than
         ready; fewer replicates than ``DEFAULT_REPLICATES``; a simulation
         fingerprint, target-table hash or validator hash other than the
-        current one; an artifact missing or changed; a condition of
+        current one; an artifact changed, or missing other than one of
+        ``UNCOMMITTED_ARTIFACTS``; a condition of
         ``resolved`` the report does not cover, or covers with other
         parameters.
     """
@@ -2285,7 +2290,8 @@ def require_ready_report(
     for name, digest in sorted(artifacts.items()):
         artifact = path.parent / name
         if not artifact.is_file():
-            problems.append(f"artifact {name} is missing")
+            if name not in UNCOMMITTED_ARTIFACTS:
+                problems.append(f"artifact {name} is missing")
         elif _file_hash(artifact) != digest:
             problems.append(f"artifact {name} does not match its recorded hash")
     covered = spec.get("conditions") or {}

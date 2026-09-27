@@ -212,7 +212,10 @@ measures every session, calling no detector: about 10-11 s and 1.6 GB of memory 
 N` measures N sessions at once, each worker needing its own 1.6 GB. `--duration` must be
 at least 120 s: the noise-modulation check needs two of its 60 s periods, and a check
 that measures nothing fails. The report is `ready` or `not_ready`, and its `report.md`
-says why; until it is ready it blocks every run.
+says why; until it is ready it blocks every run. The repository keeps its
+`spec.json`, `checks.csv`, `report.md` and figures but not `measurements.csv` (tens
+of MB, git-ignored): the same command regenerates it, and a copy that is present
+must match the hash `spec.json` records.
 
 The runner checks that report before it runs any method (smoke, full run or resume): it
 must be ready, with at least the predeclared 20 replicates per condition, and must have
