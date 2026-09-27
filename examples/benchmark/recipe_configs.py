@@ -129,7 +129,7 @@ _ASSUMPTIONS = {
     ),
 }
 
-_CONFIG_ID = re.compile(r"[a-z0-9_.]+")
+_CONFIG_ID = re.compile(r"[a-z0-9_]+(\.[a-z0-9_]+)?")
 
 
 def _is_option_pairs(options: object) -> bool:
@@ -148,7 +148,7 @@ class RecipeConfig:
     ----------
     config_id : str
         Unique, stable identifier: the method name, or ``"{method}.{label}"``
-        for a protocol variant. Only ``[a-z0-9_.]``.
+        for a protocol variant, the label of ``[a-z0-9_]``.
     method : str
         Exact function name from ``list_methods()``.
     primary_expression : str
@@ -159,7 +159,8 @@ class RecipeConfig:
         each name once, never ``rec`` or ``behavior_intervals``, and each
         value hashable (a scalar or a tuple), so the configuration is.
     input_policy : str
-        The simulation-to-``Recording`` policy, ``INPUT_POLICY``.
+        The simulation-to-``Recording`` policy. Defaults to ``""``; it must
+        be ``INPUT_POLICY`` for ``make_recording`` to build a recording.
     assumptions : tuple of str
         Benchmark choices absent from the source: the policy's stand-ins
         for the inputs this method needs, and demonstration values for
@@ -168,9 +169,9 @@ class RecipeConfig:
     Raises
     ------
     ValueError
-        The identifier has other characters or does not start with the
-        method name, the expression is unknown, or ``options`` is not a
-        tuple of pairs as described.
+        The identifier is neither the method name nor
+        ``"{method}.{label}"``, the expression is unknown, or ``options`` is
+        not a tuple of pairs as described.
     """
 
     config_id: str
@@ -186,7 +187,7 @@ class RecipeConfig:
         ):
             msg = (
                 f"config_id {self.config_id!r} must be the method name or "
-                f"'{self.method}.<label>', using only a-z, 0-9, '_' and '.'."
+                f"'{self.method}.<label>', the label of a-z, 0-9 and '_'."
             )
             raise ValueError(msg)
         if self.primary_expression not in PRIMARY_EXPRESSIONS:

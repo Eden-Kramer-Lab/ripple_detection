@@ -164,7 +164,7 @@ def test_config_ids_are_unique_and_name_their_method(recipe_configs):
     ids = [config.config_id for config in recipe_configs.RECIPES]
     assert len(ids) == len(set(ids))
     for config in recipe_configs.RECIPES:
-        assert re.fullmatch(r"[a-z0-9_.]+", config.config_id)
+        assert re.fullmatch(r"[a-z0-9_]+(\.[a-z0-9_]+)?", config.config_id)
         assert config.config_id.split(".")[0] == config.method
         assert config.input_policy == recipe_configs.INPUT_POLICY
     variants = {
@@ -185,6 +185,10 @@ def test_config_ids_are_unique_and_name_their_method(recipe_configs):
         (("Karlsson_2009", "Karlsson_2009", "ripple"), "config_id"),
         (("karlsson_2009-x", "karlsson_2009", "ripple"), "config_id"),
         (("kay", "karlsson_2009", "ripple"), "config_id"),
+        (("karlsson_2009x", "karlsson_2009", "ripple"), "config_id"),
+        (("karlsson_2009.", "karlsson_2009", "ripple"), "config_id"),
+        (("karlsson_2009..x", "karlsson_2009", "ripple"), "config_id"),
+        (("karlsson_2009.a.b", "karlsson_2009", "ripple"), "config_id"),
         (("karlsson_2009", "karlsson_2009", "ripples"), "primary_expression"),
     ],
 )
