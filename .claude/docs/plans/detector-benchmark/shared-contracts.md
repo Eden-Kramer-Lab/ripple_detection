@@ -208,6 +208,12 @@ class EventMatching:
   which is how errors at fractions 0.25 and 0.5 are computed after matching at 0.1.
 - Sign convention (do not weaken): every signed quantity in this project is *detected minus
   reference* or *method A minus method B*; negative means earlier.
+- The benchmark matches at `MATCH_IOU_LEVELS = (0.0, 0.2, 0.5)` (`examples/benchmark/run.py`):
+  0.0, any overlap, gives the headline numbers; 0.2 and 0.5 are a predeclared sensitivity
+  analysis (overview decision 14). Pair-count-first matching lets a barely overlapping event
+  take a match (truth `[0, 1], [1, 2]`, detections `[0, 1.001], [0, 0.001]`: two pairs at IoU
+  0.001 and 0.0005 rather than one at 0.999), so recall at 0.0 is reported beside IoU and the
+  higher levels, never alone.
 
 ## Detector comparison table
 
@@ -395,7 +401,7 @@ and 6. Every table is CSV; `.csv.gz` for the large ones.
 | `conditions/<condition_id>/units.csv.gz` | session × unit | `session_id`, `unit`, `unit_type`, `baseline_rate` (from `SimulatedSession.baseline_rates`) |
 | `conditions/<condition_id>/events.csv.gz` | detected event | `session_id`, `method`, `setting`, `event_index`, `start_time`, `end_time`, `peak_time`, `n_active_units`, `n_active_principal` |
 | `conditions/<condition_id>/results/<method_slug>__<setting>.csv.gz` and `.json` | detected event, complete | `session_id`, then every column the method returned, in its order (clipping flags, per-event statistics, method-specific columns); the JSON sidecar holds each column's dtype and, per `session_id`, the result's complete `attrs` (recipes: method, DOI, resolved options, grid, inputs, diagnostics such as adaptive threshold updates, `ripple_detection_version`; detectors: name, resolved parameters, version). `method_slug` is `method` with `:` replaced by `--`. |
-| `conditions/<condition_id>/metrics.csv.gz` | session × method × setting × expression | `session_id`, `method`, `setting`, `expression`, `n_reference`, `n_detected`, `n_matched`, `recall`, `precision`, `f1`, `false_positives_per_minute`, `median_iou`, `median_coverage`, `median_temporal_precision`, `median_onset_error_<f>`, `median_offset_error_<f>` for `f` in 10, 25, 50, `n_split`, `n_merged` |
+| `conditions/<condition_id>/metrics.csv.gz` | session × method × setting × expression × `minimum_iou` | `session_id`, `method`, `setting`, `expression`, `minimum_iou` (each of `MATCH_IOU_LEVELS`), `n_reference`, `n_detected`, `n_matched`, `recall`, `precision`, `f1`, `false_positives_per_minute`, `median_iou`, `median_coverage`, `median_temporal_precision`, `median_onset_error_<f>`, `median_offset_error_<f>`, `median_abs_onset_error_<f>`, `median_abs_offset_error_<f>` for `f` in 10, 25, 50, `n_split`, `n_merged` |
 | `conditions/<condition_id>/failures.csv` | failed call | `session_id`, `method`, `setting`, `error` (`f"{type(error).__name__}: {error}"`, first 200 characters) |
 
 - `method` is a registry name for a detector or `recipe:<config_id>` for a method

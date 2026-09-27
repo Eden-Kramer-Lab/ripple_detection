@@ -501,10 +501,12 @@ As implemented in phase 2 (2026-09-27), where the code departs from the sketch a
 - **Indices.** `pairs` and the unmatched/split/merged arrays are row positions (for `.iloc`);
   `consensus_counts` and `label_by_overlap` return on the input DataFrame's index, so they
   assign back by label.
-- **Not changed, for a ruling:** `jaccard_true` follows this contract literally (Jaccard of the
-  two methods' truth-matched events against each other), so two methods that found different
-  true events whose detections overlap agree (`n_shared_truth` 0, `jaccard_true` 1).
-  Zero-length events never overlap, so never match; `coverage` NaN for a zero-length reference
+- **`jaccard_true`** follows the contract literally (Jaccard of the two methods' truth-matched
+  detections against each other), so two methods that found different true events whose
+  detections overlap agree (`n_shared_truth` 0, `jaccard_true` 1). By decision 14 it stays, as
+  agreement of the detected intervals, and `jaccard_truth_ids` (`n_shared_truth` over the
+  truth events either matched) answers whether they found the same events.
+- Zero-length events never overlap, so never match; `coverage` NaN for a zero-length reference
   cannot occur.
 
 ## Agreement statistics
@@ -716,7 +718,7 @@ output size for the full grid at the requested worker count. Decision rules:
 
 ## Operating curves
 
-Per detector, condition and expression, pooled over sessions: at each setting,
+Per detector, condition, expression and `minimum_iou`, pooled over sessions: at each setting,
 `recall = Σ n_matched / Σ n_reference` and `fp_rate = Σ unmatched / Σ non-event minutes`.
 Curves are drawn in threshold order. For a target FP rate `r` in `(0.5, 1, 2, 5)` per minute:
 
@@ -745,6 +747,13 @@ same settings as the recall, never from a per-column maximum (which, on a curve 
 settings share an FP rate, paired the better setting's recall with the other's +20 ms onset
 error instead of its own -10 ms). Recipes are points `(fp_rate, recall)` on their primary expression's axes, drawn over the
 curves of the detectors with the same primary expression.
+
+The curves describe performance on the sessions they are read from. A threshold the benchmark
+recommends, or a single tuned number per method, is chosen on calibration replicates (the first
+half: 0-9 of the reference's 20, 0-4 of another condition's 10) and its recall, false-positive
+rate and boundary errors are reported on the held-out replicates (the second half), beside the
+descriptive curve. Replicate `k` keeps its seed in every condition, so the split is the same
+across conditions and comparisons still pair by replicate.
 
 ## Bootstrap and permutation tests
 

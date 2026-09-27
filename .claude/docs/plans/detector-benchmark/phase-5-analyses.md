@@ -52,16 +52,21 @@ and the interpretation limits of the reference condition.
      `label_by_overlap` against a window table of every event type's components (labelled
      `"<event_type>:<expression>"`) and every non-event (labelled by type); stacked bars per
      method, fractions with intervals.
-  3. **Pairwise agreement**: `jaccard`, `jaccard_true`, `jaccard_false` matrices (mean over
+  3. **Pairwise agreement**: `jaccard`, `jaccard_true`, `jaccard_false`, `jaccard_truth_ids` matrices (mean over
      sessions with intervals); dendrogram from average linkage on `1 - jaccard`.
   4. **Consensus**: distribution of `n_methods` per true event, by type; for false positives,
      groups of overlapping unmatched events across methods (connected components of their overlap
      graph) and how many methods each group spans.
   5. **Overlap quality**: IoU, coverage and temporal precision distributions per method (matched
      pairs, primary expression).
-  6. **Boundary errors against truth**: signed onset and offset errors per method at fractions
-     0.1, 0.25, 0.5 (medians, IQRs, intervals; box plots). Ripple-expression and burst-expression
-     errors separately for methods scored on both.
+  6. **Boundary errors against truth**: signed and absolute onset and offset errors per method
+     at fractions 0.1, 0.25, 0.5 (medians, IQRs, intervals; box plots), every median with its
+     number of pairs and the method's recall beside it, since a method that recovers only easy
+     events can time them better. Ripple-expression and burst-expression errors separately for
+     methods scored on both. **Paired timing**: for each pair of methods sharing a primary
+     expression, on the truth events both recovered, the median paired difference of their
+     signed and of their absolute errors (A minus B), with the shared count, a paired bootstrap
+     interval and a sign-flip test; `jaccard_truth_ids` beside it.
   7. **Differences between methods**: matrices of `median_onset_difference`,
      `median_offset_difference`, `fraction_a_earlier_*` (signed, a − b), and
      `onset_error_correlation` / `offset_error_correlation`.
@@ -75,6 +80,16 @@ and the interpretation limits of the reference condition.
       paired by replicate (common random numbers); the two crossed pairs as heatmaps per method. Methods whose recall changes by more than 0.1 across a factor's levels
       are listed in `summary.md`.
   11. **Rates and participation**: per the design.
+  12. **Matching sensitivity**: analyses 1, 5, 6 and 9 at `minimum_iou` 0.2 and 0.5 beside the
+      headline at 0.0 (recall, precision, F1, recall at the target false-positive rates, median
+      absolute errors); method-order changes from 0.0 listed in `summary.md`. No headline
+      number is reported at 0.0 without its IoU distribution.
+  13. **Held-out thresholds**: where `summary.md` or the README recommends a threshold, it is
+      chosen on the calibration replicates and its performance is reported on the held-out ones
+      ([designs.md#operating-curves](designs.md#operating-curves)); the operating curves
+      themselves stay descriptive. Failures stay counted per method (the output contract), and
+      every summary reports each method's failure count so averages over the sessions that ran
+      cannot favour a method that fails.
 - For all six model alternatives, report paired changes from reference in recall at common
   attainable false-positive rates, onset/offset error and observed participation. List method
   order reversals with uncertainty; an unsupported FP target stays missing. Show which stated
@@ -122,6 +137,9 @@ and the interpretation limits of the reference condition.
 | `test_sign_flip_needs_finite_pairs` | `[NaN, 0]` and `[NaN, NaN]` raise `ValueError`; `[]` returns NaN. |
 | `test_at_fp_rate_interpolates_in_log_rate` | Hand-built curve: interpolated values by hand; NaN outside the range; zero FP rate replaced by half the resolution. |
 | `test_at_fp_rate_keeps_one_setting` | Two settings share an FP rate, recall 0.8 with onset -10 ms and recall 0.6 with +20 ms: at that rate recall is 0.8 and onset -10 ms. |
+| `test_paired_timing_uses_shared_truth_only` | Two hand-built methods, one recovering only the three easy truth events (0 ms error) and one recovering all six (0, 0, 0, 20, 20, 20 ms): per-method medians 0 and 10 ms with n 3 and 6; the paired difference on the three shared events is 0. |
+| `test_held_out_threshold_reports_held_out_replicates` | A threshold chosen on replicates 0-4 of a 10-replicate condition is reported with the metrics of replicates 5-9 only. |
+| `test_matching_sensitivity_levels` | A session with a sliver detection: recall 1 at `minimum_iou` 0.0 and 0.5 at 0.2, both rows present. |
 | `test_false_positive_labels` | A hand-built session: an event over a leakage burst is labelled `spike_leakage`, one over a `burst_only` burst `burst_only:burst`, one over nothing `background`. |
 | `test_profile_and_consensus_on_tiny_run` | A two-session hand-built output directory (written by a fixture): detection profile and consensus tables equal hand values. |
 | `test_results_size_limit` | Writing a file over 1 MB raises. |

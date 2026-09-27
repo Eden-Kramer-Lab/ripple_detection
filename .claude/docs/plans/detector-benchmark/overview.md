@@ -56,6 +56,17 @@ Each was asked and answered; do not reopen them without asking.
     scope remain the basis. [simulator-validation.md](simulator-validation.md) defines the
     measurements, source conventions, model options and report required before benchmark runs.
 
+14. **Scoring safeguards (2026-09-27).** After an external review of phase 2, the maintainer
+    chose: keep the matching rule (most pairs, then summed IoU) and score it at predeclared IoU
+    levels, `MATCH_IOU_LEVELS = (0.0, 0.2, 0.5)`, with 0.0 (any overlap) the headline and the
+    others a sensitivity analysis reported beside it; add `jaccard_truth_ids` (which truth
+    events two methods both found) to `compare_detectors`, keeping `jaccard_true` as agreement
+    of the detected intervals; report absolute boundary errors beside signed ones, each median
+    with its pair count and the method's recall, and compare methods' timing on the truth
+    events both recovered; keep operating curves descriptive, and choose any threshold the
+    benchmark recommends on calibration replicates, reporting its performance on held-out ones.
+    The levels are fixed here, before any benchmark result exists.
+
 Defaults chosen by the planner, open to override, recorded in [Open Questions](#open-questions):
 no new dependencies (outputs as `.csv.gz`, estimators in NumPy, `concurrent.futures` for
 parallelism, paired bootstrap and permutation tests in place of mixed models).

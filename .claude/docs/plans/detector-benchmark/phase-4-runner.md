@@ -53,7 +53,9 @@ the simulator validation report, smoke test, extrapolation, and full run.
   Each condition writes only its own `conditions/<condition_id>/` directory, via a
   `.partial` directory renamed into place after `done.json`. Every method call is guarded by `except Exception`
   (the design's runner step 3), so no recipe or detector can abort a run. Metrics per the output schema, using
-  `truth_windows(events, 0.1, expression)` for matching and `boundary_errors` at 0.25 and 0.5.
+  `truth_windows(events, 0.1, expression)` for matching and `boundary_errors` at 0.25 and 0.5,
+  once per level of `MATCH_IOU_LEVELS` (the `minimum_iou` column), with absolute as well as
+  signed median boundary errors.
 - Persist every result complete under `results/` (see the output contract: all columns, dtypes
   and `attrs`), alongside the `events.csv.gz` summary with `n_active_units` and `n_active_principal`,
   and the observed counts within every truth window of every expression in
@@ -116,7 +118,7 @@ the simulator validation report, smoke test, extrapolation, and full run.
 | `test_simulator_validation_preflight` | Missing, failed, stale-source, changed-target or uncovered-settings reports stop before the first detector call; matching reports pass. Detector-only source edits leave the simulation fingerprint unchanged. No detector execution occurs while building a simulator report. |
 | `test_model_metadata_round_trip` | Spatial profiles, envelope powers and gamma sizing bands survive output/reload, and power-4 truth windows recompute identically. |
 | `test_run_session_schema` | A 60 s reference session (long enough for one bout: see the schedule) with two detectors, one sweep point and two recipes including Gridchyn 2020: every frame has exactly the contract's columns; `metrics` has one row per method × setting × expression. |
-| `test_metrics_agree_with_match_events` | For one method, the metrics row equals `match_events` called directly on the written events and `truth_windows`. |
+| `test_metrics_agree_with_match_events` | For one method, the metrics row at each of `MATCH_IOU_LEVELS` equals `match_events(..., minimum_iou=level)` called directly on the written events and `truth_windows`, absolute medians included; a hand-built session with a sliver detection matches it at 0.0 and not at 0.2. |
 | `test_results_round_trip` | For a recipe with diagnostics and a detector, the reloaded `results/` frames equal the originals exactly (`check_exact=True`) and their `attrs` are equal. |
 | `test_failures_are_recorded_not_raised` | Stub methods raising `ValueError` and `IndexError` each yield a `failures` row (`"IndexError: ..."`) and no events or metrics rows; the others still run. A Gridchyn configuration with a missing or invalid pre-rest baseline fails explicitly; absence of a running bout alone does not imply a missing baseline. |
 | `test_resume_skips_finished_conditions` | With `--resume`, a condition with a valid completion marker is not re-simulated (monkeypatched `run_session` call count). |
