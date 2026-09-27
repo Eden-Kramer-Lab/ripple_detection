@@ -2291,8 +2291,8 @@ def draw_non_events(
         Peak of a leaked spike's waveform in signal units, non-negative.
         Default 2.
     emg_duration : (float, float), optional
-        Range of an EMG burst's nominal span, six side scales, symmetric.
-        Default (0.05, 0.5).
+        Range of an EMG burst's nominal span, six side scales, symmetric,
+        with side scales of at least one sample. Default (0.05, 0.5).
     emg_amplitude : float, optional
         Standard deviation of an EMG burst at its peak, in signal units,
         non-negative. Default 1.5.
@@ -2356,11 +2356,11 @@ def draw_non_events(
         non-finite rate; a range is not a finite ``(low, high)`` tuple with
         ``low <= high`` inside its bounds (positive durations, SNRs and
         intervals, unit and spike counts whole numbers of at least 1 and 2,
-        a leakage interval and gamma side scale of at least one sample, gamma
-        frequencies below Nyquist); ``fast_gamma_band`` does not hold
-        ``fast_gamma_frequency`` or cannot be filtered at the sampling rate;
-        an amplitude is negative or not finite, or ``theta_burst_gain``
-        below 1; ``n_channels`` is not a whole number of at least 1; or
+        a leakage interval and EMG and gamma side scales of at least one
+        sample, gamma frequencies below Nyquist); ``fast_gamma_band`` does
+        not hold ``fast_gamma_frequency`` or cannot be filtered at the
+        sampling rate; an amplitude is negative or not finite, or
+        ``theta_burst_gain`` below 1; ``n_channels`` is not a whole number of at least 1; or
         ``rates['emg']`` is positive and the sampling rate is 200 Hz or less
         (no room above the 100 Hz high-pass).
 
@@ -2425,7 +2425,7 @@ def draw_non_events(
     leakage_spikes = _check_count_range("spike_leakage_spikes", spike_leakage_spikes, 2)
     leakage_isi = _check_range("spike_leakage_isi", spike_leakage_isi, lower=1 / rate)
     leakage_amplitude = _check_scalar("spike_leakage_amplitude", spike_leakage_amplitude)
-    emg_span = _check_range("emg_duration", emg_duration, lower=0, lower_strict=True)
+    emg_span = _check_range("emg_duration", emg_duration, lower=6 / rate)
     emg_amplitude = _check_scalar("emg_amplitude", emg_amplitude)
     if per_minute["emg"] > 0 and nyquist <= _EMG_HIGH_PASS:
         msg = (
@@ -2764,10 +2764,16 @@ def _leaked_samples(
     center_time: float, n_spikes: int, isi: float, start: float, rate: float
 ) -> IntArray:
     """The samples of a leakage burst's spikes, ``n_spikes`` at intervals of
-    ``isi`` about ``center_time``: each the nearest to its spike, a tie going
-    to the later sample, so spikes a sample apart keep distinct samples."""
-    offsets = (np.arange(n_spikes) - (n_spikes - 1) / 2) * isi
-    samples: IntArray = np.floor((center_time + offsets - start) * rate + 0.5).astype(np.int64)
+    ``isi`` about ``center_time``, counted from the sample at ``start``: each
+    the nearest to its spike, a tie going to the later sample, so spikes a
+    sample apart keep distinct samples. Positions are measured from
+    ``start`` before the offsets are added, and a position within the
+    clock's rounding below a tie counts as the tie, so a burst takes the
+    same samples at any time origin."""
+    center = (center_time - start) * rate
+    offsets = (np.arange(n_spikes) - (n_spikes - 1) / 2) * (isi * rate)
+    tolerance = _bound_tolerance(np.array([center_time, start])) * rate
+    samples: IntArray = np.floor(center + offsets + 0.5 + tolerance).astype(np.int64)
     return samples
 
 

@@ -2512,6 +2512,7 @@ class TestDrawNonEvents:
             ({"spike_leakage_amplitude": -1.0}, "spike_leakage_amplitude"),
             ({"emg_duration": (0.5, 0.05)}, "emg_duration"),
             ({"emg_amplitude": np.inf}, "emg_amplitude"),
+            ({"emg_duration": (0.002, 0.002)}, "emg_duration"),
             ({"fast_gamma_frequency": (60.0, 800.0)}, "fast_gamma_frequency"),
             ({"fast_gamma_frequency": (100.0, 60.0)}, "fast_gamma_frequency"),
             ({"fast_gamma_band": (70.0, 100.0)}, "fast_gamma_band"),

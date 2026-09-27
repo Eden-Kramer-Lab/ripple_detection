@@ -771,6 +771,36 @@ class TestTimeOrigin:
         np.testing.assert_array_equal(moved_session.multiunit, session.multiunit)
 
     @pytest.mark.parametrize("origin", ORIGINS)
+    def test_leaked_spikes_halfway_between_samples(self, origin):
+        """Leaked spikes that fall exactly halfway between samples take the
+        same samples at any origin: three 3 ms apart about 3 s (the first and
+        last halfway) and two a sample apart about 4 s (both halfway), which
+        must not collapse onto one sample."""
+        time = simulate_time(int(6 * FS), FS)
+        nan = np.nan
+        rows = pd.DataFrame(
+            {
+                "non_event_id": [0, 1], "non_event_type": ["spike_leakage"] * 2,
+                "center_time": [3.0, 4.0], "rise_sigma": [0.001, 1 / (6 * FS)],
+                "decay_sigma": [0.001, 1 / (6 * FS)], "envelope_power": [2, 2],
+                "amplitude": [2.0, 2.0], "frequency": [nan, nan], "snr_band_low": [nan, nan],
+                "snr_band_high": [nan, nan], "channel": [0, 0], "n_units": [1, 1],
+                "n_spikes": [3, 2], "isi": [0.003, 1 / FS],
+            }
+        )  # fmt: skip
+        events = rd.draw_network_events(time, event_rate=0.0)
+        options = {"rng": 1, "sampling_frequency": FS, "noise_amplitude": 0.0}
+        at_zero = rd.simulate_network_session(time, events, non_events=rows, **options)
+        shifted = rd.simulate_network_session(
+            time + origin, events, non_events=rows.assign(center_time=rows.center_time + origin),
+            **options,
+        )  # fmt: skip
+        plain = rd.simulate_network_session(time, events, **options)
+        leaked = np.flatnonzero((at_zero.multiunit - plain.multiunit).sum(axis=1))
+        np.testing.assert_array_equal(leaked, [4496, 4500, 4505, 6000, 6001])
+        np.testing.assert_array_equal(shifted.multiunit, at_zero.multiunit)
+
+    @pytest.mark.parametrize("origin", ORIGINS)
     @pytest.mark.parametrize("spike_model", ["poisson", "refractory"])
     def test_simulated_network_spikes_at_a_given_rate(self, origin, spike_model):
         """With the rate given, spikes come from it, not from the timestamps'
