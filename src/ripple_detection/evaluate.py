@@ -119,6 +119,17 @@ def _time_rounding(*bounds: FloatArray) -> float:
     return 8 * float(np.spacing(scale))
 
 
+def _check_mapping(events: object) -> None:
+    """Raise ``TypeError`` unless `events` maps method names to inventories: a
+    DataFrame iterates over its columns, and would compare them as methods."""
+    if not isinstance(events, Mapping):
+        msg = (
+            "events must map each method's name to its events, such as "
+            f"{{'Kay': kay_events, 'HSE': hse_events}}; got {type(events).__name__}."
+        )
+        raise TypeError(msg)
+
+
 def _check_minimum_iou(minimum_iou: float) -> None:
     """Raise unless ``0 <= minimum_iou < 1``: at 1 or above no pair, not even
     identical events, could exceed it."""
@@ -205,7 +216,8 @@ class EventMatching:
     pairs : pd.DataFrame
         One row per matched pair, sorted by ``reference_index``, with columns
 
-        - ``reference_index``, ``detected_index``: row positions in the inputs.
+        - ``reference_index``, ``detected_index``: row positions in the
+          inputs, for ``.iloc``; a detector's DataFrame is labelled from 1.
         - ``iou``: intersection over union, in (0, 1].
         - ``coverage``: intersection over the reference's length, the
           fraction of the reference event found.
@@ -358,6 +370,7 @@ def match_events(
         The pairs with their overlap and signed errors (detected minus
         reference; positive is late), the overlap counts, and recall,
         precision, F1, the unmatched, split and merged events as properties.
+        Every index is a row position in the input, for ``.iloc``.
 
     Raises
     ------
@@ -581,6 +594,8 @@ def compare_detectors(
         If an inventory is not ``(n_events, 2)`` or has a start or end that is
         not finite or out of order (naming it and the row), or `minimum_iou`
         is outside [0, 1).
+    TypeError
+        If `events` is not a mapping, such as a single DataFrame.
 
     Examples
     --------
@@ -596,6 +611,7 @@ def compare_detectors(
     True
 
     """
+    _check_mapping(events)
     _check_minimum_iou(minimum_iou)
     names = list(events)
     bounds = {name: _checked(events[name], f"events[{name!r}]") for name in names}
@@ -663,6 +679,8 @@ def consensus_counts(
         If a method is named ``"n_methods"``, an inventory is not
         ``(n_events, 2)`` or has a start or end that is not finite or out of
         order, or `minimum_iou` is outside [0, 1).
+    TypeError
+        If `events` is not a mapping, such as a single DataFrame.
 
     Examples
     --------
@@ -675,6 +693,7 @@ def consensus_counts(
     [True, True]
 
     """
+    _check_mapping(events)
     _check_minimum_iou(minimum_iou)
     if "n_methods" in events:
         msg = "No method may be named 'n_methods', the column that counts them."

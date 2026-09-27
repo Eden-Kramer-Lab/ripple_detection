@@ -493,6 +493,14 @@ class TestCompareDetectors:
         with pytest.raises(ValueError, match=r"minimum_iou"):
             compare_detectors({}, minimum_iou=1.0)
 
+    @pytest.mark.parametrize("function", [compare_detectors, consensus_counts])
+    def test_events_must_be_a_mapping(self, function):
+        """A single DataFrame iterates over its columns, which would be compared
+        as methods."""
+        frame = pd.DataFrame({"start_time": [0.0], "end_time": [1.0]})
+        with pytest.raises(TypeError, match="events must map each method's name"):
+            function(frame, truth=frame)
+
 
 class TestConsensusCounts:
     def test_by_hand(self):
