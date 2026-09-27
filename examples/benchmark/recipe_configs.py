@@ -2,7 +2,7 @@
 
 Each ``RecipeConfig`` names a method of ``ripple_detection.literature_methods``
 by its function name, the options it runs with and the expression of a
-simulated network event it is headlined against. ``run_recipe`` calls the
+simulated network event it is to be headlined against. ``run_recipe`` calls the
 installed method through ``run_method``; nothing here reimplements one.
 
 ``make_recording`` builds the method's ``Recording`` from a simulated session
@@ -162,7 +162,7 @@ class RecipeConfig:
     method : str
         Exact function name from ``list_methods()``.
     primary_expression : str
-        The truth the method is headlined against: ``"ripple"``,
+        The truth the method is to be headlined against: ``"ripple"``,
         ``"sharp_wave"``, ``"burst"`` or ``"network"``.
     options : tuple of (str, object) pairs
         Method options, including ``stage`` where the method takes one;

@@ -1,16 +1,17 @@
 # Detector benchmark
 
-Code and tables for comparing the package's detectors and the packaged literature
-methods on simulated sessions whose events are known. None of it is part of the
-installed package. `simulator_targets.csv` holds the measurements the network
-simulator is validated against.
+Code and tables for a benchmark, in progress, of the package's detectors and the
+packaged literature methods on simulated sessions whose events are known. None of it is
+part of the installed package. So far it holds `simulator_targets.csv`, the
+measurements the network simulator is validated against, and the configurations of
+the literature methods below; running and scoring them is still to come.
 
 ## Literature method configurations
 
 `recipe_configs.py` configures the methods of `ripple_detection.literature_methods`
 for the benchmark. It does not implement any method: a configuration names a method
 from `list_methods()`, the options it runs with and the expression of the simulated
-network event it is headlined against, and `run_recipe` calls the method through the
+network event it is to be scored against first, and `run_recipe` calls the method through the
 package's `run_method`. What each method does, which inputs it needs and why, and what
 remains unverified are in the package's
 [implementation guide](../../docs/literature/implementation.md), the method docstrings
@@ -33,10 +34,11 @@ running = np.array([[25.0, 35.0]])
 events = rd.draw_network_events(time, running_intervals=running, rng=0)
 session = rd.simulate_network_session(time, events, running_intervals=running, rng=1)
 
-config = next(config for config in RECIPES if config.config_id == "yang_2024")
+config = next(config for config in RECIPES if config.config_id == "stella_2019")
 recording = make_recording(session, config)
 found = run_recipe(config, recording, behavior_intervals(session, config))
 print(found.attrs["method"], found.attrs["role"], found.attrs["options"])
+print(config.assumptions)
 ```
 
 `found` is the package's result, unchanged: bounds, the method's own columns, and
@@ -51,9 +53,10 @@ assumptions as JSON.
 `make_recording` builds the recording with `Recording.from_arrays`, the path measured
 data take, so the package's simulation fallbacks never run. The recording holds
 exactly the inputs the method declares in `list_methods()`'s `requirements`, taking
-into account conditions on its options (`when`) and inputs that make another
-unnecessary (`unless`); an input a method does not ask for could change its events,
-so none is added. The policy (`INPUT_POLICY`) takes each input from the session:
+into account conditions on its options (`when`). A requirement that lapses when another
+input is supplied (`unless`) never lapses here, since only declared inputs are
+supplied; an input a method does not ask for could change its events. The policy
+(`INPUT_POLICY`) takes each input from the session:
 
 - `lfps`, `sharp_wave_lfp`, `multiunit` and `speed`: the recorded signals, every
   pyramidal-layer channel with the ripple channel first.
@@ -74,9 +77,12 @@ so none is added. The policy (`INPUT_POLICY`) takes each input from the session:
   on the first channel, the package's stated assumption for these papers' unspecified
   ripple detector. `example_ripples` (Carey 2019): the five largest
   `Kay_ripple_detector` events. Neither is taken from the simulation's truth.
-- Options the package requires for measured data because the paper does not report
-  them (Stella's wavelet, Nádasdy's RMS window and bounds, Kudrimoti's threshold,
-  Wikenheiser's window anchor) take the package's demonstration values.
+- Options the paper does not report take the package's demonstration value only
+  where the package ships one: an option it requires of measured data alone, and sets
+  itself for a simulated session (Stella's wavelet, Nádasdy's RMS window and bounds,
+  Kudrimoti's threshold, Wikenheiser's window anchor). Where the package requires an
+  option with no default for any data, it ships no value, and the method is excluded
+  (see Exclusions).
 
 A session without unit labels gives empty selections, which `check_recipe` and
 `run_recipe` report; nothing stands in for them. Each configuration's `assumptions`
