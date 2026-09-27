@@ -214,15 +214,23 @@ def _resolved(config: RecipeConfig) -> dict[str, Any]:
     }
 
 
-def _json_ready(value: Any) -> Any:
-    """``value`` in JSON's types: tuples become lists, non-finite floats
-    their ``repr`` ("inf")."""
+def _json_ready(value: Any, *, non_finite_as_none: bool = False) -> Any:
+    """``value`` in JSON's types: arrays and tuples become lists, NumPy
+    scalars Python ones, and a non-finite float None (the package's attrs
+    convention) or its ``repr``, such as "inf"."""
     if isinstance(value, dict):
-        return {str(key): _json_ready(item) for key, item in value.items()}
+        return {
+            str(key): _json_ready(item, non_finite_as_none=non_finite_as_none)
+            for key, item in value.items()
+        }
+    if isinstance(value, np.ndarray):
+        value = value.tolist()
     if isinstance(value, (list, tuple)):
-        return [_json_ready(item) for item in value]
+        return [_json_ready(item, non_finite_as_none=non_finite_as_none) for item in value]
+    if isinstance(value, np.generic):
+        value = value.item()
     if isinstance(value, float) and not np.isfinite(value):
-        return repr(value)
+        return None if non_finite_as_none else repr(value)
     return value
 
 
@@ -237,9 +245,12 @@ def resolved_options(config: RecipeConfig) -> dict[str, Any]:
     -------
     options : dict
         Every option of the public method, the configured value or its
-        signature's default, in JSON types (tuples as lists), as a
-        successful call's ``attrs["options"]`` records them. Known without
-        running, so a failed call can record them too.
+        signature's default, in JSON types by the package's convention for
+        ``attrs["options"]`` (tuples and arrays as lists, NumPy scalars as
+        Python numbers, non-finite values as None), so it equals what a
+        successful call records. Known without running, so a failed call
+        can record them too. A per-sample array option, which the package
+        records by its hash, would be written out in full.
 
     Raises
     ------
@@ -249,7 +260,7 @@ def resolved_options(config: RecipeConfig) -> dict[str, Any]:
         An option the method does not take.
     """
     _entry(config.method)
-    resolved: dict[str, Any] = _json_ready(_resolved(config))
+    resolved: dict[str, Any] = _json_ready(_resolved(config), non_finite_as_none=True)
     return resolved
 
 

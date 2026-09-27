@@ -230,6 +230,34 @@ def test_resolved_options_are_the_options_a_call_records(recipe_configs, results
         ), config.config_id
 
 
+def test_resolved_options_follow_the_packages_json_convention(recipe_configs, session):
+    # NumPy scalars become Python numbers and non-finite values None, as in
+    # a result's attrs["options"], whatever type the configuration holds.
+    config = recipe_configs.RecipeConfig(
+        "olafsdottir_2015",
+        "olafsdottir_2015",
+        "burst",
+        (("minimum_active_units", np.int64(7)),),
+        recipe_configs.INPUT_POLICY,
+    )
+    resolved = recipe_configs.resolved_options(config)
+    recorded = _run(recipe_configs, session, config).attrs["options"]
+    assert resolved == recorded
+    assert type(resolved["minimum_active_units"]) is type(recorded["minimum_active_units"])
+    json.dumps(resolved, allow_nan=False)
+    unbounded = recipe_configs.RecipeConfig(
+        "nadasdy_1999",
+        "nadasdy_1999",
+        "ripple",
+        (("rms_window", np.float64(0.004)), ("bound_threshold", -np.inf)),
+    )
+    assert recipe_configs.resolved_options(unbounded) == {
+        "rms_window": 0.004,
+        "bound_threshold": None,
+    }
+    assert type(recipe_configs.resolved_options(unbounded)["rms_window"]) is float
+
+
 def test_every_configured_path_finds_events(results):
     # Every stand-in (rest as sleep, baseline and eligible epochs, the zero
     # reference, one place-cell template, the external and example ripple
