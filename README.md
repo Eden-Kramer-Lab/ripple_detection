@@ -491,9 +491,9 @@ count. With a truth, `compare_detectors` also gives the two detectors' agreement
 on false events and the correlation of their errors on the true events both found.
 `consensus_counts` marks, per true event, which detectors found it, and `label_by_overlap`
 names each detection by the `label` of the window it overlaps longest (for the event types of
-`truth_windows`, below, rename its `type` column `label`). To measure boundary errors against other bounds for the same true
-events without matching again, as `truth_windows` at another fraction gives them, pass them
-to `matching.boundary_errors`.
+`truth_windows`, below, rename its `type` column `label`). To measure boundary errors against
+other bounds for the same true events without matching again, as `truth_windows` at another
+fraction gives them, pass them to `matching.boundary_errors`.
 
 ### Detecting on a trace you build
 

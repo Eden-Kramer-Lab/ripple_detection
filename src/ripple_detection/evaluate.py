@@ -381,8 +381,8 @@ def match_events(
 
     Notes
     -----
-    Builds dense ``(n_reference, n_detected)`` matrices: 8 MB for 1000 events
-    on each side.
+    Builds several dense ``(n_reference, n_detected)`` matrices: about 50 MB
+    at peak for 1000 events on each side.
 
     Examples
     --------
