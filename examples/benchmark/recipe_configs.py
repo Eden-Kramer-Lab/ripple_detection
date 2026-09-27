@@ -132,6 +132,14 @@ _ASSUMPTIONS = {
 _CONFIG_ID = re.compile(r"[a-z0-9_.]+")
 
 
+def _is_option_pairs(options: object) -> bool:
+    """Whether ``options`` is a tuple of (str, value) pairs."""
+    return isinstance(options, tuple) and all(
+        isinstance(pair, tuple) and len(pair) == 2 and isinstance(pair[0], str)
+        for pair in options
+    )
+
+
 @dataclass(frozen=True)
 class RecipeConfig:
     """One benchmark configuration of a packaged literature method.
@@ -148,7 +156,8 @@ class RecipeConfig:
         ``"sharp_wave"``, ``"burst"`` or ``"network"``.
     options : tuple of (str, object) pairs
         Method options, including ``stage`` where the method takes one;
-        scalars or tuples, so the configuration is hashable.
+        each name once, never ``rec`` or ``behavior_intervals``, and each
+        value hashable (a scalar or a tuple), so the configuration is.
     input_policy : str
         The simulation-to-``Recording`` policy, ``INPUT_POLICY``.
     assumptions : tuple of str
@@ -160,7 +169,8 @@ class RecipeConfig:
     ------
     ValueError
         The identifier has other characters or does not start with the
-        method name, or the expression is unknown.
+        method name, the expression is unknown, or ``options`` is not a
+        tuple of pairs as described.
     """
 
     config_id: str
@@ -185,6 +195,25 @@ class RecipeConfig:
                 f"{', '.join(PRIMARY_EXPRESSIONS)}."
             )
             raise ValueError(msg)
+        if not _is_option_pairs(self.options):
+            msg = f"options must be a tuple of (str, value) pairs; got {self.options!r}."
+            raise ValueError(msg)
+        names = [name for name, _ in self.options]
+        for name, value in self.options:
+            if names.count(name) > 1:
+                msg = f"options names {name!r} more than once."
+                raise ValueError(msg)
+            if name in {"rec", "behavior_intervals"}:
+                msg = (
+                    f"{name!r} is not a method option: the recording and the call's "
+                    "behavior_intervals come from the input policy."
+                )
+                raise ValueError(msg)
+            try:
+                hash(value)
+            except TypeError:
+                msg = f"option {name!r} must be hashable (a scalar or a tuple); got {value!r}."
+                raise ValueError(msg) from None
 
 
 @functools.cache

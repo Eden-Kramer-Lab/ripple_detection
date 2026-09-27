@@ -193,6 +193,29 @@ def test_a_malformed_configuration_raises(recipe_configs, fields, message):
         recipe_configs.RecipeConfig(*fields)
 
 
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ([("stage", "detection")], "tuple"),
+        ((("stage",),), "pairs"),
+        (((1, "detection"),), "pairs"),
+        ((("stage", "detection"), ("stage", "detection")), "stage.*more than once"),
+        ((("frequencies", [150.0, 250.0]),), "frequencies.*hashable"),
+        ((("rec", None),), "rec"),
+        ((("behavior_intervals", ((0.0, 1.0),)),), "behavior_intervals"),
+    ],
+)
+def test_malformed_options_raise(recipe_configs, options, message):
+    with pytest.raises(ValueError, match=message):
+        recipe_configs.RecipeConfig("mou_2022", "mou_2022", "burst", options)
+
+
+def test_every_configuration_is_hashable(recipe_configs):
+    assert len({hash(config) for config in recipe_configs.RECIPES}) == len(
+        recipe_configs.RECIPES
+    )
+
+
 def test_every_method_with_stages_runs_its_detection_stage(recipe_configs, catalog):
     for config in recipe_configs.RECIPES:
         options = dict(config.options)
