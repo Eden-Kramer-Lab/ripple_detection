@@ -49,6 +49,15 @@ jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --exec
 # Re-run the simulation study sweep the notebook reads (about three minutes)
 uv run python examples/simulation_study.py
 
+# The detector benchmark (examples/benchmark/README.md, "Running the benchmark"): a ready
+# simulator report first, then the smoke test and, by hand in tmux, the full run (hours;
+# outputs git-ignored under examples/benchmark/output/)
+uv run python examples/benchmark/validate_simulator.py --validation-id v1 --conditions all
+uv run python examples/benchmark/run.py --run-name smoke --smoke \
+    --validation-report examples/benchmark/validation/v1/spec.json
+uv run python examples/benchmark/run.py --run-name v1 --conditions all --workers N \
+    --validation-report examples/benchmark/validation/v1/spec.json
+
 # Run every surveyed paper's packaged method on a simulated session (seconds;
 # overwrites examples/literature_recipes_results.csv). Widloski 2022 has none:
 # its replay is defined by decoding (literature_methods.NOT_REPRODUCED)

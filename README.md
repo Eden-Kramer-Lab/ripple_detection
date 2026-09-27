@@ -351,6 +351,11 @@ changes, and its artifacts crude; every ripple has a sharp wave and a population
 builds in the advantage of the detectors that read them. The numbers rank the defaults and
 expose their mechanics; they are not the recall or precision to expect on a recording.
 
+The full benchmark, every detector along its threshold sweep and every packaged literature
+method on network sessions with five event types, non-events and running bouts under 43
+simulation conditions, is described in
+[`examples/benchmark/README.md`](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/benchmark/README.md).
+
 ## Output Format
 
 All detectors return a pandas DataFrame with comprehensive event statistics:

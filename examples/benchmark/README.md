@@ -2,10 +2,10 @@
 
 Code and tables for a benchmark, in progress, of the package's detectors and the
 packaged literature methods on simulated sessions whose events are known. None of it is
-part of the installed package. So far it holds `simulator_targets.csv`, the
-measurements the network simulator is validated against, the simulation conditions and
-the configurations of the literature methods below; running and scoring them is still
-to come.
+part of the installed package. It holds `simulator_targets.csv`, the measurements the
+network simulator is validated against, the simulation conditions and the configurations
+of the literature methods below, and the runner that simulates the conditions, runs every
+method and scores it (see Running the benchmark).
 
 ## Simulation conditions
 
@@ -169,3 +169,119 @@ reason's missing option or rate on a recording built under the policy.
 - `diba_2007_ripples`: rms_window: a required option the paper does not report. The
   1.6 ms window of the Csicsvari et al. 1999b methods it cites is not assumed: the
   package lists RMS windows among settings its source audit did not establish
+
+## Running the benchmark
+
+`run.py` simulates every replicate of every condition, runs each of the package's nine
+detectors at its defaults and at each point of its threshold sweep (`THRESHOLD_SWEEPS`;
+Long's `peak_thresholds` sets both of its threshold pairs to `(0.5, v)`) and every
+configuration in `RECIPES`, and scores each against the session's truth windows of every
+expression (`ripple`, `sharp_wave`, `burst` and `network`). Events are matched one to one
+(`match_events`) to the windows at 10 % of the envelope's peak, at each minimum IoU of
+`MATCH_IOU_LEVELS` (0.0, the headline, then 0.2 and 0.5), and the pairs' onset and offset
+errors are measured against the windows at 10, 25 and 50 %. The reference condition has
+20 replicates and every other condition 10: 440 sessions, replicate `k` with the same
+seed in every condition. Every call runs with its warnings ignored; a call that raises
+is written to `failures.csv`, with no events, results or scores, and the run goes on. A
+(session, method, setting) without scores is a failure, never zero events: a call that
+finds nothing still has its scores and an entry in its `results/` sidecar.
+
+Run it from the repository root, in this order. First validate the simulator for the
+settings the run will use:
+
+```bash
+uv run python examples/benchmark/validate_simulator.py --validation-id v1 --conditions all
+```
+
+The runner checks that report before it runs any method (smoke, full run or resume): it
+must be ready, and must have been made from the current simulator source and target
+table for exactly the parameters of every selected condition, `--duration` included. Its
+path, the SHA-256 of its `spec.json` and the fingerprints are saved in the run's
+`run_spec.json`. Then the smoke test, one reference session in one process, which prints
+each method's runtime, the simulation time, the peak resident memory, the rows and bytes
+of every table, the full grid's runtime and size, and the decision rules' verdicts:
+
+```bash
+uv run python examples/benchmark/run.py --run-name smoke --smoke \
+    --validation-report examples/benchmark/validation/v1/spec.json
+```
+
+The rules: if one session takes more than 5 minutes, halve `duration_s` and double the
+replicates (which needs a report for the new duration first); if all conditions'
+`events.csv.gz` would pass 2 GB, write sweep events only for the reference condition;
+run `min(requested, free cores - 1, 0.7 x available memory / peak memory)` workers.
+
+> **Placeholder, smoke test:** the measured numbers (per-session simulate and detect
+> time, peak memory, rows and bytes per table), the extrapolation and any rule applied.
+
+Look at single events before trusting any aggregate: `spot_check.py` simulates the
+smoke session again from its seed and draws six true events of each type with their
+truth windows and the events of Kay, Karlsson, the HSE detector and two recipes, one PNG
+per type in the run's `spot_check/` directory:
+
+```bash
+uv run python examples/benchmark/spot_check.py --run-name smoke
+```
+
+Then the full run, by hand in a `tmux` session named `benchmark` (it is not part of CI):
+
+```bash
+uv run python examples/benchmark/run.py --run-name v1 --conditions all --workers N \
+    --validation-report examples/benchmark/validation/v1/spec.json
+```
+
+> **Placeholder, full run:** the command as run, its wall time and the output's size.
+
+Other options: `--conditions` takes condition ids separated by commas, `--replicates N`
+gives every selected condition `N` replicates, `--duration S` sets the session length.
+
+### What a run writes
+
+Everything goes to `examples/benchmark/output/<run_name>/`, which git ignores. The
+column lists of every table are in [run.py](run.py)'s module docstring:
+
+- `manifest.json`, `run_spec.json` and `conditions.csv`, written when the run starts;
+- `conditions/<condition_id>/`, one directory per condition: sessions, the truth (the
+  latent event and non-event tables, restored by `load_truth`), the units active in each
+  truth window, the ripple channels' gains and delays, the units, the methods run with
+  their resolved options and input policies, each detected event with its active units,
+  every result complete under `results/` (read back exactly by `load_results`), the
+  scores, and the failures;
+- `combined/`, the finished conditions' tables concatenated, which the analyses read.
+
+A condition is written into `conditions/<condition_id>.partial/`, its `done.json` (the
+row count and SHA-256 of every other file) last, and then renamed into place, so a
+condition directory is either complete or absent, and finishing one never touches
+another.
+
+### Resuming and combining
+
+After an interruption, run the same command again with `--resume`. The runner rebuilds
+the run specification (every condition's parameters, the replicates and seeds, every
+method and setting with its resolved options, the package version, the git commit and
+the report) and stops, naming the keys that differ, if it is not the saved one: a run is
+never continued under other settings. It keeps each condition whose `done.json` matches
+its files, deletes each `.partial` directory and each condition that fails that check,
+and runs those again. `combined/` is rebuilt at the end of every run, and at any time by
+
+```bash
+uv run python examples/benchmark/run.py --run-name v1 --combine
+```
+
+which needs no report; `--resume` never reads it.
+
+### After changing the simulation
+
+A change to the simulator's code or its signal helpers, to `simulator_targets.csv`, or
+to a condition's parameters (including a new `--duration`) leaves the report behind, and
+the runner refuses it. Make a new report for the new settings, with the same
+`--conditions` and `--duration` the run will use, then start a new run with it:
+
+```bash
+uv run python examples/benchmark/validate_simulator.py --validation-id v2 --conditions all
+uv run python examples/benchmark/run.py --run-name v2 --conditions all --workers N \
+    --validation-report examples/benchmark/validation/v2/spec.json
+```
+
+A change confined to the detectors or the literature methods leaves the report valid,
+but the git commit in `run_spec.json` changes, so it is a new run, not a resumed one.
