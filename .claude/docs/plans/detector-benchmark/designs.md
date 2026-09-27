@@ -482,6 +482,28 @@ def match_events(reference, detected, *, minimum_iou=0.0):
   `merged_detected = flatnonzero(detected_overlaps >= 2)`. These count *any* overlap, not
   eligibility, so a fragment below `minimum_iou` still counts as a split.
 
+As implemented in phase 2 (2026-09-27), where the code departs from the sketch above:
+
+- **Tolerances from the timestamps' rounding.** With u an ulp of the largest bound: a pair is
+  eligible at `minimum_iou > 0` only when `iou > minimum_iou + 8u / union` (IoU's worst-case
+  rounding), so a nominal tie at the threshold is excluded at any clock origin; at 0 the rule
+  stays "positive overlap". `label_by_overlap` ties overlaps within 8u (earlier row), and the
+  error correlations rank errors within 8u as ties (average ranks, then Pearson): errors read
+  off sample times are whole samples that round apart, and ranking that noise gave 0.33-0.40
+  for a true 0.29. `TestTimeOrigin::test_evaluation` fails without each.
+- **Graph and solver.** Components come from a `coo_matrix` of eligible pairs (no `bmat`); a
+  component of one event a side is taken without `linear_sum_assignment`.
+- **Checks.** `minimum_iou` must be below 1; `compare_detectors` and `consensus_counts` raise
+  `TypeError` for events that are not a mapping (a DataFrame iterates over its columns).
+- **Indices.** `pairs` and the unmatched/split/merged arrays are row positions (for `.iloc`);
+  `consensus_counts` and `label_by_overlap` return on the input DataFrame's index, so they
+  assign back by label.
+- **Not changed, for a ruling:** `jaccard_true` follows this contract literally (Jaccard of the
+  two methods' truth-matched events against each other), so two methods that found different
+  true events whose detections overlap agree (`n_shared_truth` 0, `jaccard_true` 1).
+  Zero-length events never overlap, so never match; `coverage` NaN for a zero-length reference
+  cannot occur.
+
 ## Agreement statistics
 
 ```python
