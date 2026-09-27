@@ -236,10 +236,6 @@ def written(run, output, tmp_path_factory):
     return directory
 
 
-def _read(path):
-    return pd.read_csv(path, float_precision="round_trip")
-
-
 def _median(values):
     """The median, NaN for no values (NumPy would warn)."""
     values = np.asarray(values, dtype=float)
@@ -341,8 +337,8 @@ def test_run_session_schema(run, output, written):
     for name, columns in expected.items():
         assert list(getattr(output, name).columns) == columns, name
         suffix = ".csv" if name in ("methods", "failures", "warnings") else ".csv.gz"
-        assert list(_read(written / f"{name}{suffix}").columns) == columns, name
-    kay = _read(written / "results" / "Kay_ripple_detector__default.csv.gz")
+        assert list(run.read_table(written / f"{name}{suffix}").columns) == columns, name
+    kay = run.read_table(written / "results" / "Kay_ripple_detector__default.csv.gz")
     result = output.results["Kay_ripple_detector", "default"]
     assert list(kay.columns) == ["event_number", "session_id", *result.columns]
     assert sorted(p.name for p in (written / "results").iterdir()) == sorted(
@@ -387,9 +383,35 @@ def test_the_session_row_counts_the_truth(run, output, session):
     np.testing.assert_array_equal(output.units.baseline_rate, session.baseline_rates)
 
 
+def test_read_table_keeps_text_as_text(run, written, tmp_path):
+    methods = run.read_table(written / "methods.csv")
+    kay = methods[methods.method == "Kay_ripple_detector"]
+    assert list(kay.setting) == ["default", "3.0"]
+    assert (kay[["doi", "role", "inventory", "interpretation"]] == "").all().all()
+    # a table whose settings are all swept values, and levels that look like numbers
+    metrics = run.read_table(written / "metrics.csv.gz")
+    swept = metrics[metrics.setting == "3.0"]
+    run._write_table(swept, tmp_path / "swept.csv.gz")
+    assert pd.read_csv(tmp_path / "swept.csv.gz").setting.dtype == float
+    read = run.read_table(tmp_path / "swept.csv.gz")
+    assert (read.setting == "3.0").all()
+    pd.testing.assert_frame_equal(read, swept.reset_index(drop=True), check_exact=True)
+    assert read.median_iou.dtype == float
+    listed = pd.DataFrame(
+        {
+            "condition_id": ["n_units=30"],
+            "factor": ["n_units"],
+            "level": ["30"],
+            "params": ["{}"],
+        }
+    )
+    run._write_table(listed, tmp_path / "conditions.csv")
+    assert run.read_table(tmp_path / "conditions.csv").level.tolist() == ["30"]
+
+
 def test_metrics_agree_with_match_events(run, written, session):
-    events = _read(written / "events.csv.gz")
-    metrics = _read(written / "metrics.csv.gz")
+    events = run.read_table(written / "events.csv.gz")
+    metrics = run.read_table(written / "metrics.csv.gz")
     network = rd.truth_windows(session.events, 0.1, "network")
     minutes = (60.0 - _union_seconds(network[["start_time", "end_time"]].to_numpy())) / 60
     method = ("Kay_ripple_detector", "default")
@@ -585,7 +607,7 @@ def test_model_metadata_round_trip(run, conditions_module, tmp_path):
             rd.truth_windows(session.non_events, fraction),
             check_exact=True,
         )
-    channels = _read(tmp_path / "quartic" / "ripple_channels.csv.gz")
+    channels = run.read_table(tmp_path / "quartic" / "ripple_channels.csv.gz")
     pd.testing.assert_frame_equal(
         channels.drop(columns="session_id"), session.ripple_channels, check_exact=True
     )
@@ -856,7 +878,7 @@ def test_a_run_writes_its_files_and_combines_them(run, cli, conditions_module, c
     assert spec["replicates"] == dict.fromkeys(RUN_CONDITIONS, 1)
     assert spec["seeds"] == {condition_id: [20260924] for condition_id in RUN_CONDITIONS}
     assert list(spec["methods"]) == ["Kay_ripple_detector default"]
-    listed = _read(root / "conditions.csv")
+    listed = run.read_table(root / "conditions.csv")
     assert list(listed.columns) == CONDITION_COLUMNS
     assert list(listed.condition_id) == RUN_CONDITIONS
     for condition_id, params in zip(listed.condition_id, listed.params, strict=True):
@@ -865,7 +887,7 @@ def test_a_run_writes_its_files_and_combines_them(run, cli, conditions_module, c
         assert run.condition_is_finished(root / "conditions" / condition_id)
     combined = root / "combined"
     for name in ("sessions.csv.gz", "metrics.csv.gz", "events.csv.gz", "methods.csv"):
-        table = _read(combined / name)
+        table = run.read_table(combined / name)
         assert sorted(set(table.session_id)) == sorted(f"{i}/0" for i in RUN_CONDITIONS)
     for condition_id in RUN_CONDITIONS:
         assert (
@@ -948,7 +970,7 @@ def test_resume_after_two_finished_and_one_interrupted(run, cli, finished_run, t
         assert _snapshot(conditions / name) == files
         assert run.condition_is_finished(conditions / name)
     assert run.condition_is_finished(conditions / "emg_rate=3")
-    combined = _read(root / "combined" / "sessions.csv.gz")
+    combined = run.read_table(root / "combined" / "sessions.csv.gz")
     assert list(combined.condition_id) == sorted(RUN_CONDITIONS)
     assert sorted(p.name for p in (root / "combined" / "results").iterdir()) == sorted(
         RUN_CONDITIONS
@@ -1004,7 +1026,7 @@ def test_combine_names_the_conditions_it_leaves_out(run, cli, finished_run, tmp_
         "included": ["reference"],
         "missing": ["emg_rate=3", "ripple_snr=high"],
     }
-    assert list(_read(combined / "sessions.csv.gz").session_id) == ["reference/0"]
+    assert list(run.read_table(combined / "sessions.csv.gz").session_id) == ["reference/0"]
     assert sorted(p.name for p in (combined / "results").iterdir()) == ["reference"]
     assert not (root / "combined.partial").exists()
     assert not (combined / "stray.csv").exists()

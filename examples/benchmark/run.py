@@ -22,7 +22,10 @@ rebuilds ``combined/`` and needs none.
 
 Outputs, under ``examples/benchmark/output/<run_name>/`` (git-ignored). Tables are
 CSV, ``.csv.gz`` for the large ones; times are seconds, signed errors are detected
-minus truth (negative: early).
+minus truth (negative: early). Read a table with ``read_table``, which keeps text as
+text: pandas' own reader makes a ``setting`` of ``"3.0"``, or a ``level`` of
+``"30"``, a number when no other row of the column says otherwise, and an empty
+``doi`` a NaN.
 
 Run files, written when the run starts:
 
@@ -321,6 +324,16 @@ METRIC_COLUMNS = ("session_id", "method", "setting", *SCORE_COLUMNS)
 FAILURE_COLUMNS = ("session_id", "method", "setting", "error")
 WARNING_COLUMNS = ("session_id", "method", "setting", "category", "message")
 CONDITION_COLUMNS = ("condition_id", "factor", "level", "params")
+# Columns that hold text in every row of every table, "" included.
+TEXT_COLUMNS = frozenset(
+    {
+        *CONDITION_COLUMNS,
+        *METHOD_COLUMNS,
+        *FAILURE_COLUMNS,
+        *WARNING_COLUMNS,
+        "unit_type",
+    }
+)
 
 # Every table a condition directory holds, by file name, with its columns.
 TABLES: dict[str, tuple[str, ...]] = {
@@ -970,6 +983,33 @@ def _write_table(frame: pd.DataFrame, path: Path) -> int:
     compression: Any = {"method": "gzip", "mtime": 0} if path.suffix == ".gz" else None
     frame.to_csv(path, index=False, compression=compression)
     return len(frame)
+
+
+def read_table(path: str | os.PathLike[str]) -> pd.DataFrame:
+    """Read a table the runner wrote, its text as text.
+
+    Parameters
+    ----------
+    path : str or path-like
+        A ``.csv`` or ``.csv.gz`` table of a condition, of ``combined/``, or
+        ``conditions.csv``.
+
+    Returns
+    -------
+    table : pandas.DataFrame
+        Each column of ``TEXT_COLUMNS`` as ``str``, an empty field as ``""``;
+        every other column as pandas infers it, an empty field as NaN, floats
+        exactly as written.
+    """
+    header = pd.read_csv(path, nrows=0).columns
+    text = [column for column in header if column in TEXT_COLUMNS]
+    return pd.read_csv(
+        path,
+        dtype=dict.fromkeys(text, str),
+        keep_default_na=False,
+        na_values={column: [""] for column in header if column not in TEXT_COLUMNS},
+        float_precision="round_trip",
+    )
 
 
 def result_stem(method: str, setting: str) -> str:

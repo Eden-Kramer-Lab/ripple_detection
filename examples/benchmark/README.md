@@ -258,7 +258,9 @@ gives every selected condition `N` replicates, `--duration S` sets the session l
 ### What a run writes
 
 Everything goes to `examples/benchmark/output/<run_name>/`, which git ignores. The
-column lists of every table are in [run.py](run.py)'s module docstring:
+column lists of every table are in [run.py](run.py)'s module docstring. Read a table
+with `run.read_table`: it keeps text columns as text, where `pandas.read_csv` would make
+a `setting` of `"3.0"` or a `level` of `"30"` a number and an empty `doi` a NaN.
 
 - `manifest.json`, `run_spec.json` and `conditions.csv`, written when the run starts;
 - `conditions/<condition_id>/`, one directory per condition: sessions, the truth (the
