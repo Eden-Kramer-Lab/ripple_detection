@@ -47,6 +47,11 @@ HELPERS = [
     "get_multiunit_population_firing_rate",
     "load_literature_datasets",
     "load_literature_parameters",
+    "match_events",
+    "EventMatching",
+    "compare_detectors",
+    "consensus_counts",
+    "label_by_overlap",
     "exclude_close_events",
     "exclude_overlap",
     "exclude_movement",
@@ -211,6 +216,10 @@ class TestCallsWrittenFor1x:
         ripple_detection.simulate_speed,
         ripple_detection.simulate_theta_delta,
         ripple_detection.draw_non_events,
+        ripple_detection.match_events,
+        ripple_detection.compare_detectors,
+        ripple_detection.consensus_counts,
+        ripple_detection.label_by_overlap,
     )
 
     @pytest.mark.parametrize("function", WRAPPED, ids=lambda function: function.__name__)

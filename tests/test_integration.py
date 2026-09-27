@@ -851,6 +851,114 @@ class TestTimeOrigin:
         assert at_zero.multiunit.sum() > 0
         np.testing.assert_array_equal(shifted.multiunit, at_zero.multiunit)
 
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_evaluation(self, origin, moving_session, base):
+        """Matching, comparison, consensus and labels on a moved clock: the
+        same pairs, errors to the timestamps' rounding, overlap ratios to
+        that rounding over the shortest length, and a minimum IoU and a tie
+        between two windows' overlaps measured from the data, so they land
+        exactly on their boundaries."""
+        _, kay, events = base
+        time, shifted = moving_session.time, moving_session.time + origin
+        windows = moving_session.ripple_windows
+        moved_kay = kay.assign(
+            start_time=kay.start_time + origin,
+            end_time=kay.end_time + origin,
+            peak_time=kay.peak_time + origin,
+        )
+        # every event two samples later at the start and one earlier at the
+        # end, read off each clock's own samples
+        index = np.searchsorted(time, events)
+        inner = np.clip(index + np.array([2, -1]), 0, len(time) - 1)
+        shortest = min(np.diff(windows).min(), np.diff(events).min())
+        time_atol = 8 * np.spacing(origin)
+        ratio_atol = 4 * time_atol / shortest
+
+        def assert_matchings_shifted(moved, at_zero):
+            pd.testing.assert_frame_equal(
+                moved.pairs[["reference_index", "detected_index"]],
+                at_zero.pairs[["reference_index", "detected_index"]],
+            )
+            for column in ("iou", "coverage", "temporal_precision"):
+                np.testing.assert_allclose(
+                    moved.pairs[column], at_zero.pairs[column], rtol=0, atol=ratio_atol
+                )
+            for column in ("onset_error", "offset_error", "peak_error"):
+                np.testing.assert_allclose(
+                    moved.pairs[column], at_zero.pairs[column], rtol=0, atol=time_atol
+                )
+            np.testing.assert_array_equal(moved.reference_overlaps, at_zero.reference_overlaps)
+            np.testing.assert_array_equal(moved.detected_overlaps, at_zero.detected_overlaps)
+
+        at_zero = rd.match_events(windows, kay)
+        assert len(at_zero.pairs) >= 4
+        assert_matchings_shifted(rd.match_events(windows + origin, moved_kay), at_zero)
+        narrower = windows + np.array([0.005, -0.005])
+        np.testing.assert_allclose(
+            rd.match_events(windows + origin, moved_kay).boundary_errors(narrower + origin),
+            at_zero.boundary_errors(narrower),
+            rtol=0,
+            atol=time_atol,
+        )
+
+        # an IoU the data gives, which must be exceeded: that pair drops at
+        # every origin, the pairs above it stay
+        minimum_iou = float(np.median(at_zero.pairs.iou))
+        strict = rd.match_events(windows, kay, minimum_iou=minimum_iou)
+        assert 0 < len(strict.pairs) < len(at_zero.pairs)
+        assert_matchings_shifted(
+            rd.match_events(windows + origin, moved_kay, minimum_iou=minimum_iou), strict
+        )
+
+        methods = {"kay": events, "inner": time[inner]}
+        moved_methods = {"kay": events + origin, "inner": shifted[inner]}
+        comparison = rd.compare_detectors(methods, truth=windows)
+        moved_comparison = rd.compare_detectors(moved_methods, truth=windows + origin)
+        counts = ["method_a", "method_b", "n_a", "n_b", "n_matched", "n_shared_truth"]
+        pd.testing.assert_frame_equal(moved_comparison[counts], comparison[counts])
+        assert comparison.onset_error_correlation.notna().all()
+        for column in comparison.columns.drop(counts):
+            atol = time_atol if "difference" in column else ratio_atol
+            np.testing.assert_allclose(
+                moved_comparison[column], comparison[column], rtol=0, atol=atol, err_msg=column
+            )
+        pd.testing.assert_frame_equal(
+            rd.consensus_counts(moved_methods, windows + origin),
+            rd.consensus_counts(methods, windows),
+        )
+
+        # per event, two abutting windows, from its start to its middle sample
+        # and on as far again, and an event reaching as far past each end, so
+        # it overlaps both by as many samples: a tie, to the earlier window
+        middle = (index[:, 0] + index[:, 1]) // 2
+        labels = np.array(["early", "late"] * len(events))
+
+        def labelled(clock):
+            first = np.column_stack([clock[index[:, 0]], clock[middle]])
+            second = np.column_stack([clock[middle], clock[2 * middle - index[:, 0]]])
+            return pd.DataFrame(
+                {
+                    "start_time": np.column_stack([first[:, 0], second[:, 0]]).ravel(),
+                    "end_time": np.column_stack([first[:, 1], second[:, 1]]).ravel(),
+                    "label": labels,
+                }
+            )
+
+        straddling = np.column_stack(
+            [time[2 * index[:, 0] - middle], time[2 * middle - index[:, 0]]]
+        )
+        at_zero_labels = rd.label_by_overlap(straddling, labelled(time))
+        assert (at_zero_labels == "early").all()
+        pd.testing.assert_series_equal(
+            rd.label_by_overlap(
+                np.column_stack(
+                    [shifted[2 * index[:, 0] - middle], shifted[2 * middle - index[:, 0]]]
+                ),
+                labelled(shifted),
+            ),
+            at_zero_labels,
+        )
+
 
 class TestRecordingEdges:
     def test_a_ripple_cut_by_the_recording_end_is_flagged(self):

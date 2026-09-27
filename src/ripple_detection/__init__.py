@@ -62,6 +62,13 @@ from ripple_detection.detectors import (
     theta_delta_ratio,
     trim_events_to_spike_windows,
 )
+from ripple_detection.evaluate import (
+    EventMatching,
+    compare_detectors,
+    consensus_counts,
+    label_by_overlap,
+    match_events,
+)
 from ripple_detection.literature import load_literature_datasets, load_literature_parameters
 from ripple_detection.registry import (
     DETECTORS,
@@ -113,6 +120,7 @@ __all__ = [
     "UNIT_TYPES",
     "Carey_candidate_detector",
     "DetectorSpec",
+    "EventMatching",
     "Karlsson_ripple_detector",
     "Kay_ripple_detector",
     "Long_sharp_wave_ripple_detector",
@@ -126,6 +134,8 @@ __all__ = [
     "__version__",
     "brown",
     "carey_spectral_ripple_score",
+    "compare_detectors",
+    "consensus_counts",
     "count_spikes_in_events",
     "detect_events_from_trace",
     "detect_silence_bounded_events",
@@ -146,8 +156,10 @@ __all__ = [
     "histogram_minimum_threshold",
     "intersect_intervals",
     "intervals_to_mask",
+    "label_by_overlap",
     "load_literature_datasets",
     "load_literature_parameters",
+    "match_events",
     "merge_close_events",
     "minimum_sample_count",
     "multiunit_HSE_detector",
