@@ -1,6 +1,9 @@
 """Shared fixtures for ripple detection tests."""
 
+import importlib
 import os
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -314,3 +317,25 @@ def time(request):
 def stationary(request):
     """A speed of 2 cm/s at every sample, below every default speed threshold."""
     return np.full(request.cls.N_TIME, 2.0)
+
+
+# The benchmark's scripts in examples/benchmark import each other by name
+# (``import recipe_configs``), as they do when run from that directory.
+BENCHMARK = Path(__file__).resolve().parents[1] / "examples" / "benchmark"
+
+
+@pytest.fixture(scope="module")
+def benchmark_import():
+    """``importlib.import_module`` with examples/benchmark on ``sys.path``.
+
+    The directory leaves ``sys.path``, and its modules ``sys.modules``, when
+    the requesting test module finishes, so no other module sees them.
+    """
+    sys.path.insert(0, str(BENCHMARK))
+    try:
+        yield importlib.import_module
+    finally:
+        sys.path.remove(str(BENCHMARK))
+        for name, module in list(sys.modules.items()):
+            if Path(getattr(module, "__file__", None) or "").parent == BENCHMARK:
+                del sys.modules[name]
