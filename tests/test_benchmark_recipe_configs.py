@@ -782,28 +782,34 @@ def test_input_policy_records_every_setting_of_each_detector(recipe_configs, con
 
 
 @pytest.mark.parametrize(
-    ("settings", "detector"),
+    ("settings", "stand_in", "detector", "channels", "selected"),
     [
-        ("EXTERNAL_RIPPLES", "Kay_ripple_detector"),
-        ("EXAMPLE_RIPPLES", "Karlsson_ripple_detector"),
+        (
+            "EXTERNAL_RIPPLES",
+            "external_ripples",
+            "Kay_ripple_detector",
+            slice(0, 1),
+            lambda events: events[["start_time", "end_time", "peak_time"]].to_numpy(),
+        ),
+        (
+            "EXAMPLE_RIPPLES",
+            "example_ripples",
+            "Karlsson_ripple_detector",
+            slice(None),
+            lambda events: bounds(events.nlargest(5, "max_zscore")),
+        ),
     ],
 )
 def test_the_recorded_detector_is_the_one_that_runs(
-    recipe_configs, session, monkeypatch, settings, detector
+    recipe_configs, session, monkeypatch, settings, stand_in, detector, channels, selected
 ):
     spec = getattr(recipe_configs, settings)
     monkeypatch.setitem(spec, "detector", detector)
     monkeypatch.setitem(spec, "options", {})
     filtered = rd.filter_ripple_band(session.lfps, FS, band=spec["band"], time=session.time)
-    if settings == "EXTERNAL_RIPPLES":
-        events = getattr(rd, detector)(session.time, filtered[:, :1], session.speed, FS)
-        expected = events[["start_time", "end_time", "peak_time"]].to_numpy()
-        found = recipe_configs.external_ripples(session)
-    else:
-        events = getattr(rd, detector)(session.time, filtered, session.speed, FS)
-        expected = bounds(events.nlargest(5, "max_zscore"))
-        found = recipe_configs.example_ripples(session)
-    np.testing.assert_array_equal(found, expected)
+    events = getattr(rd, detector)(session.time, filtered[:, channels], session.speed, FS)
+    found = getattr(recipe_configs, stand_in)(session)
+    np.testing.assert_array_equal(found, selected(events))
 
 
 def test_the_stand_ins_are_the_packages_simulation_proxies(
