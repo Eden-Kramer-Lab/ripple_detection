@@ -243,9 +243,10 @@ matched to `truth` first):
 
 | Column | Definition |
 | --- | --- |
-| `jaccard_true` | `jaccard` between the two methods' events that matched a truth event. |
+| `jaccard_true` | `jaccard` between the two methods' events that matched a truth event: whether their detected intervals agree, which they can on different truth events. |
 | `jaccard_false` | `jaccard` between the two methods' events that matched none. |
 | `n_shared_truth` | Truth events both methods matched. |
+| `jaccard_truth_ids` | Whether they found the same truth events: `n_shared_truth / (n_true_a + n_true_b - n_shared_truth)`, `n_true_*` the truth events each matched; NaN when neither matched one. |
 | `onset_error_correlation`, `offset_error_correlation` | Spearman correlation over the shared truth events of the two methods' signed errors against truth; NaN below 3 shared events. |
 
 `consensus_counts` returns one row per truth event: one boolean column per method (matched it or

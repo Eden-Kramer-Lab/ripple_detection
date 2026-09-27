@@ -70,6 +70,7 @@ COMPARISON_COLUMNS = (
     "jaccard_true",
     "jaccard_false",
     "n_shared_truth",
+    "jaccard_truth_ids",
     "onset_error_correlation",
     "offset_error_correlation",
 )
@@ -539,6 +540,7 @@ def _truth_columns(a: EventMatching, b: EventMatching, minimum_iou: float) -> di
             int((~true_a).sum()), int((~true_b).sum()), len(both_false.pairs)
         ),
         "n_shared_truth": len(shared),
+        "jaccard_truth_ids": _jaccard(len(a.pairs), len(b.pairs), len(shared)),
         "onset_error_correlation": _spearman(
             errors_a.onset_error.to_numpy(), errors_b.onset_error.to_numpy(), tolerance
         ),
@@ -592,8 +594,12 @@ def compare_detectors(
           ``fraction_a_earlier_offset``: the same for the ends.
         - ``jaccard_true``, ``jaccard_false``: ``jaccard`` between the two
           methods' events that matched a true event, and between those that
-          matched none.
+          matched none: whether their detected intervals agree, which they
+          can on different true events.
         - ``n_shared_truth``: true events both methods matched.
+        - ``jaccard_truth_ids``: whether they found the same true events,
+          ``n_shared_truth`` over the true events either matched; NaN when
+          neither matched one.
         - ``onset_error_correlation``, ``offset_error_correlation``:
           Spearman's correlation over the shared true events of the two
           methods' signed errors against the truth, errors within the

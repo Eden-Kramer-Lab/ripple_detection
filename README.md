@@ -487,8 +487,9 @@ comparison[["jaccard", "median_onset_difference", "fraction_a_earlier_onset"]]
 
 Both take a detector's DataFrame or an `(n_events, 2)` array; rows need not be sorted, and
 `pairs` refers to them by row position. `minimum_iou` drops pairs that overlap too little to
-count. With a truth, `compare_detectors` also gives the two detectors' agreement on true and
-on false events and the correlation of their errors on the true events both found.
+count. With a truth, `compare_detectors` also gives whether the two detectors found the same
+true events (`jaccard_truth_ids`), how their detections agree on true and on false events, and
+the correlation of their errors on the true events both found.
 `consensus_counts` marks, per true event, which detectors found it, and `label_by_overlap`
 names each detection by the `label` of the window it overlaps longest (for the event types of
 `truth_windows`, below, rename its `type` column `label`). To measure boundary errors against

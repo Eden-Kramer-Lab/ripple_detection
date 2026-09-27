@@ -451,6 +451,8 @@ class TestCompareDetectors:
         # false: a's [20, 21]; b's [20.5, 21.5] and [30, 31]
         assert row.jaccard_false == 1 / (1 + 2 - 1)
         assert row.n_shared_truth == 3
+        # truth events found: a 0-3, b 1-4
+        assert row.jaccard_truth_ids == 3 / (4 + 4 - 3)
         # onset errors on truth 1-3: a 0.2, 0.3, 0.4; b 0.3, 0.1, 0.2; ranks
         # (1, 2, 3) and (3, 1, 2), so rho = 1 - 6 * 6 / (3 * 8)
         assert row.onset_error_correlation == pytest.approx(-0.5)
@@ -548,8 +550,21 @@ class TestCompareDetectors:
     def test_truth_columns_are_filled_with_truth(self):
         events = {"x": np.array([[0.0, 1.0]]), "y": np.array([[0.0, 1.0]])}
         row = compare_detectors(events, truth=np.array([[0.0, 1.0]])).iloc[0]
-        assert (row.jaccard_true, row.n_shared_truth) == (1.0, 1)
+        assert (row.jaccard_true, row.n_shared_truth, row.jaccard_truth_ids) == (1.0, 1, 1.0)
         assert np.isnan(row.jaccard_false)
+
+    def test_intervals_can_agree_on_different_true_events(self):
+        """Each method finds a different true event, and their detections
+        overlap: the intervals agree, the truth events found do not."""
+        truth = np.array([[0.0, 1.0], [1.0, 2.0]])
+        events = {"a": np.array([[0.0, 1.0]]), "b": np.array([[0.9, 2.0]])}
+        row = compare_detectors(events, truth=truth).iloc[0]
+        assert (row.jaccard_true, row.n_shared_truth, row.jaccard_truth_ids) == (1.0, 0, 0.0)
+
+    def test_truth_ids_agreement_is_nan_when_neither_finds_a_true_event(self):
+        events = {"a": np.array([[5.0, 6.0]]), "b": np.empty((0, 2))}
+        row = compare_detectors(events, truth=np.array([[0.0, 1.0]])).iloc[0]
+        assert np.isnan(row.jaccard_truth_ids)
 
     @pytest.mark.parametrize("n_methods", [0, 1])
     def test_fewer_than_two_methods_give_no_rows(self, n_methods):

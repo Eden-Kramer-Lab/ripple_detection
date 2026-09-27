@@ -139,8 +139,9 @@ here is relative to 1.7.1.
   onset, offset and peak errors (detected minus reference: negative is early),
   recall, precision, F1, the split and merged events, and errors against other
   bounds for the same true events; `compare_detectors` gives every pair of
-  methods' agreement and signed differences, and with a truth their agreement on
-  true and false events and the correlation of their errors;
+  methods' agreement and signed differences, and with a truth whether they
+  found the same true events, how their detections agree on true and false
+  events, and the correlation of their errors;
   `consensus_counts` which methods found each true event; `label_by_overlap` the
   window each event overlaps longest.
 - `load_literature_parameters`, the detection parameters of 57 replay papers,
