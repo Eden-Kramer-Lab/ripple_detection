@@ -40,8 +40,9 @@ reference's (``conditions`` "none"), and every condition the column does not
 name, are reported without gating. ``require_ready_report`` is the check a
 benchmark run makes before its first detector call.
 
-Measured sessions are rendered again with the same rendering seed and options:
-with an empty event table and no non-events (the matched noise-only
+Measured sessions are rendered again with the same rendering seed and options,
+but one unit, whose spikes are never read (the signals do not depend on the
+units): with an empty event table and no non-events (the matched noise-only
 rendering: the renderer's fixed random streams make its noise identical), and
 with groups of ripples, sharp waves or gamma bursts whose windows do not
 overlap (isolated components, so a doublet's ripples or a long ripple's
@@ -114,6 +115,8 @@ COUNT_BIN = 0.010
 POWER_WINDOW = 10.0
 LOCAL_SNR_WINDOW = 10.0
 EXAMPLE_HALF_WIDTH = 0.25
+# The units of a re-rendering, whose spikes are never read.
+_ONE_UNIT = {"place": 0, "pyramidal": 0, "interneuron": 1}
 ISOLATION_MARGIN = 0.06  # beyond eight side scales: the Hilbert window's padding and more
 PSD_MAXIMUM = 400.0
 PSD_BANDS = {
@@ -896,11 +899,15 @@ def measure_session(
     time = session.time
     rate = float(session.sampling_frequency)
     bouts = session.running_intervals
+    # a re-rendering is read for its signals and ripple channels alone, which the
+    # units do not change: one unit, the fewest the renderer takes, spares
+    # drawing every unit's spikes
+    signals_only = {**parameters, "render": {**parameters["render"], "unit_counts": _ONE_UNIT}}
 
     def rendered(
         table: pd.DataFrame, non_events: pd.DataFrame | None = None
     ) -> rd.SimulatedSession:
-        return render_tables(parameters, replicate, time, table, non_events, bouts)
+        return render_tables(signals_only, replicate, time, table, non_events, bouts)
 
     out = _Collector()
     events, non_events = session.events, session.non_events
@@ -919,7 +926,7 @@ def measure_session(
 
     rendering = rendered(events.iloc[:0])
     noise = _NoiseOnly(rendering.lfps, rendering.sharp_wave_lfp)
-    del rendering  # its spike array is as large as the session's
+    del rendering
     _check_noise_matched(out, time, lfps, radiatum, noise, events, non_events, parameters)
     band_sds = filter_ripple_band(noise.lfps, sampling_frequency=rate).std(axis=0)
     filtered_noise = filter_ripple_band(noise.lfps[:, 0], sampling_frequency=rate)
