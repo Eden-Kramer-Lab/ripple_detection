@@ -601,6 +601,51 @@ FFT windows and finite/native-grid kernels are not assumed equivalent to generic
 thresholding. A method without a verified experimental representation remains a fixed
 comparison point; no detector body is replaced to make attribution possible.
 
+As implemented in phase 3 (2026-09-27), where the plan left a choice open:
+
+- **Coverage.** 77 configurations (the 57 default inventories, the demo's two protocol
+  variants `olafsdottir_2015.bayesian_candidates` and `olafsdottir_2017.trajectory`, and 18
+  additional inventories) and 11 exclusions partition the 86 `list_methods()` names. Excluded:
+  `bush_2022_ripples` (4800 Hz) and `olafsdottir_2017_ripples` (1200 Hz), since resampling is
+  not an input policy; nine additional inventories whose required options have no published
+  value (`gridchyn_2020_ripples`, `xu_2019_ripples`, `farooq_2019_neuron_ripples`,
+  `farooq_2019_science_ripples`, `chenani_2019_hfe`, `liu_2019_ripples`,
+  `liu_2019_ripple_frames`, `drieu_2018_ripples`, `diba_2007_ripples`). The maintainer kept
+  Diba excluded rather than assume Csicsvari 1999b's 1.6 ms RMS window.
+- **One input policy** (`simulated_awake_session`): a recording holds exactly the inputs the
+  method declares for its options (`when` evaluated on the resolved options; `unless` never
+  lapses, since only declared inputs are supplied), built with `Recording.from_arrays`, so no
+  simulation-only fallback runs. Place cells are the units labelled `place` (also standing in
+  for any template, probe-sequence or block-specific selection; `templates` is one template of
+  them), pyramidal cells `place` or `pyramidal`. Sleep, baseline and behavior intervals are all
+  rest, the samples outside the known running bouts (a session without rest raises); the
+  reference LFP is zeros. External ripples (Yang 2024, Grosmark 2016) come from
+  `Zugaro_ripple_detector` on channel 0 at 130-200 Hz (low 2, high 5, at most 0.2 s, no speed
+  rule), Carey's example ripples are the five largest default Kay events by `max_zscore`: the
+  package's own simulation proxies, run by name through the registry and recorded with every
+  resolved setting. Unreported measured-only options take the package's demonstration value
+  (Stella, Nádasdy, Kudrimoti, Wikenheiser). Each stand-in is written into the
+  configuration's `assumptions`, which a configuration must match (`configure` derives them;
+  a stale copy raises when a recording or record is built).
+- **Stage.** `configure` sets `stage="detection"` for every method with a decoding stage;
+  decoding-candidate stages (replay gating) are not configured.
+- **Primary expressions**, pinned in a test: `network` where events join an LFP ripple or SWR
+  detection with a population burst (12, including Krause 2022's SWRs trimmed to place-cell
+  activity), `ripple` for LFP events even with a participation or spiking gate (30: Harvey,
+  Wikenheiser, Bhattarai's ripples, Gupta's gate), `burst` for population-only events (35,
+  including Igata 2021, whose implemented candidates are population-only). None is
+  `sharp_wave`.
+- **Records.** `method_record(config)` is one all-string row of `methods.csv` minus
+  `session_id`. Method options follow the package's attrs JSON convention (non-finite as
+  None, so they equal `attrs["options"]`); detector settings in `input_policy` write
+  non-finite values as `"inf"`, since None is itself a setting there.
+- **For the runner** (measured on a 600 s reference-size session): building the 77 recordings
+  takes about 13 s and running them about 40 s. 51 configurations take spike counts, and
+  `from_arrays` validates float64 counts chunkwise (136 ms each); integer counts made
+  recordings identical and results exactly equal on the configurations checked, and cut
+  recording time from 10.5 s to 3.7 s. Each such recording peaks at about 476 MB on top of the
+  session's 432 MB of float64 counts, so a worker needs about 0.9 GB, not 0.5 GB.
+
 ## Conditions grid
 
 `REFERENCE` is a dict of four dicts, keyed by where the values go: `"session"`
