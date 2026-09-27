@@ -2116,20 +2116,6 @@ def _merged_bounds(
     return events
 
 
-def _check_bounds(name: str, bounds: FloatArray) -> None:
-    """Raise ``ValueError`` naming `name` and the first row of the
-    ``(n_events, 2)`` `bounds` whose start or end is not finite, or whose end
-    comes before its start."""
-    bad = ~np.isfinite(bounds).all(axis=1) | (bounds[:, 1] < bounds[:, 0])
-    if bad.any():
-        row = int(np.flatnonzero(bad)[0])
-        msg = (
-            f"{name} row {row} is {bounds[row].tolist()}: every start and end must be "
-            "finite, with the start no later than the end."
-        )
-        raise ValueError(msg)
-
-
 def _overlaps(
     event_times: ArrayLike | pd.DataFrame,
     reference_event_times: ArrayLike | pd.DataFrame,
@@ -2150,10 +2136,8 @@ def _overlaps(
     to within about 1e-11 s, so an overlap measured from a session-clock
     origin rounds that far from its nominal value."""
     _check_non_negative(minimum_overlap=minimum_overlap)
-    events = _event_bounds(event_times)
-    reference = _event_bounds(reference_event_times)
-    _check_bounds("event_times", events)
-    _check_bounds("reference_event_times", reference)
+    events = _checked_bounds(event_times, "event_times")
+    reference = _checked_bounds(reference_event_times, "reference_event_times")
     if not (len(events) and len(reference)):
         return events, np.zeros(len(events), dtype=bool)
     # a zero-length reference has no duration to overlap
@@ -2564,15 +2548,7 @@ def _bound_tolerance(*arrays: FloatArray) -> float:
 def _checked_intervals(intervals: ArrayLike | pd.DataFrame, name: str) -> FloatArray:
     """``[start, end]`` rows that are finite, each start no later than its
     end, sorted by start and disjoint: each start after the previous end."""
-    bounds = _event_bounds(intervals)
-    bad = ~np.isfinite(bounds).all(axis=1) | (bounds[:, 1] < bounds[:, 0])
-    if bad.any():
-        row = int(np.flatnonzero(bad)[0])
-        msg = (
-            f"{name} row {row} is {bounds[row].tolist()}: every start and end must be "
-            "finite, with the start no later than the end."
-        )
-        raise ValueError(msg)
+    bounds = _checked_bounds(intervals, name)
     if np.any(np.diff(bounds[:, 0]) < 0):
         msg = f"{name} must be sorted by start time: {name}[np.argsort({name}[:, 0])]."
         raise ValueError(msg)
@@ -2709,7 +2685,8 @@ def _inside_mask(events: FloatArray, intervals: FloatArray) -> BoolArray:
 
 
 def _checked_bounds(event_times: ArrayLike | pd.DataFrame, name: str) -> FloatArray:
-    """Event bounds that are finite, each start no later than its end."""
+    """Event bounds that are finite, each start no later than its end; else
+    ``ValueError`` naming `name` and the first row that is not."""
     events = _event_bounds(event_times)
     bad = ~np.isfinite(events).all(axis=1) | (events[:, 1] < events[:, 0])
     if bad.any():

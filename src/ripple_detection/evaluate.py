@@ -31,9 +31,8 @@ from ripple_detection.core import (
     BoolArray,
     FloatArray,
     IntArray,
-    _check_bounds,
     _check_non_negative,
-    _event_bounds,
+    _checked_bounds,
 )
 
 EventInventory: TypeAlias = ArrayLike | pd.DataFrame
@@ -78,13 +77,6 @@ COMPARISON_COLUMNS = (
 
 _MINIMUM_SHARED_FOR_CORRELATION = 3
 """Shared truth events below which an error correlation is NaN."""
-
-
-def _checked(events: EventInventory, name: str) -> FloatArray:
-    """``events`` as ``(n_events, 2)`` float bounds, finite and in order."""
-    bounds = _event_bounds(events)
-    _check_bounds(name, bounds)
-    return bounds
 
 
 def _peaks(events: EventInventory, n_events: int) -> FloatArray:
@@ -319,7 +311,7 @@ class EventMatching:
             reference, or a start or end that is not finite or out of order.
 
         """
-        bounds = _checked(reference, "reference")
+        bounds = _checked_bounds(reference, "reference")
         if len(bounds) != len(self.reference):
             msg = (
                 f"reference has {len(bounds)} events; the matching was made with "
@@ -405,8 +397,8 @@ def match_events(
 
     """
     _check_minimum_iou(minimum_iou)
-    reference_bounds = _checked(reference, "reference")
-    detected_bounds = _checked(detected, "detected")
+    reference_bounds = _checked_bounds(reference, "reference")
+    detected_bounds = _checked_bounds(detected, "detected")
     reference_peaks = _peaks(reference, len(reference_bounds))
     detected_peaks = _peaks(detected, len(detected_bounds))
 
@@ -637,10 +629,10 @@ def compare_detectors(
     _check_mapping(events)
     _check_minimum_iou(minimum_iou)
     names = list(events)
-    bounds = {name: _checked(events[name], f"events[{name!r}]") for name in names}
+    bounds = {name: _checked_bounds(events[name], f"events[{name!r}]") for name in names}
     to_truth: dict[str, EventMatching] = {}
     if truth is not None:
-        truth_bounds = _checked(truth, "truth")
+        truth_bounds = _checked_bounds(truth, "truth")
         to_truth = {
             name: match_events(truth_bounds, bounds[name], minimum_iou=minimum_iou)
             for name in names
@@ -721,11 +713,13 @@ def consensus_counts(
     if "n_methods" in events:
         msg = "No method may be named 'n_methods', the column that counts them."
         raise ValueError(msg)
-    truth_bounds = _checked(truth, "truth")
+    truth_bounds = _checked_bounds(truth, "truth")
     found = {}
     for name, inventory in events.items():
         matching = match_events(
-            truth_bounds, _checked(inventory, f"events[{name!r}]"), minimum_iou=minimum_iou
+            truth_bounds,
+            _checked_bounds(inventory, f"events[{name!r}]"),
+            minimum_iou=minimum_iou,
         )
         hit = np.zeros(len(truth_bounds), dtype=bool)
         hit[matching.pairs.reference_index.to_numpy()] = True
@@ -789,8 +783,8 @@ def label_by_overlap(
             "truth_windows output, rename 'type' to 'label'."
         )
         raise ValueError(msg)
-    bounds = _checked(events, "events")
-    window_bounds = _checked(windows, "windows")
+    bounds = _checked_bounds(events, "events")
+    window_bounds = _checked_bounds(windows, "windows")
     labels = np.full(len(bounds), unlabeled, dtype=object)
     if len(bounds) and len(window_bounds):
         overlap = _overlap_matrix(bounds, window_bounds)
