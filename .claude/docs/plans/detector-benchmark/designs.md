@@ -309,6 +309,36 @@ participants, before the spikes, in `non_event_id` order):
 | `fast_gamma` | `_render_ripple` with `f_start = f_end = frequency`, power 2, scaled by `_scale_to_snr` using the row's stored `(snr_band_low, snr_band_high)` for both burst filtering and the stationary noise SD; added to every channel with the recording-wide channel gains. |
 | `theta_burst` | Picks `n_units` place units; multiplies their modulation by `1 + (amplitude - 1) * envelope`. |
 
+As implemented in phase 1b (2026-09-26), where the design above left a choice open:
+
+- **Draw order.** One draw from `rng` seeds a stream per kind, in `NON_EVENT_TYPES` order.
+  Each stream draws its Poisson count, the positions, then a fixed block of uniforms per
+  non-event: leakage 4 (units, spikes, ISI, channel), EMG 1 (span), gamma 3 (frequency, span,
+  SNR), theta 2 (units, span). One kind's rate or ranges never change another kind's rows.
+  Rejected non-events are dropped, not redrawn.
+- **Allowed time.** Every kind avoids the recording's first and last second, as events do.
+  "Any" is `[t0 + 1, t_end - 1]`; "running" is the bouts clipped to it.
+- **`rates`.** A kind left out of the mapping never occurs, as with `type_probabilities`.
+- **Spans.** EMG, gamma and theta spans are symmetric, `rise = decay = span / 6`.
+- **Leakage.** A burst's units fire together at the same sample, the nearest one to each
+  spike time. The waveform is added once per spike sample, so `amplitude` is the leak's peak.
+  At render, the side scales must equal `(n_spikes - 1) isi / 6`, so the truth windows cannot
+  drift from the spikes. Leaked spikes are added after the draw under either spike model, so
+  they are not subject to `refractory_period` (as [refractory
+  spiking](simulator-validation.md#refractory-spiking) specifies).
+- **EMG.** Noise is drawn over the envelope's window and filtered with `sosfiltfilt` without
+  padding; the edge transients fall where the envelope is below 1e-14. It is scaled by the
+  analytic SD of forward-backward-filtered unit white noise (`sqrt(mean |H|^4)`), so
+  `amplitude` is the expected SD at the peak.
+- **Gamma.** Added to the pyramidal-layer channels only, not the radiatum. A band's noise SD is
+  computed once per distinct stored band.
+- **Theta.** The factors multiply a unit's intensity after the additive burst and interneuron
+  gains. Under Poisson spiking the changed intensities also change the counts drawn for later
+  units: statistically the same, not bit-identical.
+- **Render validation.** `envelope_power` must be 2. A leakage burst may use at most the place
+  and other pyramidal units, a theta burst at most the place units. A gamma band must be
+  filterable at the rate. EMG needs the rate above 200 Hz.
+
 ## Truth windows
 
 ```python
