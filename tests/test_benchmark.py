@@ -6,6 +6,7 @@ short simulated sessions with a few methods."""
 import dataclasses
 import json
 import shutil
+import subprocess
 import threading
 import warnings
 from concurrent.futures import ThreadPoolExecutor
@@ -185,9 +186,11 @@ COUNTED_RECIPES = (
     "davidson_2009",
 )
 
-# For the command line: three conditions, one replicate of 30 s, one method.
+# For the command line: three conditions, one replicate of 30 s, one method, and
+# the commit the runs record, whatever state the checkout running the tests is in.
 RUN_CONDITIONS = ["reference", "ripple_snr=high", "emg_rate=3"]
 RUN_METHODS = (("Kay_ripple_detector", "default"),)
+COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
 
 @pytest.fixture(scope="module")
@@ -767,6 +770,7 @@ def cli(run, tmp_path, monkeypatch):
     reports, sessions = [], []
     monkeypatch.setattr(run, "OUTPUT", tmp_path)
     monkeypatch.setattr(run, "_require_report", _fake_report(reports))
+    monkeypatch.setattr(run, "_git_commit", lambda: COMMIT)
     real = run.run_session
 
     def counted(condition, replicate, methods=None, overrides=None):
@@ -797,6 +801,7 @@ def finished_run(run, tmp_path_factory):
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(run, "OUTPUT", root)
         patch.setattr(run, "_require_report", _fake_report([]))
+        patch.setattr(run, "_git_commit", lambda: COMMIT)
         run.run_benchmark(
             "v1",
             validation_report="report/spec.json",
@@ -836,6 +841,7 @@ def test_a_run_writes_its_files_and_combines_them(run, cli, conditions_module, c
     assert set(manifest) == MANIFEST_KEYS
     assert manifest["finished"] is not None
     spec = json.loads((root / "run_spec.json").read_text())
+    assert manifest["git_commit"] == spec["git_commit"] == COMMIT
     assert spec["validation_report"] == {
         "path": "report/spec.json",
         "sha256": "0" * 64,
@@ -1014,6 +1020,75 @@ def test_a_report_that_cannot_back_the_run_stops_it_first(run, cli, tmp_path, mo
         start()
     assert sessions == []
     assert list(tmp_path.iterdir()) == []
+
+
+def _git(directory, *arguments):
+    found = subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+            *arguments,
+        ],
+        cwd=directory,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return found.stdout.strip()
+
+
+def test_the_git_commit_is_flagged_dirty(run, tmp_path):
+    """Changes under src/ or examples/benchmark/, untracked files included,
+    make the commit ``<sha>-dirty``; changes elsewhere do not."""
+    assert run._git_commit(tmp_path) == "unknown"
+    repository = tmp_path / "repository"
+    for name in ("src/a.py", "examples/benchmark/b.py", "docs/c.md"):
+        (repository / name).parent.mkdir(parents=True, exist_ok=True)
+        (repository / name).write_text("0\n")
+    _git(repository, "init", "-q")
+    _git(repository, "add", ".")
+    _git(repository, "commit", "-q", "-m", "first")
+    sha = _git(repository, "rev-parse", "HEAD")
+    # the commit is the repository's, whichever of its directories asks
+    here = repository / "examples" / "benchmark"
+    assert run._git_commit(here) == sha
+    (repository / "docs" / "c.md").write_text("1\n")
+    assert run._git_commit(here) == sha
+    (repository / "src" / "a.py").write_text("1\n")
+    assert run._git_commit(here) == f"{sha}-dirty"
+    _git(repository, "checkout", "-q", "--", "src")
+    assert run._git_commit(here) == sha
+    (here / "new.py").write_text("")
+    assert run._git_commit(here) == f"{sha}-dirty"
+
+
+def test_an_unknown_or_dirty_commit_stops_the_run(
+    run, cli, finished_run, tmp_path, monkeypatch
+):
+    start, _, sessions = cli
+    monkeypatch.setattr(run, "_git_commit", lambda: "unknown")
+    with pytest.raises(SystemExit, match="git commit is unknown"):
+        start()
+    assert list(tmp_path.iterdir()) == []
+    root = _copy(finished_run, tmp_path)
+    (root / "conditions" / "emg_rate=3").rename(root / "conditions" / "emg_rate=3.partial")
+    before = _snapshot(root)
+    with pytest.raises(SystemExit, match="git commit is unknown"):
+        start(resume=True)
+    # a dirty tree may start a run, which records it, but never resume one
+    monkeypatch.setattr(run, "_git_commit", lambda: f"{COMMIT}-dirty")
+    with pytest.raises(SystemExit, match="committed, clean code"):
+        start(resume=True)
+    assert _snapshot(root) == before
+    assert sessions == []
+    start("dirty")
+    spec = json.loads((tmp_path / "dirty" / "run_spec.json").read_text())
+    assert spec["git_commit"] == f"{COMMIT}-dirty"
 
 
 def test_the_command_line_checks_its_arguments(run, cli, finished_run, tmp_path):

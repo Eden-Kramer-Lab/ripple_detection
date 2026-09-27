@@ -33,7 +33,8 @@ Run files, written when the run starts:
   parameters after overrides such as ``--duration``), ``replicates`` and ``seeds``
   per condition, ``methods`` (each method and setting's record, as in
   ``methods.csv``), ``scoring`` (``MATCH_IOU_LEVELS``, ``TRUTH_FRACTIONS``, the
-  expressions), ``package_version``, ``git_commit`` and ``validation_report``
+  expressions), ``package_version``, ``git_commit`` (``"<hash>-dirty"`` when
+  ``src/`` or ``examples/benchmark/`` has uncommitted changes) and ``validation_report``
   (``path``, ``sha256`` of its spec.json, ``simulation_fingerprint``,
   ``target_table_hash``).
 - ``conditions.csv``: ``condition_id``, ``factor``, ``level``, ``params`` (JSON of the
@@ -208,7 +209,8 @@ DETECTOR_EXPRESSION: dict[str, str] = {
 REFERENCE_REPLICATES = 20
 REPLICATES = 10
 
-OUTPUT = Path(__file__).with_name("output")
+HERE = Path(__file__).resolve().parent
+OUTPUT = HERE / "output"
 
 # Long's sweep value v sets both of its (bound, peak) threshold pairs to (0.5, v).
 _LONG_BOUND = 0.5
@@ -1284,18 +1286,24 @@ def _require_report(
     }
 
 
-def _git_commit() -> str:
-    try:
+def _git_commit(directory: str | os.PathLike[str] = HERE) -> str:
+    """The checkout's commit: ``HEAD``'s hash, ``"<hash>-dirty"`` when the
+    working tree has changes under ``src/`` or ``examples/benchmark/``
+    (untracked files included), ``"unknown"`` outside a git checkout."""
+
+    def git(*arguments: str) -> str:
         found = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=Path(__file__).parent,
-            capture_output=True,
-            text=True,
-            check=True,
+            ["git", *arguments], cwd=directory, capture_output=True, text=True, check=True
         )
+        return found.stdout.strip()
+
+    try:
+        commit = git("rev-parse", "HEAD")
+        # ":/" names a path from the top of the checkout, wherever git runs
+        changed = git("status", "--porcelain", "--", ":/src", ":/examples/benchmark")
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
-    return found.stdout.strip()
+    return f"{commit}-dirty" if changed else commit
 
 
 def run_specification(
@@ -1536,9 +1544,11 @@ def run_benchmark(
     ------
     SystemExit
         The report is not ready or does not cover the conditions, a condition
-        id is unknown, the run exists and ``resume`` is not set, or its saved
-        specification differs from this one (naming the differing keys).
-        Nothing is written or deleted before these checks.
+        id is unknown, the git commit is unknown, the run exists and
+        ``resume`` is not set, or, resuming, the working tree has changes
+        (``"-dirty"``) or the saved specification differs from this one
+        (naming the differing keys). Nothing is written or deleted before
+        these checks.
     Exception
         Whatever a session raises outside a method's call, at once: with
         workers, the queued sessions are cancelled first. Finished conditions
@@ -1567,6 +1577,19 @@ def run_benchmark(
         msg = f"The validation report cannot back this run: {error}"
         raise SystemExit(msg) from None
     spec = run_specification(selected, counts, overrides, report, methods)
+    if spec["git_commit"] == "unknown":
+        msg = (
+            "The git commit is unknown (not a git checkout, or no git): a run records "
+            "the commit of the code it ran, so it cannot start or resume."
+        )
+        raise SystemExit(msg)
+    if resume and spec["git_commit"].endswith("-dirty"):
+        msg = (
+            "Resume accepts only committed, clean code: src/ or examples/benchmark/ has "
+            "changes, which the commit does not identify. Commit them and start a new "
+            "run, or set them aside."
+        )
+        raise SystemExit(msg)
 
     root = OUTPUT / run_name
     conditions_directory = root / "conditions"

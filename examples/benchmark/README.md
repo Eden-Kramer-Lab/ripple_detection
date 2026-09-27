@@ -272,7 +272,16 @@ method and setting with its resolved options, the package version, the git commi
 the report) and stops, naming the keys that differ, if it is not the saved one: a run is
 never continued under other settings. It keeps each condition whose `done.json` matches
 its files, deletes each `.partial` directory and each condition that fails that check,
-and runs those again. `combined/` is rebuilt at the end of every run, and at any time by
+and runs those again.
+
+Resume accepts only committed, clean code: the commit the run started from, with no
+change under `src/` or `examples/benchmark/`. The run specification records the commit
+as `<hash>-dirty` when there is one (untracked files included); a dirty run can start,
+but not resume, since the flag does not identify the changes, and outside a git
+checkout (commit `unknown`) no run starts or resumes. Any new commit is a new
+specification, so a run cannot be resumed across one: start a new run instead.
+
+`combined/` is rebuilt at the end of every run, and at any time by
 
 ```bash
 uv run python examples/benchmark/run.py --run-name v1 --combine
