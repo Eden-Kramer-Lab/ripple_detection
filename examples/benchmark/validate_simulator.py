@@ -70,8 +70,8 @@ from conditions import (
     REFERENCE_REVISIONS,
     Condition,
     ReferenceRevision,
-    conditions,
     resolve,
+    select_conditions,
     session_seed,
     simulate_condition,
 )
@@ -1991,37 +1991,6 @@ def _flatten(value: Any, prefix: str = "") -> dict[str, Any]:
     return {prefix.rstrip("."): value}
 
 
-def select_conditions(text: str) -> tuple[Condition, ...]:
-    """Conditions by ``"all"`` or comma-separated ids, in the benchmark's order.
-
-    A crossed cell's id holds a comma itself, so the longest known id is taken
-    at each position: ``"ripple_snr=low,participation=low"`` is the crossed
-    cell, never its two one-factor conditions.
-
-    Raises
-    ------
-    ValueError
-        An id is not a condition's.
-    """
-    everything = conditions()
-    if text.strip() == "all":
-        return everything
-    known = {condition.condition_id: condition for condition in everything}
-    tokens = [token.strip() for token in text.split(",") if token.strip()]
-    chosen, position = [], 0
-    while position < len(tokens):
-        for end in range(len(tokens), position, -1):
-            candidate = ",".join(tokens[position:end])
-            if candidate in known:
-                chosen.append(candidate)
-                position = end
-                break
-        else:
-            msg = f"Unknown condition {tokens[position]!r}; use 'all' or ids of conditions()."
-            raise ValueError(msg)
-    return tuple(c for c in everything if c.condition_id in set(chosen))
-
-
 def revision_records(revisions: Sequence[ReferenceRevision]) -> list[dict[str, Any]]:
     """Each revision of a ``REFERENCE`` value as a dict of JSON types, the
     form ``spec.json`` holds."""
@@ -2576,16 +2545,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the validation from the command line; 0 when the report is ready."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--validation-id", required=True)
-    parser.add_argument("--conditions", default="all", help="'all' or ids, comma-separated")
+    parser.add_argument(
+        "--conditions",
+        default="all",
+        help="'all' or ids, comma-separated (a crossed cell's id holds its own comma)",
+    )
     parser.add_argument("--replicates", type=int, default=DEFAULT_REPLICATES)
     parser.add_argument("--duration", type=float, default=None, help="seconds per session")
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--output-root", type=Path, default=OUTPUT_ROOT)
     parser.add_argument("--no-figures", action="store_true")
     arguments = parser.parse_args(argv)
+    try:
+        selected = select_conditions(arguments.conditions)
+    except ValueError as error:
+        parser.error(str(error))
     spec_path = validate(
         arguments.validation_id,
-        select_conditions(arguments.conditions),
+        selected,
         n_replicates=arguments.replicates,
         duration=arguments.duration,
         workers=arguments.workers,

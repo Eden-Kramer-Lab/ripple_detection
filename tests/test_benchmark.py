@@ -934,6 +934,26 @@ def test_the_command_line_checks_its_arguments(run, cli, finished_run, tmp_path)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["v1"]
 
 
+def test_the_command_line_takes_a_crossed_cell(run, conditions_module, monkeypatch):
+    chosen = []
+    monkeypatch.setattr(
+        run, "run_benchmark", lambda name, **options: chosen.append(options["condition_ids"])
+    )
+    for text in ("ripple_snr=low,participation=low", "reference,participation=low"):
+        run.main(["--run-name", "x", "--conditions", text, "--validation-report", "r"])
+    run.main(["--run-name", "x", "--validation-report", "r"])
+    assert chosen == [
+        ["ripple_snr=low,participation=low"],
+        ["reference", "participation=low"],
+        [c.condition_id for c in conditions_module.conditions()],
+    ]
+    with pytest.raises(SystemExit):
+        run.main(
+            ["--run-name", "x", "--conditions", "reference,nope", "--validation-report", "r"]
+        )
+    assert len(chosen) == 3
+
+
 def test_smoke_prints_its_measurements(cli, capsys):
     start, _, sessions = cli
     start("smoke", smoke=True, condition_ids=None, replicates=None, workers=4)

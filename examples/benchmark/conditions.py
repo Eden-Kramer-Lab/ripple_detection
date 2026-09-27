@@ -7,7 +7,8 @@ benchmark session, at its reference value, in four sections: ``"session"``
 (``simulate_network_session``). A ``Condition`` changes some of them, each named
 by a dotted key: ``"events.ripple_snr"``, or ``"non_events.rates.emg"`` for one
 entry of a mapping. ``conditions()`` lists the benchmark's conditions: the
-reference, one factor at a time, and two crossed pairs of factors.
+reference, one factor at a time, and two crossed pairs of factors;
+``select_conditions`` reads a command line's selection of them.
 ``REFERENCE_REVISIONS`` records every change to a ``REFERENCE`` value after it
 was first set, with its reason and evidence.
 
@@ -318,6 +319,51 @@ def conditions() -> tuple[Condition, ...]:
         )
     # a copy, so a caller changing a mapping value changes no later call's
     return copy.deepcopy(tuple(found))
+
+
+def select_conditions(text: str) -> tuple[Condition, ...]:
+    """Conditions by ``"all"`` or comma-separated ids, in the benchmark's order.
+
+    A crossed cell's id holds a comma itself, so the longest known id is taken
+    at each position: ``"ripple_snr=low,participation=low"`` is the crossed
+    cell, never its two one-factor conditions.
+
+    Parameters
+    ----------
+    text : str
+        ``"all"``, or condition ids separated by commas (spaces around an id
+        are ignored), as a command line's ``--conditions`` takes them.
+
+    Returns
+    -------
+    selected : tuple of Condition
+        Each named condition once, in ``conditions()`` order.
+
+    Raises
+    ------
+    ValueError
+        An id is not a condition's, or ``text`` names none.
+    """
+    everything = conditions()
+    if text.strip() == "all":
+        return everything
+    known = {condition.condition_id for condition in everything}
+    tokens = [token.strip() for token in text.split(",") if token.strip()]
+    if not tokens:
+        msg = f"No condition id in {text!r}; use 'all' or ids of conditions()."
+        raise ValueError(msg)
+    chosen, position = set(), 0
+    while position < len(tokens):
+        for end in range(len(tokens), position, -1):
+            candidate = ",".join(tokens[position:end])
+            if candidate in known:
+                chosen.add(candidate)
+                position = end
+                break
+        else:
+            msg = f"Unknown condition {tokens[position]!r}; use 'all' or ids of conditions()."
+            raise ValueError(msg)
+    return tuple(c for c in everything if c.condition_id in chosen)
 
 
 def session_seed(replicate: int) -> int:

@@ -500,21 +500,31 @@ class TestReport:
         np.testing.assert_array_equal(again.lfps, session.lfps)
         np.testing.assert_array_equal(again.multiunit, session.multiunit)
 
-    def test_select_conditions(self, validate):
-        assert len(validate.select_conditions("all")) == 43
-        chosen = validate.select_conditions("spatial_profile=local,reference")
-        assert [c.condition_id for c in chosen] == ["reference", "spatial_profile=local"]
-        # a crossed cell's id holds a comma: the longest known id wins
-        crossed = validate.select_conditions("ripple_snr=low,participation=low")
-        assert [c.condition_id for c in crossed] == ["ripple_snr=low,participation=low"]
-        with pytest.raises(ValueError, match="Unknown condition 'nope'"):
-            validate.select_conditions("reference,nope")
+    def test_the_command_line_takes_a_crossed_cell(self, validate, tmp_path, monkeypatch):
+        chosen = []
 
-    def test_validate_rejects_empty_requests(self, validate, tmp_path):
+        def validated(validation_id, selected, **options):
+            chosen.append([c.condition_id for c in selected])
+            spec = tmp_path / "spec.json"
+            spec.write_text(json.dumps({"status": "ready", "reasons": []}))
+            return spec
+
+        monkeypatch.setattr(validate, "validate", validated)
+        for text in ("ripple_snr=low,participation=low", "reference,participation=low"):
+            assert validate.main(["--validation-id", "x", "--conditions", text]) == 0
+        assert chosen == [
+            ["ripple_snr=low,participation=low"],
+            ["reference", "participation=low"],
+        ]
+        with pytest.raises(SystemExit):
+            validate.main(["--validation-id", "x", "--conditions", "reference,nope"])
+        assert len(chosen) == 2
+
+    def test_validate_rejects_empty_requests(self, validate, conditions, tmp_path):
         with pytest.raises(ValueError, match="n_replicates"):
             validate.validate(
                 "x",
-                validate.select_conditions("reference"),
+                conditions.conditions()[:1],
                 n_replicates=0,
                 output_root=tmp_path,
             )

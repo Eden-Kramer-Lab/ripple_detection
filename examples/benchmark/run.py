@@ -132,7 +132,14 @@ from typing import Any, cast
 import numpy as np
 import pandas as pd
 import scipy
-from conditions import Condition, conditions, resolve, session_seed, simulate_condition
+from conditions import (
+    Condition,
+    conditions,
+    resolve,
+    select_conditions,
+    session_seed,
+    simulate_condition,
+)
 from recipe_configs import (
     RECIPES,
     RecipeConfig,
@@ -1598,7 +1605,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--run-name", required=True)
     parser.add_argument(
-        "--conditions", default="all", help="'all' or condition ids separated by commas"
+        "--conditions",
+        default="all",
+        help="'all' or ids, comma-separated (a crossed cell's id holds its own comma)",
     )
     parser.add_argument("--replicates", type=int)
     parser.add_argument("--duration", type=float, help="session length, seconds")
@@ -1623,6 +1632,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     if args.validation_report is None:
         parser.error("--validation-report is required for every run that simulates.")
+    try:
+        selected = select_conditions(args.conditions)
+    except ValueError as error:
+        parser.error(str(error))
     if args.smoke and (args.conditions != "all" or args.replicates is not None):
         parser.error(
             "--smoke runs the reference condition once; drop --conditions and --replicates."
@@ -1630,7 +1643,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     run_benchmark(
         args.run_name,
         validation_report=args.validation_report,
-        condition_ids=None if args.conditions == "all" else args.conditions.split(","),
+        condition_ids=[condition.condition_id for condition in selected],
         replicates=args.replicates,
         duration=args.duration,
         workers=args.workers,

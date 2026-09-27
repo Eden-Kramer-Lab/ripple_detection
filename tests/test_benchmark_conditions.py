@@ -294,6 +294,25 @@ def test_common_random_numbers(module, sessions):
         assert np.any(participants != expected)
 
 
+def test_select_conditions(module):
+    assert module.select_conditions("all") == module.conditions()
+    chosen = module.select_conditions("spatial_profile=local, reference")
+    assert [c.condition_id for c in chosen] == ["reference", "spatial_profile=local"]
+    # a crossed cell's id holds a comma: the longest known id wins
+    crossed = module.select_conditions("ripple_snr=low,participation=low")
+    assert [c.condition_id for c in crossed] == ["ripple_snr=low,participation=low"]
+    both = module.select_conditions("ripple_snr=low,participation=low,ripple_snr=low")
+    assert [c.condition_id for c in both] == [
+        "ripple_snr=low",
+        "ripple_snr=low,participation=low",
+    ]
+    for text in ("reference,nope", "ripple_snr=low,participation=none"):
+        with pytest.raises(ValueError, match="Unknown condition"):
+            module.select_conditions(text)
+    with pytest.raises(ValueError, match="No condition id"):
+        module.select_conditions(" , ")
+
+
 def test_running_schedule(module):
     for duration in (0.0, 20.0, 34.9, 35.0, 60.0, 600.0, 3600.0):
         for seed in range(100):

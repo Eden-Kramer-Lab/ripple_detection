@@ -235,7 +235,11 @@ uv run python examples/benchmark/run.py --run-name v1 --conditions all --workers
 
 > **Placeholder, full run:** the command as run, its wall time and the output's size.
 
-Other options: `--conditions` takes condition ids separated by commas, `--replicates N`
+Other options: `--conditions` takes `all` or condition ids separated by commas. A
+crossed cell's id holds a comma itself (`ripple_snr=low,participation=low`), so the
+list is read by taking the longest known id at each position: that text selects the
+crossed cell, never its two one-factor conditions, and an unknown id stops the command
+(`conditions.select_conditions`, which `validate_simulator.py` shares). `--replicates N`
 gives every selected condition `N` replicates, `--duration S` sets the session length.
 
 ### What a run writes
