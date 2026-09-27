@@ -206,6 +206,14 @@ settings the run will use:
 uv run python examples/benchmark/validate_simulator.py --validation-id v1 --conditions all
 ```
 
+It simulates 20 validation replicates (10000-10019) of each selected condition and
+measures every session, calling no detector: about 10-11 s and 1.6 GB of memory per
+600 s session, so the 43 conditions' 860 sessions take about 2.5 CPU hours. `--workers
+N` measures N sessions at once, each worker needing its own 1.6 GB. `--duration` must be
+at least 120 s: the noise-modulation check needs two of its 60 s periods, and a check
+that measures nothing fails. The report is `ready` or `not_ready`, and its `report.md`
+says why; until it is ready it blocks every run.
+
 The runner checks that report before it runs any method (smoke, full run or resume): it
 must be ready, with at least the predeclared 20 replicates per condition, and must have
 been made from the current simulator source, target table and `validate_simulator.py`
@@ -225,7 +233,9 @@ uv run python examples/benchmark/run.py --run-name smoke --smoke \
 The rules: if one session takes more than 5 minutes, halve `duration_s` and double the
 replicates (which needs a report for the new duration first); if all conditions'
 `events.csv.gz` would pass 2 GB, write sweep events only for the reference condition;
-run `min(requested, free cores - 1, 0.7 x available memory / peak memory)` workers.
+run `min(requested, free cores - 1, 0.7 x available memory / peak memory)` workers. The
+smoke test reports each rule's verdict; the runner has no switch for the events rule, so
+acting on it needs a change to `run.py`.
 
 > **Placeholder, smoke test:** the measured numbers (per-session simulate and detect
 > time, peak memory, rows and bytes per table), the extrapolation and any rule applied.

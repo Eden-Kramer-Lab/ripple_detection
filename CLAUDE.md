@@ -51,7 +51,11 @@ uv run python examples/simulation_study.py
 
 # The detector benchmark (examples/benchmark/README.md, "Running the benchmark"): a ready
 # simulator report first, then the smoke test and, by hand in tmux, the full run (hours;
-# outputs git-ignored under examples/benchmark/output/)
+# outputs git-ignored under examples/benchmark/output/). The runner refuses a report until
+# it is ready. Validation: 20 replicates per condition, about 10-11 s and 1.6 GB per 600 s
+# session (860 sessions for all; --workers N), --duration of at least 120 s. --conditions
+# takes all or ids separated by commas; a crossed cell's id holds a comma, and the longest
+# known id is taken
 uv run python examples/benchmark/validate_simulator.py --validation-id v1 --conditions all
 uv run python examples/benchmark/run.py --run-name smoke --smoke \
     --validation-report examples/benchmark/validation/v1/spec.json
