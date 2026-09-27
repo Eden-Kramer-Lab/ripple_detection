@@ -77,31 +77,19 @@ def channel_gains(
 
 
 def score(events: pd.DataFrame, windows: np.ndarray) -> dict[str, float]:
-    """Recall, precision and boundary errors of ``events`` against true ``windows``."""
-    n_true = len(windows)
-    if len(events) == 0:
-        return {
-            "recall": 0.0 if n_true else np.nan,
-            "precision": np.nan,
-            "onset_ms": np.nan,
-            "offset_ms": np.nan,
-        }
-    starts, ends = events.start_time.to_numpy(), events.end_time.to_numpy()
-    matched_true = np.zeros(n_true, dtype=bool)
-    matched_event = np.zeros(len(events), dtype=bool)
-    onsets, offsets = [], []
-    for i, (true_start, true_end) in enumerate(windows):
-        overlaps = (starts <= true_end) & (ends >= true_start)
-        if overlaps.any():
-            matched_true[i] = True
-            matched_event |= overlaps
-            onsets.append((starts[overlaps].min() - true_start) * 1000)
-            offsets.append((ends[overlaps].max() - true_end) * 1000)
+    """``events`` matched one-to-one to the true ``windows``: recall, precision and F1,
+    the pairs' median onset and offset errors (event minus window, in ms, so negative
+    is early), the ripples overlapped by two or more events (split) and the events
+    overlapping two or more ripples (merged)."""
+    matching = rd.match_events(windows, events)
     return {
-        "recall": matched_true.mean() if n_true else np.nan,
-        "precision": matched_event.mean(),
-        "onset_ms": float(np.median(onsets)) if onsets else np.nan,
-        "offset_ms": float(np.median(offsets)) if offsets else np.nan,
+        "recall": matching.recall,
+        "precision": matching.precision,
+        "f1": matching.f1,
+        "onset_ms": 1000 * matching.pairs.onset_error.median(),  # NaN with no pairs
+        "offset_ms": 1000 * matching.pairs.offset_error.median(),
+        "n_split": len(matching.split_reference),
+        "n_merged": len(matching.merged_detected),
     }
 
 

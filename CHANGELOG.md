@@ -204,6 +204,11 @@ here is relative to 1.7.1.
   -> 1.1 s on 10 min of 16 channels), and the per-event statistics use
   bisection (5.5 s -> 0.03 s for 30 min with 500 events).
 - Warnings name the caller's line, not a line inside the package.
+- The simulation study and the literature-recipes example score with
+  `match_events`, one-to-one: an event counts toward recall and precision only
+  as a ripple's one match, where any overlap counted before, so precision falls
+  (and the recipes' false positives rise) where several events overlapped one
+  ripple. The study adds `f1`, `n_split` and `n_merged`.
 
 ### Removed
 

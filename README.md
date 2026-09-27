@@ -300,7 +300,8 @@ and frequency, sized by `ripple_snr` (their filtered peak over the filtered back
 Poisson units bursting with each ripple for Carey and HSE; three seeds per condition. Further
 conditions put the ripple on only a quarter or half of 32 channels, sweep the thresholds of
 Kay, Karlsson and Zugaro, shrink the population to 20 units, and add 20 common-mode artifacts.
-An event is a hit when it overlaps the ripple's window. The
+An event is a hit when it is matched one-to-one (`match_events`) to a ripple window it
+overlaps, so a second event on one ripple counts against precision. The
 [notebook](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/simulation_study.ipynb) plots the whole sweep; 16 channels, means over
 seeds:
 
@@ -310,9 +311,9 @@ seeds:
 | Karlsson | 0.30 | 0.98 | 2 / 9 / 19 | 0.64 | 0.02 |
 | Roumis | 0.48 | 0.99 | 21 / 23 / 26 | 0.11 | 0.00 |
 | Shvartsman | 0.13 | 0.93 | 0 / 0.7 / 2 | 0.48 | 0.00 |
-| Yu | 0.58 | 1.00 | 15 / 25 / 70 | 0.17 | 0.30 |
+| Yu | 0.58 | 1.00 | 15 / 25 / 70 | 0.17 | 0.29 |
 | Zugaro | 0.32 | 0.93 | 11 / 14 / 16 | 0.07 | 0.00 |
-| Long | 0.42 | 0.83 | 8 / 8 / 8 | 0.61 | 0.93 |
+| Long | 0.43 | 0.83 | 8 / 8 / 8 | 0.61 | 0.93 |
 | Carey | 0.96 | 0.99 | 0.7 / 0.5 / 0.2 | 0.86 | 0.79 |
 | HSE | 0.99 | 0.99 | 50 / 50 / 53 | 0.98 | 0.85 |
 
