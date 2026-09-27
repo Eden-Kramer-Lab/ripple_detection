@@ -27,9 +27,12 @@ writes ``<output-root>/<validation-id>/`` (by default
   contract says); ``applies`` says whether the row gates readiness.
 - ``report.md`` and small PNGs.
 
-The report is ready when every rendering check passes and every target whose
-evidence is ``supported`` passes in the conditions its ``conditions`` column
-names. Targets that are ``assumed``, or whose state differs from the
+The report is ready when every rendering check passes in every condition it
+applies to (``rendering_check_applies``: a channel-profile check needs more
+than one channel, the gamma check gamma bursts, the refractory check that
+spike model), with something measured and no replicate's value NaN, and every
+target whose evidence is ``supported`` passes in the conditions its
+``conditions`` column names. Targets that are ``assumed``, or whose state differs from the
 reference's (``conditions`` "none"), and every condition the column does not
 name, are reported without gating. ``require_ready_report`` is the check a
 benchmark run makes before its first detector call.
@@ -1679,16 +1682,21 @@ def _model_metadata(
 # ---------------------------------------------------------------------------
 # Targets and checks
 
-# Rendering checks: statistic, bounds, and where they apply ("all", or
-# "refractory" for the refractory spike model only).
+# Rendering checks: statistic, bounds, and where they apply (a scope of
+# rendering_check_applies: "all", "multichannel", "fast_gamma" or "refractory").
 RENDERING_CHECKS: dict[str, tuple[str, float, float, str]] = {
     "noise_only_matched": ("max_abs_difference", 0.0, 0.0, "all"),
     "sharp_wave_truth_crossings": ("max_error_samples", 0.0, 1.0, "all"),
     "ripple_sizing": ("relative_spread", 0.0, SIZING_SPREAD, "all"),
     "ripple_nominal_snr": ("relative_error", 0.0, SNR_TOLERANCE, "all"),
     "spatial_profile_draws": ("violations", 0.0, 0.0, "all"),
-    "channel_profile_rendering": ("max_relative_residual", 0.0, PROFILE_TOLERANCE, "all"),
-    "gamma_sizing": ("relative_error", 0.0, SNR_TOLERANCE, "all"),
+    "channel_profile_rendering": (
+        "max_relative_residual",
+        0.0,
+        PROFILE_TOLERANCE,
+        "multichannel",
+    ),
+    "gamma_sizing": ("relative_error", 0.0, SNR_TOLERANCE, "fast_gamma"),
     "noise_modulation_amplitude": ("absolute_error", 0.0, MODULATION_TOLERANCE, "all"),
     "model_metadata": ("violations", 0.0, 0.0, "all"),
     "interneuron_rate_realization": ("z", -RATE_Z, RATE_Z, "all"),
@@ -1747,6 +1755,41 @@ RENDERING_DESCRIPTIONS = {
         "the draw)."
     ),
 }
+
+
+def rendering_check_applies(
+    scope: str, parameters: Mapping[str, Mapping[str, Any]]
+) -> tuple[bool, str]:
+    """Whether a rendering check of ``scope`` applies to a condition.
+
+    Parameters
+    ----------
+    scope : str
+        ``"all"``; ``"multichannel"`` (more than one channel, so a channel
+        besides a ripple's anchor to compare with it); ``"fast_gamma"`` (gamma
+        bursts are drawn and channel 0 carries them); ``"refractory"`` (the
+        refractory spike model).
+    parameters : mapping
+        The condition's resolved parameters (``conditions.resolve``).
+
+    Returns
+    -------
+    applies : bool
+    why_not : str
+        Empty when it applies.
+    """
+    render = parameters["render"]
+    if scope == "multichannel" and int(render["n_channels"]) < 2:
+        return False, "not applicable: one channel, so none besides a ripple's anchor"
+    if scope == "fast_gamma":
+        gains = render["channel_gains"]
+        if float(parameters["non_events"]["rates"]["fast_gamma"]) == 0:
+            return False, "not applicable: no gamma bursts are drawn"
+        if gains is not None and float(gains[0]) == 0:
+            return False, "not applicable: channel 0 carries no gamma"
+    if scope == "refractory" and render["spike_model"] != "refractory":
+        return False, "not applicable: the spike model has no refractory period"
+    return True, ""
 
 
 def load_targets(path: Path = TARGETS) -> pd.DataFrame:
@@ -1849,7 +1892,13 @@ def build_checks(
     targets: pd.DataFrame,
 ) -> pd.DataFrame:
     """Every check for every validated condition, target rows pooled over the
-    replicates."""
+    replicates.
+
+    Every rendering check has a row in every condition, ``applies`` saying
+    whether it gates the condition (``rendering_check_applies``). Its observed
+    value is the largest over the replicates, NaN if any replicate's is NaN,
+    and it fails when nothing was measured (``n`` 0).
+    """
     rows = []
     for condition in selected:
         cid = condition.condition_id
@@ -1875,10 +1924,8 @@ def build_checks(
                 }
             )
         session_checks = pd.concat([r.checks for r in mine], ignore_index=True)
-        render = parameters[cid]["render"]
         for name, (statistic, lower, upper, scope) in RENDERING_CHECKS.items():
-            if scope == "refractory" and render["spike_model"] != "refractory":
-                continue
+            applies, why_not = rendering_check_applies(scope, parameters[cid])
             if name == "interneuron_rate_realization":
                 pooled = samples[samples.quantity == name]
                 expected = float(pooled.y.sum())
@@ -1890,15 +1937,24 @@ def build_checks(
                 n, note = int(pooled.x.sum()), ""
             else:
                 these = session_checks[session_checks.check == name]
-                observed = float(these.observed.max())
+                # a NaN in any replicate is the check's value, never skipped
+                observed = (
+                    float(these.observed.max())
+                    if len(these) and these.observed.notna().all()
+                    else np.nan
+                )
                 n = int(these.n.sum())
                 note = "; ".join(sorted(set(these.note) - {""}))
+            if not applies:
+                note = why_not
+            elif n == 0:
+                note = "; ".join(filter(None, ["nothing measured", note]))
             rows.append(
                 {
                     "check": name,
                     "kind": "rendering",
                     "condition_id": cid,
-                    "applies": True,
+                    "applies": applies,
                     "evidence_status": "mathematical",
                     "statistic": statistic,
                     "observed": observed,
@@ -1912,8 +1968,11 @@ def build_checks(
     # bounds hold to floating-point rounding: a median of 60 samples at 1500 Hz,
     # from timestamp differences, is 39.999999999999996 ms
     slack = ROUNDING * np.maximum(1.0, np.maximum(checks.lower.abs(), checks.upper.abs()))
-    checks["passed"] = (checks.observed >= checks.lower - slack) & (
-        checks.observed <= checks.upper + slack
+    measured = (checks.kind != "rendering") | (checks.n > 0)
+    checks["passed"] = (
+        (checks.observed >= checks.lower - slack)
+        & (checks.observed <= checks.upper + slack)
+        & measured
     )
     return checks
 
@@ -2309,14 +2368,15 @@ def _report_text(
         "",
         "## Rendering checks",
         "",
-        "| check | statistic | bounds | conditions passing | worst |",
+        "| check | statistic | bounds | passing, of the conditions it applies to | worst |",
         "| --- | --- | --- | --- | --- |",
     ]
     for name, rows in rendering.groupby("check", sort=False):
-        worst = rows.observed.abs().max()
+        applicable = rows[rows.applies]
+        worst = applicable.observed.abs().max(skipna=False) if len(applicable) else np.nan
         lines.append(
             f"| {name} | {rows.statistic.iloc[0]} | [{rows.lower.iloc[0]:g}, "
-            f"{rows.upper.iloc[0]:g}] | {int(rows.passed.sum())}/{len(rows)} | "
+            f"{rows.upper.iloc[0]:g}] | {int(applicable.passed.sum())}/{len(applicable)} | "
             f"{_format(worst)} |"
         )
     lines += ["", *(f"- `{name}`: {text}" for name, text in RENDERING_DESCRIPTIONS.items())]

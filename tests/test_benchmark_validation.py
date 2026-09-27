@@ -339,6 +339,100 @@ class TestTargets:
         assert "rendering check c" in reasons[0]
 
 
+class TestRenderingChecks:
+    """Which rendering checks gate a condition, and that nothing measured, or
+    a NaN in any replicate, fails a check that applies."""
+
+    CONDITIONS = (
+        "reference",
+        "n_channels=1",
+        "fast_gamma_rate=0",
+        "spike_model=refractory",
+    )
+
+    @staticmethod
+    def _session(validate, condition_id, replicate, changed):
+        """A session whose every rendering check passes with n = 5, but for
+        ``changed``: check -> (observed, n)."""
+        rows = dict.fromkeys(validate.RENDERING_CHECKS, (0.0, 5))
+        del rows["interneuron_rate_realization"]  # pooled from the samples
+        if condition_id != "spike_model=refractory":
+            del rows["refractory_spiking"]  # measured under that model alone
+        rows.update(changed)
+        return validate.SessionResult(
+            condition_id=condition_id,
+            replicate=replicate,
+            samples=pd.DataFrame(
+                [("interneuron_rate_realization", "interneuron", 50.0, 50.0)],
+                columns=["quantity", "group", "x", "y"],
+            ),
+            measurements=pd.DataFrame(),
+            checks=pd.DataFrame(
+                [(name, observed, n, "") for name, (observed, n) in rows.items()],
+                columns=["check", "observed", "n", "note"],
+            ),
+        )
+
+    @pytest.fixture
+    def checks(self, validate, conditions):
+        by_id = {c.condition_id: c for c in conditions.conditions()}
+        selected = [by_id[i] for i in self.CONDITIONS]
+        changed = {
+            ("reference", 1): {"ripple_sizing": (np.nan, 5)},
+            ("n_channels=1", 0): {"channel_profile_rendering": (0.0, 0)},
+            ("n_channels=1", 1): {"channel_profile_rendering": (0.0, 0)},
+            ("fast_gamma_rate=0", 0): {"gamma_sizing": (0.0, 0)},
+            ("fast_gamma_rate=0", 1): {"gamma_sizing": (0.0, 0)},
+            ("spike_model=refractory", 0): {"sharp_wave_truth_crossings": (0.0, 0)},
+            ("spike_model=refractory", 1): {"sharp_wave_truth_crossings": (0.0, 0)},
+        }
+        results = [
+            self._session(validate, c, r, changed.get((c, r), {}))
+            for c in self.CONDITIONS
+            for r in (0, 1)
+        ]
+        parameters = {c.condition_id: conditions.resolve(c) for c in selected}
+        found = validate.build_checks(
+            results, selected, parameters, validate.load_targets().iloc[:0]
+        )
+        return found.set_index(["condition_id", "check"])
+
+    def test_every_check_has_a_row_saying_whether_it_applies(self, validate, checks):
+        for condition_id in self.CONDITIONS:
+            assert set(checks.loc[condition_id].index) == set(validate.RENDERING_CHECKS)
+        not_applicable = {
+            (c, name)
+            for c in self.CONDITIONS
+            for name in validate.RENDERING_CHECKS
+            if not checks.loc[(c, name), "applies"]
+        }
+        assert not_applicable == {
+            ("reference", "refractory_spiking"),
+            ("n_channels=1", "refractory_spiking"),
+            ("fast_gamma_rate=0", "refractory_spiking"),
+            ("n_channels=1", "channel_profile_rendering"),
+            ("fast_gamma_rate=0", "gamma_sizing"),
+        }
+        assert (
+            "one channel" in checks.loc[("n_channels=1", "channel_profile_rendering"), "note"]
+        )
+        assert "no gamma" in checks.loc[("fast_gamma_rate=0", "gamma_sizing"), "note"]
+
+    def test_nothing_measured_or_a_nan_fails(self, validate, checks):
+        gated = checks[checks.applies]
+        failed = set(gated.index[~gated.passed])
+        assert failed == {
+            ("reference", "ripple_sizing"),
+            ("spike_model=refractory", "sharp_wave_truth_crossings"),
+        }
+        assert np.isnan(checks.loc[("reference", "ripple_sizing"), "observed"])
+        row = checks.loc[("spike_model=refractory", "sharp_wave_truth_crossings")]
+        assert (row.n, row.observed) == (0, 0.0)
+        assert "nothing measured" in row.note
+        reasons = validate.readiness(checks.reset_index(), validate.load_targets().iloc[:0])
+        assert len(reasons) == 2
+
+
 class TestReport:
     def test_it_is_built_without_a_detector(self, report, validate):
         # the fixture failed any detector, literature method or matching call;
@@ -410,8 +504,7 @@ class TestReport:
     def test_checks_cover_every_target_and_rendering_check(self, report, validate):
         checks = pd.read_csv(report["directory"] / "checks.csv")
         targets = validate.load_targets()
-        rendering = set(validate.RENDERING_CHECKS) - {"refractory_spiking"}
-        assert set(checks.check) == set(targets.quantity) | rendering
+        assert set(checks.check) == set(targets.quantity) | set(validate.RENDERING_CHECKS)
         assert (checks.condition_id == "reference").all()
         gated = checks[checks.kind == "target"].set_index("check").applies
         for row in targets.itertuples():
@@ -419,11 +512,13 @@ class TestReport:
                 row.conditions
             ).split("; ")
             assert gated[row.quantity] == applies, row.quantity
-        assert checks[checks.kind == "rendering"].applies.all()
-        # every rendering check measured something and passes on the reference
-        rendering_rows = checks[checks.kind == "rendering"]
-        assert rendering_rows.passed.all(), rendering_rows[~rendering_rows.passed]
-        assert (rendering_rows.n > 0).all()
+        rendering = checks[checks.kind == "rendering"].set_index("check")
+        # Poisson spiking has no refractory period; every other check applies,
+        # measured something and passes on the reference
+        assert list(rendering.index[~rendering.applies]) == ["refractory_spiking"]
+        applicable = rendering[rendering.applies]
+        assert applicable.passed.all(), applicable[~applicable.passed]
+        assert (applicable.n > 0).all()
 
     def test_status_follows_the_gated_checks(self, report):
         checks = pd.read_csv(report["directory"] / "checks.csv")
