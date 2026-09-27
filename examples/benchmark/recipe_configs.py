@@ -533,7 +533,10 @@ def make_recording(session: rd.SimulatedSession, config: RecipeConfig) -> Record
     """
     _check_provenance(config)
     names, _ = supplied_inputs(config)
-    inputs = {name: _POLICY[name].get(session) for name in names}
+    getters = {name: _POLICY[name].get for name in names}
+    # Inputs with one getter (rest, for sleep and baseline) share one value.
+    values = {get: get(session) for get in dict.fromkeys(getters.values())}
+    inputs = {name: values[get] for name, get in getters.items()}
     return Recording.from_arrays(session.time, session.sampling_frequency, **inputs)
 
 
