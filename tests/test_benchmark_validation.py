@@ -319,6 +319,32 @@ class TestMeasurements:
             p / step
         )
 
+    def test_refractory_check_counts_violations(self, validate):
+        rate = 1500.0
+        time = UNIX_ORIGIN + np.arange(3000) / rate
+        # a leakage burst of five spikes 4 ms apart around sample 2000
+        leaks = pd.DataFrame(
+            {
+                "non_event_type": ["spike_leakage"],
+                "center_time": [time[2000]],
+                "n_spikes": [5],
+                "isi": [0.004],
+            }
+        )
+        # unit 0: two spikes a sample apart (a violation), then one well after;
+        # unit 1: two spikes in one sample (a violation); unit 2: three samples,
+        # 2 ms apart to the timestamps' rounding (none); unit 3: two leaked
+        # spikes a sample apart (left out)
+        samples = np.array([100, 101, 110, 200, 250, 253, 2000, 2001])
+        units = np.array([0, 0, 0, 1, 2, 2, 3, 3])
+        counts = np.array([1.0, 1.0, 1.0, 2.0, 1.0, 1.0, 1.0, 1.0])
+        assert time[253] - time[250] < 0.002
+        out = validate._Collector()
+        validate._check_refractory(
+            out, time, leaks, samples, units, counts, {"refractory_period": 0.002}
+        )
+        assert out.checks == [("refractory_spiking", 2.0, 6, "")]
+
     def test_isolated_groups_do_not_overlap(self, validate):
         rows = pd.DataFrame(
             {
