@@ -204,8 +204,13 @@ def test_every_condition_simulates(module):
 
 def test_reference_is_the_simulators_default(module):
     """``REFERENCE`` names every keyword of each call, and the calls with its
-    values give what the simulator's defaults give."""
-    reference = module.REFERENCE
+    values, each recorded revision undone, give what the simulator's defaults
+    give; each revision records the value it replaced."""
+    reference = copy.deepcopy(module.REFERENCE)
+    for revision in module.REFERENCE_REVISIONS:
+        section, name = revision.key.split(".")
+        assert reference[section][name] == revision.revised != revision.previous
+        reference[section][name] = revision.previous
     assert reference["session"] == {"duration_s": 600.0, "sampling_frequency": 1500.0}
     for section, function in SECTION_FUNCTIONS.items():
         keywords = set(inspect.signature(function).parameters) - SUPPLIED

@@ -617,9 +617,12 @@ class TestReport:
         assert (spec["status"] == "ready") == (not spec["reasons"])
 
     def test_parameter_revisions_are_listed(self, report, validate, conditions):
-        assert report["spec"]["reference_revisions"] == []
+        recorded = validate.revision_records(conditions.REFERENCE_REVISIONS)
+        assert report["spec"]["reference_revisions"] == recorded
         text = (report["directory"] / "report.md").read_text()
-        assert "## Parameter revisions\n\nNone:" in text
+        for line in validate._revision_lines(conditions.REFERENCE_REVISIONS):
+            assert line in text
+        assert validate._revision_lines([]) == ["None: every reference value is as first set."]
         revision = conditions.ReferenceRevision(
             "events.ripple_duration",
             (0.03, 0.15),

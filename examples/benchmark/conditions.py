@@ -50,7 +50,7 @@ REFERENCE: dict[str, dict[str, Any]] = {
             "ripple_doublet": 0.10,
             "sharp_wave_only": 0.10,
         },
-        "ripple_duration": (0.03, 0.15),
+        "ripple_duration": (0.042, 0.21),  # revised: see REFERENCE_REVISIONS
         "ripple_skew": (0.5, 0.7),
         "ripple_frequency": (160.0, 220.0),
         "ripple_chirp": (0.0, 30.0),
@@ -142,7 +142,29 @@ class ReferenceRevision:
 
 # Every revision of a REFERENCE value, oldest first; the simulator validation
 # report lists them.
-REFERENCE_REVISIONS: tuple[ReferenceRevision, ...] = ()
+REFERENCE_REVISIONS: tuple[ReferenceRevision, ...] = (
+    ReferenceRevision(
+        key="events.ripple_duration",
+        previous=(0.03, 0.15),
+        revised=(0.042, 0.21),
+        reason=(
+            "The nominal 30-150 ms span read Buzsaki 2015's ripple durations, whose "
+            "convention is unstated, as a span at three side scales. Measured by the "
+            "ripple_duration target's convention (a 17 ms RMS of the 100-250 Hz band above "
+            "the noise mean plus 2 SD), those spans gave swr ripples a median of 34 ms, "
+            "below the target's 40-60 ms. The range is scaled by the smallest factor, on a "
+            "0.1 grid from 1.0 to 2.0, whose median lies inside the target by at least two "
+            "bootstrap standard errors: 1.4. SNR and every other value are unchanged."
+        ),
+        evidence=(
+            "Calibration on the reference with replicates 20000-20019, separate from the "
+            "report's, 600 s each, no detector run; median of the swr ripples' durations "
+            "that cross (standard error): x1.0 33.3 ms (0.64), x1.3 40.0 (0.71), "
+            "x1.4 42.7 (0.82), x2.0 56.0 (1.16). The first report, on 5 replicates, gave "
+            "34 ms."
+        ),
+    ),
+)
 
 # The label of the reference's place among a factor's levels.
 REFERENCE_LEVEL = "reference"

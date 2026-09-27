@@ -1869,7 +1869,9 @@ def draw_network_events(
     - Ripple span, 0.03-0.15 s: ripples last 30-150 ms, skewed toward long
       (Buzsáki 2015, "Definition of Pathological Events"), convention
       unstated. The span is nominal, not a threshold-crossing duration: its
-      width at half maximum is about 0.39 times it.
+      width at half maximum is about 0.39 times it. The benchmark's validated
+      reference lengthens it to 0.042-0.21 s, so that measured durations meet
+      that table's ripple-duration target.
     - Onset frequency, 160-220 Hz: ripples of 140-220 Hz (Sullivan et al.
       2011, doi:10.1523/JNEUROSCI.0294-11.2011, abstract); modal per-event
       spectral peaks of 167, 177 and 187 Hz in sleep, quiet waking and
