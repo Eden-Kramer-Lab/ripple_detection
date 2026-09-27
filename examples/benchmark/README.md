@@ -40,8 +40,9 @@ print(found.attrs["method"], found.attrs["role"], found.attrs["options"])
 `found` is the package's result, unchanged: bounds, the method's own columns, and
 `attrs` with its DOI, resolved options, grid, the inputs it ran on and diagnostics.
 `check_recipe` lists what a call would lack without running it, and `method_record`
-gives the configuration's row of the benchmark's `methods.csv`: the resolved options,
-the input policy and the assumptions, as JSON.
+gives one flat, all-string record per configuration: its identity, the method's DOI,
+role and stage, the primary expression, and the resolved options, input policy and
+assumptions as JSON.
 
 ### The inputs a configuration receives
 

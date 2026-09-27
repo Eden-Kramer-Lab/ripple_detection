@@ -25,7 +25,7 @@ UNIT_COUNTS = {"place": 20, "pyramidal": 5, "interneuron": 5}
 UNIX_ORIGIN = 1_700_000_000.0
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 
-# A methods.csv row's columns after session_id.
+# The keys of method_record, in order.
 METHOD_COLUMNS = [
     "method",
     "setting",
@@ -815,7 +815,7 @@ def test_the_package_and_the_standalone_demo_import_no_benchmark_code():
         assert "recipe_configs" not in path.read_text(), path
 
 
-def test_method_records_are_methods_csv_rows(recipe_configs, catalog):
+def test_method_records_are_flat_string_records(recipe_configs, catalog):
     records = []
     for config in recipe_configs.RECIPES:
         record = recipe_configs.method_record(config)

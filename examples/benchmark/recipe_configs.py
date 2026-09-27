@@ -74,7 +74,7 @@ EXAMPLE_RIPPLES: dict[str, Any] = {
     "rank_by": "max_zscore",
 }
 
-# What each input the policy supplies is, as recorded in methods.csv. The
+# What each input the policy supplies is, as input_policy records it. The
 # values themselves are in each result's attrs["inputs"] and
 # attrs["behavior_intervals"].
 _REST = "rest: the complement of session.running_intervals within the recording"
@@ -539,6 +539,8 @@ def check_recipe(
     config : RecipeConfig
     recording : Recording
     behavior_intervals : ndarray, shape (n_intervals, 2), optional
+        The call's eligible epochs, as ``run_recipe`` would pass them;
+        usually ``behavior_intervals(session, config)``.
 
     Returns
     -------
@@ -595,7 +597,7 @@ def input_policy(config: RecipeConfig) -> dict[str, Any]:
 
 
 def method_record(config: RecipeConfig) -> dict[str, str]:
-    """A configuration's row of ``methods.csv``, without ``session_id``.
+    """One flat, all-string record of a configuration.
 
     Parameters
     ----------
@@ -604,11 +606,13 @@ def method_record(config: RecipeConfig) -> dict[str, str]:
     Returns
     -------
     record : dict of str to str
-        ``method`` (``"recipe:{config_id}"``), ``setting``
-        (``"literature"``), ``doi``, ``role``, ``inventory`` (from
-        ``list_methods()``), ``stage``, ``primary_expression``,
-        ``resolved_options``, ``input_policy`` and ``assumptions`` (JSON),
-        and ``interpretation``, in that order.
+        In this order: ``method`` (``"recipe:{config_id}"``), ``setting``
+        (``"literature"``), ``doi``, ``role`` and ``inventory`` (from
+        ``list_methods()``), ``stage`` (the configured stage, or
+        ``"detection"`` for a method without a stage option),
+        ``primary_expression``, ``resolved_options``, ``input_policy`` and
+        ``assumptions`` (as JSON), and ``interpretation`` (from
+        ``list_methods()``).
 
     Raises
     ------
