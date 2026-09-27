@@ -316,6 +316,40 @@ def test_a_setting_resolves_every_tunable(run, session, method, setting, expecte
     }
 
 
+@pytest.mark.parametrize(
+    ("method", "setting", "options"),
+    [
+        ("Kay_ripple_detector", "1.5", {"zscore_threshold": 1.5}),
+        ("Zugaro_ripple_detector", "2.5", {"high_threshold": 2.5}),
+        ("Yu_ripple_detector", "99.0", {"percentile": 99.0}),
+        (
+            "Long_sharp_wave_ripple_detector",
+            "1.5",
+            {"sharp_wave_thresholds": (0.5, 1.5), "ripple_thresholds": (0.5, 1.5)},
+        ),
+    ],
+)
+def test_sweep_values_and_speed_reach_the_detectors(run, session, method, setting, options):
+    """A sweep point's events are the detector's, called directly on the
+    session's signals and speed with the swept value."""
+    detector = getattr(rd, method)
+    fs = session.sampling_frequency
+    if method == "Long_sharp_wave_ripple_detector":
+        signals, keywords = (session.raw_lfp,), {"sharp_wave_lfp": session.sharp_wave_lfp}
+    else:
+        signals, keywords = (rd.filter_ripple_band(session.lfps, fs),), {}
+
+    def direct(speed, **given):
+        return detector(session.time, *signals, speed, fs, **keywords, **given)
+
+    call = next(c for c in run.method_calls(session) if c[:2] == (method, setting))[2]
+    expected = direct(session.speed, **options)
+    pd.testing.assert_frame_equal(call(), expected, check_exact=True)
+    # at this point the value and the speed both change the events
+    assert not direct(session.speed).equals(expected)
+    assert not direct(np.zeros_like(session.speed), **options).equals(expected)
+
+
 def test_an_unknown_method_raises(run):
     with pytest.raises(ValueError, match="runs no"):
         run.method_records([("Kay_ripple_detector", "9.0")])
