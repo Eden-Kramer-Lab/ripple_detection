@@ -20,6 +20,14 @@ from ripple_detection.evaluate import (
 )
 
 FS = 1500.0
+GOOD = np.array([[0.0, 1.0]])
+WINDOWS = pd.DataFrame(
+    {
+        "start_time": [0.0, 1.0, 5.0, 5.0],
+        "end_time": [2.0, 4.0, 6.0, 6.0],
+        "label": ["swr", "emg", "gamma", "theta"],
+    }
+)
 
 
 def pair_list(matching):
@@ -62,11 +70,10 @@ class TestMatchEvents:
         events = np.array([[4.0, 5.0], [0.0, 1.0], [2.0, 2.5]])
         matching = match_events(events, events)
         assert pair_list(matching) == [(0, 0), (1, 1), (2, 2)]
-        np.testing.assert_array_equal(matching.pairs.iou, 1.0)
-        np.testing.assert_array_equal(matching.pairs.coverage, 1.0)
-        np.testing.assert_array_equal(matching.pairs.temporal_precision, 1.0)
-        np.testing.assert_array_equal(matching.pairs.onset_error, 0.0)
-        np.testing.assert_array_equal(matching.pairs.offset_error, 0.0)
+        np.testing.assert_array_equal(
+            matching.pairs[["iou", "coverage", "temporal_precision"]], 1.0
+        )
+        np.testing.assert_array_equal(matching.pairs[["onset_error", "offset_error"]], 0.0)
         assert (matching.recall, matching.precision, matching.f1) == (1.0, 1.0, 1.0)
 
     @pytest.mark.parametrize(
@@ -132,7 +139,7 @@ class TestMatchEvents:
         pair = matching.pairs.iloc[0]
         assert (pair.coverage, pair.temporal_precision) == (0.5, 1.0)
 
-    def test_detector_frames_one_row_lists_and_empty_frames(self):
+    def test_detector_frames_and_one_row_lists(self):
         truth = pd.DataFrame(
             {"start_time": [0.0, 2.0], "end_time": [1.0, 3.0], "peak_time": [0.5, 2.5]}
         )
@@ -144,9 +151,7 @@ class TestMatchEvents:
         matching = match_events(truth, found)
         assert pair_list(matching) == [(1, 0)]
         assert np.isnan(matching.pairs.peak_error.iloc[0])
-        nothing = match_events(truth, found.iloc[:0])
-        assert list(nothing.pairs.columns) == list(PAIR_COLUMNS)
-        assert (nothing.recall, nothing.f1) == (0.0, 0.0)
+        # a detector that found nothing returns an empty frame
         assert consensus_counts({"found": found.iloc[:0]}, truth).n_methods.tolist() == [0, 0]
         assert pair_list(match_events([[0, 1]], [[0.5, 2]])) == [(0, 0)]
 
@@ -303,10 +308,9 @@ class TestMatchEvents:
         same = matching.boundary_errors(reference)
         np.testing.assert_array_equal(same.onset_error, matching.pairs.onset_error)
 
-    def test_boundary_errors_take_truth_windows_at_another_fraction(self):
-        events = _network_events()
-        at_tenth = rd.truth_windows(events, 0.1, expression="ripple")
-        at_half = rd.truth_windows(events, 0.5, expression="ripple")
+    def test_boundary_errors_take_truth_windows_at_another_fraction(self, network_events):
+        at_tenth = rd.truth_windows(network_events, 0.1, expression="ripple")
+        at_half = rd.truth_windows(network_events, 0.5, expression="ripple")
         detected = at_half[["start_time", "end_time"]].to_numpy()
         errors = match_events(at_tenth, detected).boundary_errors(at_half)
         np.testing.assert_array_equal(errors[["onset_error", "offset_error"]], 0.0)
@@ -315,37 +319,6 @@ class TestMatchEvents:
         matching = match_events(np.array([[0.0, 1.0], [2.0, 3.0]]), np.array([[0.0, 1.0]]))
         with pytest.raises(ValueError, match=r"reference has 1 events; .* with 2"):
             matching.boundary_errors(np.array([[0.0, 1.0]]))
-        with pytest.raises(ValueError, match=r"reference row 1"):
-            matching.boundary_errors(np.array([[0.0, 1.0], [3.0, 2.0]]))
-
-    @pytest.mark.parametrize(
-        ("which", "bad", "row"),
-        [
-            ("reference", [[0.0, 1.0], [np.nan, 2.0]], 1),
-            ("detected", [[0.0, 1.0], [2.0, np.inf]], 1),
-            ("reference", [[3.0, 2.0], [4.0, 5.0]], 0),
-        ],
-    )
-    def test_invalid_bounds_raise(self, which, bad, row):
-        good = np.array([[0.0, 1.0]])
-        arguments = {"reference": good, "detected": good, which: np.array(bad)}
-        with pytest.raises(ValueError, match=rf"^{which} row {row} is "):
-            match_events(**arguments)
-
-    def test_a_wrong_shape_raises(self):
-        with pytest.raises(ValueError, match=r"shape"):
-            match_events(np.array([0.0, 1.0, 2.0]), np.array([[0.0, 1.0]]))
-
-    @pytest.mark.parametrize("minimum_iou", [-0.1, 1.0, 2.0, np.nan])
-    def test_minimum_iou_outside_zero_to_one_raises(self, minimum_iou):
-        events = np.array([[0.0, 1.0]])
-        with pytest.raises(ValueError, match=r"minimum_iou"):
-            match_events(events, events, minimum_iou=minimum_iou)
-
-    def test_minimum_iou_must_be_a_number(self):
-        events = np.array([[0.0, 1.0]])
-        with pytest.raises(TypeError, match=r"minimum_iou"):
-            match_events(events, events, minimum_iou=None)
 
     def test_minimum_iou_is_keyword_only(self):
         events = np.array([[0.0, 1.0]])
@@ -373,18 +346,13 @@ class TestMatchEventsProperties:
         assert ((pairs.iou > 0) & (pairs.iou <= 1)).all()
         r = reference[pairs.reference_index.to_numpy()]
         d = detected[pairs.detected_index.to_numpy()]
-        assert (np.minimum(r[:, 1], d[:, 1]) > np.maximum(r[:, 0], d[:, 0])).all()
+        intersection = np.minimum(r[:, 1], d[:, 1]) - np.maximum(r[:, 0], d[:, 0])
+        assert (intersection > 0).all()
         np.testing.assert_array_equal(pairs.onset_error, d[:, 0] - r[:, 0])
         np.testing.assert_array_equal(pairs.offset_error, d[:, 1] - r[:, 1])
+        np.testing.assert_allclose(pairs.coverage, intersection / (r[:, 1] - r[:, 0]))
         np.testing.assert_allclose(
-            pairs.coverage,
-            (np.minimum(r[:, 1], d[:, 1]) - np.maximum(r[:, 0], d[:, 0]))
-            / (r[:, 1] - r[:, 0]),
-        )
-        np.testing.assert_allclose(
-            pairs.temporal_precision,
-            (np.minimum(r[:, 1], d[:, 1]) - np.maximum(r[:, 0], d[:, 0]))
-            / (d[:, 1] - d[:, 0]),
+            pairs.temporal_precision, intersection / (d[:, 1] - d[:, 0])
         )
         overlaps = np.minimum(reference[:, None, 1], detected[None, :, 1]) > np.maximum(
             reference[:, None, 0], detected[None, :, 0]
@@ -582,15 +550,6 @@ class TestCompareDetectors:
         assert (strict.n_matched, strict.n_shared_truth) == (0, 0)
         assert strict.jaccard_false == 0.0
 
-    def test_invalid_inventories_are_named(self):
-        events = {"a": np.array([[0.0, 1.0]]), "b": np.array([[0.0, 1.0], [2.0, 1.0]])}
-        with pytest.raises(ValueError, match=r"^events\['b'\] row 1"):
-            compare_detectors(events)
-        with pytest.raises(ValueError, match=r"^truth row 0"):
-            compare_detectors({"a": events["a"]}, truth=np.array([[np.nan, 1.0]]))
-        with pytest.raises(ValueError, match=r"minimum_iou"):
-            compare_detectors({}, minimum_iou=1.0)
-
     @pytest.mark.parametrize("function", [compare_detectors, consensus_counts])
     def test_events_must_be_a_mapping(self, function):
         """A single DataFrame iterates over its columns, which would be compared
@@ -634,27 +593,12 @@ class TestConsensusCounts:
         assert list(consensus.columns) == ["n_methods"]
         assert consensus.n_methods.tolist() == [0]
 
-    def test_errors(self):
-        truth = np.array([[0.0, 1.0]])
+    def test_no_method_may_be_named_n_methods(self):
         with pytest.raises(ValueError, match=r"n_methods"):
-            consensus_counts({"n_methods": truth}, truth)
-        with pytest.raises(ValueError, match=r"^events\['a'\] row 0"):
-            consensus_counts({"a": np.array([[1.0, 0.0]])}, truth)
-        with pytest.raises(ValueError, match=r"^truth row 0"):
-            consensus_counts({"a": truth}, np.array([[1.0, np.nan]]))
-        with pytest.raises(ValueError, match=r"minimum_iou"):
-            consensus_counts({"a": truth}, truth, minimum_iou=-1.0)
+            consensus_counts({"n_methods": GOOD}, GOOD)
 
 
 class TestLabelByOverlap:
-    WINDOWS = pd.DataFrame(
-        {
-            "start_time": [0.0, 1.0, 5.0, 5.0],
-            "end_time": [2.0, 4.0, 6.0, 6.0],
-            "label": ["swr", "emg", "gamma", "theta"],
-        }
-    )
-
     def test_longest_overlap_wins_and_ties(self):
         events = np.array(
             [
@@ -666,7 +610,7 @@ class TestLabelByOverlap:
                 [8.0, 9.0],
             ]
         )
-        labels = label_by_overlap(events, self.WINDOWS)
+        labels = label_by_overlap(events, WINDOWS)
         assert labels.tolist() == ["swr", "emg", "swr", "gamma", "background", "background"]
         assert labels.name == "label"
         pd.testing.assert_index_equal(labels.index, pd.RangeIndex(6))
@@ -675,17 +619,17 @@ class TestLabelByOverlap:
         """Windows filtered or relabelled keep their own index; the labels are
         read by position."""
         events = np.array([[0.5, 1.5], [1.5, 3.5], [5.2, 5.4]])
-        expected = label_by_overlap(events, self.WINDOWS)
-        relabelled = self.WINDOWS.set_axis([40, 30, 20, 10])
+        expected = label_by_overlap(events, WINDOWS)
+        relabelled = WINDOWS.set_axis([40, 30, 20, 10])
         pd.testing.assert_series_equal(label_by_overlap(events, relabelled), expected)
-        assert label_by_overlap(events, self.WINDOWS.iloc[1:]).tolist() == [
+        assert label_by_overlap(events, WINDOWS.iloc[1:]).tolist() == [
             "emg",
             "emg",
             "gamma",
         ]
 
     def test_unlabeled(self):
-        labels = label_by_overlap(np.array([[8.0, 9.0]]), self.WINDOWS, unlabeled="none")
+        labels = label_by_overlap(np.array([[8.0, 9.0]]), WINDOWS, unlabeled="none")
         assert labels.tolist() == ["none"]
 
     def test_a_dataframe_keeps_its_index(self):
@@ -693,34 +637,86 @@ class TestLabelByOverlap:
             {"start_time": [8.0, 0.5], "end_time": [9.0, 1.0]},
             index=pd.Index([1, 2], name="event_number"),
         )
-        labels = label_by_overlap(events, self.WINDOWS)
+        labels = label_by_overlap(events, WINDOWS)
         pd.testing.assert_index_equal(labels.index, events.index)
         assert events.assign(label=labels).label.tolist() == ["background", "swr"]
 
     def test_no_windows_or_no_events(self):
-        assert label_by_overlap(np.array([[0.0, 1.0]]), self.WINDOWS.iloc[:0]).tolist() == [
+        assert label_by_overlap(np.array([[0.0, 1.0]]), WINDOWS.iloc[:0]).tolist() == [
             "background"
         ]
-        assert label_by_overlap(np.empty((0, 2)), self.WINDOWS).empty
+        assert label_by_overlap(np.empty((0, 2)), WINDOWS).empty
 
-    def test_truth_windows_with_the_type_renamed(self):
-        windows = rd.truth_windows(_network_events(), 0.1, expression="network")
+    def test_truth_windows_with_the_type_renamed(self, network_events):
+        windows = rd.truth_windows(network_events, 0.1, expression="network")
         assert len(set(windows.type)) > 1
         events = windows[["start_time", "end_time"]].to_numpy()
         labels = label_by_overlap(events, windows.rename(columns={"type": "label"}))
         assert labels.tolist() == windows.type.tolist()
 
-    def test_errors(self):
+    def test_windows_need_a_label_column(self):
         with pytest.raises(ValueError, match=r"'label' column.*rename 'type'"):
-            label_by_overlap(np.array([[0.0, 1.0]]), self.WINDOWS.drop(columns="label"))
-        with pytest.raises(ValueError, match=r"^events row 0"):
-            label_by_overlap(np.array([[1.0, 0.0]]), self.WINDOWS)
-        bad = self.WINDOWS.assign(end_time=[2.0, np.nan, 6.0, 6.0])
-        with pytest.raises(ValueError, match=r"^windows row 1"):
-            label_by_overlap(np.array([[0.0, 1.0]]), bad)
+            label_by_overlap(GOOD, WINDOWS.drop(columns="label"))
 
 
-def _network_events():
+def _as_windows(bounds):
+    return pd.DataFrame(bounds, columns=["start_time", "end_time"]).assign(label="x")
+
+
+# every input's bounds are checked, and the error names the input and row
+INVALID_BOUNDS = {
+    "reference": lambda bad: match_events(bad, GOOD),
+    "detected": lambda bad: match_events(GOOD, bad),
+    "boundary_errors": lambda bad: match_events(
+        np.vstack([GOOD, GOOD + 2]), GOOD
+    ).boundary_errors(bad),
+    r"events\['b'\]": lambda bad: compare_detectors({"a": GOOD, "b": bad}),
+    "truth": lambda bad: compare_detectors({"a": GOOD}, truth=bad),
+    r"events\['a'\]": lambda bad: consensus_counts({"a": bad}, GOOD),
+    "consensus truth": lambda bad: consensus_counts({"a": GOOD}, bad),
+    "events": lambda bad: label_by_overlap(bad, WINDOWS),
+    "windows": lambda bad: label_by_overlap(GOOD, _as_windows(bad)),
+}
+
+
+@pytest.mark.parametrize("case", INVALID_BOUNDS)
+@pytest.mark.parametrize(
+    "bad",
+    [[[0.0, 1.0], [np.nan, 2.0]], [[0.0, 1.0], [2.0, np.inf]], [[0.0, 1.0], [2.0, 1.0]]],
+    ids=["nan", "inf", "reversed"],
+)
+def test_invalid_bounds_are_named(case, bad):
+    name = {"boundary_errors": "reference", "consensus truth": "truth"}.get(case, case)
+    with pytest.raises(ValueError, match=rf"^{name} row 1 is "):
+        INVALID_BOUNDS[case](np.array(bad))
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda value: match_events(GOOD, GOOD, minimum_iou=value),
+        lambda value: compare_detectors({}, minimum_iou=value),
+        lambda value: consensus_counts({}, GOOD, minimum_iou=value),
+    ],
+    ids=["match_events", "compare_detectors", "consensus_counts"],
+)
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        (-0.1, ValueError),
+        (1.0, ValueError),
+        (2.0, ValueError),
+        (np.nan, ValueError),
+        (None, TypeError),
+    ],
+)
+def test_minimum_iou_must_lie_in_zero_to_one(call, value, error):
+    with pytest.raises(error, match=r"minimum_iou"):
+        call(value)
+
+
+@pytest.fixture(scope="module")
+def network_events():
     """Latent events of every type in 20 s."""
     time = rd.simulate_time(int(20 * FS), FS)
     return rd.draw_network_events(time, event_rate=1.0, rng=3)

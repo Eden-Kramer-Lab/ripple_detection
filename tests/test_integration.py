@@ -891,11 +891,12 @@ class TestTimeOrigin:
             np.testing.assert_array_equal(moved.detected_overlaps, at_zero.detected_overlaps)
 
         at_zero = rd.match_events(windows, kay)
+        moved = rd.match_events(windows + origin, moved_kay)
         assert len(at_zero.pairs) >= 4
-        assert_matchings_shifted(rd.match_events(windows + origin, moved_kay), at_zero)
+        assert_matchings_shifted(moved, at_zero)
         narrower = windows + np.array([0.005, -0.005])
         np.testing.assert_allclose(
-            rd.match_events(windows + origin, moved_kay).boundary_errors(narrower + origin),
+            moved.boundary_errors(narrower + origin),
             at_zero.boundary_errors(narrower),
             rtol=0,
             atol=time_atol,
@@ -936,27 +937,20 @@ class TestTimeOrigin:
         def labelled(clock):
             first = np.column_stack([clock[index[:, 0]], clock[middle]])
             second = np.column_stack([clock[middle], clock[2 * middle - index[:, 0]]])
-            return pd.DataFrame(
-                {
-                    "start_time": np.column_stack([first[:, 0], second[:, 0]]).ravel(),
-                    "end_time": np.column_stack([first[:, 1], second[:, 1]]).ravel(),
-                    "label": labels,
-                }
+            bounds = np.stack([first, second], axis=1).reshape(-1, 2)
+            return pd.DataFrame(bounds, columns=["start_time", "end_time"]).assign(
+                label=labels
             )
 
-        straddling = np.column_stack(
-            [time[2 * index[:, 0] - middle], time[2 * middle - index[:, 0]]]
-        )
-        at_zero_labels = rd.label_by_overlap(straddling, labelled(time))
+        def straddling(clock):
+            return np.column_stack(
+                [clock[2 * index[:, 0] - middle], clock[2 * middle - index[:, 0]]]
+            )
+
+        at_zero_labels = rd.label_by_overlap(straddling(time), labelled(time))
         assert (at_zero_labels == "early").all()
         pd.testing.assert_series_equal(
-            rd.label_by_overlap(
-                np.column_stack(
-                    [shifted[2 * index[:, 0] - middle], shifted[2 * middle - index[:, 0]]]
-                ),
-                labelled(shifted),
-            ),
-            at_zero_labels,
+            rd.label_by_overlap(straddling(shifted), labelled(shifted)), at_zero_labels
         )
 
 
