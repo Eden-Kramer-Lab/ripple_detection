@@ -399,9 +399,11 @@ def match_events(
     iou = np.where(overlapping, _ratio(intersection, union), 0.0)
     eligible = overlapping
     if minimum_iou > 0:
-        # IoU's rounding: its intersection and union each round by about the
-        # bounds' rounding, which is relative to their length
-        rounding = 2 * _time_rounding(reference_bounds, detected_bounds)
+        # IoU's rounding, with u an ulp of the largest bound, each stored to
+        # u/2: the intersection rounds by at most 1.5u and the union by 6.5u
+        # (two lengths, the intersection and two sums), so IoU moves by at
+        # most (1.5u + IoU 6.5u) / union <= 8u / union
+        rounding = _time_rounding(reference_bounds, detected_bounds)
         tolerance = rounding * _ratio(np.ones_like(union), union)
         eligible = overlapping & (iou > minimum_iou + tolerance)
 

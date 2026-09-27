@@ -195,6 +195,16 @@ class TestMatchEvents:
         )
         assert matching.pairs.empty
 
+    def test_minimum_iou_tolerance_is_the_rounding_of_iou(self):
+        """1 ms events on a Unix clock, where a bound rounds by 1.2e-7 s: an
+        IoU 0.003 above minimum_iou is well outside what rounding can move
+        it, and is matched."""
+        origin = 1.7e9
+        reference = np.array([[origin, origin + 0.001]])
+        detected = np.array([[origin + 0.0001, origin + 0.0011]])  # IoU 9 / 11
+        assert len(match_events(reference, detected, minimum_iou=0.815).pairs) == 1
+        assert match_events(reference, detected, minimum_iou=0.822).pairs.empty
+
     def test_a_fragment_below_minimum_iou_still_splits(self):
         reference = np.array([[0.0, 10.0]])
         detected = np.array([[0.0, 9.0], [9.5, 10.0]])
