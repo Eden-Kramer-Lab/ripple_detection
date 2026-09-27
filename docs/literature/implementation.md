@@ -200,7 +200,9 @@ The demo produces 59 configurations: the 57 default inventories and two addition
 The 2017 `trajectory` row uses `analysis="trajectory"`; its default remains the
 arm-reactivation inventory. These rows apply candidate-selection rules only;
 decoding and replay significance are not implemented by selecting them.
-`false_positives` counts detected events with no overlap with a simulated ripple.
+Events are matched one-to-one to the simulated ripples (`match_events`): `recall`
+is the fraction of ripples matched and `false_positives` counts detected events
+matched to none, including a second event over an already matched ripple.
 For population-event inventories this alone does not establish a detection error.
 Other inventories are exercised with their required settings in the tests.
 
