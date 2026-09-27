@@ -669,6 +669,17 @@ class TestPreflight:
         with pytest.raises(validate.ReportNotReady, match="simulation code has changed"):
             validate.require_ready_report(ready_copy / "spec.json", resolved)
 
+    def test_changed_validator(self, validate, ready_copy, resolved, tmp_path, monkeypatch):
+        spec = json.loads((ready_copy / "spec.json").read_text())
+        assert spec["validator_hash"] == _sha256(validate.__file__)
+        edited = tmp_path / "validate_simulator.py"
+        edited.write_text(Path(validate.__file__).read_text() + "\n# edited\n")
+        monkeypatch.setattr(validate, "__file__", str(edited))
+        with pytest.raises(
+            validate.ReportNotReady, match=re.escape("validate_simulator.py has changed")
+        ):
+            validate.require_ready_report(ready_copy / "spec.json", resolved)
+
     def test_changed_targets(self, validate, ready_copy, resolved, tmp_path):
         edited = tmp_path / "targets.csv"
         edited.write_text(validate.TARGETS.read_text().replace(",0.13,0.40,", ",0.10,0.40,"))

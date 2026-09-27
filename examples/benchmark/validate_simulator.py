@@ -15,9 +15,10 @@ writes ``<output-root>/<validation-id>/`` (by default
 
 - ``spec.json``: the resolved simulation parameters of every validated
   condition, the reference's recorded revisions (``REFERENCE_REVISIONS``), the
-  replicates and their seeds, package versions,
-  ``simulation_fingerprint``, ``target_table_hash``, ``status`` (``"ready"`` or
-  ``"not_ready"``) with the reasons, and the SHA-256 of every other file here.
+  replicates and their seeds, package versions, ``simulation_fingerprint``,
+  ``target_table_hash``, ``validator_hash`` (this script's source), the runtime
+  and peak memory of each session, ``status`` (``"ready"`` or ``"not_ready"``)
+  with the reasons, and the SHA-256 of every other file here.
 - ``measurements.csv``: one row per condition, replicate, group and measured
   quantity (``condition_id, replicate, group, quantity, statistic, value, n``).
 - ``checks.csv``: one row per check and condition (``check, kind,
@@ -416,6 +417,12 @@ def simulation_fingerprint() -> str:
 
 def _file_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def validator_hash() -> str:
+    """SHA-256 of this script's source: a report's measurements and checks
+    are this code's."""
+    return _file_hash(Path(__file__))
 
 
 def target_table_hash(path: Path = TARGETS) -> str:
@@ -2193,7 +2200,7 @@ def write_report(
         "conditions": {cid: _canonical(value) for cid, value in parameters.items()},
         "reference_revisions": revision_records(REFERENCE_REVISIONS),
         "versions": _versions(),
-        "validator_hash": _file_hash(Path(__file__)),
+        "validator_hash": validator_hash(),
         "runtime_s": runtime,
         "sessions": [
             {
@@ -2234,8 +2241,8 @@ def require_ready_report(
     ReportNotReady
         Listing every problem: no readable ``spec.json``; a status other than
         ready; fewer replicates than ``DEFAULT_REPLICATES``; a simulation
-        fingerprint or target-table hash other than the current one; an
-        artifact missing or changed; a condition of
+        fingerprint, target-table hash or validator hash other than the
+        current one; an artifact missing or changed; a condition of
         ``resolved`` the report does not cover, or covers with other
         parameters.
     """
@@ -2262,6 +2269,10 @@ def require_ready_report(
         problems.append(
             "the simulation code has changed since it was made "
             "(simulation_fingerprint differs)"
+        )
+    if spec.get("validator_hash") != validator_hash():
+        problems.append(
+            "validate_simulator.py has changed since it was made (validator_hash differs)"
         )
     if spec.get("target_table_hash") != target_table_hash():
         problems.append(

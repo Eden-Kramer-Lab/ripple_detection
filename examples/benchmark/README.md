@@ -199,8 +199,9 @@ uv run python examples/benchmark/validate_simulator.py --validation-id v1 --cond
 ```
 
 The runner checks that report before it runs any method (smoke, full run or resume): it
-must be ready, and must have been made from the current simulator source and target
-table for exactly the parameters of every selected condition, `--duration` included. Its
+must be ready, with at least the predeclared 20 replicates per condition, and must have
+been made from the current simulator source, target table and `validate_simulator.py`
+for exactly the parameters of every selected condition, `--duration` included. Its
 path, the SHA-256 of its `spec.json` and the fingerprints are saved in the run's
 `run_spec.json`. Then the smoke test, one reference session in one process, which prints
 each method's runtime, the simulation time, the peak resident memory, the rows and bytes
