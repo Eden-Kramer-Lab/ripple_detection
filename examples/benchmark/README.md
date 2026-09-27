@@ -184,10 +184,12 @@ expression (`ripple`, `sharp_wave`, `burst` and `network`). Events are matched o
 `MATCH_IOU_LEVELS` (0.0, the headline, then 0.2 and 0.5), and the pairs' onset and offset
 errors are measured against the windows at 10, 25 and 50 %. The reference condition has
 20 replicates and every other condition 10: 440 sessions, replicate `k` with the same
-seed in every condition. Every call runs with its warnings ignored; a call that raises
-is written to `failures.csv`, with no events, results or scores, and the run goes on. A
-(session, method, setting) without scores is a failure, never zero events: a call that
-finds nothing still has its scores and an entry in its `results/` sidecar.
+seed in every condition. A call's warnings change nothing but are each written to
+`warnings.csv` (the session, method and setting, the warning's class and message); a
+call that raises is written to `failures.csv`, with no events, results or scores, and
+the run goes on. A (session, method, setting) without scores is a failure, never zero
+events: a call that finds nothing still has its scores and an entry in its `results/`
+sidecar.
 
 Run it from the repository root, in this order. First validate the simulator for the
 settings the run will use:
@@ -253,7 +255,7 @@ column lists of every table are in [run.py](run.py)'s module docstring:
   truth window, the ripple channels' gains and delays, the units, the methods run with
   their resolved options and input policies, each detected event with its active units,
   every result complete under `results/` (read back exactly by `load_results`), the
-  scores, and the failures;
+  scores, the failures and the warnings;
 - `combined/`, the finished conditions' tables concatenated, which the analyses read.
 
 A condition is written into `conditions/<condition_id>.partial/`, its `done.json` (the

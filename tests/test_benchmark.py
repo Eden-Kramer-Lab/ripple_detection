@@ -6,6 +6,7 @@ short simulated sessions with a few methods."""
 import dataclasses
 import json
 import shutil
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -132,6 +133,7 @@ METRIC_COLUMNS = [
     "n_merged",
 ]
 FAILURE_COLUMNS = ["session_id", "method", "setting", "error"]
+WARNING_COLUMNS = ["session_id", "method", "setting", "category", "message"]
 CONDITION_COLUMNS = ["condition_id", "factor", "level", "params"]
 MANIFEST_KEYS = {
     "run_name",
@@ -324,10 +326,11 @@ def test_run_session_schema(run, output, written):
         "events": EVENT_COLUMNS,
         "metrics": METRIC_COLUMNS,
         "failures": FAILURE_COLUMNS,
+        "warnings": WARNING_COLUMNS,
     }
     for name, columns in expected.items():
         assert list(getattr(output, name).columns) == columns, name
-        suffix = ".csv" if name in ("methods", "failures") else ".csv.gz"
+        suffix = ".csv" if name in ("methods", "failures", "warnings") else ".csv.gz"
         assert list(_read(written / f"{name}{suffix}").columns) == columns, name
     kay = _read(written / "results" / "Kay_ripple_detector__default.csv.gz")
     result = output.results["Kay_ripple_detector", "default"]
@@ -648,6 +651,47 @@ def test_a_scoring_error_raises_rather_than_failing_the_method(run, session, mon
     monkeypatch.setattr(run, "score_events", broken)
     with pytest.raises(RuntimeError, match="a bug in the benchmark"):
         run.evaluate_session(session, "reference/0", [("Kay_ripple_detector", "default")])
+
+
+def test_warnings_are_recorded_not_raised(run, session, monkeypatch):
+    long_message = "y" * 500
+    found = pd.DataFrame({"start_time": [1.0], "end_time": [1.2], "peak_time": [1.1]})
+
+    def warns():
+        for _ in range(2):
+            warnings.warn("twice from one line", UserWarning, stacklevel=1)
+        warnings.warn(long_message, RuntimeWarning, stacklevel=1)
+        return found
+
+    def warns_then_fails():
+        warnings.warn("before failing", DeprecationWarning, stacklevel=1)
+        msg = "bad value"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(
+        run,
+        "method_calls",
+        lambda given: [
+            ("stub_warns", "default", warns),
+            ("stub_fails", "3.0", warns_then_fails),
+        ],
+    )
+    output = run.evaluate_session(session, "reference/0")
+    assert list(output.results) == [("stub_warns", "default")]
+    assert list(output.failures.method) == ["stub_fails"]
+    key = {"session_id": "reference/0", "method": "stub_warns", "setting": "default"}
+    assert output.warnings.to_dict("records") == [
+        {**key, "category": "UserWarning", "message": "twice from one line"},
+        {**key, "category": "UserWarning", "message": "twice from one line"},
+        {**key, "category": "RuntimeWarning", "message": long_message[:200]},
+        {
+            **key,
+            "method": "stub_fails",
+            "setting": "3.0",
+            "category": "DeprecationWarning",
+            "message": "before failing",
+        },
+    ]
 
 
 GRIDCHYN = (("recipe:gridchyn_2020", "literature"),)

@@ -6,7 +6,8 @@ threshold sweeps (``THRESHOLD_SWEEPS``) and every configured literature method
 (``recipe_configs.RECIPES``), and scores each against the session's truth windows
 of every expression at every level of ``MATCH_IOU_LEVELS``. A method that raises is
 recorded in ``failures.csv`` and the run goes on; a missing (session, method,
-setting) is a failure, never zero events.
+setting) is a failure, never zero events. A method's warnings change nothing:
+each is recorded in ``warnings.csv``.
 
 Usage, from the repository root (see README.md, "Running the benchmark")::
 
@@ -98,6 +99,9 @@ Condition files, in ``conditions/<condition_id>/``, written into
   ``n_merged``.
 - ``failures.csv``, one row per failed call: ``session_id``, ``method``,
   ``setting``, ``error`` (``"{type}: {message}"``, at most 200 characters).
+- ``warnings.csv``, one row per warning a call issued, failed calls included, each
+  one even when a line repeats it: ``session_id``, ``method``, ``setting``,
+  ``category`` (the warning's class name), ``message`` (at most 200 characters).
 
 ``combined/`` holds the same tables concatenated over the finished conditions,
 with ``results/<condition_id>/`` copied from each; it is derived, rebuilt by
@@ -309,6 +313,7 @@ SCORE_COLUMNS = (
 )
 METRIC_COLUMNS = ("session_id", "method", "setting", *SCORE_COLUMNS)
 FAILURE_COLUMNS = ("session_id", "method", "setting", "error")
+WARNING_COLUMNS = ("session_id", "method", "setting", "category", "message")
 CONDITION_COLUMNS = ("condition_id", "factor", "level", "params")
 
 # Every table a condition directory holds, by file name, with its columns.
@@ -322,6 +327,7 @@ TABLES: dict[str, tuple[str, ...]] = {
     "events.csv.gz": EVENT_COLUMNS,
     "metrics.csv.gz": METRIC_COLUMNS,
     "failures.csv": FAILURE_COLUMNS,
+    "warnings.csv": WARNING_COLUMNS,
 }
 
 MethodCall = tuple[str, str, Callable[[], pd.DataFrame]]
@@ -334,7 +340,7 @@ class SessionOutput:
     Attributes
     ----------
     sessions, truth, truth_counts, ripple_channels, units, methods, events,
-    metrics, failures : pandas.DataFrame
+    metrics, failures, warnings : pandas.DataFrame
         The session's rows of each table, with the columns in the module
         docstring.
     results : dict of (str, str) to pandas.DataFrame
@@ -353,6 +359,7 @@ class SessionOutput:
     events: pd.DataFrame
     metrics: pd.DataFrame
     failures: pd.DataFrame
+    warnings: pd.DataFrame
     results: dict[tuple[str, str], pd.DataFrame]
     runtimes: dict[tuple[str, str], float]
 
@@ -767,9 +774,9 @@ def evaluate_session(
     output : SessionOutput
         Its ``sessions`` row has ``session_id``, the session's times and
         counts and ``detect_s``; ``run_session`` adds the condition, replicate,
-        seed and simulation time. Each call runs with warnings ignored; one
-        that raises gives a ``failures`` row and no events, results or
-        metrics rows.
+        seed and simulation time. A call's warnings are recorded as
+        ``warnings`` rows and change nothing else; a call that raises gives a
+        ``failures`` row and no events, results or metrics rows.
 
     Raises
     ------
@@ -793,25 +800,30 @@ def evaluate_session(
     selected = {(record["method"], record["setting"]) for record in records}
     calls = [call for call in method_calls(session) if methods is None or call[:2] in selected]
     events, metrics, failures, results, runtimes = [], [], [], {}, {}
+    warned: list[dict[str, str]] = []
     for method, setting, call in calls:
         call_started = wall_clock.perf_counter()
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
+        key = {"session_id": session_id, "method": method, "setting": setting}
+        result: pd.DataFrame | None = None
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            try:
                 result = call()
-        except Exception as error:  # a method's failure is data, never the run's
-            failures.append(
-                {
-                    "session_id": session_id,
-                    "method": method,
-                    "setting": setting,
-                    "error": f"{type(error).__name__}: {error}"[:_ERROR_LENGTH],
-                }
-            )
-        else:
+            except Exception as error:  # a method's failure is data, never the run's
+                failures.append(
+                    {**key, "error": f"{type(error).__name__}: {error}"[:_ERROR_LENGTH]}
+                )
+        warned.extend(
+            {
+                **key,
+                "category": warning.category.__name__,
+                "message": str(warning.message)[:_ERROR_LENGTH],
+            }
+            for warning in caught
+        )
+        if result is not None:
             n_units, n_principal = active_counts(_bounds(result), session)
             scores = score_events(windows, result, minutes_outside)
-            key = {"session_id": session_id, "method": method, "setting": setting}
             peak = result.get("peak_time", pd.Series(np.nan, index=result.index))
             events.append(
                 pd.DataFrame(
@@ -889,6 +901,7 @@ def evaluate_session(
         events=_concat(events, EVENT_COLUMNS),
         metrics=_concat(metrics, METRIC_COLUMNS),
         failures=_table_frame(failures, FAILURE_COLUMNS),
+        warnings=_table_frame(warned, WARNING_COLUMNS),
         results=results,
         runtimes=runtimes,
     )
