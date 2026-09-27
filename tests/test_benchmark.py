@@ -432,6 +432,13 @@ def test_the_session_row_counts_the_truth(run, output, session):
     np.testing.assert_array_equal(output.units.baseline_rate, session.baseline_rates)
 
 
+def test_the_union_length_of_windows_in_any_order(run):
+    bounds = np.array([[0.1, 0.4], [-0.3, -0.2], [0.3, 0.5], [0.5, 0.6], [0.2, 0.25]])
+    # [-0.3, -0.2] and [0.1, 0.6]: a window before the clock's zero counts too
+    assert run._interval_union(bounds) == pytest.approx(0.6)
+    assert run._interval_union(bounds[:0]) == 0.0
+
+
 def test_read_table_keeps_text_as_text(run, written, tmp_path):
     methods = run.read_table(written / "methods.csv")
     kay = methods[methods.method == "Kay_ripple_detector"]

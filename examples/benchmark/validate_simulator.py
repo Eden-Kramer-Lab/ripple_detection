@@ -469,15 +469,11 @@ def interval_union(intervals: FloatArray) -> FloatArray:
     Returns
     -------
     union : ndarray, shape (n_union, 2)
-        Touching or overlapping intervals merged.
+        Touching or overlapping intervals merged (``merge_close_events``).
     """
     bounds = np.asarray(intervals, dtype=float).reshape(-1, 2)
-    if not len(bounds):
-        return bounds
-    bounds = bounds[np.argsort(bounds[:, 0], kind="stable")]
-    running_end = np.maximum.accumulate(bounds[:, 1])
-    starts = np.flatnonzero(np.r_[True, bounds[1:, 0] > running_end[:-1]])
-    return np.column_stack([bounds[starts, 0], np.maximum.reduceat(bounds[:, 1], starts)])
+    union = rd.merge_close_events(bounds[np.argsort(bounds[:, 0], kind="stable")])
+    return np.asarray(union, dtype=float)
 
 
 def interval_mask(time: FloatArray, intervals: FloatArray) -> BoolArray:
@@ -492,14 +488,9 @@ def interval_mask(time: FloatArray, intervals: FloatArray) -> BoolArray:
     Returns
     -------
     mask : ndarray of bool, shape (n_time,)
+        ``intervals_to_mask`` of their union.
     """
-    union = interval_union(intervals)
-    if not len(union):
-        return np.zeros(time.shape, dtype=bool)
-    tolerance = _time_tolerance(time)
-    which = np.searchsorted(union[:, 0], time + tolerance, side="right") - 1
-    inside = (which >= 0) & (time <= union[np.clip(which, 0, None), 1] + tolerance)
-    return np.asarray(inside, dtype=bool)
+    return rd.intervals_to_mask(time, interval_union(intervals))
 
 
 def rest_intervals(time: FloatArray, bouts: FloatArray, edge: float = REST_EDGE) -> FloatArray:
@@ -661,14 +652,11 @@ def silent_gaps(
     gaps : ndarray, shape (n_gaps,)
         Seconds between consecutive distinct spike samples of one interval.
     """
+    bounds = np.asarray(intervals, dtype=float).reshape(-1, 2)
     times = np.unique(time[spike_samples])
-    union = interval_union(intervals)
-    if not len(union):
-        return np.empty(0)
-    tolerance = _time_tolerance(time)
-    which = np.searchsorted(union[:, 0], times + tolerance, side="right") - 1
-    inside = (which >= 0) & (times <= union[np.clip(which, 0, None), 1] + tolerance)
-    times, which = times[inside], which[inside]
+    times = times[rd.intervals_to_mask(times, bounds)]
+    # halfway between two intervals separates their times
+    which = np.searchsorted((bounds[:-1, 1] + bounds[1:, 0]) / 2, times)
     same = which[1:] == which[:-1]
     return np.asarray(np.diff(times)[same], dtype=float)
 

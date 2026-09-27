@@ -616,17 +616,8 @@ def method_calls(session: rd.SimulatedSession) -> list[MethodCall]:
 
 def _interval_union(bounds: np.ndarray[Any, Any]) -> float:
     """Total length of the union of ``[start, end]`` rows, shape (n, 2)."""
-    if not len(bounds):
-        return 0.0
-    bounds = bounds[np.argsort(bounds[:, 0], kind="stable")]
-    reach = np.maximum.accumulate(bounds[:, 1])
-    # a new stretch starts where a start passes every earlier end
-    new = np.r_[True, bounds[1:, 0] > reach[:-1]]
-    group = np.cumsum(new) - 1
-    starts = bounds[new, 0]
-    ends = np.zeros(len(starts))
-    np.maximum.at(ends, group, bounds[:, 1])
-    return float(np.sum(ends - starts))
+    union = rd.merge_close_events(bounds[np.argsort(bounds[:, 0], kind="stable")])
+    return float(np.sum(union[:, 1] - union[:, 0]))
 
 
 def truth_window_sets(events: pd.DataFrame) -> dict[str, tuple[pd.DataFrame, ...]]:
