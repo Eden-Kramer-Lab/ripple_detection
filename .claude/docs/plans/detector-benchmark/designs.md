@@ -488,9 +488,12 @@ As implemented in phase 2 (2026-09-27), where the code departs from the sketch a
   eligible at `minimum_iou > 0` only when `iou > minimum_iou + 8u / union` (IoU's worst-case
   rounding), so a nominal tie at the threshold is excluded at any clock origin; at 0 the rule
   stays "positive overlap". `label_by_overlap` ties overlaps within 8u (earlier row), and the
-  error correlations rank errors within 8u as ties (average ranks, then Pearson): errors read
-  off sample times are whole samples that round apart, and ranking that noise gave 0.33-0.40
-  for a true 0.29. `TestTimeOrigin::test_evaluation` fails without each.
+  error correlations rank errors within 3u of their group's smallest as ties (an error's
+  worst-case rounding; average ranks, then Pearson): errors read off sample times are whole
+  samples that round apart, and ranking that noise gave 0.33-0.40 for a true 0.29. Groups are
+  measured from their smallest value, not neighbour to neighbour, so errors 1 us apart on a
+  Unix clock do not chain into one constant group. `TestTimeOrigin::test_evaluation` fails
+  without each tolerance.
 - **Graph and solver.** Components come from a `coo_matrix` of eligible pairs (no `bmat`); a
   component of one event a side is taken without `linear_sum_assignment`.
 - **Checks.** `minimum_iou` must be below 1; `compare_detectors` and `consensus_counts` raise
