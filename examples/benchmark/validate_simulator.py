@@ -717,6 +717,20 @@ class SessionResult:
     peak_rss_bytes: int = 0
 
 
+@dataclass(frozen=True)
+class _NoiseOnly:
+    """The matched noise-only rendering's signals, without its spikes.
+
+    Attributes
+    ----------
+    lfps : ndarray, shape (n_time, n_channels)
+    sharp_wave_lfp : ndarray, shape (n_time,)
+    """
+
+    lfps: FloatArray
+    sharp_wave_lfp: FloatArray
+
+
 class _Render(Protocol):
     """A session's rendering of another table, with its seed and options."""
 
@@ -895,7 +909,9 @@ def measure_session(
     snippets = _examples(session) if keep_traces else {}
     del session  # the spike array is the largest; keep only what is measured
 
-    noise = rendered(events.iloc[:0])
+    rendering = rendered(events.iloc[:0])
+    noise = _NoiseOnly(rendering.lfps, rendering.sharp_wave_lfp)
+    del rendering  # its spike array is as large as the session's
     _check_noise_matched(out, time, lfps, radiatum, noise, events, non_events, parameters)
     band_sds = filter_ripple_band(noise.lfps, sampling_frequency=rate).std(axis=0)
     filtered_noise = filter_ripple_band(noise.lfps[:, 0], sampling_frequency=rate)
@@ -970,7 +986,7 @@ def _check_noise_matched(
     time: FloatArray,
     lfps: FloatArray,
     radiatum: FloatArray,
-    noise: rd.SimulatedSession,
+    noise: _NoiseOnly,
     events: pd.DataFrame,
     non_events: pd.DataFrame,
     parameters: Mapping[str, Mapping[str, Any]],
@@ -1001,7 +1017,7 @@ def _check_noise_matched(
 def _background(
     out: _Collector,
     time: FloatArray,
-    noise: rd.SimulatedSession,
+    noise: _NoiseOnly,
     filtered_noise: FloatArray,
     lfps: FloatArray,
     parameters: Mapping[str, Mapping[str, Any]],
@@ -1131,7 +1147,7 @@ def _ripple_measures(
     out: _Collector,
     time: FloatArray,
     events: pd.DataFrame,
-    noise: rd.SimulatedSession,
+    noise: _NoiseOnly,
     rendered: _Render,
     band_sds: FloatArray,
     filtered_noise: FloatArray,
@@ -1304,7 +1320,7 @@ def _sharp_wave_measures(
     out: _Collector,
     time: FloatArray,
     events: pd.DataFrame,
-    noise: rd.SimulatedSession,
+    noise: _NoiseOnly,
     rendered: _Render,
 ) -> None:
     """Widths of isolated sharp waves and their crossings against the truth
@@ -1354,7 +1370,7 @@ def _gamma_measures(
     out: _Collector,
     time: FloatArray,
     non_events: pd.DataFrame,
-    noise: rd.SimulatedSession,
+    noise: _NoiseOnly,
     rendered: _Render,
     events: pd.DataFrame,
     parameters: Mapping[str, Mapping[str, Any]],
