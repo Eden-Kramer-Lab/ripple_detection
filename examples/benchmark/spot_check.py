@@ -24,8 +24,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
-from conditions import conditions, resolve, session_seed, simulate_condition
-from run import EXPRESSIONS, OUTPUT, TRUTH_FRACTIONS
+from conditions import TRUTH_FRACTIONS, conditions, resolve, session_seed, simulate_condition
+from run import EXPRESSIONS, OUTPUT
 
 import ripple_detection as rd
 

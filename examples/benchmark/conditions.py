@@ -321,6 +321,10 @@ _ALTERNATIVES: dict[str, dict[str, dict[str, Any]]] = {
 # Pairs of factors crossed at every level; the cells not already in the grid.
 _CROSSED = (("ripple_snr", "participation"), ("ripple_snr", "spike_leakage_rate"))
 
+# The fractions of an envelope's peak at which truth windows are cut, the
+# first for matching, the others for boundary errors.
+TRUTH_FRACTIONS = (0.1, 0.25, 0.5)
+
 _FIRST_SEED = 20260924
 _REST_DURATION = (20.0, 40.0)  # seconds, before each bout
 _BOUT_DURATION = (10.0, 20.0)  # seconds
@@ -561,6 +565,34 @@ def _set(parameters: dict[str, dict[str, Any]], key: str, value: Any) -> None:
         msg = f"Unknown parameter {key!r}: REFERENCE has no such entry."
         raise ValueError(msg)
     target[path[-1]] = copy.deepcopy(value)
+
+
+def differing_keys(first: Any, second: Any, key: str = "") -> list[str]:
+    """The dotted keys at which two nested specifications differ.
+
+    Parameters
+    ----------
+    first, second : object
+        Nested dicts, such as two runs' specifications or two resolved
+        parameter sets in JSON types; a key one lacks counts as None there.
+    key : str, optional
+        The dotted key of ``first`` and ``second`` themselves.
+
+    Returns
+    -------
+    keys : list of str
+        Level by level in sorted order, such as
+        ``["conditions.reference.session.duration_s"]``; empty when equal.
+    """
+    if isinstance(first, dict) and isinstance(second, dict):
+        return [
+            difference
+            for name in sorted(set(first) | set(second))
+            for difference in differing_keys(
+                first.get(name), second.get(name), f"{key}.{name}" if key else name
+            )
+        ]
+    return [] if first == second else [key]
 
 
 def resolve(

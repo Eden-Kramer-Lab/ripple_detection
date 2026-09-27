@@ -145,8 +145,10 @@ import numpy as np
 import pandas as pd
 import scipy
 from conditions import (
+    TRUTH_FRACTIONS,
     Condition,
     conditions,
+    differing_keys,
     resolve,
     select_conditions,
     session_seed,
@@ -168,7 +170,6 @@ import ripple_detection as rd
 from ripple_detection.core import FloatArray
 
 MATCH_IOU_LEVELS = (0.0, 0.2, 0.5)
-TRUTH_FRACTIONS = (0.1, 0.25, 0.5)
 EXPRESSIONS = (*rd.EXPRESSIONS, "network")
 
 THRESHOLD_SWEEPS: dict[str, tuple[str, tuple[Any, ...]]] = {
@@ -1388,19 +1389,6 @@ def run_specification(
     return loaded
 
 
-def _differences(saved: Any, current: Any, key: str = "") -> list[str]:
-    """The dotted keys at which two specifications differ."""
-    if isinstance(saved, dict) and isinstance(current, dict):
-        return [
-            difference
-            for name in sorted(set(saved) | set(current))
-            for difference in _differences(
-                saved.get(name), current.get(name), f"{key}.{name}" if key else name
-            )
-        ]
-    return [] if saved == current else [key]
-
-
 def _clear_unfinished(conditions_directory: Path) -> None:
     """Delete each interrupted (``.partial``) or unverifiable condition
     directory, printing it and why."""
@@ -1660,7 +1648,7 @@ def run_benchmark(
         except OSError:
             msg = f"No run to resume at {root}."
             raise SystemExit(msg) from None
-        differences = _differences(saved, spec)
+        differences = differing_keys(saved, spec)
         if differences:
             msg = f"The saved run specification differs at: {', '.join(differences)}."
             raise SystemExit(msg)

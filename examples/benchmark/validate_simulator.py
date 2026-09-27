@@ -76,8 +76,10 @@ import pandas as pd
 import scipy
 from conditions import (
     REFERENCE_REVISIONS,
+    TRUTH_FRACTIONS,
     Condition,
     ReferenceRevision,
+    differing_keys,
     render_tables,
     resolve,
     select_conditions,
@@ -99,7 +101,6 @@ PACKAGE = Path(rd.__file__).resolve().parent
 FIRST_REPLICATE = 10000
 # The predeclared replicates per condition; fewer cannot back a run.
 DEFAULT_REPLICATES = 20
-TRUTH_FRACTIONS = (0.1, 0.25, 0.5)
 
 # Measurement conventions, in seconds and hertz.
 REST_EDGE = 1.0  # rest leaves out the recording's first and last second, as the draws do
@@ -2026,15 +2027,6 @@ def _canonical(value: Any) -> Any:
     return json.loads(json.dumps(value, sort_keys=True, allow_nan=False))
 
 
-def _flatten(value: Any, prefix: str = "") -> dict[str, Any]:
-    if isinstance(value, dict):
-        flat: dict[str, Any] = {}
-        for key, item in value.items():
-            flat.update(_flatten(item, f"{prefix}{key}."))
-        return flat
-    return {prefix.rstrip("."): value}
-
-
 def revision_records(revisions: Sequence[ReferenceRevision]) -> list[dict[str, Any]]:
     """Each revision of a ``REFERENCE`` value as a dict of JSON types, the
     form ``spec.json`` holds."""
@@ -2276,10 +2268,7 @@ def require_ready_report(
         if condition_id not in covered:
             problems.append(f"condition {condition_id} is not covered")
             continue
-        wanted, have = _flatten(_canonical(dict(parameters))), _flatten(covered[condition_id])
-        differing = sorted(
-            k for k in wanted.keys() | have.keys() if wanted.get(k) != have.get(k)
-        )
+        differing = differing_keys(_canonical(dict(parameters)), covered[condition_id])
         if differing:
             problems.append(
                 f"condition {condition_id} was validated with other settings: "
