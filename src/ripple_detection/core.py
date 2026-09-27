@@ -818,14 +818,23 @@ def _event_bounds(events: ArrayLike | pd.DataFrame) -> FloatArray:
     Raises
     ------
     ValueError
-        If an array is not ``(n_events, 2)``.
+        If an array is not ``(n_events, 2)`` (no events may also be an empty
+        list, shape ``(0,)``), or a DataFrame lacks ``start_time`` or
+        ``end_time``.
 
     """
     if isinstance(events, pd.DataFrame):
+        missing = [c for c in ("start_time", "end_time") if c not in events.columns]
+        if missing:
+            msg = (
+                f"Events as a DataFrame need 'start_time' and 'end_time' columns; missing "
+                f"{', '.join(map(repr, missing))}, has {list(events.columns)}."
+            )
+            raise ValueError(msg)
         bounds = events[["start_time", "end_time"]].to_numpy(dtype=float)
         return np.asarray(bounds, dtype=float).reshape(-1, 2)
     bounds = np.asarray(events, dtype=float)
-    if bounds.size == 0:
+    if bounds.shape == (0,):
         return np.empty((0, 2))
     if bounds.ndim != 2 or bounds.shape[1] != 2:
         msg = (

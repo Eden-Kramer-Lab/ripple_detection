@@ -2577,6 +2577,25 @@ def test_merge_close_events_rejects_a_flat_array_of_the_wrong_length():
         merge_close_events(np.array([0.0, 1.0, 2.0]), 0.05)
 
 
+@pytest.mark.parametrize("shape", [(3, 0), (0, 5), (0, 2, 2)])
+def test_an_empty_array_of_the_wrong_shape_raises(shape):
+    """No values is no events only as (0,) or (0, 2): an empty array of another
+    shape is a mistake, such as columns cut away, not an empty inventory."""
+    with pytest.raises(ValueError, match=r"shape \(n_events, 2\)"):
+        require_overlap(np.empty(shape), np.array([[0.0, 1.0]]))
+
+
+@pytest.mark.parametrize("empty", [[], np.empty(0), np.empty((0, 2))])
+def test_no_events_is_an_empty_list_or_zero_rows(empty):
+    assert require_overlap(empty, np.array([[0.0, 1.0]])).shape == (0, 2)
+
+
+def test_a_dataframe_without_bounds_raises_naming_the_columns():
+    events = pd.DataFrame({"start": [0.0], "end_time": [1.0]})
+    with pytest.raises(ValueError, match=r"'start_time'.*has \['start', 'end_time'\]"):
+        require_overlap(events, np.array([[0.0, 1.0]]))
+
+
 def test_the_default_band_given_explicitly_is_the_shipped_kernel():
     """band=(150, 250) at 1500 Hz is the default band, so it gets the kernel
     the default gets, not a different design that differs by up to 0.8 SD."""
