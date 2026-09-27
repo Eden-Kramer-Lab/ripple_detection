@@ -170,6 +170,23 @@ class TestMeasurements:
         # nothing within 25 ms of the second centre
         np.testing.assert_allclose(fractions, [2 / 3, 0.0])
 
+    def test_observed_participation_counts_units_to_the_timestamps_rounding(self, validate):
+        rate = 1500.0
+        time = UNIX_ORIGIN + np.arange(400) / rate
+        centers = time[[101, 52]]
+        # 30 samples (20 ms) from each centre lies beyond it by 20 ms in
+        # floating point: the timestamps' rounding, which still counts
+        assert time[131] > centers[0] + 0.02
+        assert time[22] < centers[1] - 0.02
+        # around the first centre unit 0 spikes twice and unit 1 at the edge;
+        # unit 2 a sample beyond it; around the second, unit 3 at the edge
+        samples = np.array([95, 101, 131, 132, 22])
+        units = np.array([0, 0, 1, 2, 3])
+        fractions = validate.observed_participation(
+            time, samples, units, np.array([0, 1, 2, 3]), centers, 0.02
+        )
+        np.testing.assert_allclose(fractions, [2 / 4, 1 / 4])
+
     def test_observed_participation_of_no_units(self, validate):
         time = np.arange(10) / 1000.0
         fractions = validate.observed_participation(
