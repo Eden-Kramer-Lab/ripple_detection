@@ -2107,6 +2107,20 @@ def _merged_bounds(
     return events
 
 
+def _check_bounds(name: str, bounds: FloatArray) -> None:
+    """Raise ``ValueError`` naming `name` and the first row of the
+    ``(n_events, 2)`` `bounds` whose start or end is not finite, or whose end
+    comes before its start."""
+    bad = ~np.isfinite(bounds).all(axis=1) | (bounds[:, 1] < bounds[:, 0])
+    if bad.any():
+        row = int(np.flatnonzero(bad)[0])
+        msg = (
+            f"{name} row {row} is {bounds[row].tolist()}: every start and end must be "
+            "finite, with the start no later than the end."
+        )
+        raise ValueError(msg)
+
+
 def _overlaps(
     event_times: ArrayLike | pd.DataFrame,
     reference_event_times: ArrayLike | pd.DataFrame,
@@ -2129,15 +2143,8 @@ def _overlaps(
     _check_non_negative(minimum_overlap=minimum_overlap)
     events = _event_bounds(event_times)
     reference = _event_bounds(reference_event_times)
-    for name, bounds in (("event_times", events), ("reference_event_times", reference)):
-        bad = ~np.isfinite(bounds).all(axis=1) | (bounds[:, 1] < bounds[:, 0])
-        if bad.any():
-            row = int(np.flatnonzero(bad)[0])
-            msg = (
-                f"{name} row {row} is {bounds[row].tolist()}: every start and end must be "
-                "finite, with the start no later than the end."
-            )
-            raise ValueError(msg)
+    _check_bounds("event_times", events)
+    _check_bounds("reference_event_times", reference)
     if not (len(events) and len(reference)):
         return events, np.zeros(len(events), dtype=bool)
     # a zero-length reference has no duration to overlap
