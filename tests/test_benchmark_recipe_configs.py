@@ -663,25 +663,37 @@ def test_the_stand_ins_are_the_packages_simulation_proxies(
 
 
 def test_missing_lfp_samples_end_events_and_ripple_inventories(
-    recipe_configs, session, configs
+    recipe_configs, session, configs, results
 ):
-    missing = (session.time >= 20.0) & (session.time <= 20.5)
+    # 20 ms missing inside a ripple every method below finds (and the
+    # external inventory holds, 13.564-13.621 s) on the complete session.
+    missing = (session.time >= 13.58) & (session.time <= 13.60)
     lfps = session.lfps.copy()
     lfps[missing] = np.nan
     gapped = dataclasses.replace(session, lfps=lfps, raw_lfp=lfps[:, 0].copy())
     first, last = session.time[missing][[0, -1]]
+    before, after = session.time[np.flatnonzero(missing)[[0, -1]] + [-1, 1]]
 
-    def outside(events):
-        found = bounds(events)
-        return not np.any((found[:, 0] <= last) & (found[:, 1] >= first))
+    def spanning(found):
+        return np.any((found[:, 0] <= last) & (found[:, 1] >= first))
 
-    for name in ("karlsson_2009", "stella_2019", "nadasdy_1999", "harvey_2023_no_radiatum"):
+    for name in (
+        "karlsson_2009",
+        "gillespie_2021",
+        "stella_2019",
+        "nadasdy_1999",
+        "harvey_2023_no_radiatum",
+    ):
+        assert spanning(bounds(results[name])), name
         events = _run(recipe_configs, gapped, configs[name])
-        assert len(events), name
-        assert outside(events), name
-    ripples = recipe_configs.external_ripples(gapped)
-    assert len(ripples)
-    assert outside(ripples[:, :2])
+        assert not spanning(bounds(events)), name
+        if events.attrs["clipping_tracked"]:
+            ending, starting = events.end_time == before, events.start_time == after
+            assert ending.any() or starting.any(), name
+            assert events.clipped_end[ending].all(), name
+            assert events.clipped_start[starting].all(), name
+    assert spanning(recipe_configs.external_ripples(session)[:, :2])
+    assert not spanning(recipe_configs.external_ripples(gapped)[:, :2])
     assert len(_run(recipe_configs, gapped, configs["yang_2024"]))
 
 
