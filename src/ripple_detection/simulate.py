@@ -12,6 +12,7 @@ with the ground truth, for testing detectors against known events.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Literal
 
 import numpy as np
@@ -24,10 +25,13 @@ from ripple_detection.core import (
     FloatArray,
     IntArray,
     StrArray,
+    _bound_tolerance,
     _check_choice,
+    _contiguous_valid_blocks,
     _generator,
     filter_ripple_band,
 )
+from ripple_detection.detectors._validation import _check_whole_number
 
 RIPPLE_FREQUENCY = 200
 NoiseType = Literal["white", "pink", "brown"]
@@ -533,16 +537,22 @@ def _validate_ripples(
         raise ValueError(msg)
 
 
+def _sample_window(time: FloatArray, start: float, end: float) -> slice:
+    """The samples in ``[start, end)``; at least one, so a bump narrower than a
+    step still lands somewhere."""
+    first, last = np.searchsorted(time, [start, end])
+    if last <= first:
+        last = min(first + 1, time.size)
+        first = last - 1
+    return slice(int(first), int(last))
+
+
 def _gaussian_window(
     time: FloatArray, center: float, sigma: float, n_sigma: float
 ) -> tuple[slice, FloatArray]:
     """The samples within ``n_sigma`` of ``center`` and the unit-peak Gaussian there;
     at least one sample, so a bump narrower than a step still lands somewhere."""
-    first, last = np.searchsorted(time, [center - n_sigma * sigma, center + n_sigma * sigma])
-    if last <= first:
-        last = min(first + 1, time.size)
-        first = last - 1
-    window = slice(int(first), int(last))
+    window = _sample_window(time, center - n_sigma * sigma, center + n_sigma * sigma)
     envelope = np.exp(-((time[window] - center) ** 2) / (2.0 * sigma**2))
     return window, np.asarray(envelope, dtype=float)
 
@@ -589,20 +599,21 @@ def _scale_to_snr(
     band: tuple[float, float] | None = None,
 ) -> float:
     """The factor that makes ``burst``'s peak *after the filter* ``snr`` times
-    ``band_noise_sd``; the filter's gain depends on frequency and duration.
+    ``band_noise_sd``; the filter's gain depends on frequency and duration."""
+    return float(snr * band_noise_sd / _filtered_peak(burst, rate, band))
 
-    ``band`` is passed to ``filter_ripple_band``; None filters the ripple band
-    (the shipped kernel at 1500 Hz). A second of zeros each side makes the run
-    long enough for the kernel at any rate, and is what the burst is
-    surrounded by in the record.
-    """
+
+def _filtered_peak(
+    burst: FloatArray, rate: float, band: tuple[float, float] | None = None
+) -> float:
+    """``burst``'s peak magnitude after ``filter_ripple_band`` (``band`` None:
+    the ripple band, the shipped kernel at 1500 Hz). A second of zeros each
+    side makes the run long enough for the kernel at any rate, and is what
+    the burst is surrounded by in the record."""
     n_pad = int(np.ceil(rate))
     padded = np.zeros(burst.size + 2 * n_pad)
     padded[n_pad : n_pad + burst.size] = burst
-    filtered_peak = np.abs(
-        filter_ripple_band(padded, sampling_frequency=rate, band=band)
-    ).max()
-    return float(snr * band_noise_sd / filtered_peak)
+    return float(np.abs(filter_ripple_band(padded, sampling_frequency=rate, band=band)).max())
 
 
 def _correlated_noise(
@@ -1157,27 +1168,24 @@ _RIPPLE_CHANNEL_COLUMNS: dict[str, type | str] = {
 }
 
 
-def _table(columns: dict[str, type | str], values: dict[str, ArrayLike]) -> pd.DataFrame:
+def _table(columns: dict[str, type | str], values: Mapping[str, ArrayLike]) -> pd.DataFrame:
     """A frame with exactly ``columns``, in order, cast to their dtypes, so an
     empty table and a filled one agree under every pandas version (``str``
-    is ``object`` before pandas 3 and the string dtype from it)."""
+    is ``object`` before pandas 3 and the string dtype from it). An integer
+    column must hold whole numbers: a cast that would truncate raises."""
     frame = pd.DataFrame({name: np.asarray(values[name]) for name in columns})
+    for name, dtype in columns.items():
+        if dtype == "int64" and len(frame):
+            number = frame[name].to_numpy(dtype=float)
+            if not np.all(np.isfinite(number) & (number == np.round(number))):
+                msg = f"{name} must hold whole numbers, got {frame[name].tolist()[:5]}."
+                raise ValueError(msg)
     return frame.astype(columns)
 
 
-def _empty_events() -> pd.DataFrame:
-    """The latent event table with no rows."""
-    return _table(_EVENT_COLUMNS, {name: [] for name in _EVENT_COLUMNS})
-
-
-def _empty_non_events() -> pd.DataFrame:
-    """The non-event table with no rows."""
-    return _table(_NON_EVENT_COLUMNS, {name: [] for name in _NON_EVENT_COLUMNS})
-
-
-def _empty_ripple_channels() -> pd.DataFrame:
-    """The per-channel ripple table with no rows."""
-    return _table(_RIPPLE_CHANNEL_COLUMNS, {name: [] for name in _RIPPLE_CHANNEL_COLUMNS})
+def _empty(columns: dict[str, type | str]) -> pd.DataFrame:
+    """A table with ``columns`` and no rows."""
+    return _table(columns, {name: [] for name in columns})
 
 
 @dataclass(frozen=True, eq=False)
@@ -1255,12 +1263,14 @@ class SimulatedSession:
     ripple_frequencies: FloatArray
     artifact_times: FloatArray
     sampling_frequency: float
-    events: pd.DataFrame = field(default_factory=_empty_events)
-    non_events: pd.DataFrame = field(default_factory=_empty_non_events)
+    events: pd.DataFrame = field(default_factory=partial(_empty, _EVENT_COLUMNS))
+    non_events: pd.DataFrame = field(default_factory=partial(_empty, _NON_EVENT_COLUMNS))
     unit_types: StrArray = field(default_factory=lambda: np.empty(0, dtype="<U11"))
     baseline_rates: FloatArray = field(default_factory=lambda: np.empty(0))
     running_intervals: FloatArray = field(default_factory=lambda: np.empty((0, 2)))
-    ripple_channels: pd.DataFrame = field(default_factory=_empty_ripple_channels)
+    ripple_channels: pd.DataFrame = field(
+        default_factory=partial(_empty, _RIPPLE_CHANNEL_COLUMNS)
+    )
 
     def __post_init__(self) -> None:
         n_time = self.time.shape[0]
@@ -1476,11 +1486,7 @@ def simulate_session(
             [] if artifact_times is None else artifact_times, dtype=float
         ),
         sampling_frequency=_sampling_rate(time, sampling_frequency),
-        running_intervals=(
-            np.empty((0, 2))
-            if running_intervals is None
-            else _running_intervals(running_intervals)
-        ),
+        running_intervals=_bouts(running_intervals),
     )
 
 
@@ -1498,6 +1504,7 @@ _TYPE_EXPRESSIONS = {
     "ripple_doublet": ("ripple", "sharp_wave", "burst"),
     "sharp_wave_only": ("sharp_wave",),
 }
+_ENVELOPE_POWERS = (2, 4)
 _MAX_RIPPLES = 3
 _TRIPLET_PROBABILITY = 0.3
 # Columns of each event's fixed blocks of variates (see draw_network_events'
@@ -1541,43 +1548,64 @@ def _check_range(
 
 
 def _check_scalar(
-    name: str, value: float, *, lower: float = 0.0, lower_strict: bool = False
+    name: str,
+    value: float,
+    *,
+    lower: float = 0.0,
+    lower_strict: bool = False,
+    upper: float = np.inf,
 ) -> float:
-    """``value`` as a finite float at or above (or above) ``lower``."""
+    """``value`` as a finite float at or above (or above) ``lower`` and at or
+    below ``upper``."""
     number = float(value)
-    if not (np.isfinite(number) and (number > lower if lower_strict else number >= lower)):
+    above = number > lower if lower_strict else number >= lower
+    if not (np.isfinite(number) and above and number <= upper):
         relation = ">" if lower_strict else ">="
-        msg = f"{name} must be finite and {relation} {lower:g}, got {value}."
+        limit = f" and <= {upper:g}" if np.isfinite(upper) else ""
+        msg = f"{name} must be finite and {relation} {lower:g}{limit}, got {value}."
         raise ValueError(msg)
     return number
 
 
-def _checked_time(time: ArrayLike) -> FloatArray:
-    """``time`` as a 1-D float array of two or more evenly spaced, increasing
-    samples (no step over 1.5 times the median, the detectors' gap rule)."""
+def _checked_time(
+    time: ArrayLike, sampling_frequency: float | None = None
+) -> tuple[FloatArray, float]:
+    """``time`` as a 1-D float array of two or more increasing samples with no
+    gap (the detectors' rule), and the sampling rate: ``sampling_frequency``,
+    which must agree with the median step to the timestamps' rounding, or the
+    rate the step gives."""
     time = np.asarray(time, dtype=float)
     if time.ndim != 1 or time.size < 2:
         msg = f"time must be 1-D with at least two samples, got shape {time.shape}."
         raise ValueError(msg)
-    steps = np.diff(time)
-    if not np.all(steps > 0):
+    if not np.all(np.diff(time) > 0):
         msg = "time must be strictly increasing."
         raise ValueError(msg)
-    if steps.max() > 1.5 * np.median(steps):
+    if len(_contiguous_valid_blocks(np.ones(time.size, dtype=bool), time)) > 1:
         msg = "time must be evenly sampled, without gaps; simulate each block separately."
         raise ValueError(msg)
-    return time
+    rate = _sampling_rate(time, sampling_frequency)
+    step = float(np.median(np.diff(time)))
+    if abs(1 / rate - step) > max(4 * float(np.spacing(np.abs(time).max())), 1e-6 * step):
+        msg = (
+            f"sampling_frequency {sampling_frequency} Hz disagrees with time's step, "
+            f"{step:.6g} s ({1 / step:.6g} Hz)."
+        )
+        raise ValueError(msg)
+    return time, rate
 
 
-def _rest_intervals(time: FloatArray, running_intervals: ArrayLike | None) -> FloatArray:
+def _bouts(running_intervals: ArrayLike | None) -> FloatArray:
+    """Checked running bouts, ``(0, 2)`` for None."""
+    if running_intervals is None:
+        return np.empty((0, 2))
+    return _running_intervals(running_intervals)
+
+
+def _rest_intervals(time: FloatArray, bouts: FloatArray) -> FloatArray:
     """(n, 2) stretches of rest: the recording less its first and last second
-    and the running bouts."""
+    and the running ``bouts``."""
     start, end = float(time[0]) + 1.0, float(time[-1]) - 1.0
-    bouts = (
-        np.empty((0, 2))
-        if running_intervals is None
-        else _running_intervals(running_intervals)
-    )
     rest = []
     cursor = start
     for bout_start, bout_end in bouts:
@@ -1891,8 +1919,8 @@ def draw_network_events(
     False
 
     """
-    time = _checked_time(time)
-    nyquist = 0.5 / float(np.median(np.diff(time)))
+    time, rate = _checked_time(time)
+    nyquist = rate / 2
     event_rate = _check_scalar("event_rate", event_rate)
     probabilities = _type_probabilities(type_probabilities)
     ripple_duration = _check_range(
@@ -1901,6 +1929,13 @@ def draw_network_events(
     ripple_skew = _check_range(
         "ripple_skew", ripple_skew, lower=0, lower_strict=True, upper=1, upper_strict=True
     )
+    # the renderer sizes a ripple from its samples: each side scale >= a step
+    if ripple_duration[0] * min(ripple_skew[0], 1 - ripple_skew[1]) / 3 < 1 / rate:
+        msg = (
+            f"ripple_duration {ripple_duration} with ripple_skew {ripple_skew} can give a "
+            f"side scale under one sample, {1 / rate:g} s; lengthen the shortest ripple."
+        )
+        raise ValueError(msg)
     ripple_frequency = _check_range(
         "ripple_frequency", ripple_frequency, lower=0, lower_strict=True, upper=nyquist,
         upper_strict=True,
@@ -1933,35 +1968,29 @@ def draw_network_events(
         "doublet_interval", doublet_interval, lower=0, lower_strict=True
     )
     minimum_separation = _check_scalar("minimum_separation", minimum_separation)
-    rho = _check_scalar("strength_correlation", strength_correlation)
-    if rho > 1:
-        msg = f"strength_correlation must lie in [0, 1], got {strength_correlation}."
-        raise ValueError(msg)
-    if envelope_power not in (2, 4):
+    rho = _check_scalar("strength_correlation", strength_correlation, upper=1.0)
+    if envelope_power not in _ENVELOPE_POWERS:
         msg = f"envelope_power must be 2 or 4, got {envelope_power!r}."
         raise ValueError(msg)
     rng = _generator(rng)
 
-    rest = _rest_intervals(time, running_intervals)
+    rest = _rest_intervals(time, _bouts(running_intervals))
     event_times, rest_index = _poisson_times(rest, event_rate, rng)
     n_events = event_times.size
     types = rng.choice(len(EVENT_TYPES), size=n_events, p=probabilities)
     normals = rng.standard_normal((n_events, _N_NORMALS))
     uniforms = rng.random((n_events, _N_UNIFORMS))
+    # each residual coupled to its event's shared strength (column 0); uniform
+    # on [0, 1] for any rho
+    coupled = special.ndtr(np.sqrt(rho) * normals[:, :1] + np.sqrt(1.0 - rho) * normals)
 
-    rows: list[tuple[int, str, str, int, float, float, float, float, float, float, float]] = []
-    last_end = -np.inf
+    rows: list[dict[str, object]] = []
+    last_end, n_kept = -np.inf, 0
     for event in range(n_events):
         event_type = EVENT_TYPES[types[event]]
-        z, u = normals[event], uniforms[event]
-
-        def strength(
-            residual: float, bounds: tuple[float, float], shared: float = z[0]
-        ) -> float:
-            return _coupled_uniform(shared, residual, rho, bounds)
-
+        z, c, u = normals[event], coupled[event], uniforms[event]
         weak = event_type == "weak_ripple"
-        components = []  # (expression, component, center, rise, decay, amplitude, f0, f1, p)
+        components: list[dict[str, object]] = []
         if event_type in ("swr", "weak_ripple", "ripple_doublet"):
             n_ripples = 1
             if event_type == "ripple_doublet":
@@ -1973,21 +2002,29 @@ def draw_network_events(
                     center += _scaled(u[4 + 4 * j], doublet_interval)
                 span = _scaled(u[1 + 4 * j], ripple_duration)
                 skew = _scaled(u[2 + 4 * j], ripple_skew)
-                onset = strength(z[2 + 2 * j], ripple_frequency)
-                snr = strength(z[1 + 2 * j], weak_ripple_snr if weak else ripple_snr)
+                onset = _scaled(c[2 + 2 * j], ripple_frequency)
                 rise, decay = span * (1 - skew) / 3, span * skew / 3
                 ripples.append((center, rise, decay, span, skew))
                 components.append(
-                    ("ripple", j, center, rise, decay, snr, onset,
-                     onset - _scaled(u[3 + 4 * j], ripple_chirp), np.nan)
+                    {
+                        "expression": "ripple", "component": j, "center_time": center,
+                        "rise_sigma": rise, "decay_sigma": decay,
+                        "amplitude": _scaled(
+                            c[1 + 2 * j], weak_ripple_snr if weak else ripple_snr
+                        ),
+                        "frequency_start": onset,
+                        "frequency_end": onset - _scaled(u[3 + 4 * j], ripple_chirp),
+                    }
                 )  # fmt: skip
-                sharp_wave_sigma = _scaled(u[13 + j], sharp_wave_duration) / 6
-                amplitude = strength(z[8 + 2 * j], sharp_wave_amplitude) * (
-                    0.5 if weak else 1.0
-                )
+                sigma = _scaled(u[13 + j], sharp_wave_duration) / 6
                 components.append(
-                    ("sharp_wave", j, center + sharp_wave_lag * z[7 + 2 * j],
-                     sharp_wave_sigma, sharp_wave_sigma, amplitude, np.nan, np.nan, np.nan)
+                    {
+                        "expression": "sharp_wave", "component": j,
+                        "center_time": center + sharp_wave_lag * z[7 + 2 * j],
+                        "rise_sigma": sigma, "decay_sigma": sigma,
+                        "amplitude": _scaled(c[8 + 2 * j], sharp_wave_amplitude)
+                        * (0.5 if weak else 1.0),
+                    }
                 )  # fmt: skip
             if event_type == "ripple_doublet":
                 # every ripple's span: an earlier, longer ripple can end last
@@ -2000,26 +2037,33 @@ def draw_network_events(
                 burst_center = ripple_center + burst_lag * z[13]
                 burst_span = span * _scaled(u[16], burst_duration_ratio)
                 burst_rise, burst_decay = burst_span * (1 - skew) / 3, burst_span * skew / 3
-            components.append(
-                ("burst", 0, burst_center, burst_rise, burst_decay, burst_gain, np.nan, np.nan,
-                 strength(z[14], weak_participation if weak else participation))
-            )  # fmt: skip
+            burst_participation = weak_participation if weak else participation
         elif event_type == "burst_only":
-            sigma = _scaled(u[17], burst_only_duration) / 6
-            components.append(
-                ("burst", 0, event_times[event], sigma, sigma, burst_gain, np.nan, np.nan,
-                 strength(z[14], participation))
-            )  # fmt: skip
+            burst_center = event_times[event]
+            burst_rise = burst_decay = _scaled(u[17], burst_only_duration) / 6
+            burst_participation = participation
         else:  # sharp_wave_only
             sigma = _scaled(u[13], sharp_wave_duration) / 6
             components.append(
-                ("sharp_wave", 0, event_times[event], sigma, sigma,
-                 strength(z[8], sharp_wave_amplitude), np.nan, np.nan, np.nan)
+                {
+                    "expression": "sharp_wave", "component": 0,
+                    "center_time": event_times[event], "rise_sigma": sigma,
+                    "decay_sigma": sigma, "amplitude": _scaled(c[8], sharp_wave_amplitude),
+                }
+            )  # fmt: skip
+        if event_type != "sharp_wave_only":
+            components.append(
+                {
+                    "expression": "burst", "component": 0, "center_time": burst_center,
+                    "rise_sigma": burst_rise, "decay_sigma": burst_decay,
+                    "amplitude": burst_gain,
+                    "participation": _scaled(c[14], burst_participation),
+                }
             )  # fmt: skip
 
-        centers = np.array([c[2] for c in components])
-        rises = np.array([c[3] for c in components])
-        decays = np.array([c[4] for c in components])
+        centers = np.array([row["center_time"] for row in components], dtype=float)
+        rises = np.array([row["rise_sigma"] for row in components], dtype=float)
+        decays = np.array([row["decay_sigma"] for row in components], dtype=float)
         start_3, end_3 = np.min(centers - 3 * rises), np.max(centers + 3 * decays)
         start_4, end_4 = np.min(centers - 4 * rises), np.max(centers + 4 * decays)
         rest_start, rest_end = rest[rest_index[event]]
@@ -2028,50 +2072,22 @@ def draw_network_events(
         if start_4 < rest_start or end_4 > rest_end:
             continue
         last_end = end_3
-        rows.extend((event, event_type, *component) for component in components)
+        # kept events' spans are disjoint and in time order, and each centre
+        # lies inside its span, so the keep order is the earliest-centre order
+        rows.extend(
+            {"event_id": n_kept, "event_type": event_type, **row} for row in components
+        )
+        n_kept += 1
 
-    if not rows:
-        return _empty_events()
-    columns = list(zip(*rows, strict=True))
-    table = pd.DataFrame(
-        {
-            "event": np.asarray(columns[0]),
-            "event_type": np.asarray(columns[1], dtype=object),
-            "expression": np.asarray(columns[2], dtype=object),
-            "component": np.asarray(columns[3]),
-            "center_time": np.asarray(columns[4], dtype=float),
-            "rise_sigma": np.asarray(columns[5], dtype=float),
-            "decay_sigma": np.asarray(columns[6], dtype=float),
-            "amplitude": np.asarray(columns[7], dtype=float),
-            "frequency_start": np.asarray(columns[8], dtype=float),
-            "frequency_end": np.asarray(columns[9], dtype=float),
-            "participation": np.asarray(columns[10], dtype=float),
-        }
+    table = pd.DataFrame(rows, columns=[*_EVENT_COLUMNS]).assign(
+        envelope_power=envelope_power, n_participants=0
     )
-    # renumber the kept events in order of their earliest component's centre
-    earliest = table.groupby("event", sort=True)["center_time"].min()
-    rank = np.argsort(np.argsort(earliest.to_numpy(), kind="stable"), kind="stable")
-    table["event_id"] = table["event"].map(pd.Series(rank, index=earliest.index))
-    table["envelope_power"] = envelope_power
-    table["n_participants"] = 0
-    return _sorted_events(
-        _table(_EVENT_COLUMNS, {name: table[name] for name in _EVENT_COLUMNS})
-    )
+    return _sorted_events(_table(_EVENT_COLUMNS, table))
 
 
 def _scaled(u: float, bounds: tuple[float, float]) -> float:
     """``u`` in [0, 1] mapped linearly onto ``(low, high)``."""
     return bounds[0] + (bounds[1] - bounds[0]) * float(u)
-
-
-def _coupled_uniform(
-    shared: float, residual: float, rho: float, bounds: tuple[float, float]
-) -> float:
-    """A uniform draw on ``bounds`` whose latent normal has correlation ``rho``
-    with every other draw sharing ``shared``: ``ndtr(sqrt(rho) shared +
-    sqrt(1 - rho) residual)``, uniform for any ``rho``."""
-    latent = np.sqrt(rho) * shared + np.sqrt(1.0 - rho) * residual
-    return _scaled(float(special.ndtr(latent)), bounds)
 
 
 def _type_probabilities(type_probabilities: Mapping[str, float] | None) -> FloatArray:
@@ -2111,6 +2127,7 @@ _REFERENCE_BASELINE_RATES = {
     "pyramidal": (0.5, 1.5),
     "interneuron": (8.0, 15.0),
 }
+_SPIKE_BLOCK = 8
 SPATIAL_PROFILES = ("global", "local")
 SPIKE_MODELS = ("poisson", "refractory")
 # the renderer's random streams, each seeded from one draw of the caller's rng
@@ -2132,11 +2149,7 @@ def _event_envelope(
     """The unit-peak envelope ``exp(-ln 2 (|t| / (sqrt(2 ln 2) sigma))**power)``,
     ``sigma`` the rise scale before ``center`` and the decay scale after, over
     the samples within 8 side scales; at least one sample."""
-    first, last = np.searchsorted(time, [center - 8 * rise_sigma, center + 8 * decay_sigma])
-    if last <= first:
-        last = min(first + 1, time.size)
-        first = last - 1
-    window = slice(int(first), int(last))
+    window = _sample_window(time, center - 8 * rise_sigma, center + 8 * decay_sigma)
     offset = time[window] - center
     sigma = np.where(offset < 0, rise_sigma, decay_sigma)
     scaled = np.abs(offset) / (np.sqrt(2 * np.log(2)) * sigma)
@@ -2210,7 +2223,8 @@ def _rest_interval_of(
 
 
 def _spatial_profile(
-    ripple: pd.Series,
+    start: float,
+    end: float,
     rest: FloatArray,
     gains: FloatArray,
     *,
@@ -2221,7 +2235,8 @@ def _spatial_profile(
     rng: np.random.Generator,
 ) -> tuple[FloatArray, FloatArray]:
     """One ripple's gain and delay on each channel, the recording-wide gains
-    included; unselected channels have gain 0 and delay 0.
+    included; unselected channels have gain 0 and delay 0. ``start`` and
+    ``end`` bound the ripple's span at four side scales.
 
     ``local`` selects ``max(1, ceil(occupancy n_channels))`` channels, one of
     them the anchor at event gain 1 and delay 0, the rest with a gain from
@@ -2244,13 +2259,12 @@ def _spatial_profile(
         carrying = order[gains[order] > 0][:1]
         selected = np.append(selected, carrying)
     anchor = carrying[int(anchor_u * carrying.size)]
-    start = ripple.center_time - 4 * ripple.rise_sigma
-    end = ripple.center_time + 4 * ripple.decay_sigma
     stretch = _rest_interval_of(rest, start, end)
-    low, high = (0.0, 0.0) if stretch is None else (
-        min(0.0, max(-maximum_delay, stretch[0] - start)),
-        max(0.0, min(maximum_delay, stretch[1] - end)),
-    )  # fmt: skip
+    if stretch is None:  # not at rest (an edited table): not delayed
+        low = high = 0.0
+    else:
+        low = min(0.0, max(-maximum_delay, stretch[0] - start))
+        high = max(0.0, min(maximum_delay, stretch[1] - end))
     event_gains, delays = np.zeros(n_channels), np.zeros(n_channels)
     event_gains[selected] = gain_range[0] + (gain_range[1] - gain_range[0]) * gain_u[selected]
     delays[selected] = low + (high - low) * delay_u[selected]
@@ -2260,19 +2274,20 @@ def _spatial_profile(
     return channel_gains, delays
 
 
-def _check_event_table(events: pd.DataFrame, time: FloatArray, rate: float) -> pd.DataFrame:
-    """The latent event table with its columns cast and sorted, or ValueError."""
-    missing = [name for name in _EVENT_COLUMNS if name not in events.columns]
+def _validated_events(events: pd.DataFrame) -> pd.DataFrame:
+    """The latent event table with its columns cast, in the given row order
+    and with ``n_participants`` 0, or ValueError: the checks that hold
+    whatever the recording (vocabularies, finite values, positive scales,
+    powers, unique keys, one type per event, components that fit the type,
+    sizes)."""
+    given = [name for name in _EVENT_COLUMNS if name != "n_participants"]
+    missing = [name for name in given if name not in events.columns]
     if missing:
         msg = f"events is missing the columns {missing}; build it with draw_network_events."
         raise ValueError(msg)
-    whole = ["event_id", "component", "envelope_power", "n_participants"]
-    keys = events[whole].to_numpy(dtype=float)
-    if not np.all(np.isfinite(keys) & (keys == np.round(keys))):
-        msg = f"events columns {', '.join(whole)} must hold whole numbers."
-        raise ValueError(msg)
-    table = _sorted_events(
-        _table(_EVENT_COLUMNS, {name: events[name] for name in _EVENT_COLUMNS})
+    table = _table(
+        _EVENT_COLUMNS,
+        {**{name: events[name] for name in given}, "n_participants": np.zeros(len(events))},
     )
     for name, vocabulary in (("event_type", EVENT_TYPES), ("expression", EXPRESSIONS)):
         unknown = sorted(set(table[name]) - set(vocabulary))
@@ -2285,7 +2300,7 @@ def _check_event_table(events: pd.DataFrame, time: FloatArray, rate: float) -> p
             "events needs finite times and amplitudes and positive rise_sigma and decay_sigma."
         )
         raise ValueError(msg)
-    if not table.envelope_power.isin([2, 4]).all():
+    if not table.envelope_power.isin(_ENVELOPE_POWERS).all():
         msg = "events.envelope_power must be 2 or 4."
         raise ValueError(msg)
     if table.duplicated(["event_id", "expression", "component"]).any():
@@ -2298,6 +2313,23 @@ def _check_event_table(events: pd.DataFrame, time: FloatArray, rate: float) -> p
         msg = "Each event_id must have one event_type; events mixes types under one id."
         raise ValueError(msg)
     _check_components(table)
+    if not (table.amplitude[table.expression == "ripple"] > 0).all():
+        msg = "A ripple's amplitude, its SNR, must be positive."
+        raise ValueError(msg)
+    bursts = table[table.expression == "burst"]
+    if not (bursts.participation.between(0, 1).all() and (bursts.amplitude >= 1).all()):
+        msg = "A burst needs participation in [0, 1] and amplitude (its gain) of at least 1."
+        raise ValueError(msg)
+    if not (table.amplitude[table.expression == "sharp_wave"] >= 0).all():
+        msg = "A sharp wave's amplitude must be non-negative; it is rendered negative."
+        raise ValueError(msg)
+    return table
+
+
+def _check_against_recording(table: pd.DataFrame, time: FloatArray, rate: float) -> None:
+    """Raise unless every component lies inside the recording and every
+    ripple fits its sampling: frequencies below Nyquist, side scales of at
+    least one sample."""
     start = table.center_time - 4 * table.rise_sigma
     end = table.center_time + 4 * table.decay_sigma
     if not ((start >= time[0]) & (end <= time[-1])).all():
@@ -2315,35 +2347,26 @@ def _check_event_table(events: pd.DataFrame, time: FloatArray, rate: float) -> p
     if not (ripples[["rise_sigma", "decay_sigma"]] >= 1 / rate).all().all():
         msg = (
             f"A ripple's rise_sigma and decay_sigma must be at least one sample, {1 / rate:g} "
-            "s; a narrower ripple has no samples to size its SNR from."
+            "s, for its sampled waveform to hold its shape."
         )
         raise ValueError(msg)
-    if not (ripples.amplitude > 0).all():
-        msg = "A ripple's amplitude, its SNR, must be positive."
-        raise ValueError(msg)
-    bursts = table[table.expression == "burst"]
-    if not (bursts.participation.between(0, 1).all() and (bursts.amplitude >= 1).all()):
-        msg = "A burst needs participation in [0, 1] and amplitude (its gain) of at least 1."
-        raise ValueError(msg)
-    if not (table.amplitude[table.expression == "sharp_wave"] >= 0).all():
-        msg = "A sharp wave's amplitude must be non-negative; it is rendered negative."
-        raise ValueError(msg)
-    return table
 
 
 def _check_components(table: pd.DataFrame) -> None:
     """Raise if an event has a component its type does not: a ripple on a
     ``burst_only`` or ``sharp_wave_only`` event, a burst on a
-    ``sharp_wave_only`` one, and so on, or a component numbered above 0 on any
-    type but ``ripple_doublet``. Components may be left out, to render one
-    expression alone; the event keeps its type."""
+    ``sharp_wave_only`` one, and so on, or a component numbered other than 0
+    (from 0 up for a ``ripple_doublet``'s ripples and sharp waves).
+    Components may be left out, to render one expression alone; the event
+    keeps its type."""
     allowed = table.event_type.map(_TYPE_EXPRESSIONS)
     has = [
         expression in expressions
         for expression, expressions in zip(table.expression, allowed, strict=True)
     ]
     single = (table.event_type != "ripple_doublet") | (table.expression == "burst")
-    wrong = ~np.asarray(has, dtype=bool) | (single & (table.component != 0)).to_numpy()
+    numbered = (table.component < 0) | (single & (table.component != 0))
+    wrong = ~np.asarray(has, dtype=bool) | numbered.to_numpy()
     if wrong.any():
         row = table[wrong].iloc[0]
         msg = (
@@ -2369,9 +2392,7 @@ def _unit_layout(
             msg = f"{name} has unknown unit types {unknown}; use {', '.join(UNIT_TYPES)}."
             raise ValueError(msg)
     for unit_type, count in counts.items():
-        if int(count) != count or count < 0:
-            msg = f"unit_counts[{unit_type!r}] must be a non-negative integer, got {count}."
-            raise ValueError(msg)
+        _check_whole_number(f"unit_counts[{unit_type!r}]", count, 0)
     if sum(counts.values()) < 1:
         msg = "unit_counts must give at least one unit."
         raise ValueError(msg)
@@ -2432,8 +2453,9 @@ def _draw_units(
         window, envelope = _event_envelope(
             time, burst.center_time, burst.rise_sigma, burst.decay_sigma, burst.envelope_power
         )
+        gain = (burst.amplitude - 1.0) * envelope
         for participant in np.flatnonzero(takes_part):
-            gains[participant].append((window, (burst.amplitude - 1.0) * envelope))
+            gains[participant].append((window, gain))
     interneurons = np.flatnonzero(unit_types == "interneuron")
     for _, ripples in events[events.expression == "ripple"].groupby("event_id", sort=True):
         envelopes = [
@@ -2446,23 +2468,31 @@ def _draw_units(
         for window, envelope in envelopes:
             part = slice(window.start - first, window.stop - first)
             union[part] = np.maximum(union[part], envelope)
+        interneuron_modulation = (interneuron_gain - 1.0) * union
         for interneuron in interneurons:
-            gains[interneuron].append((slice(first, last), (interneuron_gain - 1.0) * union))
+            gains[interneuron].append((slice(first, last), interneuron_modulation))
     spikes = np.zeros((n_time, n_units))
-    tolerance = 4 * float(np.spacing(np.max(np.abs(time[[0, -1]]))))
-    for unit in range(n_units):
-        intensity = np.full(n_time, rates[unit] * step)
-        for window, gain in gains[unit]:
-            intensity[window] += rates[unit] * step * gain
-        if spike_model == "poisson":
-            spikes[:, unit] = streams["spikes"].poisson(intensity)
-            continue
-        candidates = np.flatnonzero(streams["spikes"].random(n_time) < -np.expm1(-intensity))
-        last_spike = -np.inf
-        for sample in candidates:
-            if time[sample] - last_spike >= refractory_period - tolerance:
-                spikes[sample, unit] = 1.0
-                last_spike = time[sample]
+    tolerance = _bound_tolerance(time)
+    # units are drawn in order into a few rows, then written to the (n_time,
+    # n_units) array a block at a time rather than a strided column at a time
+    block = np.zeros((min(_SPIKE_BLOCK, n_units), n_time))
+    for first_unit in range(0, n_units, _SPIKE_BLOCK):
+        units = range(first_unit, min(first_unit + _SPIKE_BLOCK, n_units))
+        for row, unit in enumerate(units):
+            intensity = np.full(n_time, rates[unit] * step)
+            for window, gain in gains[unit]:
+                intensity[window] += rates[unit] * step * gain
+            if spike_model == "poisson":
+                block[row] = streams["spikes"].poisson(intensity)
+                continue
+            block[row] = 0.0
+            uniform = streams["spikes"].random(n_time)
+            last_spike = -np.inf
+            for sample in np.flatnonzero(uniform < -np.expm1(-intensity)):
+                if time[sample] - last_spike >= refractory_period - tolerance:
+                    block[row, sample] = 1.0
+                    last_spike = time[sample]
+        spikes[:, first_unit : first_unit + len(units)] = block[: len(units)].T
     return rates, spikes, n_participants
 
 
@@ -2677,16 +2707,9 @@ def simulate_network_session(
     ['place', 'pyramidal', 'interneuron']
 
     """
-    time = _checked_time(time)
-    rate = _sampling_rate(time, sampling_frequency)
-    step = float(np.median(np.diff(time)))
-    if abs(1 / rate - step) > max(4 * float(np.spacing(np.abs(time).max())), 1e-6 * step):
-        msg = (
-            f"sampling_frequency {sampling_frequency} Hz disagrees with time's step, "
-            f"{step:.6g} s ({1 / step:.6g} Hz)."
-        )
-        raise ValueError(msg)
-    table = _check_event_table(events, time, rate)
+    time, rate = _checked_time(time, sampling_frequency)
+    table = _sorted_events(_validated_events(events))
+    _check_against_recording(table, time, rate)
     if n_channels < 1:
         msg = f"n_channels must be at least 1, got {n_channels}."
         raise ValueError(msg)
@@ -2723,11 +2746,7 @@ def simulate_network_session(
     if len(ripples) and noise_amplitude <= 0:
         msg = "Ripples are sized against the background: noise_amplitude must be > 0."
         raise ValueError(msg)
-    bouts = (
-        np.empty((0, 2))
-        if running_intervals is None
-        else _running_intervals(running_intervals)
-    )
+    bouts = _bouts(running_intervals)
     seeds = _generator(rng).integers(np.iinfo(np.int64).max, size=len(_RENDER_STREAMS))
     streams = {
         name: np.random.default_rng(int(seed))
@@ -2753,49 +2772,41 @@ def simulate_network_session(
         else np.nan
     )
     rest = _rest_intervals(time, bouts)
-    channel_rows = []
-    for ripple in ripples.itertuples():
+    ripple_gains = np.zeros((len(ripples), n_channels))
+    delays = np.zeros((len(ripples), n_channels))
+    for index, ripple in enumerate(ripples.itertuples()):
         phase = streams["ripple_phases"].uniform(0.0, 2 * np.pi)
-        render = (
-            ripple.rise_sigma, ripple.decay_sigma, ripple.frequency_start,
-            ripple.frequency_end, phase, ripple.envelope_power,
+        render = partial(
+            _render_ripple, time, rise_sigma=ripple.rise_sigma,
+            decay_sigma=ripple.decay_sigma, frequency_start=ripple.frequency_start,
+            frequency_end=ripple.frequency_end, phase=phase, power=ripple.envelope_power,
         )  # fmt: skip
-        window, latent = _render_ripple(time, ripple.center_time, *render)
-        scale = _scale_to_snr(latent, ripple.amplitude, band_noise_sd, rate)
+        window, latent = render(ripple.center_time)
+        filtered_peak = _filtered_peak(latent, rate)
         # the filter's gain on the ripple: its SNR is measured in the ripple band
-        if ripple.amplitude * band_noise_sd / (scale * np.abs(latent).max()) < 0.1:
+        if not filtered_peak / np.abs(latent).max() >= 0.1:
             msg = (
                 f"The ripple of event {ripple.event_id} at {ripple.frequency_start:g}-"
                 f"{ripple.frequency_end:g} Hz lies outside the ripple band its SNR is "
                 "measured in (filter_ripple_band): sizing it would magnify it without bound."
             )
             raise ValueError(msg)
+        scale = float(ripple.amplitude * band_noise_sd / filtered_peak)
         radiatum[window] += ripple_leak * scale * latent
-        ripple_gains, delays = _spatial_profile(
-            pd.Series(ripple._asdict()), rest, gains,
-            local=spatial_profile == "local", occupancy=channel_occupancy,
+        ripple_gains[index], delays[index] = _spatial_profile(
+            ripple.center_time - 4 * ripple.rise_sigma,
+            ripple.center_time + 4 * ripple.decay_sigma,
+            rest, gains, local=spatial_profile == "local", occupancy=channel_occupancy,
             gain_range=gain_range, maximum_delay=channel_delay,
             rng=streams["spatial_profiles"],
         )  # fmt: skip
-        for channel in range(n_channels):
-            channel_rows.append(
-                (
-                    ripple.event_id,
-                    ripple.component,
-                    channel,
-                    ripple_gains[channel],
-                    delays[channel],
-                )
+        for channel in np.flatnonzero(ripple_gains[index]):
+            delay = delays[index, channel]
+            shifted_window, shifted = (
+                (window, latent) if delay == 0 else render(ripple.center_time + delay)
             )
-            if ripple_gains[channel] == 0:
-                continue
-            if delays[channel] == 0:
-                shifted_window, shifted = window, latent
-            else:
-                shifted_window, shifted = _render_ripple(
-                    time, ripple.center_time + delays[channel], *render
-                )
-            lfps[shifted_window, channel] += ripple_gains[channel] * scale * shifted
+            lfps[shifted_window, channel] += ripple_gains[index, channel] * scale * shifted
+    del stationary, channels  # the slow field or the views keep what is needed
 
     for sharp_wave in table[table.expression == "sharp_wave"].itertuples():
         window, envelope = _event_envelope(
@@ -2818,15 +2829,16 @@ def simulate_network_session(
         interneuron_gain=interneuron_gain, spike_model=spike_model,
         refractory_period=refractory_period, step=1 / rate, streams=streams,
     )  # fmt: skip
-    table["n_participants"] = 0
     table.loc[table.expression == "burst", "n_participants"] = n_participants
-    ripple_channels = (
-        _table(
-            _RIPPLE_CHANNEL_COLUMNS,
-            dict(zip(_RIPPLE_CHANNEL_COLUMNS, zip(*channel_rows, strict=True), strict=True)),
-        )
-        if channel_rows
-        else _empty_ripple_channels()
+    ripple_channels = _table(
+        _RIPPLE_CHANNEL_COLUMNS,
+        {
+            "event_id": np.repeat(ripples.event_id.to_numpy(), n_channels),
+            "component": np.repeat(ripples.component.to_numpy(), n_channels),
+            "channel": np.tile(np.arange(n_channels), len(ripples)),
+            "gain": ripple_gains.ravel(),
+            "delay_s": delays.ravel(),
+        },
     )
     return SimulatedSession(
         time=time,
@@ -2931,10 +2943,12 @@ def truth_windows(
             "non_event_type)."
         )
         raise ValueError(msg)
-    if not table["envelope_power"].isin([2, 4]).all():
+    events = id_column == "event_id"
+    if events:
+        table = _validated_events(table)
+    elif not table["envelope_power"].isin(_ENVELOPE_POWERS).all():
         msg = "table.envelope_power must be 2 or 4."
         raise ValueError(msg)
-    events = id_column == "event_id"
     if not events and expression is not None:
         msg = "A non-event table has no expressions; leave expression as None."
         raise ValueError(msg)

@@ -1536,6 +1536,7 @@ class TestDrawNetworkEvents:
             ({"strength_correlation": 1.5}, "strength_correlation"),
             ({"strength_correlation": -0.1}, "strength_correlation"),
             ({"envelope_power": 3}, "envelope_power"),
+            ({"ripple_duration": (0.003, 0.01)}, "under one sample"),
             ({"running_intervals": [(5.0, 2.0)]}, "start before its end"),
         ],
     )
@@ -1583,13 +1584,12 @@ def _one_event_table(event_type, *, event_id=0, center_time=5.0, **overrides):
         "frequency_start": nan, "frequency_end": nan, "participation": 0.5,
     }  # fmt: skip
     doublet_burst = {**burst, "rise_sigma": 0.19 / 6, "decay_sigma": 0.19 / 6}
-    weak = {"amplitude": 1.5}, {"amplitude": 2.5}, {"participation": 0.05}
     components = {  # (row, component, offset of its centre)
         "swr": [(ripple, 0, 0.0), (sharp_wave, 0, 0.0), (burst, 0, 0.0)],
         "weak_ripple": [
-            ({**ripple, **weak[0]}, 0, 0.0),
-            ({**sharp_wave, **weak[1]}, 0, 0.0),
-            ({**burst, **weak[2]}, 0, 0.0),
+            ({**ripple, "amplitude": 1.5}, 0, 0.0),
+            ({**sharp_wave, "amplitude": 2.5}, 0, 0.0),
+            ({**burst, "participation": 0.05}, 0, 0.0),
         ],
         "burst_only": [(burst, 0, 0.0)],
         "sharp_wave_only": [(sharp_wave, 0, 0.0)],
@@ -1632,9 +1632,23 @@ def _event_tables(*tables):
 QUIET = {"theta_amplitude": 0.0, "delta_amplitude": 0.0}
 
 
-class TestSimulateNetworkSession:
+class _Renders:
+    """Renders hand-built tables on the class's ``TIME`` with its seed and no
+    theta or delta."""
+
     FS = 1500
-    TIME = simulate_time(FS * 30, FS)
+    TIME: np.ndarray
+    RNG: int
+
+    def _render(self, events, **kwargs):
+        return simulate_network_session(
+            self.TIME, events, **{"rng": self.RNG, **QUIET, **kwargs}
+        )
+
+
+class TestSimulateNetworkSession(_Renders):
+    TIME = simulate_time(_Renders.FS * 30, _Renders.FS)
+    RNG = 5
 
     @staticmethod
     @pytest.fixture(scope="class")
@@ -1642,9 +1656,6 @@ class TestSimulateNetworkSession:
         time, running = TestSimulateNetworkSession.TIME, [(12.0, 18.0)]
         events = draw_network_events(time, event_rate=1.0, running_intervals=running, rng=0)
         return events, simulate_network_session(time, events, running_intervals=running, rng=1)
-
-    def _render(self, events, **kwargs):
-        return simulate_network_session(self.TIME, events, **{"rng": 5, **QUIET, **kwargs})
 
     def test_shapes_and_types(self, drawn):
         events, session = drawn
@@ -1805,12 +1816,9 @@ def _envelope_centroid(signal, time):
     return float(np.sum(time * power) / np.sum(power))
 
 
-class TestNetworkSessionVariants:
-    FS = 1500
-    TIME = simulate_time(FS * 12, FS)
-
-    def _render(self, events, **kwargs):
-        return simulate_network_session(self.TIME, events, **{"rng": 7, **QUIET, **kwargs})
+class TestNetworkSessionVariants(_Renders):
+    TIME = simulate_time(_Renders.FS * 12, _Renders.FS)
+    RNG = 7
 
     def test_global_profile_stores_the_channel_gains(self):
         events = _ripple_only(
@@ -1851,9 +1859,9 @@ class TestNetworkSessionVariants:
             relative = selected.gain.to_numpy() / gains[selected.channel]
             anchor = selected[np.isclose(relative, 1.0) & (selected.delay_s == 0)]
             assert len(anchor) >= 1
-            others = selected.drop(anchor.index[:1])
-            assert (relative[np.isin(selected.index, others.index)] >= 0.5 - 1e-12).all()
-            assert (relative[np.isin(selected.index, others.index)] <= 0.9 + 1e-12).all()
+            others = relative[selected.index != anchor.index[0]]
+            assert (others >= 0.5 - 1e-12).all()
+            assert (others <= 0.9 + 1e-12).all()
             assert (np.abs(selected.delay_s) <= 0.002).all()
             centre = centres[event_id]
             near = np.abs(self.TIME - centre) < 0.2
@@ -2152,7 +2160,10 @@ class TestNetworkSessionVariants:
             ),
             (_one_event_table("swr", event_id=0.5), "whole numbers"),
             (_one_event_table("swr", envelope_power=2.5), "whole numbers"),
-            (_one_event_table("swr", n_participants=np.nan), "whole numbers"),
+            (
+                _one_event_table("ripple_doublet").replace({"component": {1: -1}}),
+                "component -1",
+            ),
             (_one_event_table("swr", sharp_wave={"amplitude": -5.0}), "non-negative"),
             (
                 _one_event_table("swr").assign(event_type="sharp_wave_only"),
@@ -2188,11 +2199,11 @@ class TestNetworkSessionVariants:
     def test_n_participants_is_recounted(self):
         """The table's own counts are replaced: bursts get the rendering's,
         other rows 0."""
-        events = _one_event_table("swr", n_participants=7)
-        session = self._render(events)
-        counts = session.events.set_index("expression").n_participants
-        assert counts["ripple"] == counts["sharp_wave"] == 0
-        assert counts["burst"] != 7
+        for given in (7, np.nan):
+            session = self._render(_one_event_table("swr", n_participants=given))
+            counts = session.events.set_index("expression").n_participants
+            assert counts["ripple"] == counts["sharp_wave"] == 0
+            assert counts["burst"] != 7
 
     def test_the_anchor_carries_the_ripple(self):
         """With the ripple on one channel in four and only channel 0 of
@@ -2212,19 +2223,20 @@ class TestNetworkSessionVariants:
         """Interneurons gain (interneuron_gain - 1) times each event's ripple
         envelope, the larger of a doublet's two, and nothing on events
         without a ripple; they are never counted as burst participants."""
-        n_units, rate, gain, fs = 2000, 10.0, 3.0, self.FS
-        time = simulate_time(fs * 12, fs)
+        n_units, rate, gain, fs, time = 2000, 10.0, 3.0, self.FS, self.TIME
         events = _event_tables(
             _one_event_table("swr", center_time=2.0),
             _one_event_table("sharp_wave_only", center_time=4.0),
             _one_event_table("burst_only", center_time=6.0),
             _one_event_table("ripple_doublet", center_time=8.0),
         )
-        session = simulate_network_session(
-            time, events, unit_counts={"interneuron": n_units},
-            baseline_rate={"interneuron": (rate, rate)}, interneuron_gain=gain, rng=3,
-            **QUIET,
-        )  # fmt: skip
+        session = self._render(
+            events,
+            unit_counts={"interneuron": n_units},
+            baseline_rate={"interneuron": (rate, rate)},
+            interneuron_gain=gain,
+            rng=3,
+        )
         assert (session.events.n_participants == 0).all()
         envelope = np.zeros(time.size)
         for ripple in events[events.expression == "ripple"].itertuples():
@@ -2245,11 +2257,11 @@ class TestNetworkSessionVariants:
         """The radiatum gets ripple_leak times the ripple as rendered on a
         channel of gain 1 with no delay, under a local profile too."""
         events = _ripple_only(_one_event_table("swr"))
+        latent = self._render(events, ripple_leak=0.0)
+        noise = self._render(_empty_table())
         for options in ({}, {"spatial_profile": "local", "channel_delay": 0.002}):
             leaky = self._render(events, ripple_leak=0.25, **options)
             none = self._render(events, ripple_leak=0.0, **options)
-            latent = self._render(events, ripple_leak=0.0)
-            noise = self._render(_empty_table())
             np.testing.assert_allclose(
                 leaky.sharp_wave_lfp - none.sharp_wave_lfp,
                 0.25 * (latent.lfps[:, 0] - noise.lfps[:, 0]),
@@ -2260,10 +2272,9 @@ class TestNetworkSessionVariants:
         running = [(4.0, 6.0)]
         events = _one_event_table("swr", center_time=8.0)
         plain = self._render(events, running_intervals=running)
-        slow = simulate_network_session(
-            self.TIME, events, running_intervals=running, rng=7,
-            theta_amplitude=4.0, delta_amplitude=3.0,
-        )  # fmt: skip
+        slow = self._render(
+            events, running_intervals=running, theta_amplitude=4.0, delta_amplitude=3.0
+        )
         expected = simulate_theta_delta(
             self.TIME, running, theta_amplitude=4.0, delta_amplitude=3.0
         )
@@ -2403,6 +2414,8 @@ class TestTruthWindows:
         assert windows.type.tolist() == ["emg", "fast_gamma"]
         with pytest.raises(ValueError, match="non-event table has no expressions"):
             truth_windows(non_events, expression="ripple")
+        with pytest.raises(ValueError, match="envelope_power must be 2 or 4"):
+            truth_windows(non_events.assign(envelope_power=3))
 
     def test_empty_tables(self):
         for expression in (None, "ripple", "network"):
@@ -2426,3 +2439,5 @@ class TestTruthWindows:
             truth_windows(pd.DataFrame({"event_id": [0], "channel": [0], "gain": [1.0]}))
         with pytest.raises(ValueError, match="envelope_power must be 2 or 4"):
             truth_windows(events.assign(envelope_power=3))
+        with pytest.raises(ValueError, match="positive rise_sigma"):
+            truth_windows(events.assign(rise_sigma=-0.01))
