@@ -1196,11 +1196,38 @@ def test_the_command_line_takes_a_crossed_cell(run, conditions_module, monkeypat
     assert len(chosen) == 3
 
 
-def test_smoke_prints_its_measurements(cli, capsys):
+def test_smoke_prints_its_measurements(cli, capsys, tmp_path):
     start, _, sessions = cli
-    start("smoke", smoke=True, condition_ids=None, replicates=None, workers=4)
+    # the validation report's cost per session, as validate_simulator records it
+    report = tmp_path / "report" / "spec.json"
+    report.parent.mkdir()
+    measured = [(10.0, 2**30), (12.0, 1.5 * 2**30)]
+    report.write_text(
+        json.dumps(
+            {
+                "sessions": [
+                    {
+                        "condition_id": "reference",
+                        "replicate": 10000 + i,
+                        "seconds": s,
+                        "peak_rss_bytes": b,
+                    }
+                    for i, (s, b) in enumerate(measured)
+                ]
+            }
+        )
+    )
+    start(
+        "smoke",
+        smoke=True,
+        condition_ids=None,
+        replicates=None,
+        workers=4,
+        validation_report=report,
+    )
     assert sessions == ["reference"]
     printed = capsys.readouterr().out
+    # 860 sessions of 11 s: 2.63 CPU hours
     for text in (
         "Kay_ripple_detector default:",
         "Simulate:",
@@ -1209,6 +1236,12 @@ def test_smoke_prints_its_measurements(cli, capsys):
         "results/:",
         "Full grid at this duration: 440 sessions",
         "on 4 workers",
+        (
+            "Validation of the full grid at this duration: 860 sessions (43 conditions x 20 "
+            "replicates), 11.0 s and at most 1.50 GiB each (the report's 2 sessions): 2.6 "
+            "CPU hours, 0.7 h on 4 workers"
+        ),
+        "Validation and benchmark together:",
         "Decision rules:",
         "keep duration_s",
         "workers = min(requested 4",

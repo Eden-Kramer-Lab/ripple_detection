@@ -1432,10 +1432,15 @@ def _available_memory() -> int | None:
 
 
 def _smoke_report(
-    output: SessionOutput, condition_directory: Path, requested_workers: int
+    output: SessionOutput,
+    condition_directory: Path,
+    requested_workers: int,
+    validation_sessions: Sequence[Mapping[str, Any]],
 ) -> str:
-    """The smoke run's measurements, the full grid's extrapolation and the
-    decision rules' verdicts, as printed lines."""
+    """The smoke run's measurements, the full grid's extrapolation, the full
+    validation's from the report's own sessions (``validation_sessions``: its
+    spec.json's ``sessions``, each with ``seconds`` and ``peak_rss_bytes``),
+    and the decision rules' verdicts, as printed lines."""
     lines = ["Per-method runtime (s):"]
     lines += [
         f"  {method} {setting}: {seconds:.3f}"
@@ -1469,12 +1474,30 @@ def _smoke_report(
     total_bytes = n_sessions * sum(sizes.values())
     events_bytes = n_sessions * sizes["events.csv.gz"]
     cpu_hours = n_sessions * session_s / 3600
+    n_conditions = len(conditions())
+    n_replicates = importlib.import_module("validate_simulator").DEFAULT_REPLICATES
+    n_validation = n_conditions * n_replicates
+    validation_s = float(np.mean([s["seconds"] for s in validation_sessions]))
+    validation_peak = max(float(s["peak_rss_bytes"]) for s in validation_sessions)
+    validation_hours = n_validation * validation_s / 3600
+    both = cpu_hours + validation_hours
     lines += [
         (
             f"Full grid at this duration: {n_sessions} sessions, {cpu_hours:.1f} CPU hours, "
             f"{cpu_hours / requested_workers:.1f} h on {requested_workers} workers, "
             f"{total_bytes / 2**30:.2f} GiB written ({events_bytes / 2**30:.2f} GiB of "
             "events.csv.gz)"
+        ),
+        (
+            f"Validation of the full grid at this duration: {n_validation} sessions "
+            f"({n_conditions} conditions x {n_replicates} replicates), {validation_s:.1f} s "
+            f"and at most {validation_peak / 2**30:.2f} GiB each (the report's "
+            f"{len(validation_sessions)} sessions): {validation_hours:.1f} CPU hours, "
+            f"{validation_hours / requested_workers:.1f} h on {requested_workers} workers"
+        ),
+        (
+            f"Validation and benchmark together: {both:.1f} CPU hours, "
+            f"{both / requested_workers:.1f} h on {requested_workers} workers"
         ),
         "Decision rules:",
     ]
@@ -1539,8 +1562,9 @@ def run_benchmark(
         one, finished conditions are kept and every other runs again.
     smoke : bool, optional
         The reference condition, one replicate, in this process; prints the
-        measurements, the full grid's extrapolation at ``workers`` and the
-        decision rules.
+        measurements, the full grid's extrapolation at ``workers``, the full
+        validation's (every condition at the validator's default replicates,
+        from the runtimes the report records) and the decision rules.
     methods : collection of (method, setting) pairs, optional
         Only these; default every one.
     command : str, optional
@@ -1692,7 +1716,15 @@ def run_benchmark(
     manifest["finished"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
     if smoke and last:
-        print(_smoke_report(last[0], conditions_directory / "reference", requested_workers))
+        validation_sessions = json.loads(Path(validation_report).read_text())["sessions"]
+        print(
+            _smoke_report(
+                last[0],
+                conditions_directory / "reference",
+                requested_workers,
+                validation_sessions,
+            )
+        )
     return root
 
 

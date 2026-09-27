@@ -205,7 +205,9 @@ for exactly the parameters of every selected condition, `--duration` included. I
 path, the SHA-256 of its `spec.json` and the fingerprints are saved in the run's
 `run_spec.json`. Then the smoke test, one reference session in one process, which prints
 each method's runtime, the simulation time, the peak resident memory, the rows and bytes
-of every table, the full grid's runtime and size, and the decision rules' verdicts:
+of every table, the full grid's runtime and size, the full validation's runtime (43
+conditions at 20 replicates, from the per-session runtime and peak memory the report
+records), the two together, and the decision rules' verdicts:
 
 ```bash
 uv run python examples/benchmark/run.py --run-name smoke --smoke \
