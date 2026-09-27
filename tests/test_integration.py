@@ -773,6 +773,28 @@ class TestTimeOrigin:
             np.testing.assert_allclose(getattr(moved_session, name), signal, rtol=0, atol=atol)
         np.testing.assert_array_equal(moved_session.multiunit, session.multiunit)
 
+    def test_draws_check_the_rate_given(self):
+        """Far from zero the timestamps' step gives 1500.1 Hz, a Nyquist
+        frequency of 750.05 Hz: a frequency of 750.03 Hz draws on it, but not
+        at the rate given, which the renderer then uses. A rate the step
+        disagrees with raises."""
+        time = simulate_time(int(30 * FS), FS) + 1.7e9
+        rd.draw_network_events(time, ripple_frequency=(160.0, 750.03), rng=0)
+        with pytest.raises(ValueError, match="ripple_frequency"):
+            rd.draw_network_events(
+                time, ripple_frequency=(160.0, 750.03), rng=0, sampling_frequency=FS
+            )
+        high = {"fast_gamma_frequency": (60.0, 750.03), "fast_gamma_band": (60.0, 100.0)}
+        with pytest.raises(ValueError, match="fast_gamma_frequency"):
+            rd.draw_non_events(time, rng=0, sampling_frequency=FS, **high)
+        for draw in (rd.draw_network_events, rd.draw_non_events):
+            with pytest.raises(ValueError, match="disagrees with time's step"):
+                draw(time, rng=0, sampling_frequency=1000.0)
+            # the rate only enters the checks: the table is the same
+            pd.testing.assert_frame_equal(
+                draw(time, rng=0, sampling_frequency=FS), draw(time, rng=0)
+            )
+
     @pytest.mark.parametrize("origin", ORIGINS)
     def test_leaked_spikes_halfway_between_samples(self, origin):
         """Leaked spikes that fall halfway between samples, and one just short

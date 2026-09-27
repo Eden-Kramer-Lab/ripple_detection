@@ -1664,6 +1664,7 @@ def draw_network_events(
     strength_correlation: float = 0.0,
     envelope_power: int = 2,
     rng: int | np.random.Generator | None = None,
+    sampling_frequency: float | None = None,
 ) -> pd.DataFrame:
     """Draw latent network events: when they happen, of which type, and the
     envelope, frequency and size of each component.
@@ -1773,6 +1774,14 @@ def draw_network_events(
         though at power 4 the envelope is far smaller there. Default 2.
     rng : int or numpy.random.Generator, optional
         Seed, or a Generator to draw from. The draw order is in the Notes.
+    sampling_frequency : float, optional
+        The rate, in Hz, the frequencies are checked against (below Nyquist,
+        and a band possible to filter), as ``simulate_network_session``'s.
+        Give it, the same as to the renderer, when the timestamps lie far
+        from zero (a Unix time): there they round, and the rate their step
+        gives can differ from it by up to 0.14%. It must agree with the
+        timestamps' step. The table does not depend on it. Default None:
+        the rate the step gives.
 
     Returns
     -------
@@ -1806,7 +1815,8 @@ def draw_network_events(
     ------
     ValueError
         If ``time`` is not 1-D with two or more increasing, evenly spaced
-        samples, a rate, lag or separation is negative or not finite,
+        samples, or ``sampling_frequency`` disagrees with its step; a rate,
+        lag or separation is negative or not finite,
         ``burst_gain`` is below 1 or not finite, ``type_probabilities`` names
         an unknown type or has a negative or non-finite weight or none
         positive, a range is not a finite
@@ -1924,7 +1934,7 @@ def draw_network_events(
     False
 
     """
-    time, rate, step = _checked_time(time)
+    time, rate, step = _checked_time(time, sampling_frequency)
     nyquist = rate / 2
     event_rate = _check_scalar("event_rate", event_rate)
     probabilities = _type_probabilities(type_probabilities)
@@ -2298,6 +2308,7 @@ def draw_non_events(
     theta_burst_duration: tuple[float, float] = (0.1, 0.3),
     theta_burst_gain: float = 10.0,
     rng: int | np.random.Generator | None = None,
+    sampling_frequency: float | None = None,
 ) -> pd.DataFrame:
     """Draw non-events: activity a detector should not report, each with its
     own truth, so a false positive can be traced to its cause.
@@ -2389,6 +2400,14 @@ def draw_non_events(
         at least 1. Default 10.
     rng : int or numpy.random.Generator, optional
         Seed, or a Generator to draw from. The draw order is in the Notes.
+    sampling_frequency : float, optional
+        The rate, in Hz, the frequencies are checked against (below Nyquist,
+        and a band possible to filter), as ``simulate_network_session``'s.
+        Give it, the same as to the renderer, when the timestamps lie far
+        from zero (a Unix time): there they round, and the rate their step
+        gives can differ from it by up to 0.14%. It must agree with the
+        timestamps' step. The table does not depend on it. Default None:
+        the rate the step gives.
 
     Returns
     -------
@@ -2422,8 +2441,9 @@ def draw_non_events(
     ------
     ValueError
         If ``time`` is not 1-D with two or more increasing, evenly spaced
-        samples; ``rates`` names an unknown kind or has a negative or
-        non-finite rate; a range is not a finite ``(low, high)`` tuple with
+        samples, or ``sampling_frequency`` disagrees with its step;
+        ``rates`` names an unknown kind or has a negative or non-finite rate;
+        a range is not a finite ``(low, high)`` tuple with
         ``low <= high`` inside its bounds (positive durations, SNRs and
         intervals, unit and spike counts whole numbers of at least 1 and 2,
         a leakage interval and EMG, gamma and theta side scales of at least
@@ -2488,7 +2508,7 @@ def draw_non_events(
     True
 
     """
-    time, rate, step = _checked_time(time)
+    time, rate, step = _checked_time(time, sampling_frequency)
     nyquist = rate / 2
     per_minute = _non_event_rates(rates)
     _check_whole_number("n_channels", n_channels, 1)
@@ -3298,10 +3318,11 @@ def simulate_network_session(
         drawn for every unit after the first it modulates.
     sampling_frequency : float, optional
         As in ``simulate_LFP``. Recorded in the result. Give it when the
-        timestamps lie far from zero (a Unix time): there they round, the
-        median step no longer gives the rate exactly, and the ripples are
-        sized with a filter designed for the rate inferred. It must agree
-        with the timestamps' step.
+        timestamps lie far from zero (a Unix time), and give the same to
+        ``draw_network_events`` and ``draw_non_events``: there timestamps
+        round, the median step no longer gives the rate exactly, and the
+        ripples are sized with a filter designed for the rate inferred. It
+        must agree with the timestamps' step.
 
     Returns
     -------

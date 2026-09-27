@@ -731,7 +731,8 @@ decoys = truth_windows(session.non_events, fraction=0.1)  # 'id', 'type', 'start
 Fast gamma is sized like a ripple but in its own band (60-100 Hz by default); give
 `fast_gamma_frequency` and `fast_gamma_band` both `(90, 140)` for gamma just below the ripple
 band. With the same seed, a session rendered with non-events has the same noise, ripples and
-burst participants as one without.
+burst participants as one without. On timestamps far from zero (a Unix time), give the draws
+and `simulate_network_session` the same `sampling_frequency`.
 
 See the [examples](https://github.com/Eden-Kramer-Lab/ripple_detection/tree/master/examples/) directory for Jupyter notebooks demonstrating:
 

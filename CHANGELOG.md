@@ -130,7 +130,8 @@ here is relative to 1.7.1.
   non-events, activity a detector should not report (spikes leaking into one
   LFP channel, EMG, fast-gamma bursts, place-cell bursts while running);
   `simulate_network_session` renders them when given `non_events`, and
-  `truth_windows` gives their windows as it does for events.
+  `truth_windows` gives their windows as it does for events. The draws and the
+  renderer take `sampling_frequency` for timestamps far from zero.
 - `load_literature_parameters`, the detection parameters of 57 replay papers,
   and a simulation study comparing every detector (`examples/simulation_study.py`).
 - `load_literature_datasets`, a separate packaged catalog of public recording
