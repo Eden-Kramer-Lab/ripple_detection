@@ -450,8 +450,7 @@ def match_events(
             "onset_error": detected_bounds[d, 0] - reference_bounds[r, 0],
             "offset_error": detected_bounds[d, 1] - reference_bounds[r, 1],
             "peak_error": detected_peaks[d] - reference_peaks[r],
-        },
-        columns=list(PAIR_COLUMNS),
+        }
     )
     return EventMatching(
         reference=reference_bounds,
@@ -467,25 +466,14 @@ def _jaccard(n_a: int, n_b: int, n_matched: int) -> float:
     return _fraction(n_matched, n_a + n_b - n_matched)
 
 
-def _median(values: FloatArray) -> float:
-    """The median, NaN for no values."""
-    return float(np.median(values)) if len(values) else np.nan
-
-
-def _signed_summary(kind: str, difference: FloatArray) -> dict[str, float]:
+def _signed_summary(kind: str, difference: pd.Series) -> dict[str, float]:
     """Median, interquartile range and fraction negative (A earlier) of the
     signed differences A minus B; NaN for none."""
-    if not len(difference):
-        return {
-            f"median_{kind}_difference": np.nan,
-            f"{kind}_difference_iqr": np.nan,
-            f"fraction_a_earlier_{kind}": np.nan,
-        }
-    q25, q50, q75 = np.percentile(difference, [25, 50, 75])
+    q25, q50, q75 = difference.quantile([0.25, 0.5, 0.75])
     return {
-        f"median_{kind}_difference": float(q50),
-        f"{kind}_difference_iqr": float(q75 - q25),
-        f"fraction_a_earlier_{kind}": float(np.mean(difference < 0)),
+        f"median_{kind}_difference": q50,
+        f"{kind}_difference_iqr": q75 - q25,
+        f"fraction_a_earlier_{kind}": (difference < 0).mean(),
     }
 
 
@@ -524,25 +512,51 @@ def _spearman(x: FloatArray, y: FloatArray, tolerance: float) -> float:
     return float(np.corrcoef(x_ranks, y_ranks)[0, 1])
 
 
-def _matched_rows(matching: EventMatching) -> BoolArray:
-    """Which detected events of a matching are matched."""
-    matched = np.zeros(len(matching.detected), dtype=bool)
-    matched[matching.pairs.detected_index.to_numpy()] = True
-    return matched
+def _found(n_events: int, matched: pd.Series) -> BoolArray:
+    """Which of `n_events` rows are among the `matched` row positions."""
+    found = np.zeros(n_events, dtype=bool)
+    found[matched.to_numpy()] = True
+    return found
+
+
+def _checked_methods(
+    events: Mapping[str, EventInventory], truth: EventInventory | None, minimum_iou: float
+) -> tuple[dict[str, FloatArray], FloatArray, dict[str, EventMatching]]:
+    """Each method's bounds, the truth's, and each method matched to the
+    truth, after checking the inputs; without a truth, no truth events and no
+    matchings."""
+    _check_mapping(events)
+    _check_minimum_iou(minimum_iou)
+    bounds = {
+        name: _checked_bounds(inventory, f"events[{name!r}]")
+        for name, inventory in events.items()
+    }
+    if truth is None:
+        return bounds, np.empty((0, 2)), {}
+    truth_bounds = _checked_bounds(truth, "truth")
+    to_truth = {
+        name: match_events(truth_bounds, method, minimum_iou=minimum_iou)
+        for name, method in bounds.items()
+    }
+    return bounds, truth_bounds, to_truth
 
 
 def _truth_columns(a: EventMatching, b: EventMatching, minimum_iou: float) -> dict[str, float]:
     """The columns of :func:`compare_detectors` that need the truth, from each
     method matched to it (the truth the reference of both)."""
-    true_a, true_b = _matched_rows(a), _matched_rows(b)
+    true_a = _found(len(a.detected), a.pairs.detected_index)
+    true_b = _found(len(b.detected), b.pairs.detected_index)
     both_true = match_events(a.detected[true_a], b.detected[true_b], minimum_iou=minimum_iou)
     both_false = match_events(
         a.detected[~true_a], b.detected[~true_b], minimum_iou=minimum_iou
     )
-    errors_a = a.pairs.set_index("reference_index")
-    errors_b = b.pairs.set_index("reference_index")
-    shared = np.intersect1d(errors_a.index, errors_b.index)
-    errors_a, errors_b = errors_a.loc[shared], errors_b.loc[shared]
+    # pairs are sorted by, and unique in, the truth row
+    shared, in_a, in_b = np.intersect1d(
+        a.pairs.reference_index,
+        b.pairs.reference_index,
+        assume_unique=True,
+        return_indices=True,
+    )
     # an error is two bounds, each within half an ulp u, and a subtraction
     # within u/2, so it is within 1.5u of its nominal value and two errors
     # that are nominally equal are within 3u of each other
@@ -554,12 +568,14 @@ def _truth_columns(a: EventMatching, b: EventMatching, minimum_iou: float) -> di
         ),
         "n_shared_truth": len(shared),
         "jaccard_truth_ids": _jaccard(len(a.pairs), len(b.pairs), len(shared)),
-        "onset_error_correlation": _spearman(
-            errors_a.onset_error.to_numpy(), errors_b.onset_error.to_numpy(), tolerance
-        ),
-        "offset_error_correlation": _spearman(
-            errors_a.offset_error.to_numpy(), errors_b.offset_error.to_numpy(), tolerance
-        ),
+        **{
+            f"{kind}_error_correlation": _spearman(
+                a.pairs[f"{kind}_error"].to_numpy()[in_a],
+                b.pairs[f"{kind}_error"].to_numpy()[in_b],
+                tolerance,
+            )
+            for kind in ("onset", "offset")
+        },
     }
 
 
@@ -647,23 +663,10 @@ def compare_detectors(
     True
 
     """
-    _check_mapping(events)
-    _check_minimum_iou(minimum_iou)
-    names = list(events)
-    bounds = {name: _checked_bounds(events[name], f"events[{name!r}]") for name in names}
-    to_truth: dict[str, EventMatching] = {}
-    if truth is not None:
-        truth_bounds = _checked_bounds(truth, "truth")
-        to_truth = {
-            name: match_events(truth_bounds, bounds[name], minimum_iou=minimum_iou)
-            for name in names
-        }
+    bounds, _, to_truth = _checked_methods(events, truth, minimum_iou)
     rows = []
-    for a, b in itertools.combinations(names, 2):
+    for a, b in itertools.combinations(bounds, 2):
         matching = match_events(bounds[a], bounds[b], minimum_iou=minimum_iou)
-        # errors are b minus a; the differences are a minus b
-        onset = -matching.pairs.onset_error.to_numpy()
-        offset = -matching.pairs.offset_error.to_numpy()
         row: dict[str, object] = {
             "method_a": a,
             "method_b": b,
@@ -671,9 +674,10 @@ def compare_detectors(
             "n_b": len(bounds[b]),
             "n_matched": len(matching.pairs),
             "jaccard": _jaccard(len(bounds[a]), len(bounds[b]), len(matching.pairs)),
-            "median_iou": _median(matching.pairs.iou.to_numpy()),
-            **_signed_summary("onset", onset),
-            **_signed_summary("offset", offset),
+            "median_iou": matching.pairs.iou.median(),
+            # errors are b minus a; the differences are a minus b
+            **_signed_summary("onset", -matching.pairs.onset_error),
+            **_signed_summary("offset", -matching.pairs.offset_error),
         }
         if to_truth:
             row |= _truth_columns(to_truth[a], to_truth[b], minimum_iou)
@@ -729,22 +733,14 @@ def consensus_counts(
     [True, True]
 
     """
-    _check_mapping(events)
-    _check_minimum_iou(minimum_iou)
-    if "n_methods" in events:
+    _, truth_bounds, to_truth = _checked_methods(events, truth, minimum_iou)
+    if "n_methods" in to_truth:
         msg = "No method may be named 'n_methods', the column that counts them."
         raise ValueError(msg)
-    truth_bounds = _checked_bounds(truth, "truth")
-    found = {}
-    for name, inventory in events.items():
-        matching = match_events(
-            truth_bounds,
-            _checked_bounds(inventory, f"events[{name!r}]"),
-            minimum_iou=minimum_iou,
-        )
-        hit = np.zeros(len(truth_bounds), dtype=bool)
-        hit[matching.pairs.reference_index.to_numpy()] = True
-        found[name] = hit
+    found = {
+        name: _found(len(truth_bounds), matching.pairs.reference_index)
+        for name, matching in to_truth.items()
+    }
     consensus = pd.DataFrame(found, index=_index(truth, len(truth_bounds)))
     consensus["n_methods"] = consensus.sum(axis=1).astype(int)
     return consensus
