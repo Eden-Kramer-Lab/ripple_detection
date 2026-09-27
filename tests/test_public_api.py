@@ -79,6 +79,7 @@ HELPERS = [
     "simulate_theta_delta",
     "SimulatedSession",
     "draw_network_events",
+    "draw_non_events",
     "simulate_network_session",
     "truth_windows",
     "EVENT_TYPES",
@@ -209,6 +210,7 @@ class TestCallsWrittenFor1x:
         ripple_detection.simulate_session,
         ripple_detection.simulate_speed,
         ripple_detection.simulate_theta_delta,
+        ripple_detection.draw_non_events,
     )
 
     @pytest.mark.parametrize("function", WRAPPED, ids=lambda function: function.__name__)
@@ -365,6 +367,7 @@ class TestCallsWrittenFor1x:
                 "simulate_session",
                 "simulate_sharp_wave_ripple_pair",
                 "draw_network_events",
+                "draw_non_events",
                 "simulate_network_session",
                 "pink",
                 "white",

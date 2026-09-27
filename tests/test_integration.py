@@ -733,6 +733,44 @@ class TestTimeOrigin:
         pd.testing.assert_frame_equal(moved_session.ripple_channels, session.ripple_channels)
 
     @pytest.mark.parametrize("origin", ORIGINS)
+    def test_simulated_non_events(self, origin):
+        """Non-events follow the running bouts, not the clock: the table and
+        its truth windows move by the origin; rendered, the LFP agrees to its
+        slope times the timestamps' rounding and the spikes, leaked ones
+        included, are the same."""
+        time = simulate_time(int(30 * FS), FS)
+        running = np.asarray(RUNNING)
+        rates = {"spike_leakage": 20.0, "emg": 10.0, "fast_gamma": 20.0, "theta_burst": 60.0}
+        at_zero = rd.draw_non_events(time, rates=rates, running_intervals=running, rng=0)
+        shifted = rd.draw_non_events(
+            time + origin, rates=rates, running_intervals=running + origin, rng=0
+        )
+        assert set(at_zero.non_event_type) == set(rd.NON_EVENT_TYPES)
+        assert_times_shifted(shifted.center_time, at_zero.center_time, origin)
+        pd.testing.assert_frame_equal(
+            shifted.drop(columns="center_time"), at_zero.drop(columns="center_time")
+        )
+        windows = rd.truth_windows(at_zero, 0.25)
+        moved = rd.truth_windows(shifted, 0.25)
+        for column in ("start_time", "end_time", "peak_time"):
+            assert_times_shifted(moved[column], windows[column], origin)
+
+        events = rd.draw_network_events(time, event_rate=0.0)
+        session = rd.simulate_network_session(
+            time, events, non_events=at_zero, running_intervals=running, rng=1,
+            sampling_frequency=FS,
+        )  # fmt: skip
+        moved_session = rd.simulate_network_session(
+            time + origin, events, non_events=shifted, running_intervals=running + origin,
+            rng=1, sampling_frequency=FS,
+        )  # fmt: skip
+        for name in ("lfps", "sharp_wave_lfp"):
+            signal = getattr(session, name)
+            atol = np.abs(np.gradient(signal, time, axis=0)).max() * 8 * np.spacing(origin)
+            np.testing.assert_allclose(getattr(moved_session, name), signal, rtol=0, atol=atol)
+        np.testing.assert_array_equal(moved_session.multiunit, session.multiunit)
+
+    @pytest.mark.parametrize("origin", ORIGINS)
     @pytest.mark.parametrize("spike_model", ["poisson", "refractory"])
     def test_simulated_network_spikes_at_a_given_rate(self, origin, spike_model):
         """With the rate given, spikes come from it, not from the timestamps'

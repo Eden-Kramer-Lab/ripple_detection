@@ -20,6 +20,7 @@ from ripple_detection.simulate import (
     _render_ripple,
     brown,
     draw_network_events,
+    draw_non_events,
     mean_squared,
     normalize,
     pink,
@@ -1686,6 +1687,21 @@ class TestSimulateNetworkSession(_Renders):
         assert len(session.ripple_channels) == 4 * n_ripples
         assert session.non_events.empty
 
+    def test_no_non_events_is_unchanged(self, drawn):
+        """No non-events, or an empty table of them, renders exactly as
+        without the argument."""
+        events, session = drawn
+        running = [(12.0, 18.0)]
+        for non_events in (None, draw_non_events(self.TIME, rates={})):
+            again = simulate_network_session(
+                self.TIME, events, non_events=non_events, running_intervals=running, rng=1
+            )
+            for name in ("lfps", "sharp_wave_lfp", "multiunit", "speed", "baseline_rates"):
+                np.testing.assert_array_equal(getattr(again, name), getattr(session, name))
+            pd.testing.assert_frame_equal(again.events, session.events)
+            _assert_schema(again.non_events, NON_EVENT_COLUMNS)
+            assert again.non_events.empty
+
     def test_participants_follow_participation(self):
         """Place units join with the row's probability, other pyramidal units
         with half of it; about 40 * 0.5 + 10 * 0.25 = 22.5 per burst."""
@@ -2285,6 +2301,487 @@ class TestNetworkSessionVariants(_Renders):
             slow.sharp_wave_lfp - plain.sharp_wave_lfp, expected, atol=1e-12
         )
         np.testing.assert_array_equal(slow.speed, simulate_speed(self.TIME, running))
+
+
+NON_EVENT_KINDS = ("spike_leakage", "emg", "fast_gamma", "theta_burst")
+# per minute: enough of each kind in 300 s to see its ranges
+DENSE_RATES = {"spike_leakage": 20.0, "emg": 10.0, "fast_gamma": 20.0, "theta_burst": 40.0}
+
+
+class TestDrawNonEvents:
+    FS = 1500
+    TIME = simulate_time(FS * 300, FS)
+    RUNNING = ((40.0, 55.0), (120.0, 150.0), (200.0, 230.0))
+
+    @staticmethod
+    @pytest.fixture(scope="class")
+    def non_events():
+        cls = TestDrawNonEvents
+        return draw_non_events(
+            cls.TIME, rates=DENSE_RATES, running_intervals=cls.RUNNING, rng=0
+        )
+
+    def test_schema_and_order(self, non_events):
+        _assert_schema(non_events, NON_EVENT_COLUMNS)
+        assert isinstance(non_events.index, pd.RangeIndex)
+        np.testing.assert_array_equal(non_events.non_event_id, np.arange(len(non_events)))
+        assert np.all(np.diff(non_events.center_time) >= 0)
+        assert set(non_events.non_event_type) == set(NON_EVENT_KINDS)
+        assert (non_events.envelope_power == 2).all()
+        kind = non_events.non_event_type
+        gamma, leakage = kind == "fast_gamma", kind == "spike_leakage"
+        with_units = leakage | (kind == "theta_burst")
+        bands = ["frequency", "snr_band_low", "snr_band_high"]
+        assert non_events.loc[gamma, bands].notna().all().all()
+        assert non_events.loc[~gamma, bands].isna().all().all()
+        assert (non_events.channel[~leakage] == -1).all()
+        assert (non_events.n_units[with_units] >= 1).all()
+        assert (non_events.n_units[~with_units] == 0).all()
+        assert (non_events.n_spikes[~leakage] == 0).all()
+        assert non_events.isi[~leakage].isna().all()
+
+    @pytest.mark.parametrize("rates", [{}, dict.fromkeys(NON_EVENT_KINDS, 0.0)])
+    def test_an_empty_draw_has_the_schema(self, rates):
+        non_events = draw_non_events(self.TIME, rates=rates, rng=0)
+        assert len(non_events) == 0
+        _assert_schema(non_events, NON_EVENT_COLUMNS)
+
+    def test_where_each_type_occurs(self, non_events):
+        """Leakage at rest, theta bursts while running, EMG and gamma in
+        both; every span at four side scales inside its stretch."""
+        start, end = _spans(non_events, 4)
+        running = np.asarray(self.RUNNING)
+        in_bout = (start.to_numpy()[:, None] >= running[:, 0]) & (
+            end.to_numpy()[:, None] <= running[:, 1]
+        )
+        touches_bout = (start.to_numpy()[:, None] < running[:, 1]) & (
+            end.to_numpy()[:, None] > running[:, 0]
+        )
+        kind = non_events.non_event_type.to_numpy()
+        assert in_bout[kind == "theta_burst"].any(axis=1).all()
+        assert not touches_bout[kind == "spike_leakage"].any()
+        for anywhere in ("emg", "fast_gamma"):
+            centre_running = in_bout[kind == anywhere].any(axis=1)
+            assert centre_running.any(), anywhere
+            assert not centre_running.all(), anywhere
+        assert (start >= self.TIME[0] + 1.0).all()
+        assert (end <= self.TIME[-1] - 1.0).all()
+
+    def test_rates_are_per_minute_of_each_state(self, non_events):
+        """Before rejection each kind is Poisson on its state's time, and
+        few are rejected at these spans."""
+        running = sum(end - start for start, end in self.RUNNING)
+        whole = self.TIME[-1] - self.TIME[0] - 2.0
+        minutes = {
+            "spike_leakage": (whole - running) / 60, "emg": whole / 60,
+            "fast_gamma": whole / 60, "theta_burst": running / 60,
+        }  # fmt: skip
+        counts = non_events.non_event_type.value_counts()
+        for kind, rate in DENSE_RATES.items():
+            expected = rate * minutes[kind]
+            assert abs(counts[kind] - expected) < 4 * np.sqrt(expected) + 0.05 * expected, kind
+
+    def test_drawn_values(self, non_events):
+        by_kind = dict(tuple(non_events.groupby("non_event_type")))
+        leakage = by_kind["spike_leakage"]
+        assert set(leakage.n_units) == {1, 2, 3}
+        assert set(leakage.n_spikes) == set(range(3, 9))
+        assert leakage.isi.between(0.003, 0.006).all()
+        assert set(leakage.channel) == {0, 1, 2, 3}
+        assert (leakage.amplitude == 2.0).all()
+        np.testing.assert_allclose(
+            leakage.rise_sigma, (leakage.n_spikes - 1) * leakage.isi / 6
+        )
+        np.testing.assert_array_equal(leakage.rise_sigma, leakage.decay_sigma)
+        emg = by_kind["emg"]
+        assert (6 * emg.rise_sigma).between(0.05, 0.5).all()
+        assert (emg.amplitude == 1.5).all()
+        gamma = by_kind["fast_gamma"]
+        assert gamma.frequency.between(60.0, 100.0).all()
+        assert (gamma.snr_band_low == 60.0).all()
+        assert (gamma.snr_band_high == 100.0).all()
+        assert (6 * gamma.rise_sigma).between(0.05, 0.15).all()
+        assert gamma.amplitude.between(1.5, 4.0).all()
+        theta = by_kind["theta_burst"]
+        assert theta.n_units.between(5, 15).all()
+        assert {5, 15} <= set(theta.n_units)
+        assert (6 * theta.rise_sigma).between(0.1, 0.3).all()
+        assert (theta.amplitude == 10.0).all()
+
+    def test_leakage_windows_bound_the_spikes(self, non_events):
+        """At exp(-4.5) of the peak a Gaussian's window is three side scales
+        each way: from the first spike to the last."""
+        leakage = non_events[non_events.non_event_type == "spike_leakage"]
+        windows = truth_windows(leakage, np.exp(-4.5))
+        half = (leakage.n_spikes - 1) * leakage.isi / 2
+        np.testing.assert_allclose(windows.start_time, leakage.center_time - half)
+        np.testing.assert_allclose(windows.end_time, leakage.center_time + half)
+
+    def test_kinds_draw_independently(self, non_events):
+        """One kind's rate or ranges leave the other kinds' rows unchanged,
+        and a range that sets only a value changes only that value."""
+
+        def rows(table, kind):
+            return table[table.non_event_type == kind].drop(columns="non_event_id")
+
+        no_emg = draw_non_events(
+            self.TIME, rates={**DENSE_RATES, "emg": 0.0}, running_intervals=self.RUNNING, rng=0
+        )
+        assert rows(no_emg, "emg").empty
+        for kind in ("spike_leakage", "fast_gamma", "theta_burst"):
+            pd.testing.assert_frame_equal(
+                rows(no_emg, kind).reset_index(drop=True),
+                rows(non_events, kind).reset_index(drop=True),
+            )
+        nearby = draw_non_events(
+            self.TIME, rates=DENSE_RATES, running_intervals=self.RUNNING,
+            fast_gamma_frequency=(90.0, 140.0), fast_gamma_band=(90.0, 140.0), rng=0,
+        )  # fmt: skip
+        changed = ["frequency", "snr_band_low", "snr_band_high"]
+        pd.testing.assert_frame_equal(
+            nearby.drop(columns=changed), non_events.drop(columns=changed)
+        )
+        gamma = nearby.non_event_type == "fast_gamma"
+        np.testing.assert_allclose(
+            nearby.frequency[gamma] - 90.0, (non_events.frequency[gamma] - 60.0) * 50 / 40
+        )
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"rates": {"ripple": 1.0}}, "rates has unknown"),
+            ({"rates": {"emg": -1.0}}, r"rates\['emg'\]"),
+            ({"rates": {"emg": np.nan}}, r"rates\['emg'\]"),
+            ({"n_channels": 0}, "n_channels"),
+            ({"spike_leakage_units": (3, 1)}, "spike_leakage_units"),
+            ({"spike_leakage_units": (0, 2)}, "spike_leakage_units"),
+            ({"spike_leakage_units": (1.5, 2)}, "spike_leakage_units"),
+            ({"spike_leakage_spikes": (1, 4)}, "spike_leakage_spikes"),
+            ({"spike_leakage_isi": (0.0001, 0.004)}, "spike_leakage_isi"),
+            ({"spike_leakage_amplitude": -1.0}, "spike_leakage_amplitude"),
+            ({"emg_duration": (0.5, 0.05)}, "emg_duration"),
+            ({"emg_amplitude": np.inf}, "emg_amplitude"),
+            ({"fast_gamma_frequency": (60.0, 800.0)}, "fast_gamma_frequency"),
+            ({"fast_gamma_frequency": (100.0, 60.0)}, "fast_gamma_frequency"),
+            ({"fast_gamma_band": (70.0, 100.0)}, "fast_gamma_band"),
+            ({"fast_gamma_band": (100.0, 60.0)}, "fast_gamma_band"),
+            ({"fast_gamma_band": (60.0, 800.0)}, "fast_gamma_band"),
+            (
+                {"fast_gamma_frequency": (80.0, 80.0), "fast_gamma_band": (80.0, 80.0)},
+                "fast_gamma_band must have low < high",
+            ),
+            (
+                {"fast_gamma_frequency": (15.0, 20.0), "fast_gamma_band": (10.0, 30.0)},
+                "fast_gamma_band.*cannot be filtered",
+            ),
+            ({"fast_gamma_duration": (0.001, 0.1)}, "fast_gamma_duration"),
+            ({"fast_gamma_snr": (0.0, 2.0)}, "fast_gamma_snr"),
+            ({"theta_burst_units": (0, 5)}, "theta_burst_units"),
+            ({"theta_burst_duration": (0.0, 0.1)}, "theta_burst_duration"),
+            ({"theta_burst_gain": 0.5}, "theta_burst_gain"),
+            ({"running_intervals": [(5.0, 2.0)]}, "start before its end"),
+        ],
+    )
+    def test_validation(self, kwargs, message):
+        with pytest.raises(ValueError, match=message):
+            draw_non_events(simulate_time(3000, 1500), **kwargs)
+
+    def test_emg_needs_room_above_its_high_pass(self):
+        time = simulate_time(3000, 180)
+        fits = {
+            "spike_leakage_isi": (0.006, 0.01), "fast_gamma_frequency": (45.0, 55.0),
+            "fast_gamma_band": (40.0, 60.0),
+        }  # fmt: skip
+        with pytest.raises(ValueError, match="high-passed at 100 Hz"):
+            draw_non_events(time, rates={"emg": 1.0}, **fits)
+        assert len(draw_non_events(time, rates={"fast_gamma": 60.0}, rng=0, **fits)) > 0
+
+
+def _one_non_event_table(non_event_type, *, non_event_id=0, center_time=5.0, **overrides):
+    """One non-event built by hand, centred on ``center_time``: a leakage
+    burst of 2 units, 5 spikes 4 ms apart, peak 2, on channel 1; an EMG burst
+    of span 0.1 s and peak SD 1.5; a gamma burst of span 0.1 s at 80 Hz and
+    SNR 3 in 60-100 Hz; a theta burst of span 0.2 s over 5 units at gain 10.
+    ``overrides`` set columns."""
+    nan = np.nan
+    row = {
+        "non_event_id": non_event_id, "non_event_type": non_event_type,
+        "center_time": center_time, "envelope_power": 2, "frequency": nan,
+        "snr_band_low": nan, "snr_band_high": nan, "channel": -1, "n_units": 0,
+        "n_spikes": 0, "isi": nan,
+    }  # fmt: skip
+    row.update(
+        {
+            "spike_leakage": {
+                "rise_sigma": 4 * 0.004 / 6, "amplitude": 2.0, "channel": 1, "n_units": 2,
+                "n_spikes": 5, "isi": 0.004,
+            },
+            "emg": {"rise_sigma": 0.1 / 6, "amplitude": 1.5},
+            "fast_gamma": {
+                "rise_sigma": 0.1 / 6, "amplitude": 3.0, "frequency": 80.0,
+                "snr_band_low": 60.0, "snr_band_high": 100.0,
+            },
+            "theta_burst": {"rise_sigma": 0.2 / 6, "amplitude": 10.0, "n_units": 5},
+        }[non_event_type]
+    )  # fmt: skip
+    row["decay_sigma"] = row["rise_sigma"]
+    row.update(overrides)
+    return pd.DataFrame([row])[list(NON_EVENT_COLUMNS)]
+
+
+def _non_event_tables(*tables):
+    """Hand-built non-events as one table, numbered in order."""
+    return pd.concat(
+        [table.assign(non_event_id=i) for i, table in enumerate(tables)], ignore_index=True
+    )
+
+
+NOISE_FREE = {"noise_amplitude": 0.0}
+
+
+class TestNonEventRendering(_Renders):
+    TIME = simulate_time(_Renders.FS * 12, _Renders.FS)
+    RNG = 11
+
+    def _pair(self, non_events, **kwargs):
+        """The rendering with ``non_events`` and the matched one without."""
+        return (
+            self._render(_empty_table(), non_events=non_events, **kwargs),
+            self._render(_empty_table(), **kwargs),
+        )
+
+    def test_the_table_is_recorded_in_id_order(self):
+        table = _non_event_tables(
+            _one_non_event_table("emg", center_time=3.0),
+            _one_non_event_table("fast_gamma", center_time=6.0),
+            _one_non_event_table("spike_leakage", center_time=8.0),
+        )
+        shuffled = table.iloc[[2, 0, 1]]
+        a = self._render(_empty_table(), non_events=table)
+        b = self._render(_empty_table(), non_events=shuffled)
+        pd.testing.assert_frame_equal(a.non_events, table)
+        pd.testing.assert_frame_equal(b.non_events, table)
+        np.testing.assert_array_equal(a.lfps, b.lfps)
+        np.testing.assert_array_equal(a.multiunit, b.multiunit)
+
+    def test_non_events_leave_the_other_draws_unchanged(self):
+        """The non-events have their own stream: with an EMG burst, the
+        noise away from it and every spike are as without."""
+        with_emg, without = self._pair(_one_non_event_table("emg"))
+        away = np.abs(self.TIME - 5.0) > 8 * 0.1 / 6 + 1 / self.FS
+        np.testing.assert_array_equal(with_emg.lfps[away], without.lfps[away])
+        np.testing.assert_array_equal(with_emg.multiunit, without.multiunit)
+
+    @pytest.mark.parametrize("spike_model", ["poisson", "refractory"])
+    def test_spike_leakage_adds_ripple_band_power_on_one_channel(self, spike_model):
+        """Noise-free: the waveform on channel 1 only, ripple-band power in
+        its window; exactly n_spikes more spikes on each of n_units place or
+        pyramidal units, on top of the drawn counts."""
+        row = _one_non_event_table("spike_leakage")
+        leaked, plain = self._pair(row, spike_model=spike_model, **NOISE_FREE)
+        added = leaked.lfps - plain.lfps
+        assert (added[:, [0, 2, 3]] == 0).all()
+        np.testing.assert_array_equal(leaked.sharp_wave_lfp, plain.sharp_wave_lfp)
+        spike_times = 5.0 + (np.arange(5) - 2) * 0.004
+        samples = np.round(spike_times * self.FS).astype(int)
+        np.testing.assert_allclose(added[samples, 1], -2.0)
+        np.testing.assert_allclose(added[samples + 1, 1], 0.9)
+        assert np.count_nonzero(added[:, 1]) == 15
+        # a burst at 250 spikes/s: much of it in the ripple band, all within
+        # the filter kernel's half-length (0.11 s) of it
+        power = filter_ripple_band(added[:, 1], sampling_frequency=self.FS) ** 2
+        assert power.sum() > 0.1 * np.sum(added[:, 1] ** 2)
+        assert power[np.abs(self.TIME - 5.0) < 0.15].sum() > 0.999 * power.sum()
+        extra = leaked.multiunit - plain.multiunit
+        units = np.flatnonzero(extra.any(axis=0))
+        assert units.size == 2
+        assert set(leaked.unit_types[units]) <= {"place", "pyramidal"}
+        expected = np.zeros((self.TIME.size, 2))
+        expected[samples] = 1.0
+        np.testing.assert_array_equal(extra[:, units], expected)
+
+    def test_emg_is_common_mode_and_high_passed(self):
+        """Noise-free: the same burst on every channel and the radiatum, less
+        than 5% of its power below 80 Hz, and a standard deviation of
+        ``amplitude`` about its peak."""
+        sigma = 0.5
+        row = _one_non_event_table("emg", center_time=6.0, rise_sigma=sigma, decay_sigma=sigma)
+        session = self._render(_empty_table(), non_events=row, **NOISE_FREE)
+        burst = session.sharp_wave_lfp
+        np.testing.assert_array_equal(session.lfps, np.repeat(burst[:, None], 4, axis=1))
+        frequencies = np.fft.rfftfreq(burst.size, 1 / self.FS)
+        spectrum = np.abs(np.fft.rfft(burst)) ** 2
+        assert spectrum[frequencies < 80].sum() < 0.05 * spectrum.sum()
+        window, envelope = _event_envelope(self.TIME, 6.0, sigma, sigma, 2)
+        core = envelope > np.exp(-0.5)
+        assert np.std(burst[window][core] / envelope[core]) == pytest.approx(1.5, rel=0.05)
+
+    def _gamma_snr(self, rows, band):
+        """Each gamma burst's peak, filtered to ``band``, over the filtered
+        stationary noise's SD: on the rendering less the matched noise-only
+        one. Also each burst's ripple-band over in-band power."""
+        session, noise = self._pair(rows)
+        added = session.lfps - noise.lfps
+        sd = filter_ripple_band(noise.lfps[:, 0], sampling_frequency=self.FS, band=band).std()
+        in_band = filter_ripple_band(added[:, 0], sampling_frequency=self.FS, band=band)
+        ripple_band = filter_ripple_band(added[:, 0], sampling_frequency=self.FS)
+        snr, spillover = [], []
+        for center, sigma in zip(rows.center_time, rows.rise_sigma, strict=True):
+            inside = np.abs(self.TIME - center) < 3 * sigma
+            snr.append(np.abs(in_band[inside]).max() / sd)
+            spillover.append(np.sum(ripple_band[inside] ** 2) / np.sum(in_band[inside] ** 2))
+        return session, noise, np.array(snr), np.array(spillover)
+
+    def _gamma_rows(self, frequencies, snrs, band):
+        return _non_event_tables(
+            *(
+                _one_non_event_table(
+                    "fast_gamma",
+                    center_time=1.5 + 0.9 * i,
+                    frequency=f,
+                    amplitude=a,
+                    snr_band_low=band[0],
+                    snr_band_high=band[1],
+                )
+                for i, (f, a) in enumerate(zip(frequencies, snrs, strict=True))
+            )
+        )
+
+    def test_fast_gamma_snr_and_band(self):
+        """Each burst's filtered 60-100 Hz peak is its SNR against the 60-100
+        Hz noise; almost none of it is in the ripple band; on every channel
+        at the channel gains, not on the radiatum."""
+        rows = self._gamma_rows(np.linspace(62, 98, 10), np.linspace(1.5, 4.0, 10), (60, 100))
+        session, noise, snr, spillover = self._gamma_snr(rows, (60.0, 100.0))
+        np.testing.assert_allclose(snr, rows.amplitude, rtol=1e-6)
+        assert (spillover < 0.1).all()
+        np.testing.assert_array_equal(session.sharp_wave_lfp, noise.sharp_wave_lfp)
+        gains = [1.0, 0.5, 0.0, 2.0]
+        scaled, plain = self._pair(rows, channel_gains=gains)
+        added = scaled.lfps - plain.lfps
+        np.testing.assert_allclose(added, added[:, [0]] * gains, atol=1e-12)
+
+    def test_nearby_gamma_uses_its_band(self):
+        """Bursts at 90-140 Hz reach their SNR in their stored band, whose
+        noise SD sizes them; the same burst sized in 60-100 Hz reaches its SNR
+        there instead, at another amplitude. Nearby gamma leaks more into the
+        ripple band than the reference does (measured, not bounded)."""
+        frequencies = np.linspace(92, 138, 10)
+        rows = self._gamma_rows(frequencies, np.full(10, 3.0), (90, 140))
+        _, _, snr, nearby_spillover = self._gamma_snr(rows, (90.0, 140.0))
+        np.testing.assert_allclose(snr, 3.0, rtol=1e-6)
+        reference = self._gamma_rows(np.linspace(62, 98, 10), np.full(10, 3.0), (60, 100))
+        *_, reference_spillover = self._gamma_snr(reference, (60.0, 100.0))
+        assert nearby_spillover.max() > 10 * reference_spillover.max()
+
+        one = {"frequency": 95.0, "amplitude": 3.0}
+        sizes = {}
+        for band in ((60.0, 100.0), (90.0, 140.0)):
+            row = _one_non_event_table(
+                "fast_gamma", snr_band_low=band[0], snr_band_high=band[1], **one
+            )
+            session, noise = self._pair(row)
+            sizes[band] = np.abs(session.lfps[:, 0] - noise.lfps[:, 0]).max()
+            _, _, snr, _ = self._gamma_snr(row, band)
+            assert snr.item() == pytest.approx(3.0, rel=1e-6)
+        assert sizes[(60.0, 100.0)] != pytest.approx(sizes[(90.0, 140.0)], rel=0.05)
+
+    def test_theta_burst_modulates_only_its_units(self):
+        """Every place unit in each burst: their rate within a side scale of
+        the centres is several times their rate away from the bursts, and
+        highest at the centre; other units keep their rate; no LFP."""
+        rows = _non_event_tables(
+            *(
+                _one_non_event_table("theta_burst", center_time=1.5 + 0.5 * i)
+                for i in range(18)
+            )
+        )
+        options = {
+            "unit_counts": {"place": 5, "pyramidal": 5, "interneuron": 5},
+            "baseline_rate": {"place": (5.0, 5.0), "pyramidal": (5.0, 5.0)},
+        }
+        sigma = 0.2 / 6
+        distance = np.abs(self.TIME[:, None] - rows.center_time.to_numpy()).min(axis=1)
+        near = distance < 0.5 * sigma
+        mid = np.abs(distance - 2 * sigma) < 0.5 * sigma
+        far = distance > 5 * sigma
+        place, other = slice(0, 5), slice(5, 15)
+        counts = {"near": 0.0, "mid": 0.0, "far": 0.0, "other_near": 0.0, "other_far": 0.0}
+        for seed in range(4):
+            theta = self._render(_empty_table(), non_events=rows, rng=seed, **options)
+            plain = self._render(_empty_table(), rng=seed, **options)
+            np.testing.assert_array_equal(theta.lfps, plain.lfps)
+            np.testing.assert_array_equal(theta.sharp_wave_lfp, plain.sharp_wave_lfp)
+            spikes = theta.multiunit
+            counts["near"] += spikes[near, place].sum() / near.sum()
+            counts["mid"] += spikes[mid, place].sum() / mid.sum()
+            counts["far"] += spikes[far, place].sum() / far.sum()
+            counts["other_near"] += spikes[near, other].sum() / near.sum()
+            counts["other_far"] += spikes[far, other].sum() / far.sum()
+        assert counts["near"] > 5 * counts["far"]
+        assert counts["near"] > counts["mid"] > counts["far"]
+        assert counts["other_near"] < 2 * counts["other_far"]
+
+    @pytest.mark.parametrize(
+        ("row", "kwargs", "message"),
+        [
+            (_one_non_event_table("emg").drop(columns="isi"), {}, "missing the columns"),
+            (
+                _one_non_event_table("emg").assign(non_event_type="chewing"),
+                {},
+                "unknown types",
+            ),
+            (
+                _non_event_tables(
+                    _one_non_event_table("emg"), _one_non_event_table("emg")
+                ).assign(non_event_id=0),
+                {},
+                "duplicate non_event_id",
+            ),
+            (_one_non_event_table("emg", envelope_power=4), {}, "envelope_power must be 2"),
+            (_one_non_event_table("emg", rise_sigma=0.0), {}, "positive side scales"),
+            (_one_non_event_table("emg", center_time=np.nan), {}, "finite times"),
+            (_one_non_event_table("emg", center_time=11.99), {}, "inside the recording"),
+            (_one_non_event_table("emg", amplitude=-1.0), {}, "emg row's amplitude"),
+            (_one_non_event_table("spike_leakage", channel=4), {}, "spike_leakage row"),
+            (_one_non_event_table("spike_leakage", n_units=51), {}, "1 to 50 units"),
+            (_one_non_event_table("spike_leakage", isi=0.005), {}, "spike_leakage row"),
+            (
+                _one_non_event_table(
+                    "spike_leakage", n_spikes=1, rise_sigma=1e-4, decay_sigma=1e-4
+                ),
+                {},
+                "spike_leakage row",
+            ),
+            (
+                _one_non_event_table("spike_leakage"),
+                {"unit_counts": {"interneuron": 3}},
+                "1 to 0 units",
+            ),
+            (_one_non_event_table("theta_burst", n_units=41), {}, "theta_burst row"),
+            (_one_non_event_table("theta_burst", amplitude=0.5), {}, "theta_burst row"),
+            (_one_non_event_table("fast_gamma", amplitude=0.0), {}, "fast_gamma row"),
+            (_one_non_event_table("fast_gamma", snr_band_low=np.nan), {}, "snr_band_low"),
+            (_one_non_event_table("fast_gamma", frequency=120.0), {}, "must contain"),
+            (_one_non_event_table("fast_gamma", snr_band_high=800.0), {}, "snr_band_low"),
+            (_one_non_event_table("fast_gamma"), NOISE_FREE, "noise_amplitude"),
+            (
+                _one_non_event_table("fast_gamma"),
+                {"channel_gains": [0.0] * 4},
+                "some channel gain",
+            ),
+        ],
+    )
+    def test_validation(self, row, kwargs, message):
+        with pytest.raises(ValueError, match=message):
+            self._render(_empty_table(), non_events=row, **kwargs)
+
+    def test_emg_needs_room_above_its_high_pass(self):
+        time = simulate_time(12 * 180, 180)
+        with pytest.raises(ValueError, match="high-passed at 100 Hz"):
+            simulate_network_session(
+                time, _empty_table(), non_events=_one_non_event_table("emg"), rng=0
+            )
 
 
 def _crossing_distance(fraction, power):
