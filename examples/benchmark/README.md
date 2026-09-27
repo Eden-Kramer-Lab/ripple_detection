@@ -272,7 +272,7 @@ method and setting with its resolved options, the package version, the git commi
 the report) and stops, naming the keys that differ, if it is not the saved one: a run is
 never continued under other settings. It keeps each condition whose `done.json` matches
 its files, deletes each `.partial` directory and each condition that fails that check,
-and runs those again.
+printing each one it deletes and why, and runs those again.
 
 Resume accepts only committed, clean code: the commit the run started from, with no
 change under `src/` or `examples/benchmark/`. The run specification records the commit

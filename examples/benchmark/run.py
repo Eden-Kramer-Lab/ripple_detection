@@ -1371,12 +1371,21 @@ def _differences(saved: Any, current: Any, key: str = "") -> list[str]:
 
 
 def _clear_unfinished(conditions_directory: Path) -> None:
-    """Delete each interrupted (``.partial``) or unverifiable condition directory."""
+    """Delete each interrupted (``.partial``) or unverifiable condition
+    directory, printing it and why."""
     for path in sorted(conditions_directory.glob("*")):
-        if path.is_dir() and (
-            path.name.endswith(".partial") or not condition_is_finished(path)
-        ):
-            shutil.rmtree(path)
+        if not path.is_dir():
+            continue
+        if path.name.endswith(".partial"):
+            reason = "interrupted while written"
+        elif not (path / "done.json").exists():
+            reason = "it has no done.json"
+        elif not condition_is_finished(path):
+            reason = "its files do not match done.json"
+        else:
+            continue
+        print(f"Deleting {path}: {reason}")
+        shutil.rmtree(path)
 
 
 def _run_one(

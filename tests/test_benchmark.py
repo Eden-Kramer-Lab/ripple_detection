@@ -900,17 +900,22 @@ def test_resume_skips_finished_conditions(run, cli, finished_run, tmp_path):
 
 
 @pytest.mark.parametrize("damage", ["partial", "tampered"])
-def test_resume_reruns_interrupted_conditions(run, cli, finished_run, tmp_path, damage):
+def test_resume_reruns_interrupted_conditions(
+    run, cli, finished_run, tmp_path, damage, capsys
+):
     start, _, sessions = cli
     root = _copy(finished_run, tmp_path)
     conditions = root / "conditions"
     if damage == "partial":
         (conditions / "emg_rate=3").rename(conditions / "emg_rate=3.partial")
+        deleted = f"Deleting {conditions / 'emg_rate=3.partial'}: interrupted while written"
     else:
         with (conditions / "emg_rate=3" / "events.csv.gz").open("ab") as file:
             file.write(b"\0")
+        deleted = f"Deleting {conditions / 'emg_rate=3'}: its files do not match done.json"
     start(resume=True)
     assert sessions == ["emg_rate=3"]
+    assert capsys.readouterr().out.splitlines() == [deleted]
     assert not (conditions / "emg_rate=3.partial").exists()
     assert run.condition_is_finished(conditions / "emg_rate=3")
     # the same files again, but for the wall-clock times in sessions.csv.gz
