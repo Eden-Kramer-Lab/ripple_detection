@@ -58,6 +58,7 @@ import argparse
 import ast
 import hashlib
 import json
+import os
 import platform
 import resource
 import shutil
@@ -2197,21 +2198,25 @@ def write_report(
 
 
 def require_ready_report(
-    spec_path: str | Path, resolved: Mapping[str, Mapping[str, Any]]
-) -> str:
+    spec_path: str | os.PathLike[str], resolved: Mapping[str, Mapping[str, Any]]
+) -> dict[str, Any]:
     """Check that a validation report can back a run of ``resolved``.
 
     Parameters
     ----------
-    spec_path : str or pathlib.Path
+    spec_path : str or path-like
         The report's ``spec.json``.
     resolved : mapping of str to mapping
         ``condition_id`` to its resolved parameters (``conditions.resolve``).
 
     Returns
     -------
-    digest : str
-        SHA-256 of ``spec.json``, for the run's specification.
+    report : dict
+        What a run records of it: ``path`` (``spec_path`` as a string),
+        ``sha256`` (of ``spec.json``), ``simulation_fingerprint`` and
+        ``target_table_hash`` (the report's, which are the current ones), and
+        ``sessions``, each validated session's ``condition_id``,
+        ``replicate``, ``seconds`` and ``peak_rss_bytes``.
 
     Raises
     ------
@@ -2286,7 +2291,13 @@ def require_ready_report(
             + "\n- ".join(problems)
         )
         raise ReportNotReady(msg)
-    return _file_hash(path)
+    return {
+        "path": str(spec_path),
+        "sha256": _file_hash(path),
+        "simulation_fingerprint": spec["simulation_fingerprint"],
+        "target_table_hash": spec["target_table_hash"],
+        "sessions": spec["sessions"],
+    }
 
 
 def _format(value: float) -> str:

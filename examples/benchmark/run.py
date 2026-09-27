@@ -126,7 +126,6 @@ import datetime
 import functools
 import gzip
 import hashlib
-import importlib
 import json
 import os
 import platform
@@ -162,6 +161,8 @@ from recipe_configs import (
     method_record,
     run_recipe,
 )
+from validate_simulator import DEFAULT_REPLICATES, ReportNotReady
+from validate_simulator import require_ready_report as _require_report
 
 import ripple_detection as rd
 from ripple_detection.core import FloatArray
@@ -222,6 +223,8 @@ _LONG_BOUND = 0.5
 _PRINCIPAL = ("place", "pyramidal")
 _ERROR_LENGTH = 200
 _RESULT_INDEX = "event_number"
+# What run_spec.json records of the validation report.
+_REPORT_IDENTITY = ("path", "sha256", "simulation_fingerprint", "target_table_hash")
 
 SESSION_COLUMNS = (
     "session_id",
@@ -1314,25 +1317,6 @@ def combine(run_directory: str | os.PathLike[str]) -> Path:
 # The command line
 
 
-def _require_report(
-    path: str | os.PathLike[str], resolved: Mapping[str, Mapping[str, Any]]
-) -> dict[str, str]:
-    """Check the simulator validation report covers ``resolved`` and is ready.
-
-    Returns its ``path``, the ``sha256`` of its spec.json, and the simulator
-    source fingerprint and target-table hash it was made with; raises
-    ``validate_simulator.ReportNotReady`` listing every problem.
-    """
-    validation = importlib.import_module("validate_simulator")
-    sha256 = validation.require_ready_report(path, resolved)
-    return {
-        "path": str(path),
-        "sha256": str(sha256),
-        "simulation_fingerprint": str(validation.simulation_fingerprint()),
-        "target_table_hash": str(validation.target_table_hash()),
-    }
-
-
 def _git_commit(directory: str | os.PathLike[str] = HERE) -> str:
     """The checkout's commit: ``HEAD``'s hash, ``"<hash>-dirty"`` when the
     working tree has changes under ``src/`` or ``examples/benchmark/``
@@ -1354,23 +1338,23 @@ def _git_commit(directory: str | os.PathLike[str] = HERE) -> str:
 
 
 def run_specification(
-    selected: Sequence[Condition],
+    resolved: Mapping[str, Mapping[str, Any]],
     replicates: Mapping[str, int],
-    overrides: Mapping[str, Any],
-    report: Mapping[str, str],
+    report: Mapping[str, Any],
     methods: Collection[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     """The resolved specification a run writes to ``run_spec.json``.
 
     Parameters
     ----------
-    selected : sequence of Condition
+    resolved : mapping of str to mapping
+        Each selected condition's parameters after the command line's
+        overrides (``conditions.resolve``), by condition id.
     replicates : mapping of str to int
         Replicate count by condition id.
-    overrides : mapping of str to object
-        The command line's overrides, as in ``conditions.resolve``.
-    report : mapping of str to str
-        The validation report's path, hash and fingerprints.
+    report : mapping of str to object
+        The validation report's record, as ``require_ready_report`` gives
+        it; its path, hash and fingerprints are recorded.
     methods : collection of (method, setting) pairs, optional
         As in ``method_records``.
 
@@ -1381,7 +1365,7 @@ def run_specification(
         docstring.
     """
     spec = {
-        "conditions": {c.condition_id: resolve(c, overrides) for c in selected},
+        "conditions": dict(resolved),
         "replicates": dict(replicates),
         "seeds": {
             condition_id: [session_seed(replicate) for replicate in range(count)]
@@ -1398,7 +1382,7 @@ def run_specification(
         },
         "package_version": rd.__version__,
         "git_commit": _git_commit(),
-        "validation_report": dict(report),
+        "validation_report": {key: report[key] for key in _REPORT_IDENTITY},
     }
     loaded: dict[str, Any] = json.loads(json.dumps(spec, allow_nan=False))
     return loaded
@@ -1484,8 +1468,9 @@ def _smoke_report(
     validation_sessions: Sequence[Mapping[str, Any]],
 ) -> str:
     """The smoke run's measurements, the full grid's extrapolation, the full
-    validation's from the report's own sessions (``validation_sessions``: its
-    spec.json's ``sessions``, each with ``seconds`` and ``peak_rss_bytes``),
+    validation's from the report's own sessions (``validation_sessions``, as
+    ``require_ready_report`` gives them, each with ``seconds`` and
+    ``peak_rss_bytes``),
     and the decision rules' verdicts, as printed lines."""
     lines = ["Per-method runtime (s):"]
     lines += [
@@ -1521,8 +1506,7 @@ def _smoke_report(
     events_bytes = n_sessions * sizes["events.csv.gz"]
     cpu_hours = n_sessions * session_s / 3600
     n_conditions = len(conditions())
-    n_replicates = importlib.import_module("validate_simulator").DEFAULT_REPLICATES
-    n_validation = n_conditions * n_replicates
+    n_validation = n_conditions * DEFAULT_REPLICATES
     validation_s = float(np.mean([s["seconds"] for s in validation_sessions]))
     validation_peak = max(float(s["peak_rss_bytes"]) for s in validation_sessions)
     validation_hours = n_validation * validation_s / 3600
@@ -1536,7 +1520,8 @@ def _smoke_report(
         ),
         (
             f"Validation of the full grid at this duration: {n_validation} sessions "
-            f"({n_conditions} conditions x {n_replicates} replicates), {validation_s:.1f} s "
+            f"({n_conditions} conditions x {DEFAULT_REPLICATES} replicates), "
+            f"{validation_s:.1f} s "
             f"and at most {validation_peak / 2**30:.2f} GiB each (the report's "
             f"{len(validation_sessions)} sessions): {validation_hours:.1f} CPU hours, "
             f"{validation_hours / requested_workers:.1f} h on {requested_workers} workers"
@@ -1594,7 +1579,7 @@ def run_benchmark(
         The simulator validation report's spec.json; checked against the
         selected conditions' parameters before any method runs.
     condition_ids : sequence of str, optional
-        Default every condition.
+        Default every condition; run in ``conditions()`` order, each once.
     replicates : int, optional
         Per condition; default ``REFERENCE_REPLICATES`` for the reference and
         ``REPLICATES`` for every other.
@@ -1623,8 +1608,8 @@ def run_benchmark(
     Raises
     ------
     SystemExit
-        The report is not ready or does not cover the conditions, a condition
-        id is unknown, the git commit is unknown, the run exists and
+        A condition id is unknown, the report is not ready or does not cover
+        the conditions, the git commit is unknown, the run exists and
         ``resume`` is not set, or, resuming, the working tree has changes
         (``"-dirty"``) or the saved specification differs from this one
         (naming the differing keys). Nothing is written or deleted before
@@ -1634,29 +1619,25 @@ def run_benchmark(
         workers, the queued sessions are cancelled first. Finished conditions
         stay, and ``resume`` runs the rest.
     """
-    by_id = {condition.condition_id: condition for condition in conditions()}
     requested_workers = workers or max(1, (os.cpu_count() or 2) - 1)
     if smoke:
         condition_ids, replicates, workers = ["reference"], 1, 1
-    unknown = sorted(set(condition_ids or ()) - set(by_id))
-    if unknown:
-        msg = f"Unknown conditions {unknown}; see conditions.conditions()."
-        raise SystemExit(msg)
-    selected = [by_id[i] for i in condition_ids] if condition_ids else list(by_id.values())
+    try:
+        selected = select_conditions(",".join(condition_ids) if condition_ids else "all")
+    except ValueError as error:
+        raise SystemExit(str(error)) from None
     counts = {
         c.condition_id: replicates
         or (REFERENCE_REPLICATES if c.condition_id == "reference" else REPLICATES)
         for c in selected
     }
     overrides = {} if duration is None else {"session.duration_s": float(duration)}
-    validation = importlib.import_module("validate_simulator")
+    resolved = {c.condition_id: resolve(c, overrides) for c in selected}
     try:
-        report = _require_report(
-            validation_report, {c.condition_id: resolve(c, overrides) for c in selected}
-        )
-    except validation.ReportNotReady as error:  # its message names the report and why
+        report = _require_report(validation_report, resolved)
+    except ReportNotReady as error:  # its message names the report and why
         raise SystemExit(str(error)) from None
-    spec = run_specification(selected, counts, overrides, report, methods)
+    spec = run_specification(resolved, counts, report, methods)
     if spec["git_commit"] == "unknown":
         msg = (
             "The git commit is unknown (not a git checkout, or no git): a run records "
@@ -1762,13 +1743,12 @@ def run_benchmark(
     manifest["finished"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
     if smoke and last:
-        validation_sessions = json.loads(Path(validation_report).read_text())["sessions"]
         print(
             _smoke_report(
                 last[0],
                 conditions_directory / "reference",
                 requested_workers,
-                validation_sessions,
+                report["sessions"],
             )
         )
     return root

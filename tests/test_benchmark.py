@@ -887,6 +887,23 @@ def test_integer_counts_give_the_float_results(run, recipe_configs, session):
 # The command line
 
 
+# The validation report's cost per session, as validate_simulator records it.
+REPORT_SESSIONS = [
+    {
+        "condition_id": "reference",
+        "replicate": 10000,
+        "seconds": 10.0,
+        "peak_rss_bytes": 2**30,
+    },
+    {
+        "condition_id": "reference",
+        "replicate": 10001,
+        "seconds": 12.0,
+        "peak_rss_bytes": 1.5 * 2**30,
+    },
+]
+
+
 def _fake_report(calls):
     def require(path, resolved):
         calls.append((path, resolved))
@@ -895,6 +912,7 @@ def _fake_report(calls):
             "sha256": "0" * 64,
             "simulation_fingerprint": "1" * 64,
             "target_table_hash": "2" * 64,
+            "sessions": REPORT_SESSIONS,
         }
 
     return require
@@ -1282,7 +1300,7 @@ def test_an_unknown_or_dirty_commit_stops_the_run(
 
 def test_the_command_line_checks_its_arguments(run, cli, finished_run, tmp_path):
     start, _, sessions = cli
-    with pytest.raises(SystemExit, match="Unknown conditions"):
+    with pytest.raises(SystemExit, match="Unknown condition 'ripple_snr=huge'"):
         start(condition_ids=["reference", "ripple_snr=huge"])
     _copy(finished_run, tmp_path)
     with pytest.raises(SystemExit, match="exists; pass --resume"):
@@ -1328,38 +1346,12 @@ def test_the_command_line_takes_a_crossed_cell(run, conditions_module, monkeypat
     assert len(chosen) == 3
 
 
-def test_smoke_prints_its_measurements(cli, capsys, tmp_path):
+def test_smoke_prints_its_measurements(cli, capsys):
     start, _, sessions = cli
-    # the validation report's cost per session, as validate_simulator records it
-    report = tmp_path / "report" / "spec.json"
-    report.parent.mkdir()
-    measured = [(10.0, 2**30), (12.0, 1.5 * 2**30)]
-    report.write_text(
-        json.dumps(
-            {
-                "sessions": [
-                    {
-                        "condition_id": "reference",
-                        "replicate": 10000 + i,
-                        "seconds": s,
-                        "peak_rss_bytes": b,
-                    }
-                    for i, (s, b) in enumerate(measured)
-                ]
-            }
-        )
-    )
-    start(
-        "smoke",
-        smoke=True,
-        condition_ids=None,
-        replicates=None,
-        workers=4,
-        validation_report=report,
-    )
+    start("smoke", smoke=True, condition_ids=None, replicates=None, workers=4)
     assert sessions == ["reference"]
     printed = capsys.readouterr().out
-    # 860 sessions of 11 s: 2.63 CPU hours
+    # 860 validation sessions of the report's 11 s each: 2.63 CPU hours
     for text in (
         "Kay_ripple_detector default:",
         "Simulate:",

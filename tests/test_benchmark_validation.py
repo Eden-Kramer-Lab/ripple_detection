@@ -785,21 +785,31 @@ class TestReport:
 
 
 class TestPreflight:
-    def test_a_matching_report_passes(self, validate, ready_copy, resolved):
-        digest = validate.require_ready_report(ready_copy / "spec.json", resolved)
-        assert digest == _sha256(ready_copy / "spec.json")
+    def test_a_matching_report_passes(self, validate, report, ready_copy, resolved):
+        spec = ready_copy / "spec.json"
+        assert validate.require_ready_report(spec, resolved) == {
+            "path": str(spec),
+            "sha256": _sha256(spec),
+            "simulation_fingerprint": validate.simulation_fingerprint(),
+            "target_table_hash": _sha256(validate.TARGETS),
+            "sessions": report["spec"]["sessions"],
+        }
+        assert [s["replicate"] for s in report["spec"]["sessions"]] == [10000]
+        assert set(report["spec"]["sessions"][0]) == {
+            "condition_id",
+            "replicate",
+            "seconds",
+            "peak_rss_bytes",
+        }
 
     def test_the_runner_reads_a_ready_report(
         self, benchmark_import, validate, ready_copy, resolved
     ):
         run = benchmark_import("run")
         spec = ready_copy / "spec.json"
-        assert run._require_report(spec, resolved) == {
-            "path": str(spec),
-            "sha256": _sha256(spec),
-            "simulation_fingerprint": validate.simulation_fingerprint(),
-            "target_table_hash": _sha256(validate.TARGETS),
-        }
+        assert run._require_report(spec, resolved) == validate.require_ready_report(
+            spec, resolved
+        )
         with pytest.raises(validate.ReportNotReady, match="No simulator validation report"):
             run._require_report(ready_copy / "other.json", resolved)
 
@@ -895,8 +905,7 @@ class TestPreflight:
         backs a run, and a copy that is present must match."""
         (ready_copy / "measurements.csv").unlink()
         spec = ready_copy / "spec.json"
-        digest = hashlib.sha256(spec.read_bytes()).hexdigest()
-        assert validate.require_ready_report(spec, resolved) == digest
+        assert validate.require_ready_report(spec, resolved)["sha256"] == _sha256(spec)
 
     def test_every_problem_is_listed_at_once(self, validate, ready_copy, resolved):
         spec = json.loads((ready_copy / "spec.json").read_text())
