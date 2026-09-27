@@ -14,6 +14,7 @@ from ripple_detection import filter_ripple_band
 from ripple_detection.simulate import (
     EVENT_TYPES,
     NOISE_FUNCTION,
+    NON_EVENT_TYPES,
     SimulatedSession,
     _draw_per_ripple,
     _event_envelope,
@@ -2503,22 +2504,51 @@ class TestDrawNonEvents:
         assert (6 * theta.rise_sigma).between(0.15, 0.2).all()
         assert (theta.amplitude == 4.0).all()
 
-    @pytest.mark.parametrize("fs", [1250.0, 2500.0])
-    def test_the_shortest_spans_render(self, fs):
-        """Durations at the one-sample floor, where six sides of a sample
-        divided by six can round below a sample, are drawn and then rendered."""
-        time = simulate_time(int(10 * fs), fs)
-        floor = 6 / fs
-        table = draw_non_events(
-            time, rates={"emg": 60.0, "fast_gamma": 60.0}, emg_duration=(floor, floor),
-            fast_gamma_duration=(floor, floor), rng=0,
-        )  # fmt: skip
-        assert len(table) > 0
-        events = draw_network_events(time, event_rate=0.0)
-        session = simulate_network_session(
-            time, events, non_events=table, sampling_frequency=fs, rng=1
-        )
-        assert np.isfinite(session.lfps).all()
+    @pytest.mark.parametrize(
+        ("fs", "origin"), [(1000.0, 0.0), (1250.0, 0.0), (1500.0, 0.0), (2500.0, 0.0),
+                           (1500.0, 1.7e9)],
+    )  # fmt: skip
+    def test_what_draws_at_the_one_sample_floor_renders(self, fs, origin):
+        """Ripples, EMG, gamma and theta spans and leak intervals at the
+        floating-point values around one sample: whatever the draws accept,
+        the renderer accepts, given the rate or the lowest rate it allows
+        for these timestamps (0.14% under their step's at a Unix time)."""
+        time = simulate_time(int(12 * fs), fs) + origin
+        step = float(np.median(np.diff(time)))
+        tolerance = max(4 * float(np.spacing(time[-1])), 1e-6 * step)
+        given = 1 / (step + 0.9 * tolerance)
+        running = [(origin + 2.0, origin + 10.0)]
+        drawn = 0
+        for nudge in (-2, -1, 0, 1, 2):
+            factor = 1 + nudge * np.finfo(float).eps
+            span, isi = 6 * step * factor, step * factor
+            try:
+                events = draw_network_events(
+                    time, event_rate=2.0, ripple_duration=(span, span),
+                    ripple_skew=(0.5, 0.5), running_intervals=running, rng=0,
+                )  # fmt: skip
+            except ValueError:
+                events = None
+            try:
+                non_events = draw_non_events(
+                    time, rates=dict.fromkeys(NON_EVENT_TYPES, 120.0),
+                    running_intervals=running, spike_leakage_isi=(isi, isi),
+                    spike_leakage_spikes=(2, 2), emg_duration=(span, span),
+                    fast_gamma_duration=(span, span), theta_burst_duration=(span, span),
+                    rng=0,
+                )  # fmt: skip
+            except ValueError:
+                non_events = None
+            for table, keyword in ((events, None), (non_events, "non_events")):
+                if table is None:
+                    continue
+                drawn += 1
+                simulate_network_session(
+                    time, _empty_table() if keyword else table,
+                    **({keyword: table} if keyword else {}), running_intervals=running,
+                    sampling_frequency=given, rng=1,
+                )  # fmt: skip
+        assert drawn >= 2
 
     def test_kinds_draw_independently(self, non_events):
         """One kind's rate or ranges leave the other kinds' rows unchanged,

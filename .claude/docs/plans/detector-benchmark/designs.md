@@ -344,11 +344,11 @@ As implemented in phase 1b (2026-09-26), where the design above left a choice op
   and other pyramidal units, a theta burst at most the place units. A gamma band must be
   filterable at the rate, and a gamma frequency finite. EMG needs the rate above 200 Hz.
   EMG, gamma and theta side scales, and leakage intervals, must be at least a sample.
-- **One sample.** `draw_non_events` requires a whole sample at the rate its timestamps give.
-  The renderer accepts 0.99 of one, because a rate given to it can exceed the timestamps'
-  rate: by an ulp at most rates, and by up to 0.14% at a Unix time. So a drawn table always
-  renders. A leak interval under one sample that would put two spikes on a sample still
-  raises.
+- **One sample.** Every one-sample floor, for events and non-events, at draw and at render,
+  compares with the timestamps' median step, never `1 / rate`. The draws infer the rate from
+  the timestamps, while the renderer may be given one up to 0.14% away at a Unix time. So
+  a table drawn on the timestamps renders at any rate given. A leak interval near one sample
+  that would put two spikes on a sample still raises.
 - **Leaked samples.** A spike takes its nearest sample, and a tie goes to the later one. The
   position is measured from the recording's first sample before the spike offsets are added,
   so it rounds with the centre alone. A position up to 1 µs below a tie counts as the tie;

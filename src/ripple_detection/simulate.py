@@ -1572,11 +1572,13 @@ def _check_scalar(
 
 def _checked_time(
     time: ArrayLike, sampling_frequency: float | None = None
-) -> tuple[FloatArray, float]:
+) -> tuple[FloatArray, float, float]:
     """``time`` as a 1-D float array of two or more increasing samples with no
-    gap (the detectors' rule), and the sampling rate: ``sampling_frequency``,
+    gap (the detectors' rule), the sampling rate (``sampling_frequency``,
     which must agree with the median step to the timestamps' rounding, or the
-    rate the step gives."""
+    rate the step gives) and the median step. Every one-sample floor compares
+    with the step, not ``1 / rate``, so a table drawn on these timestamps
+    renders whatever rate is given."""
     time = np.asarray(time, dtype=float)
     if time.ndim != 1 or time.size < 2:
         msg = f"time must be 1-D with at least two samples, got shape {time.shape}."
@@ -1595,7 +1597,7 @@ def _checked_time(
             f"{step:.6g} s ({1 / step:.6g} Hz)."
         )
         raise ValueError(msg)
-    return time, rate
+    return time, rate, step
 
 
 def _bouts(running_intervals: ArrayLike | None) -> FloatArray:
@@ -1922,7 +1924,7 @@ def draw_network_events(
     False
 
     """
-    time, rate = _checked_time(time)
+    time, rate, step = _checked_time(time)
     nyquist = rate / 2
     event_rate = _check_scalar("event_rate", event_rate)
     probabilities = _type_probabilities(type_probabilities)
@@ -1933,10 +1935,10 @@ def draw_network_events(
         "ripple_skew", ripple_skew, lower=0, lower_strict=True, upper=1, upper_strict=True
     )
     # the renderer sizes a ripple from its samples: each side scale >= a step
-    if ripple_duration[0] * min(ripple_skew[0], 1 - ripple_skew[1]) / 3 < 1 / rate:
+    if ripple_duration[0] * min(ripple_skew[0], 1 - ripple_skew[1]) / 3 < step:
         msg = (
             f"ripple_duration {ripple_duration} with ripple_skew {ripple_skew} can give a "
-            f"side scale under one sample, {1 / rate:g} s; lengthen the shortest ripple."
+            f"side scale under one sample, {step:g} s; lengthen the shortest ripple."
         )
         raise ValueError(msg)
     ripple_frequency = _check_range(
@@ -2145,10 +2147,6 @@ _SPIKE_WAVEFORM = np.array([-1.0, 0.45, 0.2])
 # how far below a tie between two samples a leaked spike still counts as the
 # tie, in seconds: more than a Unix-time timestamp's rounding (1.2e-7 s)
 _TIE_TOLERANCE = 1e-6
-# the fraction of a sample the renderer accepts as one: a drawn table meets a
-# whole sample at the rate its timestamps give, which a given rate may exceed
-# by up to 0.14% at a Unix time
-_ONE_SAMPLE = 0.99
 
 
 def _non_event_rates(rates: Mapping[str, float] | None) -> dict[str, float]:
@@ -2199,14 +2197,14 @@ def _check_sizing_band(
     return low, high
 
 
-def _check_span(name: str, value: object, rate: float) -> tuple[float, float]:
+def _check_span(name: str, value: object, step: float) -> tuple[float, float]:
     """A range of spans whose side scales, a sixth of each, are at least one
-    sample at ``rate``, which ``simulate_network_session`` then accepts."""
+    sample, ``step`` seconds."""
     low, high = _check_range(name, value, lower=0, lower_strict=True)
-    if low / 6 < 1 / rate:
+    if low / 6 < step:
         msg = (
             f"{name} must give side scales, a sixth of the span, of at least one sample, "
-            f"{1 / rate:g} s, got {value}."
+            f"{step:g} s, got {value}."
         )
         raise ValueError(msg)
     return low, high
@@ -2444,15 +2442,15 @@ def draw_non_events(
     True
 
     """
-    time, rate = _checked_time(time)
+    time, rate, step = _checked_time(time)
     nyquist = rate / 2
     per_minute = _non_event_rates(rates)
     _check_whole_number("n_channels", n_channels, 1)
     leakage_units = _check_count_range("spike_leakage_units", spike_leakage_units, 1)
     leakage_spikes = _check_count_range("spike_leakage_spikes", spike_leakage_spikes, 2)
-    leakage_isi = _check_range("spike_leakage_isi", spike_leakage_isi, lower=1 / rate)
+    leakage_isi = _check_range("spike_leakage_isi", spike_leakage_isi, lower=step)
     leakage_amplitude = _check_scalar("spike_leakage_amplitude", spike_leakage_amplitude)
-    emg_span = _check_span("emg_duration", emg_duration, rate)
+    emg_span = _check_span("emg_duration", emg_duration, step)
     emg_amplitude = _check_scalar("emg_amplitude", emg_amplitude)
     if per_minute["emg"] > 0 and nyquist <= _EMG_HIGH_PASS:
         msg = (
@@ -2465,10 +2463,10 @@ def draw_non_events(
         upper=nyquist, upper_strict=True,
     )  # fmt: skip
     gamma_band = _check_sizing_band("fast_gamma_band", fast_gamma_band, gamma_frequency, rate)
-    gamma_span = _check_span("fast_gamma_duration", fast_gamma_duration, rate)
+    gamma_span = _check_span("fast_gamma_duration", fast_gamma_duration, step)
     gamma_snr = _check_range("fast_gamma_snr", fast_gamma_snr, lower=0, lower_strict=True)
     theta_units = _check_count_range("theta_burst_units", theta_burst_units, 1)
-    theta_span = _check_span("theta_burst_duration", theta_burst_duration, rate)
+    theta_span = _check_span("theta_burst_duration", theta_burst_duration, step)
     theta_gain = _check_scalar("theta_burst_gain", theta_burst_gain, lower=1.0)
     rng = _generator(rng)
 
@@ -2733,7 +2731,9 @@ def _validated_events(events: pd.DataFrame) -> pd.DataFrame:
     return table
 
 
-def _check_against_recording(table: pd.DataFrame, time: FloatArray, rate: float) -> None:
+def _check_against_recording(
+    table: pd.DataFrame, time: FloatArray, rate: float, step: float
+) -> None:
     """Raise unless every component lies inside the recording and every
     ripple fits its sampling: frequencies below Nyquist, side scales of at
     least one sample."""
@@ -2751,9 +2751,9 @@ def _check_against_recording(table: pd.DataFrame, time: FloatArray, rate: float)
     if not np.all((frequencies > 0) & (frequencies < nyquist)):
         msg = f"Ripple frequencies must lie in (0, {nyquist:g}) Hz, the Nyquist range."
         raise ValueError(msg)
-    if not (ripples[["rise_sigma", "decay_sigma"]] >= 1 / rate).all().all():
+    if not (ripples[["rise_sigma", "decay_sigma"]] >= step).all().all():
         msg = (
-            f"A ripple's rise_sigma and decay_sigma must be at least one sample, {1 / rate:g} "
+            f"A ripple's rise_sigma and decay_sigma must be at least one sample, {step:g} "
             "s, for its sampled waveform to hold its shape."
         )
         raise ValueError(msg)
@@ -2808,6 +2808,7 @@ def _validated_non_events(
     non_events: pd.DataFrame,
     time: FloatArray,
     rate: float,
+    step: float,
     n_channels: int,
     unit_types: StrArray,
 ) -> pd.DataFrame:
@@ -2853,7 +2854,7 @@ def _validated_non_events(
         leakage.channel.between(0, n_channels - 1)
         & leakage.n_units.between(1, n_pyramidal)
         & (leakage.n_spikes >= 2)
-        & (leakage.isi >= _ONE_SAMPLE / rate)
+        & (leakage.isi >= step)
         & (leakage.amplitude >= 0)
         & np.isclose(leakage.rise_sigma, (leakage.n_spikes - 1) * leakage.isi / 6)
         & (leakage.rise_sigma == leakage.decay_sigma)
@@ -2869,7 +2870,7 @@ def _validated_non_events(
         msg = (
             f"A spike_leakage row needs a channel in 0..{n_channels - 1}, 1 to "
             f"{n_pyramidal} units (the place and other pyramidal units), at least 2 "
-            f"spikes at intervals of at least one sample, {1 / rate:g} s, a non-negative "
+            f"spikes at intervals of at least one sample, {step:g} s, a non-negative "
             "amplitude, side scales of (n_spikes - 1) isi / 6, and its spikes on "
             "distinct samples inside the recording; non-event "
             f"{leakage.non_event_id.to_numpy()[~fits][0]} has not."
@@ -2877,12 +2878,11 @@ def _validated_non_events(
         raise ValueError(msg)
     emg = table[kind == "emg"]
     if not (
-        (emg.amplitude >= 0)
-        & (emg[["rise_sigma", "decay_sigma"]] >= _ONE_SAMPLE / rate).all(axis=1)
+        (emg.amplitude >= 0) & (emg[["rise_sigma", "decay_sigma"]] >= step).all(axis=1)
     ).all():
         msg = (
             "An emg row needs a non-negative amplitude, its peak standard deviation, and "
-            f"side scales of at least one sample, {1 / rate:g} s."
+            f"side scales of at least one sample, {step:g} s."
         )
         raise ValueError(msg)
     if (kind == "emg").any() and rate / 2 <= _EMG_HIGH_PASS:
@@ -2894,12 +2894,12 @@ def _validated_non_events(
     fits = (
         (gamma.amplitude > 0)
         & np.isfinite(gamma.frequency)
-        & (gamma[["rise_sigma", "decay_sigma"]] >= _ONE_SAMPLE / rate).all(axis=1)
+        & (gamma[["rise_sigma", "decay_sigma"]] >= step).all(axis=1)
     )
     if not fits.all():
         msg = (
             "A fast_gamma row needs a positive amplitude, its SNR, a finite frequency, and "
-            f"side scales of at least one sample, {1 / rate:g} s; non-event "
+            f"side scales of at least one sample, {step:g} s; non-event "
             f"{gamma.non_event_id[~fits].iloc[0]} has not."
         )
         raise ValueError(msg)
@@ -2912,13 +2912,13 @@ def _validated_non_events(
     fits = (
         theta.n_units.between(1, n_place)
         & (theta.amplitude >= 1)
-        & (theta[["rise_sigma", "decay_sigma"]] >= _ONE_SAMPLE / rate).all(axis=1)
+        & (theta[["rise_sigma", "decay_sigma"]] >= step).all(axis=1)
     )
     if not fits.all():
         msg = (
             f"A theta_burst row needs 1 to {n_place} units (the place units), an "
             "amplitude, its gain, of at least 1, and side scales of at least one sample, "
-            f"{1 / rate:g} s; non-event "
+            f"{step:g} s; non-event "
             f"{theta.non_event_id[~fits].iloc[0]} has not."
         )
         raise ValueError(msg)
@@ -3328,8 +3328,8 @@ def simulate_network_session(
         frequency, side scales under a sample, or a sizing band that is not
         finite, ordered, below Nyquist, holding its frequency and possible to
         filter; a theta burst with no units or more than the place units, a
-        gain below 1 or side scales under a sample; "under a sample" allows
-        1% for a rate given that differs from the timestamps'), or has gamma
+        gain below 1 or side scales under a sample, the timestamps' median
+        step), or has gamma
         bursts while ``noise_amplitude`` or every channel gain is 0;
         ``spatial_profile`` or ``spike_model`` is unknown;
         ``channel_occupancy`` lies outside (0, 1]; ``channel_gain_range`` is
@@ -3368,9 +3368,9 @@ def simulate_network_session(
     ['place', 'pyramidal', 'interneuron']
 
     """
-    time, rate = _checked_time(time, sampling_frequency)
+    time, rate, step = _checked_time(time, sampling_frequency)
     table = _sorted_events(_validated_events(events))
-    _check_against_recording(table, time, rate)
+    _check_against_recording(table, time, rate, step)
     if n_channels < 1:
         msg = f"n_channels must be at least 1, got {n_channels}."
         raise ValueError(msg)
@@ -3392,7 +3392,7 @@ def simulate_network_session(
     non_event_table = (
         _empty(_NON_EVENT_COLUMNS)
         if non_events is None
-        else _validated_non_events(non_events, time, rate, n_channels, unit_types)
+        else _validated_non_events(non_events, time, rate, step, n_channels, unit_types)
     )
     gamma = non_event_table[non_event_table.non_event_type == "fast_gamma"]
     if len(gamma) and not ((gains > 0).any() and noise_amplitude > 0):
