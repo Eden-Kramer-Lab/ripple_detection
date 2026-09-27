@@ -3,8 +3,42 @@
 Code and tables for a benchmark, in progress, of the package's detectors and the
 packaged literature methods on simulated sessions whose events are known. None of it is
 part of the installed package. So far it holds `simulator_targets.csv`, the
-measurements the network simulator is validated against, and the configurations of
-the literature methods below; running and scoring them is still to come.
+measurements the network simulator is validated against, the simulation conditions and
+the configurations of the literature methods below; running and scoring them is still
+to come.
+
+## Simulation conditions
+
+`conditions.py` defines the sessions the benchmark simulates. `REFERENCE` holds every
+keyword of the three simulator calls at its reference value, the simulator's defaults
+written out in full: `"session"` (600 s at 1500 Hz), `"events"` (`draw_network_events`),
+`"non_events"` (`draw_non_events`) and `"render"` (`simulate_network_session`).
+`conditions()` gives the 43 conditions: the reference; 15 factors varied one at a time
+(28 levels); the simulator's six alternative models, one at a time; and the 8 cells of
+`ripple_snr` crossed with `participation` and with `spike_leakage_rate` that are not
+already in the grid. A condition changes values by dotted key, such as
+`"events.ripple_snr"` or `"non_events.rates.emg"`; `resolve` gives its full parameter
+set and `resolved_json` the same as sorted JSON, for saving and hashing.
+
+```python
+import sys
+
+sys.path.insert(0, "examples/benchmark")  # from the repository root
+from conditions import conditions, resolved_json, simulate_condition
+
+condition = next(c for c in conditions() if c.condition_id == "ripple_snr=high")
+session = simulate_condition(condition, 0, overrides={"session.duration_s": 60.0})
+print(resolved_json(condition)[:80])
+```
+
+A session starts at rest and alternates rest of 20-40 s with running bouts of 10-20 s,
+dropping a bout that would leave less than 5 s of rest at the end. Replicate `k` has the
+seed `session_seed(k)` in every condition. That seed gives one seed to each stage, in
+the order schedule, events, non-events, rendering, so what one stage draws never moves
+another's draws: replicate `k` of every condition has the same running bouts, and a
+condition that changes no draw count (a size such as `ripple_snr`, or any of the six
+alternative models) keeps the reference's event times, unit baseline rates and
+per-unit participant draws. Conditions are therefore compared replicate by replicate.
 
 ## Literature method configurations
 
