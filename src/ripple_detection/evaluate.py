@@ -520,11 +520,10 @@ def _found(n_events: int, matched: pd.Series) -> BoolArray:
 
 
 def _checked_methods(
-    events: Mapping[str, EventInventory], truth: EventInventory | None, minimum_iou: float
-) -> tuple[dict[str, FloatArray], FloatArray, dict[str, EventMatching]]:
-    """Each method's bounds, the truth's, and each method matched to the
-    truth, after checking the inputs; without a truth, no truth events and no
-    matchings."""
+    events: Mapping[str, EventInventory], truth: FloatArray | None, minimum_iou: float
+) -> tuple[dict[str, FloatArray], dict[str, EventMatching]]:
+    """Each method's bounds, and each matched to the `truth` bounds the caller
+    checked (none without them), after checking the other inputs."""
     _check_mapping(events)
     _check_minimum_iou(minimum_iou)
     bounds = {
@@ -532,13 +531,12 @@ def _checked_methods(
         for name, inventory in events.items()
     }
     if truth is None:
-        return bounds, np.empty((0, 2)), {}
-    truth_bounds = _checked_bounds(truth, "truth")
+        return bounds, {}
     to_truth = {
-        name: match_events(truth_bounds, method, minimum_iou=minimum_iou)
+        name: match_events(truth, method, minimum_iou=minimum_iou)
         for name, method in bounds.items()
     }
-    return bounds, truth_bounds, to_truth
+    return bounds, to_truth
 
 
 def _truth_columns(a: EventMatching, b: EventMatching, minimum_iou: float) -> dict[str, float]:
@@ -663,7 +661,8 @@ def compare_detectors(
     True
 
     """
-    bounds, _, to_truth = _checked_methods(events, truth, minimum_iou)
+    truth_bounds = None if truth is None else _checked_bounds(truth, "truth")
+    bounds, to_truth = _checked_methods(events, truth_bounds, minimum_iou)
     rows = []
     for a, b in itertools.combinations(bounds, 2):
         matching = match_events(bounds[a], bounds[b], minimum_iou=minimum_iou)
@@ -733,7 +732,8 @@ def consensus_counts(
     [True, True]
 
     """
-    _, truth_bounds, to_truth = _checked_methods(events, truth, minimum_iou)
+    truth_bounds = _checked_bounds(truth, "truth")
+    _, to_truth = _checked_methods(events, truth_bounds, minimum_iou)
     if "n_methods" in to_truth:
         msg = "No method may be named 'n_methods', the column that counts them."
         raise ValueError(msg)

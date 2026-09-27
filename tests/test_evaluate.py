@@ -593,6 +593,11 @@ class TestConsensusCounts:
         assert list(consensus.columns) == ["n_methods"]
         assert consensus.n_methods.tolist() == [0]
 
+    def test_the_truth_is_required(self):
+        """None is not an empty truth: it would drop every method's column."""
+        with pytest.raises(ValueError, match=r"shape \(n_events, 2\)"):
+            consensus_counts({"a": GOOD}, None)
+
     def test_no_method_may_be_named_n_methods(self):
         with pytest.raises(ValueError, match=r"n_methods"):
             consensus_counts({"n_methods": GOOD}, GOOD)
