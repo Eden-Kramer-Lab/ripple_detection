@@ -9,6 +9,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import pytest
+from _synthetic import _non_event_tables, _one_non_event_table
 
 import ripple_detection as rd
 from ripple_detection import (
@@ -782,18 +783,21 @@ class TestTimeOrigin:
         rounds far from zero), and three a sample apart 0.45 of a sample past
         2 s."""
         time = simulate_time(int(6 * FS), FS)
-        n_spikes = np.array([3, 2, 2, 3])
-        isi = np.array([0.003, 1 / FS, 2 / FS, 1 / FS])
-        sigma = (n_spikes - 1) * isi / 6
-        rows = pd.DataFrame(
-            {
-                "non_event_id": np.arange(4), "non_event_type": "spike_leakage",
-                "center_time": [3.0, 4.0, 5.0 + 0.5 / FS, 2.0 + 0.45 / FS],
-                "rise_sigma": sigma, "decay_sigma": sigma, "envelope_power": 2,
-                "amplitude": 2.0, "frequency": np.nan, "snr_band_low": np.nan,
-                "snr_band_high": np.nan, "channel": 0, "n_units": 1, "n_spikes": n_spikes,
-                "isi": isi,
-            }
+        bursts = [
+            (3.0, 3, 0.003),
+            (4.0, 2, 1 / FS),
+            (5.0 + 0.5 / FS, 2, 2 / FS),
+            (2.0 + 0.45 / FS, 3, 1 / FS),
+        ]  # (centre, spikes, interval)
+        rows = _non_event_tables(
+            *(
+                _one_non_event_table(
+                    "spike_leakage", center_time=center, n_spikes=n_spikes, isi=isi,
+                    rise_sigma=(n_spikes - 1) * isi / 6, decay_sigma=(n_spikes - 1) * isi / 6,
+                    channel=0, n_units=1,
+                )
+                for center, n_spikes, isi in bursts
+            )
         )  # fmt: skip
         events = rd.draw_network_events(time, event_rate=0.0)
         options = {"rng": 1, "sampling_frequency": FS, "noise_amplitude": 0.0}

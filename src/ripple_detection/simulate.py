@@ -2139,8 +2139,16 @@ _NON_EVENT_STATES = {
     "fast_gamma": "any",
     "theta_burst": "running",
 }
-# the uniforms each kind draws per non-event
-_NON_EVENT_UNIFORMS = {"spike_leakage": 4, "emg": 1, "fast_gamma": 3, "theta_burst": 2}
+# a non-event's values in the columns its kind does not use
+_NON_EVENT_FILL = {
+    "frequency": np.nan,
+    "snr_band_low": np.nan,
+    "snr_band_high": np.nan,
+    "channel": -1,
+    "n_units": 0,
+    "n_spikes": 0,
+    "isi": np.nan,
+}
 _EMG_HIGH_PASS = 100.0  # Hz
 # a spike (one sample) and its after-hyperpolarization (two): 2 ms at 1500 Hz
 _SPIKE_WAVEFORM = np.array([-1.0, 0.45, 0.2])
@@ -2210,6 +2218,23 @@ def _check_span(name: str, value: object, step: float) -> tuple[float, float]:
     return low, high
 
 
+def _check_emg_room(rate: float, remedy: str = "") -> None:
+    """Raise unless ``rate`` leaves room above the EMG high-pass."""
+    if rate / 2 <= _EMG_HIGH_PASS:
+        msg = (
+            f"EMG is high-passed at {_EMG_HIGH_PASS:g} Hz, at or above the Nyquist "
+            f"frequency, {rate / 2:g} Hz{remedy}."
+        )
+        raise ValueError(msg)
+
+
+def _uniform_draws(u: FloatArray, bounds: tuple[float, float]) -> FloatArray:
+    """Uniforms ``u`` mapped linearly onto ``(low, high)``."""
+    low, high = bounds
+    drawn: FloatArray = low + (high - low) * u
+    return drawn
+
+
 def _whole_draws(u: FloatArray, bounds: tuple[int, int]) -> IntArray:
     """Uniforms ``u`` mapped onto the whole numbers ``low .. high``, each
     equally likely."""
@@ -2223,11 +2248,10 @@ def _allowed_intervals(time: FloatArray, bouts: FloatArray) -> dict[str, FloatAr
     last second: rest, running, and the whole recording (``"any"``)."""
     start, end = float(time[0]) + 1.0, float(time[-1]) - 1.0
     running = np.column_stack([np.maximum(bouts[:, 0], start), np.minimum(bouts[:, 1], end)])
-    whole = np.array([[start, end]])
     return {
         "rest": _rest_intervals(time, bouts),
         "running": running[running[:, 1] > running[:, 0]],
-        "any": whole[whole[:, 1] > whole[:, 0]],
+        "any": _rest_intervals(time, np.empty((0, 2))),
     }
 
 
@@ -2452,12 +2476,8 @@ def draw_non_events(
     leakage_amplitude = _check_scalar("spike_leakage_amplitude", spike_leakage_amplitude)
     emg_span = _check_span("emg_duration", emg_duration, step)
     emg_amplitude = _check_scalar("emg_amplitude", emg_amplitude)
-    if per_minute["emg"] > 0 and nyquist <= _EMG_HIGH_PASS:
-        msg = (
-            f"EMG is high-passed at {_EMG_HIGH_PASS:g} Hz, at or above the Nyquist "
-            f"frequency, {nyquist:g} Hz; set rates['emg'] to 0."
-        )
-        raise ValueError(msg)
+    if per_minute["emg"] > 0:
+        _check_emg_room(rate, "; set rates['emg'] to 0")
     gamma_frequency = _check_range(
         "fast_gamma_frequency", fast_gamma_frequency, lower=0, lower_strict=True,
         upper=nyquist, upper_strict=True,
@@ -2472,54 +2492,51 @@ def draw_non_events(
 
     allowed = _allowed_intervals(time, _bouts(running_intervals))
     seeds = rng.integers(np.iinfo(np.int64).max, size=len(NON_EVENT_TYPES))
-    columns: dict[str, list[ArrayLike]] = {name: [] for name in _NON_EVENT_COLUMNS}
+    parts: dict[str, list[ArrayLike]] = {name: [] for name in _NON_EVENT_COLUMNS}
+    del parts["non_event_id"]
     for non_event_type, seed in zip(NON_EVENT_TYPES, seeds, strict=True):
         stream = np.random.default_rng(int(seed))
         intervals = allowed[_NON_EVENT_STATES[non_event_type]]
         centers, index = _poisson_times(intervals, per_minute[non_event_type] / 60, stream)
-        u = stream.random((centers.size, _NON_EVENT_UNIFORMS[non_event_type]))
         n = centers.size
-        values: dict[str, ArrayLike] = {
-            "frequency": np.full(n, np.nan), "snr_band_low": np.full(n, np.nan),
-            "snr_band_high": np.full(n, np.nan), "channel": np.full(n, -1),
-            "n_units": np.zeros(n), "n_spikes": np.zeros(n), "isi": np.full(n, np.nan),
-        }  # fmt: skip
+        drawn: dict[str, ArrayLike]
         if non_event_type == "spike_leakage":
+            u = stream.random((n, 4))
             n_spikes = _whole_draws(u[:, 1], leakage_spikes)
-            isi = leakage_isi[0] + (leakage_isi[1] - leakage_isi[0]) * u[:, 2]
+            isi = _uniform_draws(u[:, 2], leakage_isi)
             sigma = (n_spikes - 1) * isi / 6
-            values.update(
-                amplitude=np.full(n, leakage_amplitude),
-                n_units=_whole_draws(u[:, 0], leakage_units), n_spikes=n_spikes, isi=isi,
-                channel=np.floor(u[:, 3] * n_channels),
-            )  # fmt: skip
+            drawn = {
+                "amplitude": leakage_amplitude,
+                "n_units": _whole_draws(u[:, 0], leakage_units),
+                "n_spikes": n_spikes, "isi": isi,
+                "channel": _whole_draws(u[:, 3], (0, n_channels - 1)),
+            }  # fmt: skip
         elif non_event_type == "emg":
-            sigma = (emg_span[0] + (emg_span[1] - emg_span[0]) * u[:, 0]) / 6
-            values.update(amplitude=np.full(n, emg_amplitude))
+            u = stream.random((n, 1))
+            sigma = _uniform_draws(u[:, 0], emg_span) / 6
+            drawn = {"amplitude": emg_amplitude}
         elif non_event_type == "fast_gamma":
-            sigma = (gamma_span[0] + (gamma_span[1] - gamma_span[0]) * u[:, 1]) / 6
-            values.update(
-                frequency=gamma_frequency[0]
-                + (gamma_frequency[1] - gamma_frequency[0]) * u[:, 0],
-                amplitude=gamma_snr[0] + (gamma_snr[1] - gamma_snr[0]) * u[:, 2],
-                snr_band_low=np.full(n, gamma_band[0]),
-                snr_band_high=np.full(n, gamma_band[1]),
-            )  # fmt: skip
+            u = stream.random((n, 3))
+            sigma = _uniform_draws(u[:, 1], gamma_span) / 6
+            drawn = {
+                "frequency": _uniform_draws(u[:, 0], gamma_frequency),
+                "amplitude": _uniform_draws(u[:, 2], gamma_snr),
+                "snr_band_low": gamma_band[0], "snr_band_high": gamma_band[1],
+            }  # fmt: skip
         else:  # theta_burst
-            sigma = (theta_span[0] + (theta_span[1] - theta_span[0]) * u[:, 1]) / 6
-            values.update(
-                amplitude=np.full(n, theta_gain), n_units=_whole_draws(u[:, 0], theta_units)
-            )
+            u = stream.random((n, 2))
+            sigma = _uniform_draws(u[:, 1], theta_span) / 6
+            drawn = {"amplitude": theta_gain, "n_units": _whole_draws(u[:, 0], theta_units)}
         stretch = intervals[index]
         keep = (centers - 4 * sigma >= stretch[:, 0]) & (centers + 4 * sigma <= stretch[:, 1])
-        values.update(
-            non_event_type=np.full(n, non_event_type), center_time=centers,
-            rise_sigma=sigma, decay_sigma=sigma, envelope_power=np.full(n, 2),
-        )  # fmt: skip
-        for name in _NON_EVENT_COLUMNS:
-            if name != "non_event_id":
-                columns[name].append(np.asarray(values[name])[keep])
-    joined = {name: np.concatenate(value) for name, value in columns.items() if value}
+        values = {
+            **_NON_EVENT_FILL, **drawn, "non_event_type": non_event_type,
+            "center_time": centers, "rise_sigma": sigma, "decay_sigma": sigma,
+            "envelope_power": 2,
+        }  # fmt: skip
+        for name, part in parts.items():
+            part.append(np.broadcast_to(values[name], n)[keep])
+    joined = {name: np.concatenate(part) for name, part in parts.items()}
     order = np.argsort(joined["center_time"], kind="stable")
     table = {name: value[order] for name, value in joined.items()}
     table["non_event_id"] = np.arange(order.size)
@@ -2699,12 +2716,7 @@ def _validated_events(events: pd.DataFrame) -> pd.DataFrame:
         if unknown:
             msg = f"events.{name} has unknown values {unknown}; use {', '.join(vocabulary)}."
             raise ValueError(msg)
-    scales = table[["center_time", "rise_sigma", "decay_sigma", "amplitude"]].to_numpy()
-    if not (np.all(np.isfinite(scales)) and np.all(scales[:, 1:3] > 0)):
-        msg = (
-            "events needs finite times and amplitudes and positive rise_sigma and decay_sigma."
-        )
-        raise ValueError(msg)
+    _check_scales(table, "events")
     if not table.envelope_power.isin(_ENVELOPE_POWERS).all():
         msg = "events.envelope_power must be 2 or 4."
         raise ValueError(msg)
@@ -2731,20 +2743,38 @@ def _validated_events(events: pd.DataFrame) -> pd.DataFrame:
     return table
 
 
+def _check_scales(table: pd.DataFrame, name: str) -> None:
+    """Raise unless every row of ``table`` (``name`` in the message) has a
+    finite time and amplitude and positive side scales."""
+    scales = table[["center_time", "rise_sigma", "decay_sigma", "amplitude"]].to_numpy()
+    if not (np.all(np.isfinite(scales)) and np.all(scales[:, 1:3] > 0)):
+        msg = (
+            f"{name} needs finite times and amplitudes and positive rise_sigma and "
+            "decay_sigma."
+        )
+        raise ValueError(msg)
+
+
+def _check_inside_recording(table: pd.DataFrame, time: FloatArray, row: str) -> None:
+    """Raise unless every row's span at four side scales lies inside the
+    recording; ``row`` names a row in the message."""
+    start = table.center_time - 4 * table.rise_sigma
+    end = table.center_time + 4 * table.decay_sigma
+    if not ((start >= time[0]) & (end <= time[-1])).all():
+        msg = (
+            f"Every {row}'s span at four side scales must lie inside the recording, "
+            f"[{time[0]}, {time[-1]}] s; draw the table on the time you render it on."
+        )
+        raise ValueError(msg)
+
+
 def _check_against_recording(
     table: pd.DataFrame, time: FloatArray, rate: float, step: float
 ) -> None:
     """Raise unless every component lies inside the recording and every
     ripple fits its sampling: frequencies below Nyquist, side scales of at
     least one sample."""
-    start = table.center_time - 4 * table.rise_sigma
-    end = table.center_time + 4 * table.decay_sigma
-    if not ((start >= time[0]) & (end <= time[-1])).all():
-        msg = (
-            "Every component's span at four side scales must lie inside the recording, "
-            f"[{time[0]}, {time[-1]}] s; draw the events on the time you render them on."
-        )
-        raise ValueError(msg)
+    _check_inside_recording(table, time, "component")
     nyquist = rate / 2
     ripples = table[table.expression == "ripple"]
     frequencies = ripples[["frequency_start", "frequency_end"]].to_numpy()
@@ -2829,99 +2859,74 @@ def _validated_non_events(
     if table.non_event_id.duplicated().any():
         msg = "non_events has duplicate non_event_id values."
         raise ValueError(msg)
-    scales = table[["center_time", "rise_sigma", "decay_sigma", "amplitude"]].to_numpy()
-    if not (np.all(np.isfinite(scales)) and np.all(scales[:, 1:3] > 0)):
-        msg = "non_events needs finite times and amplitudes and positive side scales."
-        raise ValueError(msg)
+    _check_scales(table, "non_events")
     if not (table.envelope_power == 2).all():
         msg = "non_events.envelope_power must be 2."
         raise ValueError(msg)
-    start = table.center_time - 4 * table.rise_sigma
-    end = table.center_time + 4 * table.decay_sigma
-    if not ((start >= time[0]) & (end <= time[-1])).all():
-        msg = (
-            "Every non-event's span at four side scales must lie inside the recording, "
-            f"[{time[0]}, {time[-1]}] s; draw them on the time you render them on."
-        )
-        raise ValueError(msg)
+    _check_inside_recording(table, time, "non-event")
 
-    kind = table.non_event_type
-    leakage, gamma, theta = (
-        table[kind == name] for name in ("spike_leakage", "fast_gamma", "theta_burst")
-    )
+    kind = table.non_event_type.to_numpy()
+    sides = (table.rise_sigma >= step) & (table.decay_sigma >= step)
     n_pyramidal = int(np.isin(unit_types, ["place", "pyramidal"]).sum())
-    fits = (
-        leakage.channel.between(0, n_channels - 1)
-        & leakage.n_units.between(1, n_pyramidal)
-        & (leakage.n_spikes >= 2)
-        & (leakage.isi >= step)
-        & (leakage.amplitude >= 0)
-        & np.isclose(leakage.rise_sigma, (leakage.n_spikes - 1) * leakage.isi / 6)
-        & (leakage.rise_sigma == leakage.decay_sigma)
+    n_place = int((unit_types == "place").sum())
+    leakage = (
+        table.channel.between(0, n_channels - 1)
+        & table.n_units.between(1, n_pyramidal)
+        & (table.n_spikes >= 2)
+        & (table.isi >= step)
+        & (table.amplitude >= 0)
+        & np.isclose(table.rise_sigma, (table.n_spikes - 1) * table.isi / 6)
+        & (table.rise_sigma == table.decay_sigma)
     ).to_numpy(dtype=bool, copy=True)
     # distinct samples: isi * rate can round to just under one sample
-    for index, row in enumerate(leakage.itertuples()):
-        if fits[index]:
-            samples = _leaked_samples(row.center_time, row.n_spikes, row.isi, time[0], rate)
-            fits[index] = bool(np.all(np.diff(samples) > 0)) and (
-                samples[-1] + _SPIKE_WAVEFORM.size <= time.size
-            )
-    if not fits.all():
-        msg = (
-            f"A spike_leakage row needs a channel in 0..{n_channels - 1}, 1 to "
-            f"{n_pyramidal} units (the place and other pyramidal units), at least 2 "
-            f"spikes at intervals of at least one sample, {step:g} s, a non-negative "
-            "amplitude, side scales of (n_spikes - 1) isi / 6, and its spikes on "
-            "distinct samples inside the recording; non-event "
-            f"{leakage.non_event_id.to_numpy()[~fits][0]} has not."
+    for index in np.flatnonzero((kind == "spike_leakage") & leakage):
+        row = table.iloc[index]
+        samples = _leaked_samples(row.center_time, row.n_spikes, row.isi, time[0], rate)
+        leakage[index] = bool(np.all(np.diff(samples) > 0)) and (
+            samples[-1] + _SPIKE_WAVEFORM.size <= time.size
         )
-        raise ValueError(msg)
-    emg = table[kind == "emg"]
-    if not (
-        (emg.amplitude >= 0) & (emg[["rise_sigma", "decay_sigma"]] >= step).all(axis=1)
-    ).all():
-        msg = (
-            "An emg row needs a non-negative amplitude, its peak standard deviation, and "
-            f"side scales of at least one sample, {step:g} s."
-        )
-        raise ValueError(msg)
-    if (kind == "emg").any() and rate / 2 <= _EMG_HIGH_PASS:
-        msg = (
-            f"EMG is high-passed at {_EMG_HIGH_PASS:g} Hz, at or above the Nyquist "
-            f"frequency, {rate / 2:g} Hz."
-        )
-        raise ValueError(msg)
-    fits = (
-        (gamma.amplitude > 0)
-        & np.isfinite(gamma.frequency)
-        & (gamma[["rise_sigma", "decay_sigma"]] >= step).all(axis=1)
-    )
-    if not fits.all():
-        msg = (
-            "A fast_gamma row needs a positive amplitude, its SNR, a finite frequency, and "
-            f"side scales of at least one sample, {step:g} s; non-event "
-            f"{gamma.non_event_id[~fits].iloc[0]} has not."
-        )
-        raise ValueError(msg)
+    one_sample = f"side scales of at least one sample, {step:g} s"
+    requirements = {
+        "spike_leakage": (
+            leakage,
+            (
+                f"a channel in 0..{n_channels - 1}, 1 to {n_pyramidal} units (the place "
+                f"and other pyramidal units), at least 2 spikes at intervals of at least "
+                f"one sample, {step:g} s, a non-negative amplitude, side scales of "
+                "(n_spikes - 1) isi / 6, and its spikes on distinct samples inside the "
+                "recording"
+            ),
+        ),
+        "emg": (
+            (table.amplitude >= 0) & sides,
+            f"a non-negative amplitude, its peak standard deviation, and {one_sample}",
+        ),
+        "fast_gamma": (
+            (table.amplitude > 0) & np.isfinite(table.frequency) & sides,
+            f"a positive amplitude, its SNR, a finite frequency, and {one_sample}",
+        ),
+        "theta_burst": (
+            table.n_units.between(1, n_place) & (table.amplitude >= 1) & sides,
+            (
+                f"1 to {n_place} units (the place units), an amplitude, its gain, of at "
+                f"least 1, and {one_sample}"
+            ),
+        ),
+    }
+    for name, (fits, needs) in requirements.items():
+        failing = table.non_event_id.to_numpy()[(kind == name) & ~np.asarray(fits, dtype=bool)]
+        if failing.size:
+            msg = f"Each {name} row needs {needs}; non-event {failing[0]} has not."
+            raise ValueError(msg)
+    if (kind == "emg").any():
+        _check_emg_room(rate)
+    gamma = table[kind == "fast_gamma"]
     for (low, high), rows in gamma.groupby(["snr_band_low", "snr_band_high"], dropna=False):
+        frequencies = rows.frequency.to_numpy()
         _check_sizing_band(
             f"non-event {rows.non_event_id.iloc[0]}'s (snr_band_low, snr_band_high)",
-            (low, high), (rows.frequency.min(), rows.frequency.max()), rate,
+            (low, high), (np.min(frequencies), np.max(frequencies)), rate,
         )  # fmt: skip
-    n_place = int((unit_types == "place").sum())
-    fits = (
-        theta.n_units.between(1, n_place)
-        & (theta.amplitude >= 1)
-        & (theta[["rise_sigma", "decay_sigma"]] >= step).all(axis=1)
-    )
-    if not fits.all():
-        msg = (
-            f"A theta_burst row needs 1 to {n_place} units (the place units), an "
-            "amplitude, its gain, of at least 1, and side scales of at least one sample, "
-            f"{step:g} s; non-event "
-            f"{theta.non_event_id[~fits].iloc[0]} has not."
-        )
-        raise ValueError(msg)
     return table
 
 
@@ -2935,7 +2940,8 @@ def _settling_samples(sos: FloatArray) -> int:
         energy = signal.sosfilt(sos, impulse) ** 2
         remaining = np.cumsum(energy[::-1])[::-1]
         settled = np.flatnonzero(remaining < 1e-12 * remaining[0])
-        if settled.size:
+        # settled in the first half, so the window holds the whole response
+        if settled.size and settled[0] < n_samples // 2:
             return int(settled[0])
         n_samples *= 2
 
@@ -2975,9 +2981,10 @@ def _render_non_events(
             for shift, value in enumerate(_SPIKE_WAVEFORM):
                 lfps[samples + shift, row.channel] += row.amplitude * value
             continue
-        window, envelope = _event_envelope(
-            time, row.center_time, row.rise_sigma, row.decay_sigma, row.envelope_power
-        )
+        if row.non_event_type != "fast_gamma":
+            window, envelope = _event_envelope(
+                time, row.center_time, row.rise_sigma, row.decay_sigma, row.envelope_power
+            )
         if row.non_event_type == "emg":
             # drawn and filtered a settling time beyond each end of the window,
             # so the kept samples are stationary filtered noise
@@ -3042,7 +3049,7 @@ def _draw_units(
     refractory_period: float,
     step: float,
     streams: Mapping[str, np.random.Generator],
-    multipliers: Sequence[Sequence[tuple[slice, FloatArray]]] | None = None,
+    multipliers: Sequence[Sequence[tuple[slice, FloatArray]]],
 ) -> tuple[FloatArray, FloatArray, IntArray]:
     """Baseline rates, spike counts ``(n_time, n_units)`` and the number of
     place and pyramidal participants of each burst row.
@@ -3109,7 +3116,7 @@ def _draw_units(
             intensity = np.full(n_time, rates[unit] * step)
             for window, gain in gains[unit]:
                 intensity[window] += rates[unit] * step * gain
-            for window, factor in [] if multipliers is None else multipliers[unit]:
+            for window, factor in multipliers[unit]:
                 intensity[window] *= factor
             if spike_model == "poisson":
                 block[row] = streams["spikes"].poisson(intensity)

@@ -7,6 +7,7 @@ import itertools
 import numpy as np
 import pandas as pd
 import pytest
+from _synthetic import NON_EVENT_COLUMNS, _non_event_tables, _one_non_event_table
 from scipy import stats
 from scipy.signal import hilbert
 
@@ -1173,22 +1174,6 @@ EVENT_COLUMNS = {
     "participation": "float64",
     "n_participants": "int64",
 }
-NON_EVENT_COLUMNS = {
-    "non_event_id": "int64",
-    "non_event_type": "str",
-    "center_time": "float64",
-    "rise_sigma": "float64",
-    "decay_sigma": "float64",
-    "envelope_power": "int64",
-    "amplitude": "float64",
-    "frequency": "float64",
-    "snr_band_low": "float64",
-    "snr_band_high": "float64",
-    "channel": "int64",
-    "n_units": "int64",
-    "n_spikes": "int64",
-    "isi": "float64",
-}
 RIPPLE_CHANNEL_COLUMNS = {
     "event_id": "int64",
     "component": "int64",
@@ -2303,9 +2288,19 @@ class TestNetworkSessionVariants(_Renders):
         np.testing.assert_array_equal(slow.speed, simulate_speed(self.TIME, running))
 
 
-NON_EVENT_KINDS = ("spike_leakage", "emg", "fast_gamma", "theta_burst")
 # per minute: enough of each kind in 300 s to see its ranges
 DENSE_RATES = {"spike_leakage": 20.0, "emg": 10.0, "fast_gamma": 20.0, "theta_burst": 40.0}
+
+
+def _inside_any(table, stretches):
+    """Whether each row's span at four side scales lies inside one of
+    ``stretches``, shape (n_stretches, 2)."""
+    start, end = _spans(table, 4)
+    stretches = np.asarray(stretches)
+    return (
+        (start.to_numpy()[:, None] >= stretches[:, 0])
+        & (end.to_numpy()[:, None] <= stretches[:, 1])
+    ).any(axis=1)
 
 
 class TestDrawNonEvents:
@@ -2326,7 +2321,7 @@ class TestDrawNonEvents:
         assert isinstance(non_events.index, pd.RangeIndex)
         np.testing.assert_array_equal(non_events.non_event_id, np.arange(len(non_events)))
         assert np.all(np.diff(non_events.center_time) >= 0)
-        assert set(non_events.non_event_type) == set(NON_EVENT_KINDS)
+        assert set(non_events.non_event_type) == set(NON_EVENT_TYPES)
         assert (non_events.envelope_power == 2).all()
         kind = non_events.non_event_type
         gamma, leakage = kind == "fast_gamma", kind == "spike_leakage"
@@ -2340,7 +2335,7 @@ class TestDrawNonEvents:
         assert (non_events.n_spikes[~leakage] == 0).all()
         assert non_events.isi[~leakage].isna().all()
 
-    @pytest.mark.parametrize("rates", [{}, dict.fromkeys(NON_EVENT_KINDS, 0.0)])
+    @pytest.mark.parametrize("rates", [{}, dict.fromkeys(NON_EVENT_TYPES, 0.0)])
     def test_an_empty_draw_has_the_schema(self, rates):
         non_events = draw_non_events(self.TIME, rates=rates, rng=0)
         assert len(non_events) == 0
@@ -2351,17 +2346,15 @@ class TestDrawNonEvents:
         both; every span at four side scales inside its stretch."""
         start, end = _spans(non_events, 4)
         running = np.asarray(self.RUNNING)
-        in_bout = (start.to_numpy()[:, None] >= running[:, 0]) & (
-            end.to_numpy()[:, None] <= running[:, 1]
-        )
+        in_bout = _inside_any(non_events, running)
         touches_bout = (start.to_numpy()[:, None] < running[:, 1]) & (
             end.to_numpy()[:, None] > running[:, 0]
         )
         kind = non_events.non_event_type.to_numpy()
-        assert in_bout[kind == "theta_burst"].any(axis=1).all()
+        assert in_bout[kind == "theta_burst"].all()
         assert not touches_bout[kind == "spike_leakage"].any()
         for anywhere in ("emg", "fast_gamma"):
-            span_running = in_bout[kind == anywhere].any(axis=1)
+            span_running = in_bout[kind == anywhere]
             assert span_running.any(), anywhere
             assert not span_running.all(), anywhere
         assert (start >= self.TIME[0] + 1.0).all()
@@ -2437,11 +2430,7 @@ class TestDrawNonEvents:
             stretches, kept_time = np.array([[1.0, time[-1] - 1.0]]), 2 - 2 / 3 - 1 / self.FS
         rate = 6000.0  # per minute
         table = draw_non_events(time, rates={kind: rate}, rng=3, **options)
-        start, end = _spans(table, 4)
-        inside = (start.to_numpy()[:, None] >= stretches[:, 0]) & (
-            end.to_numpy()[:, None] <= stretches[:, 1]
-        )
-        assert inside.any(axis=1).all()
+        assert _inside_any(table, stretches).all()
         expected = rate / 60 * kept_time
         assert abs(len(table) - expected) < 4 * np.sqrt(expected)
 
@@ -2630,45 +2619,6 @@ class TestDrawNonEvents:
         with pytest.raises(ValueError, match="high-passed at 100 Hz"):
             draw_non_events(time, rates={"emg": 1.0}, **fits)
         assert len(draw_non_events(time, rates={"fast_gamma": 60.0}, rng=0, **fits)) > 0
-
-
-def _one_non_event_table(non_event_type, *, non_event_id=0, center_time=5.0, **overrides):
-    """One non-event built by hand, centred on ``center_time``: a leakage
-    burst of 2 units, 5 spikes 4 ms apart, peak 2, on channel 1; an EMG burst
-    of span 0.1 s and peak SD 1.5; a gamma burst of span 0.1 s at 80 Hz and
-    SNR 3 in 60-100 Hz; a theta burst of span 0.2 s over 5 units at gain 10.
-    ``overrides`` set columns."""
-    nan = np.nan
-    row = {
-        "non_event_id": non_event_id, "non_event_type": non_event_type,
-        "center_time": center_time, "envelope_power": 2, "frequency": nan,
-        "snr_band_low": nan, "snr_band_high": nan, "channel": -1, "n_units": 0,
-        "n_spikes": 0, "isi": nan,
-    }  # fmt: skip
-    row.update(
-        {
-            "spike_leakage": {
-                "rise_sigma": 4 * 0.004 / 6, "amplitude": 2.0, "channel": 1, "n_units": 2,
-                "n_spikes": 5, "isi": 0.004,
-            },
-            "emg": {"rise_sigma": 0.1 / 6, "amplitude": 1.5},
-            "fast_gamma": {
-                "rise_sigma": 0.1 / 6, "amplitude": 3.0, "frequency": 80.0,
-                "snr_band_low": 60.0, "snr_band_high": 100.0,
-            },
-            "theta_burst": {"rise_sigma": 0.2 / 6, "amplitude": 10.0, "n_units": 5},
-        }[non_event_type]
-    )  # fmt: skip
-    row["decay_sigma"] = row["rise_sigma"]
-    row.update(overrides)
-    return pd.DataFrame([row])[list(NON_EVENT_COLUMNS)]
-
-
-def _non_event_tables(*tables):
-    """Hand-built non-events as one table, numbered in order."""
-    return pd.concat(
-        [table.assign(non_event_id=i) for i, table in enumerate(tables)], ignore_index=True
-    )
 
 
 NOISE_FREE = {"noise_amplitude": 0.0}
@@ -2969,8 +2919,7 @@ class TestNonEventRendering(_Renders):
         within = distance < 4 * sigma
         extra = 0.0
         for seed in range(4):
-            theta = self._render(_empty_table(), non_events=rows, rng=seed, **options)
-            plain = self._render(_empty_table(), rng=seed, **options)
+            theta, plain = self._pair(rows, rng=seed, **options)
             np.testing.assert_array_equal(theta.lfps, plain.lfps)
             np.testing.assert_array_equal(theta.sharp_wave_lfp, plain.sharp_wave_lfp)
             spikes = theta.multiunit
@@ -2987,34 +2936,32 @@ class TestNonEventRendering(_Renders):
         assert counts["other_near"] < 2 * counts["other_far"]
 
     @pytest.mark.parametrize(
-        ("row", "kwargs", "message"),
+        ("row", "message"),
         [
-            (_one_non_event_table("emg").drop(columns="isi"), {}, "missing the columns"),
-            (
-                _one_non_event_table("emg").assign(non_event_type="chewing"),
-                {},
-                "unknown types",
-            ),
+            (_one_non_event_table("emg").drop(columns="isi"), "missing the columns"),
+            (_one_non_event_table("emg").assign(non_event_type="chewing"), "unknown types"),
             (
                 _non_event_tables(
                     _one_non_event_table("emg"), _one_non_event_table("emg")
                 ).assign(non_event_id=0),
-                {},
                 "duplicate non_event_id",
             ),
-            (_one_non_event_table("emg", envelope_power=4), {}, "envelope_power must be 2"),
-            (_one_non_event_table("emg", rise_sigma=0.0), {}, "positive side scales"),
-            (_one_non_event_table("emg", center_time=np.nan), {}, "finite times"),
-            (_one_non_event_table("emg", center_time=11.99), {}, "inside the recording"),
-            (_one_non_event_table("emg", amplitude=-1.0), {}, "emg row"),
-            (_one_non_event_table("spike_leakage", channel=4), {}, "spike_leakage row"),
-            (_one_non_event_table("spike_leakage", n_units=51), {}, "1 to 50 units"),
-            (_one_non_event_table("spike_leakage", isi=0.005), {}, "spike_leakage row"),
+            (_one_non_event_table("emg", envelope_power=4), "envelope_power must be 2"),
+            (_one_non_event_table("emg", rise_sigma=0.0), "positive rise_sigma"),
+            (_one_non_event_table("emg", center_time=np.nan), "finite times"),
+            (_one_non_event_table("emg", center_time=11.99), "inside the recording"),
+            (_one_non_event_table("emg", center_time=0.01), "inside the recording"),
+            (_one_non_event_table("emg", amplitude=-1.0), "emg row"),
+            (_one_non_event_table("emg", rise_sigma=1e-5, decay_sigma=1e-5), "emg row"),
+            (_one_non_event_table("spike_leakage", channel=4), "spike_leakage row"),
+            (_one_non_event_table("spike_leakage", n_units=51), "1 to 50 units"),
+            (_one_non_event_table("spike_leakage", isi=0.005), "spike_leakage row"),
+            (_one_non_event_table("spike_leakage", amplitude=-2.0), "spike_leakage row"),
+            (_one_non_event_table("spike_leakage", decay_sigma=0.004), "spike_leakage row"),
             (
                 _one_non_event_table(
                     "spike_leakage", n_spikes=1, rise_sigma=1e-9, decay_sigma=1e-9
                 ),
-                {},
                 "spike_leakage row",
             ),
             (
@@ -3027,16 +2974,10 @@ class TestNonEventRendering(_Renders):
                     rise_sigma=0.15 / 1500,
                     decay_sigma=0.15 / 1500,
                 ),
-                {},
-                "spike_leakage row",
-            ),
-            (_one_non_event_table("spike_leakage", amplitude=-2.0), {}, "spike_leakage row"),
-            (
-                _one_non_event_table("spike_leakage", decay_sigma=0.004),
-                {},
                 "spike_leakage row",
             ),
             (
+                # the waveform's last two samples would run past the recording
                 _one_non_event_table(
                     "spike_leakage",
                     center_time=TIME[-1] - 0.7 / 1500,
@@ -3045,55 +2986,48 @@ class TestNonEventRendering(_Renders):
                     rise_sigma=1 / 9000,
                     decay_sigma=1 / 9000,
                 ),
-                {},
                 "spike_leakage row",
             ),
-            (
-                _one_non_event_table("fast_gamma", rise_sigma=1e-4, decay_sigma=1e-4),
-                {},
-                "fast_gamma row",
-            ),
-            (_one_non_event_table("emg", center_time=0.01), {}, "inside the recording"),
-            (
-                _one_non_event_table("spike_leakage"),
-                {"unit_counts": {"interneuron": 3}},
-                "1 to 0 units",
-            ),
-            (_one_non_event_table("theta_burst", n_units=41), {}, "theta_burst row"),
-            (_one_non_event_table("theta_burst", amplitude=0.5), {}, "theta_burst row"),
+            (_one_non_event_table("theta_burst", n_units=41), "theta_burst row"),
+            (_one_non_event_table("theta_burst", amplitude=0.5), "theta_burst row"),
             (
                 _one_non_event_table("theta_burst", rise_sigma=1e-5, decay_sigma=1e-5),
-                {},
                 "theta_burst row",
             ),
-            (_one_non_event_table("fast_gamma", amplitude=0.0), {}, "fast_gamma row"),
+            (_one_non_event_table("fast_gamma", amplitude=0.0), "fast_gamma row"),
+            (
+                _one_non_event_table("fast_gamma", rise_sigma=1e-4, decay_sigma=1e-4),
+                "fast_gamma row",
+            ),
             (
                 _non_event_tables(
                     _one_non_event_table("fast_gamma", center_time=3.0),
                     _one_non_event_table("fast_gamma", frequency=np.nan),
                 ),
-                {},
                 "fast_gamma row",
             ),
-            (
-                _one_non_event_table("emg", rise_sigma=1e-5, decay_sigma=1e-5),
-                {},
-                "emg row",
-            ),
-            (_one_non_event_table("fast_gamma", snr_band_low=np.nan), {}, "snr_band_low"),
-            (_one_non_event_table("fast_gamma", frequency=120.0), {}, "must contain"),
-            (_one_non_event_table("fast_gamma", snr_band_high=800.0), {}, "snr_band_low"),
-            (_one_non_event_table("fast_gamma"), NOISE_FREE, "noise_amplitude"),
-            (
-                _one_non_event_table("fast_gamma"),
-                {"channel_gains": [0.0] * 4},
-                "some channel gain",
-            ),
+            (_one_non_event_table("fast_gamma", snr_band_low=np.nan), "snr_band_low"),
+            (_one_non_event_table("fast_gamma", frequency=120.0), "must contain"),
+            (_one_non_event_table("fast_gamma", snr_band_high=800.0), "snr_band_low"),
         ],
     )
-    def test_validation(self, row, kwargs, message):
+    def test_validation(self, row, message):
         with pytest.raises(ValueError, match=message):
-            self._render(_empty_table(), non_events=row, **kwargs)
+            self._render(_empty_table(), non_events=row)
+
+    @pytest.mark.parametrize(
+        ("kind", "kwargs", "message"),
+        [
+            ("spike_leakage", {"unit_counts": {"interneuron": 3}}, "1 to 0 units"),
+            ("fast_gamma", NOISE_FREE, "noise_amplitude"),
+            ("fast_gamma", {"channel_gains": [0.0] * 4}, "some channel gain"),
+        ],
+    )
+    def test_rows_the_session_cannot_render(self, kind, kwargs, message):
+        """A leak with no pyramidal units to take; gamma sized against no
+        background, or carried by no channel."""
+        with pytest.raises(ValueError, match=message):
+            self._render(_empty_table(), non_events=_one_non_event_table(kind), **kwargs)
 
     def test_emg_needs_room_above_its_high_pass(self):
         time = simulate_time(12 * 180, 180)
