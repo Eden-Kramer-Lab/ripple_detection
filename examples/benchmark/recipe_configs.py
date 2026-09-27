@@ -266,28 +266,26 @@ def policy_inputs(config: RecipeConfig) -> tuple[str, ...]:
         ``Recording.from_arrays`` inputs, and ``"behavior_intervals"`` when
         the call takes eligible epochs, in declaration order. A requirement
         applies when every option in its ``when`` has that value in the
-        resolved options, and not when the input its ``unless`` names is
-        supplied. Options are not inputs.
+        resolved options. Its ``unless`` never lapses: the input it names
+        would have to be supplied, and the policy supplies only declared
+        inputs (Krause 2022 declares no ``external_ripples``, so it gets
+        ``lfps`` and ``speed``). Options are not inputs.
 
     Raises
     ------
     KeyError
         Unknown method.
+    TypeError
+        An option the method does not take.
     """
     requirements = _entry(config.method)["requirements"]
     options = _resolved(config)
-    applicable = [
-        requirement
-        for requirement in requirements
-        if requirement["kind"] != "option"
-        and all(options.get(option) == value for option, value in requirement["when"])
-    ]
-    names = {requirement["input"] for requirement in applicable}
     return tuple(
         dict.fromkeys(
             requirement["input"]
-            for requirement in applicable
-            if requirement["unless"] not in names
+            for requirement in requirements
+            if requirement["kind"] != "option"
+            and all(options.get(option) == value for option, value in requirement["when"])
         )
     )
 

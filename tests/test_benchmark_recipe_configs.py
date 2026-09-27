@@ -291,6 +291,15 @@ def test_a_missing_option_raises(recipe_configs, session):
         recipe_configs.run_recipe(config, recording)
 
 
+def test_an_option_the_method_does_not_take_raises(recipe_configs):
+    config = recipe_configs.RecipeConfig(
+        "karlsson_2009", "karlsson_2009", "ripple", (("threshold", 2.0),)
+    )
+    for call in (recipe_configs.policy_inputs, recipe_configs.resolved_options):
+        with pytest.raises(TypeError, match="threshold"):
+            call(config)
+
+
 def test_a_missing_input_raises(recipe_configs, session, configs):
     chenani = configs["chenani_2019"]
     with pytest.raises(ValueError, match="behavior_intervals"):
