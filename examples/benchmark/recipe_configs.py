@@ -256,8 +256,10 @@ def _resolved(method: str, options: Params) -> dict[str, Any]:
 
 def _json_ready(value: Any, *, non_finite_as_none: bool = False) -> Any:
     """``value`` in JSON's types: arrays and tuples become lists, NumPy
-    scalars Python ones, and a non-finite float None (the package's attrs
-    convention) or its ``repr``, such as "inf"."""
+    scalars Python ones, and a non-finite float its ``repr``, such as "inf",
+    or with ``non_finite_as_none`` None. That mode mirrors the convention of
+    the package's attrs (``literature_methods``' private ``_jsonable``) for
+    values without per-sample arrays, which it records by their hash."""
     if isinstance(value, dict):
         return {
             str(key): _json_ready(item, non_finite_as_none=non_finite_as_none)
