@@ -119,6 +119,45 @@ class TestMatchEvents:
         np.testing.assert_array_equal(matching.unmatched_reference, [1, 2])
         np.testing.assert_array_equal(matching.unmatched_detected, [1])
 
+    def test_unmatched_events_where_the_pair_indices_differ(self):
+        reference = np.array([[0.0, 1.0], [2.0, 3.0], [4.0, 5.0]])
+        detected = np.array([[2.5, 3.5], [10.0, 11.0], [12.0, 13.0]])
+        matching = match_events(reference, detected)
+        assert pair_list(matching) == [(1, 0)]
+        np.testing.assert_array_equal(matching.unmatched_reference, [0, 2])
+        np.testing.assert_array_equal(matching.unmatched_detected, [1, 2])
+
+    def test_coverage_is_of_the_reference_and_precision_of_the_detection(self):
+        matching = match_events(np.array([[0.0, 10.0]]), np.array([[2.0, 7.0]]))
+        pair = matching.pairs.iloc[0]
+        assert (pair.coverage, pair.temporal_precision) == (0.5, 1.0)
+
+    def test_detector_frames_one_row_lists_and_empty_frames(self):
+        truth = pd.DataFrame(
+            {"start_time": [0.0, 2.0], "end_time": [1.0, 3.0], "peak_time": [0.5, 2.5]}
+        )
+        found = pd.DataFrame(
+            {"start_time": [2.1], "end_time": [2.9], "peak_time": [np.nan]},
+            index=pd.Index([1], name="event_number"),
+        )
+        # a NaN peak gives a NaN peak error; the bounds still match
+        matching = match_events(truth, found)
+        assert pair_list(matching) == [(1, 0)]
+        assert np.isnan(matching.pairs.peak_error.iloc[0])
+        nothing = match_events(truth, found.iloc[:0])
+        assert list(nothing.pairs.columns) == list(PAIR_COLUMNS)
+        assert (nothing.recall, nothing.f1) == (0.0, 0.0)
+        assert consensus_counts({"found": found.iloc[:0]}, truth).n_methods.tolist() == [0, 0]
+        assert pair_list(match_events([[0, 1]], [[0.5, 2]])) == [(0, 0)]
+
+    def test_a_long_chain_of_overlapping_events(self):
+        """One connected component of 500 events a side, each detection
+        overlapping two references: every reference is matched."""
+        reference = np.column_stack([np.arange(500.0), np.arange(500.0) + 1.0])
+        matching = match_events(reference, reference + 0.5)
+        assert len(matching.pairs) == 500
+        np.testing.assert_array_equal(matching.pairs.onset_error, 0.5)
+
     def test_touching_is_not_overlap(self):
         matching = match_events(np.array([[0.0, 1.0]]), np.array([[1.0, 2.0]]))
         assert matching.pairs.empty
@@ -159,7 +198,7 @@ class TestMatchEvents:
             forward, backward = match_events(a, b), match_events(b, a)
             assert len(forward.pairs) == len(backward.pairs)
             assert forward.pairs.iou.sum() == pytest.approx(backward.pairs.iou.sum())
-            assert forward.f1 == backward.f1 or np.isnan(forward.f1)
+            assert forward.f1 == backward.f1
             assert (forward.recall, forward.precision) == (
                 backward.precision,
                 backward.recall,
@@ -259,6 +298,7 @@ class TestMatchEvents:
         np.testing.assert_array_equal(errors.onset_error, detected[d, 0] - narrower[r, 0])
         np.testing.assert_array_equal(errors.offset_error, detected[d, 1] - narrower[r, 1])
         np.testing.assert_allclose(errors.onset_error, [-0.45, -0.15])
+        np.testing.assert_allclose(errors.offset_error, [0.15, 0.45])
         # the original bounds give back the pairs' own errors
         same = matching.boundary_errors(reference)
         np.testing.assert_array_equal(same.onset_error, matching.pairs.onset_error)
@@ -336,8 +376,21 @@ class TestMatchEventsProperties:
         assert (np.minimum(r[:, 1], d[:, 1]) > np.maximum(r[:, 0], d[:, 0])).all()
         np.testing.assert_array_equal(pairs.onset_error, d[:, 0] - r[:, 0])
         np.testing.assert_array_equal(pairs.offset_error, d[:, 1] - r[:, 1])
-        # every matched event overlaps something
-        assert (matching.reference_overlaps[pairs.reference_index] >= 1).all()
+        np.testing.assert_allclose(
+            pairs.coverage,
+            (np.minimum(r[:, 1], d[:, 1]) - np.maximum(r[:, 0], d[:, 0]))
+            / (r[:, 1] - r[:, 0]),
+        )
+        np.testing.assert_allclose(
+            pairs.temporal_precision,
+            (np.minimum(r[:, 1], d[:, 1]) - np.maximum(r[:, 0], d[:, 0]))
+            / (d[:, 1] - d[:, 0]),
+        )
+        overlaps = np.minimum(reference[:, None, 1], detected[None, :, 1]) > np.maximum(
+            reference[:, None, 0], detected[None, :, 0]
+        )
+        np.testing.assert_array_equal(matching.reference_overlaps, overlaps.sum(axis=1))
+        np.testing.assert_array_equal(matching.detected_overlaps, overlaps.sum(axis=0))
 
     @given(
         reference=bounds_on_a_grid(5),
@@ -374,6 +427,7 @@ class TestCompareDetectors:
         assert row.median_offset_difference == 0.0
         assert row.offset_difference_iqr == pytest.approx(0.0 - -0.1)
         assert row.fraction_a_earlier_offset == 1 / 3
+        assert row[list(COMPARISON_COLUMNS[13:])].isna().all()  # no truth given
 
     def test_swapping_the_methods_negates_the_differences(self):
         a = np.array([[0.0, 1.0], [2.0, 3.0], [4.0, 5.0]])
@@ -572,6 +626,19 @@ class TestLabelByOverlap:
         assert labels.tolist() == ["swr", "emg", "swr", "gamma", "background", "background"]
         assert labels.name == "label"
         pd.testing.assert_index_equal(labels.index, pd.RangeIndex(6))
+
+    def test_windows_on_any_index(self):
+        """Windows filtered or relabelled keep their own index; the labels are
+        read by position."""
+        events = np.array([[0.5, 1.5], [1.5, 3.5], [5.2, 5.4]])
+        expected = label_by_overlap(events, self.WINDOWS)
+        relabelled = self.WINDOWS.set_axis([40, 30, 20, 10])
+        pd.testing.assert_series_equal(label_by_overlap(events, relabelled), expected)
+        assert label_by_overlap(events, self.WINDOWS.iloc[1:]).tolist() == [
+            "emg",
+            "emg",
+            "gamma",
+        ]
 
     def test_unlabeled(self):
         labels = label_by_overlap(np.array([[8.0, 9.0]]), self.WINDOWS, unlabeled="none")
