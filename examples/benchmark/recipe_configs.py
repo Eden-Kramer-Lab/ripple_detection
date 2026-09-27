@@ -8,8 +8,8 @@ installed method through ``run_method``; nothing here reimplements one.
 ``make_recording`` builds the method's ``Recording`` from a simulated session
 with ``Recording.from_arrays``, the measured-data path, under one input policy
 (``INPUT_POLICY``): the recording holds exactly the inputs the method declares
-(its ``list_methods()`` requirements), taken from the session's observations
-and its known unit labels, never from its truth tables. Where a method needs
+(its ``list_methods()`` requirements), taken from the session's observations,
+its known unit labels and running bouts, never its truth tables. Where a method needs
 an input the simulation has no counterpart for (a sleep state, a template, an
 external ripple inventory), the policy supplies a stated stand-in, and every
 stand-in a configuration relies on is listed in its ``assumptions``.
@@ -77,7 +77,10 @@ EXAMPLE_RIPPLES: dict[str, Any] = {
 # What each input the policy supplies is, as input_policy records it. The
 # values themselves are in each result's attrs["inputs"] and
 # attrs["behavior_intervals"].
-_REST = "rest: the complement of session.running_intervals within the recording"
+_REST = (
+    "rest: the recorded samples outside session.running_intervals, the simulator's "
+    "known running bouts"
+)
 _SOURCES: dict[str, Any] = {
     "lfps": "session.lfps: every pyramidal-layer channel, the ripple channel first",
     "sharp_wave_lfp": "session.sharp_wave_lfp: the stratum radiatum channel",
@@ -97,10 +100,10 @@ _SOURCES: dict[str, Any] = {
 # The benchmark choice behind each supplied input that is not an observation.
 _ASSUMPTIONS = {
     "place_cells": (
-        "place_cells: every unit the simulator labels 'place'; they also stand in "
-        "for any narrower selection the method names (one template's, one "
+        "place_cells: every unit the simulator labels 'place', also standing in for "
+        "any narrower selection the method names, such as one template's, one "
         "directional template's, one probe sequence's, block-specific or "
-        "place-responsive cells), since the simulator has no place fields or "
+        "place-responsive cells, since the simulator has no place fields or "
         "trajectories"
     ),
     "pyramidal": "pyramidal: every unit the simulator labels 'place' or 'pyramidal'",
@@ -109,15 +112,22 @@ _ASSUMPTIONS = {
         "place fields or trajectories"
     ),
     "sleep_intervals": (
-        "sleep_intervals: rest (outside the running bouts) stands in for the sleep "
-        "state, since the simulated sessions are awake"
+        "sleep_intervals: rest, the samples outside the simulator's known running "
+        "bouts, stands in for the sleep state, since the simulated sessions are awake"
     ),
-    "baseline_intervals": "baseline_intervals: rest stands in for the normalization epoch",
+    "baseline_intervals": (
+        "baseline_intervals: rest, the samples outside the simulator's known running "
+        "bouts, stands in for the normalization epoch"
+    ),
     "behavior_intervals": (
-        "behavior_intervals: rest stands in for the eligible epochs; position-defined "
-        "epochs have no simulated counterpart, and simulated events occur only at rest"
+        "behavior_intervals: rest, the samples outside the simulator's known running "
+        "bouts, stands in for the eligible epochs: simulated events occur only at rest, "
+        "and the simulator has no position"
     ),
-    "reference_lfp": "reference_lfp: zeros, since the simulated channels share no reference",
+    "reference_lfp": (
+        "reference_lfp: zeros, so nothing is subtracted, as examples/literature_recipes.py "
+        "does: the simulation has no reference electrode"
+    ),
     "external_ripples": (
         "external_ripples: Zugaro_ripple_detector with the settings input_policy "
         "records, the package's stated assumption for this paper's unspecified ripple "
@@ -645,7 +655,7 @@ def _assumptions(method: str, options: Params) -> tuple[str, ...]:
     requirements = _entry(method)["requirements"]
     meanings = {requirement["input"]: requirement["meaning"] for requirement in requirements}
     assumptions = [
-        _ASSUMPTIONS[name].replace(":", f" ({meanings[name]}):", 1)
+        _ASSUMPTIONS[name].replace(":", f', for "{meanings[name]}":', 1)
         if meanings[name]
         else _ASSUMPTIONS[name]
         for name in _inputs(method, options)

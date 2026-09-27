@@ -63,10 +63,13 @@ so none is added. The policy (`INPUT_POLICY`) takes each input from the session:
   unit stands in for a narrower selection (one template's, one directional template's,
   one probe sequence's cells), and `templates` is one template of every place unit.
 - `sleep_intervals`, `baseline_intervals` and the call's `behavior_intervals`: rest,
-  the recorded samples outside the running bouts. The sessions are awake, so rest
-  stands in for a sleep state; position-defined epochs (reward zones, track ends,
-  corners) have no simulated counterpart, and simulated events occur only at rest.
-- `reference_lfp`: zeros; the simulated channels share no reference.
+  the recorded samples outside the running bouts, which the simulator states as it
+  states unit labels. The sessions are awake, so rest stands in for a sleep state and
+  for a normalization epoch; it stands in for eligible epochs because simulated events
+  occur only at rest and the simulator has no position (no reward zones, track ends or
+  corners).
+- `reference_lfp`: zeros, so nothing is subtracted, as `examples/literature_recipes.py`
+  does: the simulation has no reference electrode.
 - `external_ripples` (Yang 2024, Grosmark 2016): the public `Zugaro_ripple_detector`
   on the first channel, the package's stated assumption for these papers' unspecified
   ripple detector. `example_ripples` (Carey 2019): the five largest
