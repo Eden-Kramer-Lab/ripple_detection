@@ -4,7 +4,7 @@ Simulates validation replicates of the benchmark's conditions (indices 10000 up,
 through ``conditions.session_seed``, apart from the benchmark's own replicates),
 measures the rendered sessions and compares the measurements with the targets
 in ``simulator_targets.csv``. It uses the public simulator and signal helpers
-only: no detector, recipe or literature method is imported or called.
+only: no detector, recipe or literature method is called.
 
     uv run python examples/benchmark/validate_simulator.py --validation-id v1
         [--conditions all|ID,ID] [--replicates 20] [--duration S] [--workers N]
@@ -19,11 +19,12 @@ writes ``<output-root>/<validation-id>/`` (by default
   ``target_table_hash``, ``validator_hash`` (this script's source), the runtime
   and peak memory of each session, ``status`` (``"ready"`` or ``"not_ready"``)
   with the reasons, and the SHA-256 of every other file here.
-- ``measurements.csv``: one row per condition, replicate, group and measured
-  quantity (``condition_id, replicate, group, quantity, statistic, value, n``).
+- ``measurements.csv``: one row per condition, replicate, group, measured
+  quantity and statistic (``condition_id, replicate, group, quantity,
+  statistic, value, n``).
 - ``checks.csv``: one row per check and condition (``check, kind,
   condition_id, applies, evidence_status, statistic, observed, lower, upper,
-  n, passed, note``). ``kind`` is ``"target"`` (a row of the target table,
+  n, note, passed``). ``kind`` is ``"target"`` (a row of the target table,
   pooled over the replicates) or ``"rendering"`` (the simulator does what its
   contract says); ``applies`` says whether the row gates readiness.
 - ``report.md`` and small PNGs.

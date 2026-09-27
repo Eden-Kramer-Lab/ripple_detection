@@ -95,13 +95,13 @@ Condition files, in ``conditions/<condition_id>/``, written into
 - ``metrics.csv.gz``, one row per session, method, setting, expression and
   ``minimum_iou``: ``session_id``, ``method``, ``setting``, ``expression``,
   ``minimum_iou``, ``n_reference``, ``n_detected``, ``n_matched``, ``recall``,
-  ``precision``, ``f1``, ``false_positives_per_minute`` (unmatched detections per
-  minute outside every network window at 0.1), ``median_iou``,
-  ``median_coverage``, ``median_temporal_precision``, then for ``f`` in 10, 25, 50
-  (truth windows at that percent of the peak, matched at 10)
-  ``median_onset_error_<f>``, ``median_offset_error_<f>``,
-  ``median_abs_onset_error_<f>``, ``median_abs_offset_error_<f>``, and ``n_split``,
-  ``n_merged``.
+  ``precision``, ``f1``, ``false_positives_per_minute`` (the unmatched detections,
+  wherever they lie, over the minutes of the session outside every network window
+  at 0.1), ``median_iou``, ``median_coverage``, ``median_temporal_precision``, then,
+  against the truth windows at ``f`` percent of the peak (matched at 10),
+  ``median_onset_error_<f>`` and ``median_offset_error_<f>`` for ``f`` in 10, 25,
+  50, then ``median_abs_onset_error_<f>`` and ``median_abs_offset_error_<f>`` for
+  ``f`` in 10, 25, 50, and ``n_split``, ``n_merged``.
 - ``failures.csv``, one row per failed call: ``session_id``, ``method``,
   ``setting``, ``error`` (``"{type}: {message}"``, at most 200 characters).
 - ``warnings.csv``, one row per warning a call issued, failed calls included, each

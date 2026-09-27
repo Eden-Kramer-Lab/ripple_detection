@@ -663,6 +663,20 @@ class TestReport:
 
     def test_status_follows_the_gated_checks(self, report):
         checks = pd.read_csv(report["directory"] / "checks.csv")
+        assert list(checks.columns) == [
+            "check",
+            "kind",
+            "condition_id",
+            "applies",
+            "evidence_status",
+            "statistic",
+            "observed",
+            "lower",
+            "upper",
+            "n",
+            "note",
+            "passed",
+        ]
         failing = checks[checks.applies & ~checks.passed]
         assert (report["spec"]["status"] == "ready") == failing.empty
         assert len(report["spec"]["reasons"]) == len(failing)
