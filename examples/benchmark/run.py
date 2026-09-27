@@ -1274,7 +1274,7 @@ def _require_report(
 
     Returns its ``path``, the ``sha256`` of its spec.json, and the simulator
     source fingerprint and target-table hash it was made with; raises
-    ``validate_simulator.ReportNotReady``, a ValueError, listing every problem.
+    ``validate_simulator.ReportNotReady`` listing every problem.
     """
     validation = importlib.import_module("validate_simulator")
     sha256 = validation.require_ready_report(path, resolved)
@@ -1578,13 +1578,13 @@ def run_benchmark(
         for c in selected
     }
     overrides = {} if duration is None else {"session.duration_s": float(duration)}
+    validation = importlib.import_module("validate_simulator")
     try:
         report = _require_report(
             validation_report, {c.condition_id: resolve(c, overrides) for c in selected}
         )
-    except ValueError as error:
-        msg = f"The validation report cannot back this run: {error}"
-        raise SystemExit(msg) from None
+    except validation.ReportNotReady as error:  # its message names the report and why
+        raise SystemExit(str(error)) from None
     spec = run_specification(selected, counts, overrides, report, methods)
     if spec["git_commit"] == "unknown":
         msg = (

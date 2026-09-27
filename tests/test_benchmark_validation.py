@@ -632,6 +632,20 @@ class TestPreflight:
         digest = validate.require_ready_report(ready_copy / "spec.json", resolved)
         assert digest == _sha256(ready_copy / "spec.json")
 
+    def test_the_runner_reads_a_ready_report(
+        self, benchmark_import, validate, ready_copy, resolved
+    ):
+        run = benchmark_import("run")
+        spec = ready_copy / "spec.json"
+        assert run._require_report(spec, resolved) == {
+            "path": str(spec),
+            "sha256": _sha256(spec),
+            "simulation_fingerprint": validate.simulation_fingerprint(),
+            "target_table_hash": _sha256(validate.TARGETS),
+        }
+        with pytest.raises(validate.ReportNotReady, match="No simulator validation report"):
+            run._require_report(ready_copy / "other.json", resolved)
+
     def test_a_missing_report(self, validate, tmp_path, resolved):
         with pytest.raises(validate.ReportNotReady, match="No simulator validation report"):
             validate.require_ready_report(tmp_path / "spec.json", resolved)

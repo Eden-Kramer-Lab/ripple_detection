@@ -204,6 +204,11 @@ def conditions_module(benchmark_import):
 
 
 @pytest.fixture(scope="module")
+def validation(benchmark_import):
+    return benchmark_import("validate_simulator")
+
+
+@pytest.fixture(scope="module")
 def recipe_configs(benchmark_import):
     return benchmark_import("recipe_configs")
 
@@ -1013,18 +1018,50 @@ def test_resume_rejects_a_changed_specification(cli, finished_run, tmp_path, cha
     assert _snapshot(root) == before
 
 
-def test_a_report_that_cannot_back_the_run_stops_it_first(run, cli, tmp_path, monkeypatch):
+def test_a_report_that_cannot_back_the_run_stops_it_first(
+    run, validation, cli, tmp_path, monkeypatch
+):
     start, _, sessions = cli
 
     def not_ready(path, resolved):
         msg = "status is not_ready: widths out of range"
-        raise ValueError(msg)
+        raise validation.ReportNotReady(msg)
 
     monkeypatch.setattr(run, "_require_report", not_ready)
     with pytest.raises(SystemExit, match="not_ready: widths"):
         start()
     assert sessions == []
     assert list(tmp_path.iterdir()) == []
+
+    # any other error is a bug, raised as it is
+    def broken(path, resolved):
+        msg = "a bug in the preflight"
+        raise ValueError(msg)
+
+    monkeypatch.setattr(run, "_require_report", broken)
+    with pytest.raises(ValueError, match="a bug in the preflight"):
+        start()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_the_real_preflight_stops_the_run_with_its_own_message(run, tmp_path, monkeypatch):
+    monkeypatch.setattr(run, "OUTPUT", tmp_path / "runs")
+    missing = tmp_path / "missing" / "spec.json"
+    arguments = {"condition_ids": ["reference"], "replicates": 1, "methods": RUN_METHODS}
+    with pytest.raises(SystemExit) as raised:
+        run.run_benchmark("v1", validation_report=missing, **arguments)
+    assert str(raised.value) == (
+        f"No simulator validation report at {missing}: run validate_simulator.py first."
+    )
+    stale = tmp_path / "stale" / "spec.json"
+    stale.parent.mkdir()
+    stale.write_text(json.dumps({"status": "not_ready", "reasons": ["widths"]}))
+    with pytest.raises(SystemExit) as raised:
+        run.run_benchmark("v1", validation_report=stale, **arguments)
+    message = str(raised.value)
+    assert message.count("cannot back this run") == 1
+    assert "its status is 'not_ready', not 'ready' (widths)" in message
+    assert not (tmp_path / "runs").exists()
 
 
 def _git(directory, *arguments):
