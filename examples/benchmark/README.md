@@ -256,7 +256,8 @@ column lists of every table are in [run.py](run.py)'s module docstring:
   their resolved options and input policies, each detected event with its active units,
   every result complete under `results/` (read back exactly by `load_results`), the
   scores, the failures and the warnings;
-- `combined/`, the finished conditions' tables concatenated, which the analyses read.
+- `combined/`, the finished conditions' tables concatenated, which the analyses read,
+  and its `manifest.json`: the run's conditions it includes and those it leaves out.
 
 A condition is written into `conditions/<condition_id>.partial/`, its `done.json` (the
 row count and SHA-256 of every other file) last, and then renamed into place, so a
@@ -277,7 +278,10 @@ and runs those again. `combined/` is rebuilt at the end of every run, and at any
 uv run python examples/benchmark/run.py --run-name v1 --combine
 ```
 
-which needs no report; `--resume` never reads it.
+which needs no report; `--resume` never reads it. It combines the conditions that have
+finished, prints those of the run's `conditions.csv` it leaves out, and lists both in
+`combined/manifest.json` (`included`, `missing`); it is built in `combined.partial/` and
+renamed into place, so `combined/` is never half written.
 
 ### After changing the simulation
 

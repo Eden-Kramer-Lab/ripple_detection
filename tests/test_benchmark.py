@@ -860,6 +860,10 @@ def test_a_run_writes_its_files_and_combines_them(run, cli, conditions_module, c
         assert (
             combined / "results" / condition_id / "Kay_ripple_detector__default.json"
         ).exists()
+    assert json.loads((combined / "manifest.json").read_text()) == {
+        "included": sorted(RUN_CONDITIONS),
+        "missing": [],
+    }
     assert not capsys.readouterr().out
 
 
@@ -949,6 +953,30 @@ def test_combine_is_derived(run, cli, finished_run, tmp_path):
     start(resume=True)
     assert sessions == []
     assert _snapshot(root / "combined") == combined
+
+
+def test_combine_names_the_conditions_it_leaves_out(run, cli, finished_run, tmp_path, capsys):
+    root = _copy(finished_run, tmp_path)
+    conditions = root / "conditions"
+    # one condition interrupted, one whose files no longer match done.json
+    (conditions / "emg_rate=3").rename(conditions / "emg_rate=3.partial")
+    with (conditions / "ripple_snr=high" / "events.csv.gz").open("ab") as file:
+        file.write(b"\0")
+    # and a combine that stopped half way
+    (root / "combined.partial").mkdir()
+    (root / "combined.partial" / "stray.csv").write_text("")
+    run.main(["--run-name", "v1", "--combine"])
+    printed = capsys.readouterr().out
+    assert "emg_rate=3, ripple_snr=high" in printed
+    combined = root / "combined"
+    assert json.loads((combined / "manifest.json").read_text()) == {
+        "included": ["reference"],
+        "missing": ["emg_rate=3", "ripple_snr=high"],
+    }
+    assert list(_read(combined / "sessions.csv.gz").session_id) == ["reference/0"]
+    assert sorted(p.name for p in (combined / "results").iterdir()) == ["reference"]
+    assert not (root / "combined.partial").exists()
+    assert not (combined / "stray.csv").exists()
 
 
 @pytest.mark.parametrize(

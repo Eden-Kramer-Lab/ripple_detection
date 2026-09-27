@@ -104,8 +104,11 @@ Condition files, in ``conditions/<condition_id>/``, written into
   ``category`` (the warning's class name), ``message`` (at most 200 characters).
 
 ``combined/`` holds the same tables concatenated over the finished conditions,
-with ``results/<condition_id>/`` copied from each; it is derived, rebuilt by
-``--combine`` at any time and at the end of a run, and never read by ``--resume``.
+with ``results/<condition_id>/`` copied from each, and ``manifest.json``:
+``included`` and ``missing``, the run's conditions (``conditions.csv``) it holds
+and those it leaves out, not finished. It is derived, rebuilt by ``--combine`` at
+any time (into ``combined.partial/``, renamed into place) and at the end of a run,
+and never read by ``--resume``.
 """
 
 from __future__ import annotations
@@ -1206,33 +1209,56 @@ def combine(run_directory: str | os.PathLike[str]) -> Path:
     Returns
     -------
     combined : pathlib.Path
-        Rebuilt from scratch: each table the finished conditions' tables
-        concatenated in condition-id order, and ``results/<condition_id>/``
-        a copy of each one's ``results/``. A condition without a valid
-        ``done.json`` is left out.
+        Rebuilt from scratch in ``combined.partial/`` and renamed into place:
+        each table the finished conditions' tables concatenated in
+        condition-id order, ``results/<condition_id>/`` a copy of each one's
+        ``results/``, and ``manifest.json`` naming the run's conditions
+        included and those missing. A condition of ``conditions.csv`` without
+        a valid ``done.json`` is left out, and printed.
 
     Raises
     ------
     ValueError
-        No condition has finished.
+        The directory holds no run (no ``conditions.csv``), or no condition
+        has finished.
     """
     root = Path(run_directory)
-    finished = sorted(
-        path
-        for path in (root / "conditions").glob("*")
-        if path.is_dir() and not path.name.endswith(".partial") and condition_is_finished(path)
-    )
+    try:
+        listed = pd.read_csv(root / "conditions.csv", usecols=["condition_id"], dtype=str)
+    except FileNotFoundError:
+        msg = f"No run at {root}: it has no conditions.csv."
+        raise ValueError(msg) from None
+    finished = [
+        condition_id
+        for condition_id in sorted(listed.condition_id)
+        if condition_is_finished(root / "conditions" / condition_id)
+    ]
+    missing = sorted(set(listed.condition_id) - set(finished))
     if not finished:
         msg = f"No finished condition under {root / 'conditions'}."
         raise ValueError(msg)
+    if missing:
+        print(
+            f"combined/ leaves out {len(missing)} of the run's {len(listed)} conditions, "
+            f"not finished: {', '.join(missing)}"
+        )
+    partial = root / "combined.partial"
+    if partial.exists():
+        shutil.rmtree(partial)
+    (partial / "results").mkdir(parents=True)
+    for name in TABLES:
+        _concat_csv([root / "conditions" / c / name for c in finished], partial / name)
+    for condition_id in finished:
+        shutil.copytree(
+            root / "conditions" / condition_id / "results", partial / "results" / condition_id
+        )
+    (partial / "manifest.json").write_text(
+        json.dumps({"included": finished, "missing": missing}, indent=2)
+    )
     combined = root / "combined"
     if combined.exists():
         shutil.rmtree(combined)
-    (combined / "results").mkdir(parents=True)
-    for name in TABLES:
-        _concat_csv([path / name for path in finished], combined / name)
-    for path in finished:
-        shutil.copytree(path / "results", combined / "results" / path.name)
+    partial.rename(combined)
     return combined
 
 
