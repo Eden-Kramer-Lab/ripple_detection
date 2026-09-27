@@ -43,6 +43,12 @@ condition that changes no draw count (a size such as `ripple_snr`, or any of the
 alternative models) keeps the reference's event times, unit baseline rates and
 per-unit participant draws. Conditions are therefore compared replicate by replicate.
 
+A saved parameter set regenerates its sessions without the condition:
+`parameters_from_json` reads `resolved_json`'s text, or a run's `conditions.csv`
+`params`, back as `resolve` gives it (ranges as tuples again), and
+`simulate_parameters(parameters, k)` simulates replicate `k` of it, as
+`simulate_condition` does.
+
 ## Literature method configurations
 
 `recipe_configs.py` configures the methods of `ripple_detection.literature_methods`

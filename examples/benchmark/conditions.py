@@ -12,9 +12,10 @@ reference, one factor at a time, and two crossed pairs of factors;
 ``REFERENCE_REVISIONS`` records every change to a ``REFERENCE`` value after it
 was first set, with its reason and evidence.
 
-``simulate_condition`` renders replicate ``k`` of a condition. Replicate ``k``
-has the same seed in every condition (common random numbers), so conditions
-are compared replicate by replicate.
+``simulate_condition`` renders replicate ``k`` of a condition, and
+``simulate_parameters`` of a saved parameter set (``parameters_from_json``).
+Replicate ``k`` has the same seed in every condition (common random numbers),
+so conditions are compared replicate by replicate.
 """
 
 from __future__ import annotations
@@ -489,32 +490,55 @@ def resolved_json(condition: Condition, overrides: Mapping[str, Any] | None = No
     return json.dumps(resolve(condition, overrides), sort_keys=True, allow_nan=False)
 
 
+def parameters_from_json(text: str) -> dict[str, dict[str, Any]]:
+    """Parameters saved as JSON, as ``resolve`` returns them.
+
+    The inverse of ``resolved_json``, for a saved specification such as a
+    run's ``conditions.csv`` ``params``: each list becomes a tuple again (every
+    list-like value of ``REFERENCE`` is one), each mapping stays a mapping.
+
+    Parameters
+    ----------
+    text : str
+        JSON of the four sections, every keyword in each.
+
+    Returns
+    -------
+    parameters : dict of str to dict
+        By section, as ``resolve`` gives them; ``simulate_parameters`` takes it.
+
+    Raises
+    ------
+    ValueError
+        A section or keyword ``REFERENCE`` has is missing, or one it lacks is
+        there: the simulator would otherwise fill in its own default.
+    """
+
+    def restored(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {key: restored(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return tuple(restored(item) for item in value)
+        return value
+
+    parameters: dict[str, dict[str, Any]] = restored(json.loads(text))
+    expected = {f"{s}.{k}" for s, values in REFERENCE.items() for k in values} | set(REFERENCE)
+    found = {f"{s}.{k}" for s, values in parameters.items() for k in values} | set(parameters)
+    if found != expected:
+        msg = (
+            f"The saved parameters lack {', '.join(sorted(expected - found)) or 'nothing'}; "
+            f"have {', '.join(sorted(found - expected)) or 'nothing else'}."
+        )
+        raise ValueError(msg)
+    return parameters
+
+
 def simulate_condition(
     condition: Condition, replicate: int, overrides: Mapping[str, Any] | None = None
 ) -> rd.SimulatedSession:
     """Replicate ``replicate`` of ``condition``, simulated.
 
-    The session's timestamps start at 0, ``duration_s`` long at
-    ``sampling_frequency``. It is built in four stages: the running schedule
-    (``running_schedule``), the network events (``draw_network_events``), the
-    non-events (``draw_non_events``) and the rendering
-    (``simulate_network_session``), each given the resolved parameters of its
-    section, the schedule and the sampling rate.
-
-    Randomness: one generator seeded with ``session_seed(replicate)`` draws
-    four seeds at once, one per stage in that order, and each stage draws
-    only from a generator of its own seed. So a stage's random stream depends
-    on the replicate alone, never on how many draws another stage made:
-    replicate ``k`` has the same schedule in every condition of one duration,
-    and its later stages start from the same streams. Within a stage the
-    simulator's own rules apply (see each function's Notes and ``rng``): a
-    factor that changes no draw count, such as a size, the strength
-    correlation, the envelope power, the spatial profile, the noise
-    modulation, the gamma band or the spike model, leaves the event times,
-    the units' baseline rates and the per-unit participant draws as they
-    are, while one that changes a draw count (the event rate, a rate of
-    non-events, the channel or unit count) or which events fit changes the
-    draws after it in that stage and in what depends on its table.
+    ``simulate_parameters(resolve(condition, overrides), replicate)``.
 
     Parameters
     ----------
@@ -534,7 +558,54 @@ def simulate_condition(
     ValueError
         As ``resolve``, or a simulator function rejects a value.
     """
-    parameters = resolve(condition, overrides)
+    return simulate_parameters(resolve(condition, overrides), replicate)
+
+
+def simulate_parameters(
+    parameters: Mapping[str, Mapping[str, Any]], replicate: int
+) -> rd.SimulatedSession:
+    """Replicate ``replicate`` of a condition's resolved parameters, simulated.
+
+    The session's timestamps start at 0, ``duration_s`` long at
+    ``sampling_frequency``. It is built in four stages: the running schedule
+    (``running_schedule``), the network events (``draw_network_events``), the
+    non-events (``draw_non_events``) and the rendering
+    (``simulate_network_session``), each given the parameters of its section,
+    the schedule and the sampling rate.
+
+    Randomness: one generator seeded with ``session_seed(replicate)`` draws
+    four seeds at once, one per stage in that order, and each stage draws
+    only from a generator of its own seed. So a stage's random stream depends
+    on the replicate alone, never on how many draws another stage made:
+    replicate ``k`` has the same schedule in every condition of one duration,
+    and its later stages start from the same streams. Within a stage the
+    simulator's own rules apply (see each function's Notes and ``rng``): a
+    factor that changes no draw count, such as a size, the strength
+    correlation, the envelope power, the spatial profile, the noise
+    modulation, the gamma band or the spike model, leaves the event times,
+    the units' baseline rates and the per-unit participant draws as they
+    are, while one that changes a draw count (the event rate, a rate of
+    non-events, the channel or unit count) or which events fit changes the
+    draws after it in that stage and in what depends on its table.
+
+    Parameters
+    ----------
+    parameters : mapping of str to mapping
+        Every section and keyword, as ``resolve`` or ``parameters_from_json``
+        gives them.
+    replicate : int
+        From 0.
+
+    Returns
+    -------
+    session : SimulatedSession
+        As ``simulate_network_session`` returns it, with the non-events.
+
+    Raises
+    ------
+    ValueError
+        A simulator function rejects a value.
+    """
     duration = parameters["session"]["duration_s"]
     rate = parameters["session"]["sampling_frequency"]
     time = rd.simulate_time(round(duration * rate), rate)

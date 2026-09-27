@@ -134,24 +134,6 @@ def sessions(module, by_id):
     return found
 
 
-def _as_lists(value):
-    """``value`` with every tuple a list, as JSON reads it back."""
-    if isinstance(value, dict):
-        return {key: _as_lists(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_as_lists(item) for item in value]
-    return value
-
-
-def _as_tuples(value):
-    """``value`` with every list a tuple, as the simulator takes ranges."""
-    if isinstance(value, dict):
-        return {key: _as_tuples(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return tuple(_as_tuples(item) for item in value)
-    return value
-
-
 def _assert_same_session(first, second):
     for name in ("lfps", "sharp_wave_lfp", "multiunit", "speed", "running_intervals"):
         np.testing.assert_array_equal(getattr(first, name), getattr(second, name))
@@ -390,30 +372,40 @@ def test_resolved_json_round_trips(module, by_id):
     texts = {}
     for condition in module.conditions():
         text = module.resolved_json(condition)
-        loaded = json.loads(text)
-        assert loaded == _as_lists(module.resolve(condition))
-        assert text == json.dumps(loaded, sort_keys=True)
+        assert text == json.dumps(json.loads(text), sort_keys=True)
+        # read back exactly: ranges as tuples again, mappings as mappings
+        assert module.parameters_from_json(text) == module.resolve(condition)
         texts[condition.condition_id] = text
     assert len(set(texts.values())) == len(texts)
+    loaded = module.parameters_from_json(texts["type_mix=hard"])
+    assert loaded["events"]["ripple_snr"] == (2.5, 6.0)
+    assert loaded["events"]["type_probabilities"]["weak_ripple"] == 0.3
     with pytest.raises(ValueError, match="not JSON compliant"):
         module.resolved_json(by_id["reference"], {"render.noise_amplitude": float("nan")})
 
 
+def test_parameters_from_json_names_what_a_saved_set_lacks(module, by_id):
+    saved = json.loads(module.resolved_json(by_id["reference"]))
+    del saved["render"]["noise_type"]
+    saved["events"]["ripple_snrs"] = [1.0, 2.0]
+    with pytest.raises(ValueError, match=r"lack render\.noise_type; have events\.ripple_snrs"):
+        module.parameters_from_json(json.dumps(saved))
+    del saved["render"]
+    with pytest.raises(ValueError, match="lack render, "):
+        module.parameters_from_json(json.dumps(saved))
+
+
 def test_a_saved_specification_reproduces_the_session(module, by_id):
-    """The resolved parameters alone, reloaded from JSON and applied to the
-    reference, simulate the condition's session."""
-    condition = by_id["spatial_profile=local"]
-    overrides = {"session.duration_s": 10.0}
-    loaded = _as_tuples(json.loads(module.resolved_json(condition, overrides)))
-    flat = {
-        f"{section}.{name}": value
-        for section, values in loaded.items()
-        for name, value in values.items()
-    }
-    _assert_same_session(
-        module.simulate_condition(by_id["reference"], 2, flat),
-        module.simulate_condition(condition, 2, overrides),
-    )
+    """The resolved parameters alone, as conditions.csv saves them, simulate
+    the condition's session."""
+    condition = by_id["type_mix=swr_only"]
+    overrides = {"session.duration_s": 40.0, "non_events.rates.emg": 3.0}
+    parameters = module.parameters_from_json(module.resolved_json(condition, overrides))
+    session = module.simulate_parameters(parameters, 2)
+    _assert_same_session(session, module.simulate_condition(condition, 2, overrides))
+    # the condition's and the override's values took effect
+    assert set(session.events.event_type) == {"swr"}
+    assert (session.non_events.non_event_type == "emg").sum() > 0
 
 
 def test_reference_revisions_hold_the_current_values(module):
