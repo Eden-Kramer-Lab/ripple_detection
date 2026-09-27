@@ -380,9 +380,10 @@ def test_each_exclusion_is_what_check_method_reports(recipe_configs, session):
             recipe_configs.make_recording(session, config),
             recipe_configs.behavior_intervals(session, config),
         )
-        assert problems, method
-        for problem in problems:
-            assert problem.split(" - ")[0] in reason, (method, problem)
+        # A reason starts with what it names ("rms_window, bound_threshold: ..."
+        # or "input sampled at 4800 Hz: ..."): exactly what check_method reports.
+        named = set(reason.split(": ", 1)[0].split(", "))
+        assert named == {problem.split(" - ")[0] for problem in problems}, method
 
 
 def test_primary_expressions_are_the_reviewed_table(recipe_configs):
