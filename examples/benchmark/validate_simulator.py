@@ -828,6 +828,37 @@ def _padded_filtered_peak(
     return float(np.abs(filter_ripple_band(padded, sampling_frequency=rate, band=band)).max())
 
 
+def component_spans(rows: pd.DataFrame, margin: float = 0.0) -> FloatArray:
+    """Each row's window of eight side scales, widened by ``margin`` each side.
+
+    Parameters
+    ----------
+    rows : pandas.DataFrame
+        Event or non-event rows (``center_time``, ``rise_sigma``,
+        ``decay_sigma``).
+    margin : float, optional
+        Seconds.
+
+    Returns
+    -------
+    spans : ndarray, shape (n_rows, 2)
+        Start and end of each, in the rows' order.
+    """
+    return np.column_stack(
+        [
+            rows.center_time - 8 * rows.rise_sigma - margin,
+            rows.center_time + 8 * rows.decay_sigma + margin,
+        ]
+    )
+
+
+def _component_window(time: FloatArray, row: Any, pad: int = 0) -> slice:
+    """The samples of one row's window of eight side scales, as ``_window``."""
+    return _window(
+        time, row.center_time - 8 * row.rise_sigma, row.center_time + 8 * row.decay_sigma, pad
+    )
+
+
 def isolated_groups(rows: pd.DataFrame, margin: float) -> list[pd.DataFrame]:
     """Rows split into groups within which no two rows' windows overlap.
 
@@ -845,8 +876,7 @@ def isolated_groups(rows: pd.DataFrame, margin: float) -> list[pd.DataFrame]:
         Each in the rows' order; together, every row once. Greedy by window
         start, so as few groups as the windows' largest overlap.
     """
-    starts = (rows.center_time - 8 * rows.rise_sigma - margin).to_numpy()
-    ends = (rows.center_time + 8 * rows.decay_sigma + margin).to_numpy()
+    starts, ends = component_spans(rows, margin).T
     last_end: list[float] = []
     group = np.empty(len(rows), dtype=int)
     for i in np.argsort(starts, kind="stable"):
@@ -1000,15 +1030,7 @@ def _check_noise_matched(
         float(parameters["render"]["channel_delay"])
         + 4 / parameters["session"]["sampling_frequency"]
     )
-    spans = [
-        np.column_stack(
-            [
-                table.center_time - 8 * table.rise_sigma - reach,
-                table.center_time + 8 * table.decay_sigma + reach,
-            ]
-        )
-        for table in (events, non_events)
-    ]
+    spans = [component_spans(table, reach) for table in (events, non_events)]
     outside = ~interval_mask(time, np.concatenate(spans))
     difference = max(
         float(np.max(np.abs(lfps[outside] - noise.lfps[outside]), initial=0.0)),
@@ -1176,20 +1198,11 @@ def _ripple_measures(
         for position, row in enumerate(table.itertuples()):
             channels = channels_of[row.event_id, row.component]
             anchor = _anchor(channels)
-            window = _window(
-                time,
-                row.center_time - 8 * row.rise_sigma,
-                row.center_time + 8 * row.decay_sigma,
-            )
+            window = _component_window(time, row)
             waveform = difference[window, anchor]
             group = str(row.event_type)
             out.sample("ripple_peak_frequency", group, [fft_peak_frequency(waveform, rate)])
-            padded = _window(
-                time,
-                row.center_time - 8 * row.rise_sigma,
-                row.center_time + 8 * row.decay_sigma,
-                pad=int(0.05 * rate),
-            )
+            padded = _component_window(time, row, pad=int(0.05 * rate))
             analytic_time = time[padded]
             frequency = instantaneous_frequency(analytic_time, difference[padded, anchor])
             before = _nearest(analytic_time, row.center_time - FREQUENCY_OFFSET)
@@ -1234,12 +1247,7 @@ def _ripple_measures(
             center = _nearest(time, row.center_time)
             local = filtered_noise[max(center - local_half, 0) : center + local_half]
             out.sample("ripple_snr_event_local", group, [filtered_peak / local.std()])
-            wide = _window(
-                time,
-                row.center_time - 8 * row.rise_sigma,
-                row.center_time + 8 * row.decay_sigma,
-                pad=reach,
-            )
+            wide = _component_window(time, row, pad=reach)
             per_channel = [
                 _padded_filtered_peak(difference[wide, c], rate) / band_sds[c]
                 for c in range(difference.shape[1])
@@ -1338,11 +1346,7 @@ def _sharp_wave_measures(
             for fraction in TRUTH_FRACTIONS
         }
         for position, row in enumerate(table.itertuples()):
-            window = _window(
-                time,
-                row.center_time - 8 * row.rise_sigma,
-                row.center_time + 8 * row.decay_sigma,
-            )
+            window = _component_window(time, row)
             local = deflection[window]
             local_time = time[window]
             widths = envelope_widths(local_time, local, (0.5, 0.1))
@@ -1399,11 +1403,7 @@ def _gamma_measures(
                         noise.lfps[:, 0], sampling_frequency=rate, band=band
                     ).std()
                 )
-            window = _window(
-                time,
-                row.center_time - 8 * row.rise_sigma,
-                row.center_time + 8 * row.decay_sigma,
-            )
+            window = _component_window(time, row)
             snr = _padded_filtered_peak(difference[window], rate, band) / band_sd[band]
             ratios.append(snr / (row.amplitude * gain))
             out.sample("gamma_snr_ratio", "fast_gamma", [ratios[-1]])
@@ -1587,13 +1587,7 @@ def _spike_measures(
 
     # interneurons fire at their baseline intensity outside every ripple's
     # eight-scale window, at rest (theta bursts and leaks recruit no interneuron)
-    spans = np.column_stack(
-        [
-            ripples.center_time - 8 * ripples.rise_sigma - 2 * step,
-            ripples.center_time + 8 * ripples.decay_sigma + 2 * step,
-        ]
-    )
-    quiet = rest_mask & ~interval_mask(time, spans)
+    quiet = rest_mask & ~interval_mask(time, component_spans(ripples, 2 * step))
     observed = float(counts_in(quiet)[interneurons].sum())
     rates = baseline_rates[interneurons]
     if render["spike_model"] == "refractory":
