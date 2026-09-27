@@ -6,7 +6,9 @@ short simulated sessions with a few methods."""
 import dataclasses
 import json
 import shutil
+import threading
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -1052,6 +1054,34 @@ def test_smoke_prints_its_measurements(cli, capsys):
         "workers = min(requested 4",
     ):
         assert text in printed, text
+
+
+def test_a_worker_failure_cancels_the_queued_sessions(run, cli, monkeypatch):
+    """The first session to fail stops the run: queued sessions never start.
+    Threads stand in for the processes, so the stub sessions are seen."""
+    start, _, _ = cli
+    release = threading.Event()
+    started = []
+
+    def run_one(condition, replicate, methods, overrides):
+        started.append((condition.condition_id, replicate))
+        if len(started) == 1:
+            msg = "the first session failed"
+            raise RuntimeError(msg)
+        # the others hold their worker until the test ends; the timeout only
+        # bounds a run that waits for every queued session
+        release.wait(timeout=2.0)
+
+    monkeypatch.setattr(run, "ProcessPoolExecutor", ThreadPoolExecutor)
+    monkeypatch.setattr(run, "_run_one", run_one)
+    try:
+        with pytest.raises(RuntimeError, match="the first session failed"):
+            start("failing", replicates=3, workers=2)
+        # the failed session, the one running beside it and at most one the
+        # freed worker took before the queue was cancelled; not all nine
+        assert len(started) <= 3
+    finally:
+        release.set()
 
 
 def test_workers_write_what_one_process_writes(run, cli, finished_run):

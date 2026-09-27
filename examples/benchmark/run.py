@@ -1513,6 +1513,10 @@ def run_benchmark(
         id is unknown, the run exists and ``resume`` is not set, or its saved
         specification differs from this one (naming the differing keys).
         Nothing is written or deleted before these checks.
+    Exception
+        Whatever a session raises outside a method's call, at once: with
+        workers, the queued sessions are cancelled first. Finished conditions
+        stay, and ``resume`` runs the rest.
     """
     by_id = {condition.condition_id: condition for condition in conditions()}
     requested_workers = workers or max(1, (os.cpu_count() or 2) - 1)
@@ -1606,13 +1610,20 @@ def run_benchmark(
         for condition, replicate in tasks:
             finish(*_run_one(condition, replicate, methods, overrides))
     else:
-        with ProcessPoolExecutor(max_workers=n_workers) as pool:
+        pool = ProcessPoolExecutor(max_workers=n_workers)
+        try:
             futures = [
                 pool.submit(_run_one, condition, replicate, methods, overrides)
                 for condition, replicate in tasks
             ]
             for future in as_completed(futures):
                 finish(*future.result())
+        except BaseException:
+            # stop at the first failure: no queued session starts, and the
+            # error is raised without waiting for the running ones
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        pool.shutdown()
 
     combine(root)
     manifest = json.loads((root / "manifest.json").read_text())
