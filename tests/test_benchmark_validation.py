@@ -381,6 +381,32 @@ class TestReport:
             assert _sha256(directory / name) == digest
         assert (spec["status"] == "ready") == (not spec["reasons"])
 
+    def test_parameter_revisions_are_listed(self, report, validate, conditions):
+        assert report["spec"]["reference_revisions"] == []
+        text = (report["directory"] / "report.md").read_text()
+        assert "## Parameter revisions\n\nNone:" in text
+        revision = conditions.ReferenceRevision(
+            "events.ripple_duration",
+            (0.03, 0.15),
+            (0.03, 0.1),
+            "calibrated span",
+            "calibration c1",
+        )
+        assert validate.revision_records([revision]) == [
+            {
+                "key": "events.ripple_duration",
+                "previous": [0.03, 0.15],
+                "revised": [0.03, 0.1],
+                "reason": "calibrated span",
+                "evidence": "calibration c1",
+            }
+        ]
+        lines = validate._revision_lines([revision])
+        assert lines[-1] == (
+            "| `events.ripple_duration` | [0.03, 0.15] | [0.03, 0.1] | calibrated span | "
+            "calibration c1 |"
+        )
+
     def test_checks_cover_every_target_and_rendering_check(self, report, validate):
         checks = pd.read_csv(report["directory"] / "checks.csv")
         targets = validate.load_targets()

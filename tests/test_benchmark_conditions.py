@@ -3,6 +3,7 @@ the grid, the reference parameters, the running schedule and the common
 random numbers that pair conditions by replicate."""
 
 import copy
+import dataclasses
 import inspect
 import json
 import re
@@ -394,3 +395,28 @@ def test_a_saved_specification_reproduces_the_session(module, by_id):
         module.simulate_condition(by_id["reference"], 2, flat),
         module.simulate_condition(condition, 2, overrides),
     )
+
+
+def test_reference_revisions_hold_the_current_values(module):
+    """Each revision names a ``REFERENCE`` entry, and a key's latest revision
+    holds its current value: a revision is recorded, never silent."""
+    assert isinstance(module.REFERENCE_REVISIONS, tuple)
+    revision = module.ReferenceRevision(
+        "events.ripple_duration", (0.03, 0.15), (0.03, 0.1), "", ""
+    )
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        revision.revised = (0.0, 1.0)
+    reference = module.resolve(module.conditions()[0])
+    latest = {}
+    for revision in module.REFERENCE_REVISIONS:
+        assert isinstance(revision, module.ReferenceRevision)
+        assert revision.previous != revision.revised, revision.key
+        assert revision.reason, revision.key
+        assert revision.evidence, revision.key
+        latest[revision.key] = revision.revised
+    for key, revised in latest.items():
+        section, *path = key.split(".")
+        value = reference[section]
+        for name in path:
+            value = value[name]
+        assert value == revised, key

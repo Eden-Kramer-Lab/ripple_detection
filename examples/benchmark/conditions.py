@@ -8,6 +8,8 @@ benchmark session, at its reference value, in four sections: ``"session"``
 by a dotted key: ``"events.ripple_snr"``, or ``"non_events.rates.emg"`` for one
 entry of a mapping. ``conditions()`` lists the benchmark's conditions: the
 reference, one factor at a time, and two crossed pairs of factors.
+``REFERENCE_REVISIONS`` records every change to a ``REFERENCE`` value after it
+was first set, with its reason and evidence.
 
 ``simulate_condition`` renders replicate ``k`` of a condition. Replicate ``k``
 has the same seed in every condition (common random numbers), so conditions
@@ -111,6 +113,34 @@ REFERENCE: dict[str, dict[str, Any]] = {
         "delta_amplitude": 4.0,
     },
 }
+
+
+@dataclass(frozen=True)
+class ReferenceRevision:
+    """A change to a ``REFERENCE`` value after it was first set.
+
+    Attributes
+    ----------
+    key : str
+        The value's dotted key, such as ``"events.ripple_duration"``.
+    previous, revised : object
+        The value before and after the revision.
+    reason : str
+        Why it changed.
+    evidence : str
+        What shows the change is needed, such as a calibration or a source.
+    """
+
+    key: str
+    previous: Any
+    revised: Any
+    reason: str
+    evidence: str
+
+
+# Every revision of a REFERENCE value, oldest first; the simulator validation
+# report lists them.
+REFERENCE_REVISIONS: tuple[ReferenceRevision, ...] = ()
 
 # One factor at a time, in order: factor -> label -> overrides, for each level
 # other than the reference.

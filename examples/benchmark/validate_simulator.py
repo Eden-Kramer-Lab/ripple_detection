@@ -14,7 +14,8 @@ writes ``<output-root>/<validation-id>/`` (by default
 ``examples/benchmark/validation/v1/``):
 
 - ``spec.json``: the resolved simulation parameters of every validated
-  condition, the replicates and their seeds, package versions,
+  condition, the reference's recorded revisions (``REFERENCE_REVISIONS``), the
+  replicates and their seeds, package versions,
   ``simulation_fingerprint``, ``target_table_hash``, ``status`` (``"ready"`` or
   ``"not_ready"``) with the reasons, and the SHA-256 of every other file here.
 - ``measurements.csv``: one row per condition, replicate, group and measured
@@ -57,7 +58,7 @@ import sys
 import time as clock
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import Any, Protocol
@@ -65,7 +66,15 @@ from typing import Any, Protocol
 import numpy as np
 import pandas as pd
 import scipy
-from conditions import Condition, conditions, resolve, session_seed, simulate_condition
+from conditions import (
+    REFERENCE_REVISIONS,
+    Condition,
+    ReferenceRevision,
+    conditions,
+    resolve,
+    session_seed,
+    simulate_condition,
+)
 from numpy.typing import ArrayLike
 from scipy import signal, stats
 
@@ -2013,6 +2022,28 @@ def select_conditions(text: str) -> tuple[Condition, ...]:
     return tuple(c for c in everything if c.condition_id in set(chosen))
 
 
+def revision_records(revisions: Sequence[ReferenceRevision]) -> list[dict[str, Any]]:
+    """Each revision of a ``REFERENCE`` value as a dict of JSON types, the
+    form ``spec.json`` holds."""
+    return [_canonical(asdict(revision)) for revision in revisions]
+
+
+def _revision_lines(revisions: Sequence[ReferenceRevision]) -> list[str]:
+    """The report's table of ``REFERENCE`` revisions."""
+    if not revisions:
+        return ["None: every reference value is as first set."]
+    lines = [
+        "| parameter | previous | revised | reason | evidence |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    lines += [
+        f"| `{r['key']}` | {json.dumps(r['previous'])} | {json.dumps(r['revised'])} | "
+        f"{r['reason']} | {r['evidence']} |"
+        for r in revision_records(revisions)
+    ]
+    return lines
+
+
 def _versions() -> dict[str, str]:
     return {
         "python": platform.python_version(),
@@ -2132,6 +2163,7 @@ def write_report(
         "seeds": {str(r): session_seed(r) for r in replicates},
         "overrides": dict(overrides),
         "conditions": {cid: _canonical(value) for cid, value in parameters.items()},
+        "reference_revisions": revision_records(REFERENCE_REVISIONS),
         "versions": _versions(),
         "validator_hash": _file_hash(Path(__file__)),
         "runtime_s": runtime,
@@ -2364,7 +2396,7 @@ def _report_text(
         "",
         "## Parameter revisions",
         "",
-        "None in this report.",
+        *_revision_lines(REFERENCE_REVISIONS),
         "",
     ]
     total = sum(r.seconds for r in results)
