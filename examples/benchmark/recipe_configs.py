@@ -631,7 +631,7 @@ def method_record(config: RecipeConfig) -> dict[str, str]:
         ``config.input_policy`` is not ``INPUT_POLICY``, or its
         ``assumptions`` are not those its method and options imply.
     """
-    _check_provenance(config)
+    policy = input_policy(config)
     entry = _entry(config.method)
     options = resolved_options(config)
     return {
@@ -643,7 +643,7 @@ def method_record(config: RecipeConfig) -> dict[str, str]:
         "stage": options.get("stage", "detection"),
         "primary_expression": config.primary_expression,
         "resolved_options": json.dumps(options, sort_keys=True, allow_nan=False),
-        "input_policy": json.dumps(input_policy(config), sort_keys=True, allow_nan=False),
+        "input_policy": json.dumps(policy, sort_keys=True, allow_nan=False),
         "assumptions": json.dumps(list(config.assumptions)),
         "interpretation": entry["interpretation"],
     }
