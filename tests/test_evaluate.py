@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from scipy.stats import spearmanr
 
 import ripple_detection as rd
 from ripple_detection.evaluate import (
@@ -407,6 +408,31 @@ class TestCompareDetectors:
         # and b 0.2, 0.1, 0.5
         assert three.onset_error_correlation == pytest.approx(-0.5)
         assert three.offset_error_correlation == pytest.approx(-1.0)
+
+    @pytest.mark.parametrize("origin", [0.0, 3600.0, 1.7e9])
+    def test_error_correlation_ranks_whole_samples(self, origin):
+        """Errors read off sample times take a few values, whole samples late,
+        which round apart by ulps: equal numbers of samples are ties, so the
+        correlation is that of the sample counts, and NaN when one method's
+        count never varies."""
+        time = origin + np.arange(3000) / FS
+        starts = np.arange(40) * 70 + 10
+        truth = np.column_stack([time[starts], time[starts + 30]])
+        late_a = np.tile([0, 1, 1, 0, 1], 8)
+        late_b = np.where(np.arange(40) % 3 == 0, 1 - late_a, late_a)
+
+        def events(late):
+            return np.column_stack([time[starts + late], time[starts + 30]])
+
+        row = compare_detectors({"a": events(late_a), "b": events(late_b)}, truth=truth).iloc[
+            0
+        ]
+        expected = spearmanr(late_a, late_b)[0]
+        assert row.onset_error_correlation == pytest.approx(expected, abs=1e-12)
+        constant = compare_detectors(
+            {"a": events(np.ones(40, dtype=int)), "b": events(late_b)}, truth=truth
+        ).iloc[0]
+        assert np.isnan(constant.onset_error_correlation)
 
     def test_pair_order_and_columns(self):
         events = {

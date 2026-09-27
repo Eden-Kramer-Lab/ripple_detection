@@ -25,7 +25,6 @@ from numpy.typing import ArrayLike
 from scipy.optimize import linear_sum_assignment
 from scipy.sparse import coo_matrix
 from scipy.sparse.csgraph import connected_components
-from scipy.stats import spearmanr
 
 from ripple_detection._call_hints import explain_call_errors
 from ripple_detection.core import (
@@ -456,12 +455,29 @@ def _signed_summary(kind: str, difference: FloatArray) -> dict[str, float]:
     }
 
 
-def _spearman(x: FloatArray, y: FloatArray) -> float:
-    """Spearman's rank correlation; NaN for fewer than three values, or when
-    either is constant and a rank correlation is undefined."""
-    if len(x) < _MINIMUM_SHARED_FOR_CORRELATION or np.ptp(x) == 0 or np.ptp(y) == 0:
+def _tied_ranks(values: FloatArray, tolerance: float) -> FloatArray:
+    """Ranks from 1, averaged over each run of sorted values that lie within
+    `tolerance` of their neighbour: errors read off sample times are whole
+    samples that round apart by a few ulps, and are ties, not an order."""
+    order = np.argsort(values, kind="stable")
+    group = np.cumsum(np.concatenate([[True], np.diff(values[order]) > tolerance])) - 1
+    position = np.arange(1.0, len(values) + 1)
+    mean_rank = np.bincount(group, weights=position) / np.bincount(group)
+    ranks = np.empty(len(values))
+    ranks[order] = mean_rank[group]
+    return ranks
+
+
+def _spearman(x: FloatArray, y: FloatArray, tolerance: float) -> float:
+    """Spearman's rank correlation, values within `tolerance` of each other
+    tied; NaN for fewer than three values, or when either is constant and a
+    rank correlation is undefined."""
+    if len(x) < _MINIMUM_SHARED_FOR_CORRELATION:
         return np.nan
-    return float(spearmanr(x, y)[0])
+    x_ranks, y_ranks = _tied_ranks(x, tolerance), _tied_ranks(y, tolerance)
+    if np.ptp(x_ranks) == 0 or np.ptp(y_ranks) == 0:
+        return np.nan
+    return float(np.corrcoef(x_ranks, y_ranks)[0, 1])
 
 
 def _matched_rows(matching: EventMatching) -> BoolArray:
@@ -483,6 +499,8 @@ def _truth_columns(a: EventMatching, b: EventMatching, minimum_iou: float) -> di
     errors_b = b.pairs.set_index("reference_index")
     shared = np.intersect1d(errors_a.index, errors_b.index)
     errors_a, errors_b = errors_a.loc[shared], errors_b.loc[shared]
+    # an error is two bounds apart, so two errors are four
+    tolerance = _time_rounding(a.reference, a.detected, b.detected)
     return {
         "jaccard_true": _jaccard(int(true_a.sum()), int(true_b.sum()), len(both_true.pairs)),
         "jaccard_false": _jaccard(
@@ -490,10 +508,10 @@ def _truth_columns(a: EventMatching, b: EventMatching, minimum_iou: float) -> di
         ),
         "n_shared_truth": len(shared),
         "onset_error_correlation": _spearman(
-            errors_a.onset_error.to_numpy(), errors_b.onset_error.to_numpy()
+            errors_a.onset_error.to_numpy(), errors_b.onset_error.to_numpy(), tolerance
         ),
         "offset_error_correlation": _spearman(
-            errors_a.offset_error.to_numpy(), errors_b.offset_error.to_numpy()
+            errors_a.offset_error.to_numpy(), errors_b.offset_error.to_numpy(), tolerance
         ),
     }
 
@@ -546,8 +564,10 @@ def compare_detectors(
         - ``n_shared_truth``: true events both methods matched.
         - ``onset_error_correlation``, ``offset_error_correlation``:
           Spearman's correlation over the shared true events of the two
-          methods' signed errors against the truth; NaN below three shared
-          events or when either method's errors are all equal.
+          methods' signed errors against the truth, errors within the
+          timestamps' rounding of each other tied (as whole samples read off
+          the timestamps are); NaN below three shared events or when either
+          method's errors are all equal.
 
         Summaries over no pairs are NaN. The truth columns are present, and
         NaN, without `truth`. Empty, with these columns, for fewer than two
