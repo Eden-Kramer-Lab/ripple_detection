@@ -408,7 +408,11 @@ def test_the_session_row_counts_the_truth(run, output, session):
         assert row[f"n_events_{kind}"] == (events.event_type == kind).sum()
     for kind in rd.NON_EVENT_TYPES:
         assert row[f"n_non_events_{kind}"] == (session.non_events.non_event_type == kind).sum()
-    assert row.rest_s == pytest.approx(60.0 - np.ptp(session.running_intervals))
+    bouts = session.running_intervals
+    assert row.rest_s == pytest.approx(60.0 - np.sum(bouts[:, 1] - bouts[:, 0]))
+    # two bouts: rest is what their lengths leave, not the span between them
+    two = dataclasses.replace(session, running_intervals=np.array([[5.0, 10.0], [20.0, 32.0]]))
+    assert run.evaluate_session(two, "s/0", ()).sessions.rest_s.iloc[0] == pytest.approx(43.0)
     network = rd.truth_windows(session.events, 0.1, "network")
     assert row.event_time_s == pytest.approx(
         _union_seconds(network[["start_time", "end_time"]].to_numpy())
