@@ -336,6 +336,23 @@ def rest_intervals(session: rd.SimulatedSession) -> FloatArray:
     return rest
 
 
+def _stand_in_events(
+    session: rd.SimulatedSession, spec: dict[str, Any], channels: slice = slice(None)
+) -> pd.DataFrame:
+    """The events of the detector ``spec`` names, run with its options on
+    the ``channels`` of the session's LFPs filtered to its band."""
+    filtered = rd.filter_ripple_band(
+        session.lfps, session.sampling_frequency, band=spec["band"], time=session.time
+    )
+    return rd.get_detector(spec["detector"]).detector(
+        session.time,
+        filtered[:, channels],
+        session.speed,
+        session.sampling_frequency,
+        **spec["options"],
+    )
+
+
 def external_ripples(session: rd.SimulatedSession) -> FloatArray:
     """The external ripple inventory ``EXTERNAL_RIPPLES`` describes.
 
@@ -348,20 +365,8 @@ def external_ripples(session: rd.SimulatedSession) -> FloatArray:
     ripples : ndarray, shape (n_ripples, 3)
         Start, end and peak time of each ripple, in seconds.
     """
-    filtered = rd.filter_ripple_band(
-        session.lfps,
-        session.sampling_frequency,
-        band=EXTERNAL_RIPPLES["band"],
-        time=session.time,
-    )
     channel = EXTERNAL_RIPPLES["channel"]
-    events = rd.get_detector(EXTERNAL_RIPPLES["detector"]).detector(
-        session.time,
-        filtered[:, channel : channel + 1],
-        session.speed,
-        session.sampling_frequency,
-        **EXTERNAL_RIPPLES["options"],
-    )
+    events = _stand_in_events(session, EXTERNAL_RIPPLES, slice(channel, channel + 1))
     return np.asarray(events[list(EXTERNAL_RIPPLES["columns"])], dtype=float)
 
 
@@ -378,19 +383,7 @@ def example_ripples(session: rd.SimulatedSession) -> FloatArray:
         Start and end of each example, largest ``max_zscore`` first; fewer
         rows when the detector finds fewer events.
     """
-    filtered = rd.filter_ripple_band(
-        session.lfps,
-        session.sampling_frequency,
-        band=EXAMPLE_RIPPLES["band"],
-        time=session.time,
-    )
-    events = rd.get_detector(EXAMPLE_RIPPLES["detector"]).detector(
-        session.time,
-        filtered,
-        session.speed,
-        session.sampling_frequency,
-        **EXAMPLE_RIPPLES["options"],
-    )
+    events = _stand_in_events(session, EXAMPLE_RIPPLES)
     return bounds(events.nlargest(EXAMPLE_RIPPLES["n_examples"], EXAMPLE_RIPPLES["rank_by"]))
 
 
