@@ -187,9 +187,13 @@ def catalog():
     return literature_methods.list_methods().set_index("name")
 
 
+def _call_inputs(module, session, config):
+    """The recording and eligible epochs the policy gives a call of ``config``."""
+    return module.make_recording(session, config), module.behavior_intervals(session, config)
+
+
 def _run(module, session, config):
-    recording = module.make_recording(session, config)
-    return module.run_recipe(config, recording, module.behavior_intervals(session, config))
+    return module.run_recipe(config, *_call_inputs(module, session, config))
 
 
 @pytest.fixture(scope="module")
@@ -316,20 +320,15 @@ def test_every_method_with_stages_runs_its_detection_stage(recipe_configs, catal
     assert config.options == (("stage", "decoding_candidates"),)
 
 
-def test_every_configuration_can_run_under_the_policy(recipe_configs, session):
+def test_every_configuration_can_run_and_is_the_direct_public_call(
+    recipe_configs, session, results
+):
     for config in recipe_configs.RECIPES:
-        recording = recipe_configs.make_recording(session, config)
-        eligible = recipe_configs.behavior_intervals(session, config)
-        assert recipe_configs.check_recipe(config, recording, eligible) == [], config.config_id
-
-
-def test_run_recipe_is_the_direct_public_call(recipe_configs, session, results):
-    for config in recipe_configs.RECIPES:
-        recording = recipe_configs.make_recording(session, config)
+        recording, eligible = _call_inputs(recipe_configs, session, config)
+        problems = recipe_configs.check_recipe(config, recording, eligible)
+        assert not problems, f"{config.config_id} cannot run under the policy: {problems}"
         direct = getattr(literature_methods, config.method)(
-            recording,
-            behavior_intervals=recipe_configs.behavior_intervals(session, config),
-            **dict(config.options),
+            recording, behavior_intervals=eligible, **dict(config.options)
         )
         found = results[config.config_id]
         pd.testing.assert_frame_equal(found, direct, check_exact=True, obj=config.config_id)
@@ -381,9 +380,7 @@ def test_each_exclusion_is_what_check_method_reports(recipe_configs, session):
     for method, reason in recipe_configs.EXCLUSIONS.items():
         config = _unconfigured(recipe_configs, method)
         problems = recipe_configs.check_recipe(
-            config,
-            recipe_configs.make_recording(session, config),
-            recipe_configs.behavior_intervals(session, config),
+            config, *_call_inputs(recipe_configs, session, config)
         )
         # A reason starts with what it names ("rms_window, bound_threshold: ..."
         # or "input sampled at 4800 Hz: ..."): exactly what check_method reports.
@@ -615,8 +612,7 @@ def test_a_recording_holds_exactly_the_declared_inputs(recipe_configs, session):
         *(_unconfigured(recipe_configs, method) for method in recipe_configs.EXCLUSIONS),
     ]
     for config in configs:
-        recording = recipe_configs.make_recording(session, config)
-        eligible = recipe_configs.behavior_intervals(session, config)
+        recording, eligible = _call_inputs(recipe_configs, session, config)
         names, takes_behavior_intervals = recipe_configs.supplied_inputs(config)
         assert _supplied(recording) == set(names), config.config_id
         assert (eligible is not None) == takes_behavior_intervals, config.config_id
@@ -682,11 +678,10 @@ def test_unlabeled_units_are_not_selected(recipe_configs, session, configs):
         ("farooq_2019_science", {"pyramidal", "place_cells"}),
     ):
         config = configs[name]
-        recording = recipe_configs.make_recording(unlabeled, config)
+        recording, eligible = _call_inputs(recipe_configs, unlabeled, config)
         assert not recording.place_cells.any()
         assert not recording.pyramidal.any()
         assert recording.templates == ()
-        eligible = recipe_configs.behavior_intervals(unlabeled, config)
         problems = recipe_configs.check_recipe(config, recording, eligible)
         assert {problem.split(":")[0].split(" - ")[0] for problem in problems} == missing
         with pytest.raises(ValueError, match=next(iter(missing))):
@@ -706,14 +701,10 @@ def test_the_policy_reads_no_truth(recipe_configs, session, configs, results):
         ripple_channels=session.ripple_channels.iloc[:0],
     )
     for config in recipe_configs.RECIPES:
-        _assert_same_recording(
-            recipe_configs.make_recording(session, config),
-            recipe_configs.make_recording(blind, config),
-        )
-        np.testing.assert_array_equal(
-            recipe_configs.behavior_intervals(session, config),
-            recipe_configs.behavior_intervals(blind, config),
-        )
+        recording, eligible = _call_inputs(recipe_configs, session, config)
+        blind_recording, blind_eligible = _call_inputs(recipe_configs, blind, config)
+        _assert_same_recording(recording, blind_recording)
+        np.testing.assert_array_equal(eligible, blind_eligible, err_msg=config.config_id)
     for name in STAND_INS:
         pd.testing.assert_frame_equal(
             _run(recipe_configs, blind, configs[name]), results[name]
@@ -896,10 +887,8 @@ def test_results_shift_with_the_clock_origin(recipe_configs, session, configs, r
 
 def test_a_discarded_recording_is_collected(recipe_configs, session, configs):
     config = configs["yang_2024"]
-    recording = recipe_configs.make_recording(session, config)
-    events = recipe_configs.run_recipe(
-        config, recording, recipe_configs.behavior_intervals(session, config)
-    )
+    recording, eligible = _call_inputs(recipe_configs, session, config)
+    events = recipe_configs.run_recipe(config, recording, eligible)
     reference = weakref.ref(recording)
     del recording
     gc.collect()
