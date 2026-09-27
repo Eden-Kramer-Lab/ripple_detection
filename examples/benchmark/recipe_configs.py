@@ -141,6 +141,9 @@ _ASSUMPTIONS = {
 
 _CONFIG_ID = re.compile(r"[a-z0-9_]+(\.[a-z0-9_]+)?")
 
+# Call arguments that are not method options: the input policy supplies them.
+_NOT_OPTIONS = frozenset({"rec", "behavior_intervals"})
+
 
 def _is_option_pairs(options: object) -> bool:
     """Whether ``options`` is a tuple of (str, value) pairs."""
@@ -214,7 +217,7 @@ class RecipeConfig:
             if names.count(name) > 1:
                 msg = f"options names {name!r} more than once."
                 raise ValueError(msg)
-            if name in {"rec", "behavior_intervals"}:
+            if name in _NOT_OPTIONS:
                 msg = (
                     f"{name!r} is not a method option: the recording and the call's "
                     "behavior_intervals come from the input policy."
@@ -248,11 +251,7 @@ def _resolved(method: str, options: Params) -> dict[str, Any]:
     signature = inspect.signature(getattr(literature_methods, method))
     call = signature.bind_partial(**dict(options))
     call.apply_defaults()
-    return {
-        name: value
-        for name, value in call.arguments.items()
-        if name not in {"rec", "behavior_intervals"}
-    }
+    return {name: value for name, value in call.arguments.items() if name not in _NOT_OPTIONS}
 
 
 def _json_ready(value: Any, *, non_finite_as_none: bool = False) -> Any:
@@ -847,18 +846,16 @@ _UNRESAMPLED = (
     "resampling is not part of the input policy"
 )
 _NO_VALUE = "no value is assumed"
+_UNREPORTED_RMS = (
+    "rms_window, bound_threshold: required options the paper does not report, "
+    f"nor do the Csicsvari et al. 1999 methods it cites; {_NO_VALUE}"
+)
 
 EXCLUSIONS: dict[str, str] = {
     "bush_2022_ripples": f"input sampled at 4800 Hz: {_UNRESAMPLED}",
     "olafsdottir_2017_ripples": f"input sampled at 1200 Hz: {_UNRESAMPLED}",
-    "gridchyn_2020_ripples": (
-        "rms_window, bound_threshold: required options the paper does not report, "
-        f"nor do the Csicsvari et al. 1999 methods it cites; {_NO_VALUE}"
-    ),
-    "xu_2019_ripples": (
-        "rms_window, bound_threshold: required options the paper does not report, "
-        f"nor do the Csicsvari et al. 1999 methods it cites; {_NO_VALUE}"
-    ),
+    "gridchyn_2020_ripples": _UNREPORTED_RMS,
+    "xu_2019_ripples": _UNREPORTED_RMS,
     "farooq_2019_neuron_ripples": (
         "threshold, bound_threshold, smoothing_sigma: required options the paper "
         f"does not report; {_NO_VALUE}"
