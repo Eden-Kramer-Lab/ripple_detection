@@ -319,8 +319,8 @@ def stationary(request):
     return np.full(request.cls.N_TIME, 2.0)
 
 
-# The benchmark's scripts in examples/benchmark import each other by name
-# (``import recipe_configs``), as they do when run from that directory.
+# Modules in examples/benchmark are imported by name (``import
+# recipe_configs``), as an interpreter started in that directory imports them.
 BENCHMARK = Path(__file__).resolve().parents[1] / "examples" / "benchmark"
 
 

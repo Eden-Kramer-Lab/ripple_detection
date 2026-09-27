@@ -18,8 +18,10 @@ and the paper notes.
 
 ### Running a configuration
 
-The benchmark's scripts import `recipe_configs` by name: run Python from this
-directory, or put it on `sys.path`.
+`recipe_configs` is imported by name, so the directory must be on `sys.path`: paste
+the example into an interpreter started in `examples/benchmark`, save it as a script
+there, or run `sys.path.insert(0, "examples/benchmark")` first from the repository
+root.
 
 ```python
 import numpy as np
