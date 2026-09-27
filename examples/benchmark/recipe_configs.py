@@ -31,7 +31,7 @@ import pandas as pd
 
 import ripple_detection as rd
 from ripple_detection import literature_methods
-from ripple_detection.core import FloatArray
+from ripple_detection.core import FloatArray, IntArray
 from ripple_detection.literature_methods import (
     Recording,
     bounds,
@@ -72,71 +72,6 @@ EXAMPLE_RIPPLES: dict[str, Any] = {
     "options": {},
     "n_examples": 5,
     "rank_by": "max_zscore",
-}
-
-# What each input the policy supplies is, as input_policy records it. The
-# values themselves are in each result's attrs["inputs"] and
-# attrs["behavior_intervals"].
-_REST = (
-    "rest: the recorded samples outside session.running_intervals, the simulator's "
-    "known running bouts"
-)
-_SOURCES: dict[str, Any] = {
-    "lfps": "session.lfps: every pyramidal-layer channel, the ripple channel first",
-    "sharp_wave_lfp": "session.sharp_wave_lfp: the stratum radiatum channel",
-    "multiunit": "session.multiunit: every unit",
-    "speed": "session.speed",
-    "place_cells": "units whose session.unit_types is 'place' (known labels)",
-    "pyramidal": "units whose session.unit_types is 'place' or 'pyramidal' (known labels)",
-    "templates": "one template: the place_cells selection",
-    "sleep_intervals": _REST,
-    "baseline_intervals": _REST,
-    "behavior_intervals": _REST,
-    "reference_lfp": "zeros",
-    "external_ripples": EXTERNAL_RIPPLES,
-    "example_ripples": EXAMPLE_RIPPLES,
-}
-
-# The benchmark choice behind each supplied input that is not an observation.
-_ASSUMPTIONS = {
-    "place_cells": (
-        "place_cells: every unit the simulator labels 'place', also standing in for "
-        "any narrower selection the method names, such as one template's, one "
-        "directional template's, one probe sequence's, block-specific or "
-        "place-responsive cells, since the simulator has no place fields or "
-        "trajectories"
-    ),
-    "pyramidal": "pyramidal: every unit the simulator labels 'place' or 'pyramidal'",
-    "templates": (
-        "templates: one template of every place unit, since the simulator has no "
-        "place fields or trajectories"
-    ),
-    "sleep_intervals": (
-        "sleep_intervals: rest, the samples outside the simulator's known running "
-        "bouts, stands in for the sleep state, since the simulated sessions are awake"
-    ),
-    "baseline_intervals": (
-        "baseline_intervals: rest, the samples outside the simulator's known running "
-        "bouts, stands in for the normalization epoch"
-    ),
-    "behavior_intervals": (
-        "behavior_intervals: rest, the samples outside the simulator's known running "
-        "bouts, stands in for the eligible epochs: simulated events occur only at rest, "
-        "and the simulator has no position"
-    ),
-    "reference_lfp": (
-        "reference_lfp: zeros, so nothing is subtracted, as examples/literature_recipes.py "
-        "does: the simulation has no reference electrode"
-    ),
-    "external_ripples": (
-        "external_ripples: Zugaro_ripple_detector with the settings input_policy "
-        "records, the package's stated assumption for this paper's unspecified ripple "
-        "detector; not the simulation's truth"
-    ),
-    "example_ripples": (
-        "example_ripples: the largest Kay_ripple_detector events, as input_policy "
-        "records, the package's stand-in for manual selection; not the simulation's truth"
-    ),
 }
 
 _CONFIG_ID = re.compile(r"[a-z0-9_]+(\.[a-z0-9_]+)?")
@@ -459,6 +394,117 @@ def example_ripples(session: rd.SimulatedSession) -> FloatArray:
     return bounds(events.nlargest(EXAMPLE_RIPPLES["n_examples"], EXAMPLE_RIPPLES["rank_by"]))
 
 
+def _place_units(session: rd.SimulatedSession) -> IntArray:
+    """The units the session labels ``"place"``, by index."""
+    return np.flatnonzero(session.unit_types == "place")
+
+
+def _templates(session: rd.SimulatedSession) -> tuple[IntArray, ...]:
+    """One template of every place unit; none when no unit is labelled one."""
+    place = _place_units(session)
+    return (place,) if len(place) else ()
+
+
+@dataclass(frozen=True)
+class _PolicyInput:
+    """How the policy supplies one input.
+
+    Attributes
+    ----------
+    source : str or dict
+        Where it comes from, as ``input_policy`` records it: a description,
+        or the settings of the detector that builds it.
+    get : callable
+        Its value for a session.
+    stand_in : str or None
+        What it is and why, when it stands in for something the simulation
+        lacks; its assumption is the input's name, the method's meaning of
+        it, and this. None for an observation of the session.
+    """
+
+    source: str | dict[str, Any]
+    get: Callable[[rd.SimulatedSession], Any]
+    stand_in: str | None = None
+
+
+_REST = (
+    "rest: the recorded samples outside session.running_intervals, the simulator's "
+    "known running bouts"
+)
+_REST_STANDS_IN = (
+    "rest, the samples outside the simulator's known running bouts, stands in for"
+)
+
+# Every input a method can declare. The values supplied are in each result's
+# attrs["inputs"] and attrs["behavior_intervals"].
+_POLICY: dict[str, _PolicyInput] = {
+    "lfps": _PolicyInput(
+        "session.lfps: every pyramidal-layer channel, the ripple channel first",
+        lambda session: session.lfps,
+    ),
+    "sharp_wave_lfp": _PolicyInput(
+        "session.sharp_wave_lfp: the stratum radiatum channel",
+        lambda session: session.sharp_wave_lfp,
+    ),
+    "multiunit": _PolicyInput(
+        "session.multiunit: every unit", lambda session: session.multiunit
+    ),
+    "speed": _PolicyInput("session.speed", lambda session: session.speed),
+    "place_cells": _PolicyInput(
+        "units whose session.unit_types is 'place' (known labels)",
+        _place_units,
+        "every unit the simulator labels 'place', also standing in for any narrower "
+        "selection the method names, such as one template's, one directional template's, "
+        "one probe sequence's, block-specific or place-responsive cells, since the "
+        "simulator has no place fields or trajectories",
+    ),
+    "pyramidal": _PolicyInput(
+        "units whose session.unit_types is 'place' or 'pyramidal' (known labels)",
+        lambda session: np.flatnonzero(np.isin(session.unit_types, ("place", "pyramidal"))),
+        "every unit the simulator labels 'place' or 'pyramidal'",
+    ),
+    "templates": _PolicyInput(
+        "one template: the place_cells selection",
+        _templates,
+        "one template of every place unit, since the simulator has no place fields or "
+        "trajectories",
+    ),
+    "sleep_intervals": _PolicyInput(
+        _REST,
+        rest_intervals,
+        f"{_REST_STANDS_IN} the sleep state, since the simulated sessions are awake",
+    ),
+    "baseline_intervals": _PolicyInput(
+        _REST, rest_intervals, f"{_REST_STANDS_IN} the normalization epoch"
+    ),
+    "behavior_intervals": _PolicyInput(
+        _REST,
+        rest_intervals,
+        f"{_REST_STANDS_IN} the eligible epochs: simulated events occur only at rest, and "
+        "the simulator has no position",
+    ),
+    "reference_lfp": _PolicyInput(
+        "zeros",
+        lambda session: np.zeros_like(session.time),
+        "zeros, so nothing is subtracted, as examples/literature_recipes.py does: the "
+        "simulation has no reference electrode",
+    ),
+    "external_ripples": _PolicyInput(
+        EXTERNAL_RIPPLES,
+        external_ripples,
+        "Zugaro_ripple_detector with the settings input_policy records, the package's "
+        "stated assumption for this paper's unspecified ripple detector; not the "
+        "simulation's truth",
+    ),
+    "example_ripples": _PolicyInput(
+        EXAMPLE_RIPPLES,
+        example_ripples,
+        "the largest Kay_ripple_detector events, as input_policy records, the package's "
+        "stand-in for manual selection; not the simulation's truth",
+    ),
+}
+
+
 def make_recording(session: rd.SimulatedSession, config: RecipeConfig) -> Recording:
     """Build the ``Recording`` a configuration runs on, under ``INPUT_POLICY``.
 
@@ -486,25 +532,8 @@ def make_recording(session: rd.SimulatedSession, config: RecipeConfig) -> Record
         Unknown method.
     """
     _check_provenance(config)
-    place = np.flatnonzero(session.unit_types == "place")
-    sources: dict[str, Callable[[], Any]] = {
-        "lfps": lambda: session.lfps,
-        "sharp_wave_lfp": lambda: session.sharp_wave_lfp,
-        "multiunit": lambda: session.multiunit,
-        "speed": lambda: session.speed,
-        "place_cells": lambda: place,
-        "pyramidal": lambda: np.flatnonzero(
-            np.isin(session.unit_types, ("place", "pyramidal"))
-        ),
-        "templates": lambda: (place,) if len(place) else (),
-        "sleep_intervals": lambda: rest_intervals(session),
-        "baseline_intervals": lambda: rest_intervals(session),
-        "reference_lfp": lambda: np.zeros_like(session.time),
-        "external_ripples": lambda: external_ripples(session),
-        "example_ripples": lambda: example_ripples(session),
-    }
     names, _ = supplied_inputs(config)
-    inputs = {name: sources[name]() for name in names}
+    inputs = {name: _POLICY[name].get(session) for name in names}
     return Recording.from_arrays(session.time, session.sampling_frequency, **inputs)
 
 
@@ -526,7 +555,7 @@ def behavior_intervals(
         would drop events.
     """
     _, takes_behavior_intervals = supplied_inputs(config)
-    return rest_intervals(session) if takes_behavior_intervals else None
+    return _POLICY["behavior_intervals"].get(session) if takes_behavior_intervals else None
 
 
 def run_recipe(
@@ -611,7 +640,7 @@ def input_policy(config: RecipeConfig) -> dict[str, Any]:
     """
     _check_provenance(config)
     names, takes_behavior_intervals = supplied_inputs(config)
-    sources = {name: _SOURCES[name] for name in names}
+    sources = {name: _POLICY[name].source for name in names}
     for name, source in sources.items():
         if isinstance(source, dict):
             defaults = rd.get_detector(source["detector"]).parameters
@@ -619,7 +648,7 @@ def input_policy(config: RecipeConfig) -> dict[str, Any]:
     return {
         "name": config.input_policy,
         "recording": _json_ready(sources),
-        "behavior_intervals": _SOURCES["behavior_intervals"]
+        "behavior_intervals": _POLICY["behavior_intervals"].source
         if takes_behavior_intervals
         else None,
         "values": "each result's attrs['inputs'] and attrs['behavior_intervals']",
@@ -675,11 +704,11 @@ def _assumptions(config: RecipeConfig) -> tuple[str, ...]:
     requirements = _entry(config.method)["requirements"]
     meanings = {requirement["input"]: requirement["meaning"] for requirement in requirements}
     assumptions = [
-        _ASSUMPTIONS[name].replace(":", f', for "{meanings[name]}":', 1)
+        f'{name}, for "{meanings[name]}": {stand_in}'
         if meanings[name]
-        else _ASSUMPTIONS[name]
+        else f"{name}: {stand_in}"
         for name in policy_inputs(config)
-        if name in _ASSUMPTIONS
+        if (stand_in := _POLICY[name].stand_in) is not None
     ]
     unreported = {
         requirement["input"]
