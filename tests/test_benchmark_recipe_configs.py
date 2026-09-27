@@ -609,3 +609,13 @@ def test_assumptions_state_every_stand_in_and_unreported_value(recipe_configs, c
         options = dict(config.options)
         for name in unreported:
             assert f"{name}={options[name]!r}: unreported" in " ".join(config.assumptions)
+
+
+def test_the_readme_lists_every_exclusion(recipe_configs):
+    readme = (EXAMPLES / "benchmark" / "README.md").read_text()
+    section = readme.split("## Exclusions", 1)[1].split("\n## ", 1)[0]
+    items = re.findall(
+        r"^- `([a-z0-9_]+)`: (.*?)(?=^- `|\Z)", section, re.MULTILINE | re.DOTALL
+    )
+    listed = {name: " ".join(reason.split()) for name, reason in items}
+    assert listed == recipe_configs.EXCLUSIONS

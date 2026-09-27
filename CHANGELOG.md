@@ -144,6 +144,12 @@ here is relative to 1.7.1.
   events, and the correlation of their errors;
   `consensus_counts` which methods found each true event; `label_by_overlap` the
   window each event overlaps longest.
+- `examples/benchmark/recipe_configs.py`, the benchmark's configurations of the
+  packaged literature methods: each names a method, its options and the event
+  expression it is scored against first, builds the method's recording from a
+  simulated network session with `Recording.from_arrays` under one stated input
+  policy, and runs it through `run_method`. The methods it does not configure are
+  listed with the reason in `examples/benchmark/README.md`.
 - `load_literature_parameters`, the detection parameters of 57 replay papers,
   and a simulation study comparing every detector (`examples/simulation_study.py`).
 - `load_literature_datasets`, a separate packaged catalog of public recording

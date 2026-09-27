@@ -18,12 +18,13 @@ The suite, with its shared fixtures:
 14. **[tests/test_benchmark_recipe_configs.py](test_benchmark_recipe_configs.py)** - The
     benchmark's configurations of the literature methods (examples/benchmark/recipe_configs.py)
     on a one-minute network session: configurations and exclusions partition `list_methods()`,
-    each exclusion is what `check_method` reports; every configuration passes `check_method`,
-    equals the direct public call (frame and attrs) and records its resolved options; the
-    stage, ids, primary expressions and error paths; the input policy (exactly the declared
-    inputs, unit labels, rest intervals, `when`/`unless`, no stand-in for missing labels, no
-    truth read, stand-ins equal to the package's simulation proxies, external detectors'
-    provenance); missing LFP samples, a Unix clock origin, recording lifetime, the
-    `methods.csv` row and the assumptions; the package and the demo import no benchmark code
+    each exclusion is what `check_method` reports and the README lists; every configuration
+    passes `check_method`, equals the direct public call (frame and attrs) and records its
+    resolved options; the stage, ids, primary expressions and error paths; the input policy
+    (exactly the declared inputs, unit labels, rest intervals, `when`/`unless`, no stand-in
+    for missing labels, no truth read, stand-ins equal to the package's simulation proxies,
+    external detectors' provenance); missing LFP samples, a Unix clock origin, recording
+    lifetime, the `methods.csv` row and the assumptions; the package and the demo import no
+    benchmark code
 
 The whole suite runs in seconds; `pytest` reports coverage of `src/ripple_detection` with the missing lines. The package also validates that example notebooks run without errors in CI.
