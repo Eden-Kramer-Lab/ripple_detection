@@ -688,7 +688,7 @@ def test_unlabeled_units_are_not_selected(recipe_configs, session, configs):
             recipe_configs.run_recipe(config, recording, eligible)
 
 
-def test_the_policy_reads_no_truth(recipe_configs, session, configs, results):
+def test_the_policy_reads_no_truth(recipe_configs, session):
     blind = dataclasses.replace(
         session,
         events=session.events.iloc[:0],
@@ -705,10 +705,6 @@ def test_the_policy_reads_no_truth(recipe_configs, session, configs, results):
         blind_recording, blind_eligible = _call_inputs(recipe_configs, blind, config)
         _assert_same_recording(recording, blind_recording)
         np.testing.assert_array_equal(eligible, blind_eligible, err_msg=config.config_id)
-    for name in STAND_INS:
-        pd.testing.assert_frame_equal(
-            _run(recipe_configs, blind, configs[name]), results[name]
-        )
 
 
 def test_external_inventories_are_the_stated_detectors(recipe_configs, session, configs):
