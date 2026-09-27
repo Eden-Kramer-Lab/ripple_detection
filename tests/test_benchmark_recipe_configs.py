@@ -120,7 +120,7 @@ def results(recipe_configs, session):
 
 def _unconfigured(module, method):
     """A configuration of ``method`` with no options, as an excluded one would be."""
-    return module.RecipeConfig(method, method, "ripple", input_policy=module.INPUT_POLICY)
+    return module.configure(method, "ripple")
 
 
 def _supplied(recording) -> set[str]:
@@ -260,12 +260,8 @@ def test_resolved_options_are_the_options_a_call_records(recipe_configs, results
 def test_resolved_options_follow_the_packages_json_convention(recipe_configs, session):
     # NumPy scalars become Python numbers and non-finite values None, as in
     # a result's attrs["options"], whatever type the configuration holds.
-    config = recipe_configs.RecipeConfig(
-        "olafsdottir_2015",
-        "olafsdottir_2015",
-        "burst",
-        (("minimum_active_units", np.int64(7)),),
-        recipe_configs.INPUT_POLICY,
+    config = recipe_configs.configure(
+        "olafsdottir_2015", "burst", ("minimum_active_units", np.int64(7))
     )
     resolved = recipe_configs.resolved_options(config)
     recorded = _run(recipe_configs, session, config).attrs["options"]
@@ -328,7 +324,9 @@ def test_primary_expressions_follow_the_inputs_events_need(recipe_configs):
 
 
 def test_an_unknown_method_raises(recipe_configs, session, configs):
-    config = _unconfigured(recipe_configs, "not_a_method")
+    config = recipe_configs.RecipeConfig(
+        "not_a_method", "not_a_method", "ripple", input_policy=recipe_configs.INPUT_POLICY
+    )
     recording = recipe_configs.make_recording(session, configs["bendor_2012"])
     for call in (
         lambda: recipe_configs.make_recording(session, config),
@@ -368,6 +366,23 @@ def test_another_input_policy_is_refused(recipe_configs, session, configs):
     config = dataclasses.replace(configs["karlsson_2009"], input_policy="measured")
     with pytest.raises(ValueError, match="input policy"):
         recipe_configs.make_recording(session, config)
+
+
+def test_a_configuration_whose_provenance_is_stale_raises(recipe_configs, session, configs):
+    # Changing the stage adds place_cells, whose stand-in the copied
+    # assumptions do not state; a bare configuration names no input policy.
+    stale = dataclasses.replace(
+        configs["grosmark_2016"], options=(("stage", "decoding_candidates"),)
+    )
+    bare = recipe_configs.RecipeConfig("karlsson_2009", "karlsson_2009", "ripple")
+    for config, message in ((stale, "assumptions"), (bare, "input policy")):
+        for call in (
+            recipe_configs.input_policy,
+            recipe_configs.method_record,
+            lambda config: recipe_configs.make_recording(session, config),
+        ):
+            with pytest.raises(ValueError, match=message):
+                call(config)
 
 
 def test_unit_selections_are_the_simulators_labels(recipe_configs, session, configs):

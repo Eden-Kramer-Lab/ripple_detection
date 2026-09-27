@@ -231,11 +231,12 @@ def _entry(method: str) -> dict[str, Any]:
     return catalog[method]
 
 
-def _resolved(config: RecipeConfig) -> dict[str, Any]:
+def _resolved(method: str, options: Params) -> dict[str, Any]:
     """Every option of the method: the configured value, else its default.
     A required option the configuration does not give is left out."""
-    signature = inspect.signature(getattr(literature_methods, config.method))
-    call = signature.bind_partial(**dict(config.options))
+    _entry(method)
+    signature = inspect.signature(getattr(literature_methods, method))
+    call = signature.bind_partial(**dict(options))
     call.apply_defaults()
     return {
         name: value
@@ -289,8 +290,9 @@ def resolved_options(config: RecipeConfig) -> dict[str, Any]:
     TypeError
         An option the method does not take.
     """
-    _entry(config.method)
-    resolved: dict[str, Any] = _json_ready(_resolved(config), non_finite_as_none=True)
+    resolved: dict[str, Any] = _json_ready(
+        _resolved(config.method, config.options), non_finite_as_none=True
+    )
     return resolved
 
 
@@ -319,14 +321,19 @@ def policy_inputs(config: RecipeConfig) -> tuple[str, ...]:
     TypeError
         An option the method does not take.
     """
-    requirements = _entry(config.method)["requirements"]
-    options = _resolved(config)
+    return _inputs(config.method, config.options)
+
+
+def _inputs(method: str, options: Params) -> tuple[str, ...]:
+    """``policy_inputs`` of a method with these options."""
+    requirements = _entry(method)["requirements"]
+    resolved = _resolved(method, options)
     return tuple(
         dict.fromkeys(
             requirement["input"]
             for requirement in requirements
             if requirement["kind"] != "option"
-            and all(options.get(option) == value for option, value in requirement["when"])
+            and all(resolved.get(option) == value for option, value in requirement["when"])
         )
     )
 
@@ -441,16 +448,12 @@ def make_recording(session: rd.SimulatedSession, config: RecipeConfig) -> Record
     Raises
     ------
     ValueError
-        ``config.input_policy`` is not ``INPUT_POLICY``.
+        ``config.input_policy`` is not ``INPUT_POLICY``, or its
+        ``assumptions`` are not those its method and options imply.
     KeyError
         Unknown method.
     """
-    if config.input_policy != INPUT_POLICY:
-        msg = (
-            f"{config.config_id} names input policy {config.input_policy!r}; "
-            f"expected {INPUT_POLICY!r}."
-        )
-        raise ValueError(msg)
+    _check_provenance(config)
     place = np.flatnonzero(session.unit_types == "place")
     sources: dict[str, Callable[[], Any]] = {
         "lfps": lambda: session.lfps,
@@ -567,7 +570,14 @@ def input_policy(config: RecipeConfig) -> dict[str, Any]:
         setting there (no limit, no mask); the method options in
         ``resolved_options`` instead follow the package's attrs, which write
         it as None.
+
+    Raises
+    ------
+    ValueError
+        ``config.input_policy`` is not ``INPUT_POLICY``, or its
+        ``assumptions`` are not those its method and options imply.
     """
+    _check_provenance(config)
     inputs = policy_inputs(config)
     sources = {name: _SOURCES[name] for name in inputs if name != "behavior_intervals"}
     for name, source in sources.items():
@@ -599,7 +609,14 @@ def method_record(config: RecipeConfig) -> dict[str, str]:
         ``list_methods()``), ``stage``, ``primary_expression``,
         ``resolved_options``, ``input_policy`` and ``assumptions`` (JSON),
         and ``interpretation``, in that order.
+
+    Raises
+    ------
+    ValueError
+        ``config.input_policy`` is not ``INPUT_POLICY``, or its
+        ``assumptions`` are not those its method and options imply.
     """
+    _check_provenance(config)
     entry = _entry(config.method)
     options = resolved_options(config)
     return {
@@ -617,32 +634,22 @@ def method_record(config: RecipeConfig) -> dict[str, str]:
     }
 
 
-def _configure(
-    method: str, primary_expression: str, *options: tuple[str, Any], label: str = ""
-) -> RecipeConfig:
-    """A configuration under ``INPUT_POLICY``, its assumptions derived from
-    the inputs the policy supplies and the unreported options it sets."""
-    config = RecipeConfig(
-        f"{method}.{label}" if label else method,
-        method,
-        primary_expression,
-        tuple(options),
-        INPUT_POLICY,
-    )
-    meanings = {
-        requirement["input"]: requirement["meaning"]
-        for requirement in _entry(method)["requirements"]
-    }
+def _assumptions(method: str, options: Params) -> tuple[str, ...]:
+    """The benchmark choices a configuration of ``method`` with ``options``
+    relies on: the stand-in for each input the policy supplies that is not
+    an observation, and each unreported option set to a demonstration value."""
+    requirements = _entry(method)["requirements"]
+    meanings = {requirement["input"]: requirement["meaning"] for requirement in requirements}
     assumptions = [
         _ASSUMPTIONS[name].replace(":", f" ({meanings[name]}):", 1)
         if meanings[name]
         else _ASSUMPTIONS[name]
-        for name in policy_inputs(config)
+        for name in _inputs(method, options)
         if name in _ASSUMPTIONS
     ]
     unreported = {
         requirement["input"]
-        for requirement in _entry(method)["requirements"]
+        for requirement in requirements
         if requirement["kind"] == "option" and requirement["measured_only"]
     }
     assumptions += [
@@ -650,13 +657,66 @@ def _configure(
         for name, value in options
         if name in unreported
     ]
+    return tuple(assumptions)
+
+
+def _check_provenance(config: RecipeConfig) -> None:
+    """Raise unless ``config`` names ``INPUT_POLICY`` and states the
+    assumptions its method and options imply, so no record is stale."""
+    if config.input_policy != INPUT_POLICY:
+        msg = (
+            f"{config.config_id} names input policy {config.input_policy!r}; "
+            f"expected {INPUT_POLICY!r}. Build configurations with configure()."
+        )
+        raise ValueError(msg)
+    expected = _assumptions(config.method, config.options)
+    if config.assumptions != expected:
+        msg = (
+            f"{config.config_id}'s assumptions are not those its method and options "
+            f"imply: {list(expected)}. Build configurations with configure()."
+        )
+        raise ValueError(msg)
+
+
+def configure(
+    method: str, primary_expression: str, *options: tuple[str, Any], label: str = ""
+) -> RecipeConfig:
+    """A configuration under ``INPUT_POLICY`` with the assumptions it implies.
+
+    Parameters
+    ----------
+    method : str
+        Exact function name from ``list_methods()``.
+    primary_expression : str
+        ``"ripple"``, ``"sharp_wave"``, ``"burst"`` or ``"network"``.
+    *options : (str, object) pairs
+        Method options.
+    label : str, optional
+        A protocol variant's label; the id is then ``"{method}.{label}"``.
+
+    Returns
+    -------
+    config : RecipeConfig
+        Its ``assumptions`` state the stand-in for each input the policy
+        supplies that is not an observation, and each unreported option set
+        to the package's demonstration value.
+
+    Raises
+    ------
+    KeyError
+        Unknown method.
+    TypeError
+        An option the method does not take.
+    ValueError
+        As ``RecipeConfig``.
+    """
     return RecipeConfig(
-        config.config_id,
+        f"{method}.{label}" if label else method,
         method,
         primary_expression,
-        config.options,
+        tuple(options),
         INPUT_POLICY,
-        tuple(assumptions),
+        _assumptions(method, tuple(options)),
     )
 
 
@@ -668,101 +728,101 @@ _DETECTION = ("stage", "detection")
 # events alone, "network" where the events join an LFP ripple or SWR detection
 # with a population-burst detection.
 RECIPES: tuple[RecipeConfig, ...] = (
-    _configure("mallory_2025", "burst"),
-    _configure("widloski_2025", "ripple"),
-    _configure("yang_2024", "network"),
-    _configure("huelin_gorriz_2023", "network"),
+    configure("mallory_2025", "burst"),
+    configure("widloski_2025", "ripple"),
+    configure("yang_2024", "network"),
+    configure("huelin_gorriz_2023", "network"),
     # Long's SWR detector with a pyramidal spiking veto near the ripple peak.
-    _configure("harvey_2023_code", "ripple", _DETECTION),
-    _configure("harvey_2023_text", "ripple", _DETECTION),
-    _configure("liu_2023", "network"),
-    _configure("tirole_2022", "network"),
-    _configure("bush_2022", "burst"),
-    _configure("berners_lee_2022", "burst"),
+    configure("harvey_2023_code", "ripple", _DETECTION),
+    configure("harvey_2023_text", "ripple", _DETECTION),
+    configure("liu_2023", "network"),
+    configure("tirole_2022", "network"),
+    configure("bush_2022", "burst"),
+    configure("berners_lee_2022", "burst"),
     # SWRs trimmed to the stretch of place-cell activity inside them.
-    _configure("krause_2022", "network"),
-    _configure("mou_2022", "burst", _DETECTION),
-    _configure("berners_lee_2021", "ripple"),
-    _configure("denovellis_2021", "ripple"),
-    _configure("gillespie_2021", "ripple"),
-    _configure("michon_2021", "network"),
+    configure("krause_2022", "network"),
+    configure("mou_2022", "burst", _DETECTION),
+    configure("berners_lee_2021", "ripple"),
+    configure("denovellis_2021", "ripple"),
+    configure("gillespie_2021", "ripple"),
+    configure("michon_2021", "network"),
     # The implemented candidate stage is population-only; the GMM split on
     # ripple power that makes the paper's output "SWR+MUA" is not reproduced.
-    _configure("igata_2021", "burst"),
-    _configure("gridchyn_2020", "burst"),
-    _configure("kaefer_2020", "ripple"),
-    _configure("bhattarai_2020", "network"),
-    _configure(
+    configure("igata_2021", "burst"),
+    configure("gridchyn_2020", "burst"),
+    configure("kaefer_2020", "ripple"),
+    configure("bhattarai_2020", "network"),
+    configure(
         "stella_2019",
         "ripple",
         ("frequencies", (150.0, 170.0, 190.0, 210.0, 230.0, 250.0)),
         ("cycles", 7.0),
     ),
-    _configure("xu_2019", "burst"),
-    _configure("farooq_2019_neuron", "burst"),
-    _configure("farooq_2019_science", "burst"),
-    _configure("chenani_2019", "burst"),
-    _configure("michon_2019", "network"),
-    _configure("liu_2019", "burst"),
-    _configure("shin_2019", "ripple", _DETECTION),
-    _configure("carey_2019", "network"),
-    _configure("muessig_2019", "network"),
-    _configure("drieu_2018", "burst", _DETECTION),
-    _configure("maboudi_2018", "burst"),
-    _configure("olafsdottir_2017", "burst"),
-    _configure("olafsdottir_2017", "burst", ("analysis", "trajectory"), label="trajectory"),
-    _configure("wu_2017", "burst", _DETECTION),
-    _configure("yamamoto_2017", "network"),
-    _configure("tang_2017", "ripple"),
-    _configure("grosmark_2016", "network", _DETECTION),
-    _configure("ambrose_2016", "ripple"),
-    _configure("jadhav_2016", "ripple", _DETECTION),
-    _configure("olafsdottir_2016", "burst"),
-    _configure("silva_2015", "burst"),
-    _configure("olafsdottir_2015", "burst"),
-    _configure(
+    configure("xu_2019", "burst"),
+    configure("farooq_2019_neuron", "burst"),
+    configure("farooq_2019_science", "burst"),
+    configure("chenani_2019", "burst"),
+    configure("michon_2019", "network"),
+    configure("liu_2019", "burst"),
+    configure("shin_2019", "ripple", _DETECTION),
+    configure("carey_2019", "network"),
+    configure("muessig_2019", "network"),
+    configure("drieu_2018", "burst", _DETECTION),
+    configure("maboudi_2018", "burst"),
+    configure("olafsdottir_2017", "burst"),
+    configure("olafsdottir_2017", "burst", ("analysis", "trajectory"), label="trajectory"),
+    configure("wu_2017", "burst", _DETECTION),
+    configure("yamamoto_2017", "network"),
+    configure("tang_2017", "ripple"),
+    configure("grosmark_2016", "network", _DETECTION),
+    configure("ambrose_2016", "ripple"),
+    configure("jadhav_2016", "ripple", _DETECTION),
+    configure("olafsdottir_2016", "burst"),
+    configure("silva_2015", "burst"),
+    configure("olafsdottir_2015", "burst"),
+    configure(
         "olafsdottir_2015",
         "burst",
         ("minimum_active_units", 7),
         label="bayesian_candidates",
     ),
-    _configure("pfeiffer_2015", "ripple"),
-    _configure("wu_2014", "burst"),
+    configure("pfeiffer_2015", "ripple"),
+    configure("wu_2014", "burst"),
     # Ripple-power windows; >= 3 active units and >= 5 spikes is a gate.
-    _configure("wikenheiser_2013", "ripple", ("window_anchor", "samples")),
-    _configure("pfeiffer_2013", "burst"),
-    _configure("carr_2012", "ripple", _DETECTION),
-    _configure("bendor_2012", "burst"),
+    configure("wikenheiser_2013", "ripple", ("window_anchor", "samples")),
+    configure("pfeiffer_2013", "burst"),
+    configure("carr_2012", "ripple", _DETECTION),
+    configure("bendor_2012", "burst"),
     # A gate, not an event definition (role "candidate_gate"); scored as ripples.
-    _configure("gupta_2010", "ripple"),
-    _configure("karlsson_2009", "ripple"),
-    _configure("davidson_2009", "burst"),
-    _configure("diba_2007", "burst"),
-    _configure("ji_2007", "burst", _DETECTION),
-    _configure("foster_2006", "burst"),
-    _configure("lee_2002", "burst"),
-    _configure("nadasdy_1999", "ripple", ("rms_window", 0.004), ("bound_threshold", 0.0)),
-    _configure("kudrimoti_1999", "ripple", ("threshold_sd", 3.0)),
+    configure("gupta_2010", "ripple"),
+    configure("karlsson_2009", "ripple"),
+    configure("davidson_2009", "burst"),
+    configure("diba_2007", "burst"),
+    configure("ji_2007", "burst", _DETECTION),
+    configure("foster_2006", "burst"),
+    configure("lee_2002", "burst"),
+    configure("nadasdy_1999", "ripple", ("rms_window", 0.004), ("bound_threshold", 0.0)),
+    configure("kudrimoti_1999", "ripple", ("threshold_sd", 3.0)),
     # Zugaro's FindRipples branch with the same spiking veto as harvey_2023_code.
-    _configure("harvey_2023_no_radiatum", "ripple", _DETECTION),
-    _configure("mallory_2025_ripples", "ripple"),
-    _configure("igata_2021_ripples", "ripple"),
-    _configure("wu_2014_ripples", "ripple"),
-    _configure("pfeiffer_2013_ripples", "ripple"),
-    _configure("davidson_2009_ripples", "ripple"),
-    _configure("ji_2007_ripples", "ripple"),
-    _configure("lee_2002_ripples", "ripple"),
-    _configure("foster_2006_ripples", "ripple"),
-    _configure("widloski_2025_bursts", "burst"),
-    _configure("krause_2022_hse", "burst"),
-    _configure("denovellis_2021_mua", "burst"),
-    _configure("gillespie_2021_mua", "burst"),
-    _configure("maboudi_2018_open_field", "burst"),
-    _configure("muessig_2019_ripples", "ripple"),
+    configure("harvey_2023_no_radiatum", "ripple", _DETECTION),
+    configure("mallory_2025_ripples", "ripple"),
+    configure("igata_2021_ripples", "ripple"),
+    configure("wu_2014_ripples", "ripple"),
+    configure("pfeiffer_2013_ripples", "ripple"),
+    configure("davidson_2009_ripples", "ripple"),
+    configure("ji_2007_ripples", "ripple"),
+    configure("lee_2002_ripples", "ripple"),
+    configure("foster_2006_ripples", "ripple"),
+    configure("widloski_2025_bursts", "burst"),
+    configure("krause_2022_hse", "burst"),
+    configure("denovellis_2021_mua", "burst"),
+    configure("gillespie_2021_mua", "burst"),
+    configure("maboudi_2018_open_field", "burst"),
+    configure("muessig_2019_ripples", "ripple"),
     # Ripples with >= 5 active place cells: a participation gate.
-    _configure("bhattarai_2020_ripples", "ripple"),
-    _configure("farooq_2019_science_awake", "burst"),
-    _configure("liu_2019_awake", "burst"),
+    configure("bhattarai_2020_ripples", "ripple"),
+    configure("farooq_2019_science_awake", "burst"),
+    configure("liu_2019_awake", "burst"),
 )
 
 _UNRESAMPLED = (
