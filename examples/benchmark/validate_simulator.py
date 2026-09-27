@@ -76,10 +76,11 @@ from conditions import (
     REFERENCE_REVISIONS,
     Condition,
     ReferenceRevision,
+    render_tables,
     resolve,
     select_conditions,
     session_seed,
-    simulate_condition,
+    simulate_parameters,
 )
 from numpy.typing import ArrayLike
 from scipy import signal, stats
@@ -764,15 +765,6 @@ class _Render(Protocol):
     ) -> rd.SimulatedSession: ...
 
 
-def _render_seed(replicate: int) -> int:
-    """The rendering stage's seed of ``replicate``, as ``simulate_condition``
-    derives it (the fourth of four seeds drawn from ``session_seed``)."""
-    seeds = np.random.default_rng(session_seed(replicate)).integers(
-        np.iinfo(np.int64).max, size=4
-    )
-    return int(seeds[3])
-
-
 def _peak_rss_bytes() -> int:
     usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return int(usage if sys.platform == "darwin" else usage * 1024)
@@ -900,24 +892,15 @@ def measure_session(
     """
     started = clock.perf_counter()
     parameters = resolve(condition, overrides)
-    session = simulate_condition(condition, replicate, overrides)
+    session = simulate_parameters(parameters, replicate)
     time = session.time
     rate = float(session.sampling_frequency)
-    seed = _render_seed(replicate)
     bouts = session.running_intervals
 
     def rendered(
         table: pd.DataFrame, non_events: pd.DataFrame | None = None
     ) -> rd.SimulatedSession:
-        return rd.simulate_network_session(
-            time,
-            table,
-            non_events=non_events,
-            running_intervals=bouts,
-            rng=np.random.default_rng(seed),
-            sampling_frequency=rate,
-            **parameters["render"],
-        )
+        return render_tables(parameters, replicate, time, table, non_events, bouts)
 
     out = _Collector()
     events, non_events = session.events, session.non_events

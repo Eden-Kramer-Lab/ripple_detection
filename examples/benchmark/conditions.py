@@ -13,7 +13,8 @@ reference, one factor at a time, and two crossed pairs of factors;
 was first set, with its reason and evidence.
 
 ``simulate_condition`` renders replicate ``k`` of a condition, and
-``simulate_parameters`` of a saved parameter set (``parameters_from_json``).
+``simulate_parameters`` of a saved parameter set (``parameters_from_json``);
+``render_tables`` renders other tables with a replicate's rendering stage.
 Replicate ``k`` has the same seed in every condition (common random numbers),
 so conditions are compared replicate by replicate.
 """
@@ -27,6 +28,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
 import ripple_detection as rd
 from ripple_detection.core import FloatArray
@@ -485,6 +487,27 @@ def session_seed(replicate: int) -> int:
     return _FIRST_SEED + replicate
 
 
+def stage_seeds(replicate: int) -> tuple[int, int, int, int]:
+    """The seeds of replicate ``replicate``'s four stages.
+
+    Parameters
+    ----------
+    replicate : int
+        From 0.
+
+    Returns
+    -------
+    schedule, events, non_events, render : int
+        Drawn at once by a generator seeded with ``session_seed(replicate)``,
+        so each depends on the replicate alone.
+    """
+    seeds = np.random.default_rng(session_seed(replicate)).integers(
+        np.iinfo(np.int64).max, size=4
+    )
+    schedule, events, non_events, render = (int(seed) for seed in seeds)
+    return schedule, events, non_events, render
+
+
 def running_schedule(duration_s: float, rng: np.random.Generator) -> FloatArray:
     """Running bouts separated by rest, starting and ending at rest.
 
@@ -702,8 +725,9 @@ def simulate_parameters(
     the schedule and the sampling rate.
 
     Randomness: one generator seeded with ``session_seed(replicate)`` draws
-    four seeds at once, one per stage in that order, and each stage draws
-    only from a generator of its own seed. So a stage's random stream depends
+    four seeds at once (``stage_seeds``), one per stage in that order, and
+    each stage draws only from a generator of its own seed (the rendering
+    through ``render_tables``). So a stage's random stream depends
     on the replicate alone, never on how many draws another stage made:
     replicate ``k`` has the same schedule in every condition of one duration,
     and its later stages start from the same streams. Within a stage the
@@ -737,33 +761,62 @@ def simulate_parameters(
     duration = parameters["session"]["duration_s"]
     rate = parameters["session"]["sampling_frequency"]
     time = rd.simulate_time(round(duration * rate), rate)
-    schedule, events, non_events, render = (
-        np.random.default_rng(seed)
-        for seed in np.random.default_rng(session_seed(replicate)).integers(
-            np.iinfo(np.int64).max, size=4
-        )
-    )
-    running = running_schedule(duration, schedule)
+    schedule, events, non_events, _ = stage_seeds(replicate)
+    running = running_schedule(duration, np.random.default_rng(schedule))
     network_events = rd.draw_network_events(
         time,
         running_intervals=running,
-        rng=events,
+        rng=np.random.default_rng(events),
         sampling_frequency=rate,
         **parameters["events"],
     )
     other_events = rd.draw_non_events(
         time,
         running_intervals=running,
-        rng=non_events,
+        rng=np.random.default_rng(non_events),
         sampling_frequency=rate,
         **parameters["non_events"],
     )
+    return render_tables(parameters, replicate, time, network_events, other_events, running)
+
+
+def render_tables(
+    parameters: Mapping[str, Mapping[str, Any]],
+    replicate: int,
+    time: FloatArray,
+    events: pd.DataFrame,
+    non_events: pd.DataFrame | None,
+    running_intervals: FloatArray,
+) -> rd.SimulatedSession:
+    """The rendering stage of replicate ``replicate``, of any tables.
+
+    ``simulate_network_session`` with the ``"render"`` section of
+    ``parameters`` and a generator of the stage's own seed
+    (``stage_seeds``): ``simulate_parameters``' last stage, and, given other
+    tables, a rendering of the same session's noise and spikes with other
+    events.
+
+    Parameters
+    ----------
+    parameters : mapping of str to mapping
+        Every section, as ``resolve`` gives them.
+    replicate : int
+    time : ndarray, shape (n_time,)
+    events : pandas.DataFrame
+        A latent event table.
+    non_events : pandas.DataFrame or None
+    running_intervals : ndarray, shape (n_bouts, 2)
+
+    Returns
+    -------
+    session : SimulatedSession
+    """
     return rd.simulate_network_session(
         time,
-        network_events,
-        non_events=other_events,
-        running_intervals=running,
-        rng=render,
-        sampling_frequency=rate,
+        events,
+        non_events=non_events,
+        running_intervals=running_intervals,
+        rng=np.random.default_rng(stage_seeds(replicate)[3]),
+        sampling_frequency=parameters["session"]["sampling_frequency"],
         **parameters["render"],
     )

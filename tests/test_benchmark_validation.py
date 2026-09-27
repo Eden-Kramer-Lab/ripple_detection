@@ -737,18 +737,17 @@ class TestReport:
         latent = bursts.loc[first.event_id, "n_participants"].to_numpy() / principal.size
         assert not np.allclose(expected, latent)
 
-    def test_rendering_seed_reproduces_the_session(self, validate, conditions):
+    def test_rendering_seed_reproduces_the_session(self, conditions):
         reference = conditions.conditions()[0]
         overrides = {"session.duration_s": 40.0}
         session = conditions.simulate_condition(reference, 3, overrides)
-        again = rd.simulate_network_session(
+        again = conditions.render_tables(
+            conditions.resolve(reference, overrides),
+            3,
             session.time,
             session.events,
-            non_events=session.non_events,
-            running_intervals=session.running_intervals,
-            rng=np.random.default_rng(validate._render_seed(3)),
-            sampling_frequency=session.sampling_frequency,
-            **conditions.resolve(reference, overrides)["render"],
+            session.non_events,
+            session.running_intervals,
         )
         np.testing.assert_array_equal(again.lfps, session.lfps)
         np.testing.assert_array_equal(again.multiunit, session.multiunit)
