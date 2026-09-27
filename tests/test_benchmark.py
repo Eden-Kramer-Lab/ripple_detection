@@ -1333,6 +1333,25 @@ def test_a_worker_failure_cancels_the_queued_sessions(run, cli, monkeypatch):
         release.set()
 
 
+def test_replicates_are_written_in_order_with_their_seeds(run, cli):
+    """Two replicates on two workers, whichever finishes first."""
+    start, _, _ = cli
+    root = start("two", condition_ids=["reference"], replicates=2, workers=2)
+    condition = root / "conditions" / "reference"
+    rows = run.read_table(condition / "sessions.csv.gz")
+    assert list(rows.session_id) == ["reference/0", "reference/1"]
+    assert list(rows.replicate) == [0, 1]
+    assert list(rows.seed) == [20260924, 20260925]
+    spec = json.loads((root / "run_spec.json").read_text())
+    assert spec["replicates"] == {"reference": 2}
+    assert spec["seeds"] == {"reference": [20260924, 20260925]}
+    assert json.loads((root / "manifest.json").read_text())["n_workers"] == 2
+    # each replicate is its own draw, in its own rows of every table
+    units = run.read_table(condition / "units.csv.gz")
+    first, second = (rows.baseline_rate.to_numpy() for _, rows in units.groupby("session_id"))
+    assert not np.array_equal(first, second)
+
+
 def test_workers_write_what_one_process_writes(run, cli, finished_run):
     start, _, _ = cli
     root = start("pooled", workers=2)
