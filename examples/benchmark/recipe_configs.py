@@ -732,8 +732,11 @@ RECIPES: tuple[RecipeConfig, ...] = (
     configure("widloski_2025", "ripple"),
     configure("yang_2024", "network"),
     configure("huelin_gorriz_2023", "network"),
-    # Long's SWR detector with a pyramidal spiking veto near the ripple peak.
+    # Long's SWR detector on the pyramidal and radiatum channels, then a
+    # pyramidal spiking veto near the ripple peak.
     configure("harvey_2023_code", "ripple", _DETECTION),
+    # Difference-of-Gaussians ripples overlapping radiatum sharp waves; the
+    # detection stage applies no spiking criterion.
     configure("harvey_2023_text", "ripple", _DETECTION),
     configure("liu_2023", "network"),
     configure("tirole_2022", "network"),
