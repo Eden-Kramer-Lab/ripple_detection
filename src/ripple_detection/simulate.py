@@ -1918,8 +1918,10 @@ def draw_network_events(
     - Assumed: the type mix, the 0.05 s separation, ripple skew, the ripple
       and weak-ripple SNR ranges, sharp-wave amplitudes (3-8, around and
       above the delta amplitude, 4, of ``examples/literature_recipes.py``)
-      and lags, the burst gain of 40 (``examples/literature_recipes.py``),
-      span ratio and lag, the
+      and lags, the burst gain of 40 (``examples/literature_recipes.py``; the
+      benchmark's validated reference lowers it to 34, so that pyramidal
+      rates at the ripple's peak rise 8.6-fold, Csicsvari et al. 1999's
+      mean), span ratio and lag, the
       ``burst_only`` span, the weak-ripple values, and the renderer's noise,
       leaks, channel count and theta and delta amplitudes
       (``simulate_session``'s and ``examples/literature_recipes.py``'s).

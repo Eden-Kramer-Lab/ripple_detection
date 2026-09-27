@@ -61,7 +61,7 @@ REFERENCE: dict[str, dict[str, Any]] = {
         "sharp_wave_lag": 0.01,
         "burst_duration_ratio": (1.0, 1.5),
         "burst_lag": 0.01,
-        "burst_gain": 40.0,
+        "burst_gain": 34.0,  # revised: see REFERENCE_REVISIONS
         "participation": (0.2, 0.6),
         "weak_participation": (0.02, 0.1),
         "burst_only_duration": (0.05, 0.3),
@@ -162,6 +162,25 @@ REFERENCE_REVISIONS: tuple[ReferenceRevision, ...] = (
             "that cross (standard error): x1.0 33.3 ms (0.64), x1.3 40.0 (0.71), "
             "x1.4 42.7 (0.82), x2.0 56.0 (1.16). The first report, on 5 replicates, gave "
             "34 ms."
+        ),
+    ),
+    ReferenceRevision(
+        key="events.burst_gain",
+        previous=40.0,
+        revised=34.0,
+        reason=(
+            "The gain of 40 was assumed, taken from examples/literature_recipes.py. After "
+            "the ripple span revision, longer bursts put the pyramidal_ripple_gain ratio "
+            "at the target's upper bound (reference 9.96, coupled 10.00, quartic 10.17 "
+            "against 5-10). The gain is set, on a grid of whole numbers from 30 to 40, to "
+            "the value whose reference ratio is closest to the source's reported mean, "
+            "8.6 (Csicsvari et al. 1999, p. 278): 34."
+        ),
+        evidence=(
+            "Calibration on the reference with the revised spans, replicates "
+            "20000-20019, 600 s each, no detector run, the ratio pooled as the report "
+            "pools it: gain 33 8.25, 34 8.64, 35 8.96, 40 10.21. The 20-replicate report "
+            "with gain 40 gave 9.96."
         ),
     ),
 )
