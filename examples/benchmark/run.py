@@ -689,7 +689,8 @@ def active_counts(
 
     ``count_spikes_in_events`` on the samples inside some event only, which
     are every sample it reads, so its whole-array check of the counts costs
-    little per method.
+    little per method. An event holding no sample (one lying between two
+    samples, as some methods' bounds may) has no active unit.
 
     Parameters
     ----------
@@ -704,16 +705,21 @@ def active_counts(
     Raises
     ------
     ValueError
-        As ``count_spikes_in_events``, such as an event holding no sample.
+        As ``count_spikes_in_events``, such as counts that are not whole.
     """
     time = session.time
     first = np.searchsorted(time, bounds[:, 0], side="left")
     last = np.searchsorted(time, bounds[:, 1], side="right")
+    holds = last > first
     step = np.zeros(len(time) + 1, dtype=np.int64)
-    np.add.at(step, first, 1)
-    np.add.at(step, last, -1)
+    np.add.at(step, first[holds], 1)
+    np.add.at(step, last[holds], -1)
     inside = np.cumsum(step[:-1]) > 0
-    counts = rd.count_spikes_in_events(bounds, session.multiunit[inside], time[inside])
+    counts = np.zeros((len(bounds), session.multiunit.shape[1]), dtype=np.int64)
+    if holds.any():
+        counts[holds] = rd.count_spikes_in_events(
+            bounds[holds], session.multiunit[inside], time[inside]
+        )
     principal = np.isin(session.unit_types, _PRINCIPAL)
     return (counts > 0).sum(axis=1), (counts[:, principal] > 0).sum(axis=1)
 
@@ -762,13 +768,17 @@ def evaluate_session(
         Its ``sessions`` row has ``session_id``, the session's times and
         counts and ``detect_s``; ``run_session`` adds the condition, replicate,
         seed and simulation time. Each call runs with warnings ignored; one
-        that raises, or whose events cannot be summarized or scored, gives a
-        ``failures`` row and no events, results or metrics rows.
+        that raises gives a ``failures`` row and no events, results or
+        metrics rows.
 
     Raises
     ------
     ValueError
         A (method, setting) pair the runner does not run.
+    Exception
+        Whatever summarizing or scoring a result raises: those steps are the
+        benchmark's own, so an error there is a bug to fix, never a method's
+        failure.
     """
     started = wall_clock.perf_counter()
     fs = session.sampling_frequency
@@ -789,8 +799,6 @@ def evaluate_session(
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 result = call()
-                n_units, n_principal = active_counts(_bounds(result), session)
-                scores = score_events(windows, result, minutes_outside)
         except Exception as error:  # a method's failure is data, never the run's
             failures.append(
                 {
@@ -801,6 +809,8 @@ def evaluate_session(
                 }
             )
         else:
+            n_units, n_principal = active_counts(_bounds(result), session)
+            scores = score_events(windows, result, minutes_outside)
             key = {"session_id": session_id, "method": method, "setting": setting}
             peak = result.get("peak_time", pd.Series(np.nan, index=result.index))
             events.append(

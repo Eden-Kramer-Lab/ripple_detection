@@ -614,6 +614,42 @@ def test_failures_are_recorded_not_raised(run, session, monkeypatch):
     }
 
 
+def _returns(frame):
+    def call():
+        return frame
+
+    return call
+
+
+def test_a_sub_sample_event_is_kept_with_no_active_units(run, session, monkeypatch):
+    # some methods' bounds lie up to half a sample off the grid: an event
+    # between two samples holds none, and so no spike
+    step = 1 / session.sampling_frequency
+    between = session.time[100] + np.array([0.25, 0.75]) * step
+    found = pd.DataFrame(
+        {"start_time": [between[0], 1.0], "end_time": [between[1], 1.2], "peak_time": np.nan}
+    )
+    monkeypatch.setattr(
+        run, "method_calls", lambda given: [("stub", "default", _returns(found))]
+    )
+    output = run.evaluate_session(session, "reference/0")
+    assert output.failures.empty
+    assert list(output.results) == [("stub", "default")]
+    counts = rd.count_spikes_in_events(found.iloc[1:], session.multiunit, session.time)
+    np.testing.assert_array_equal(output.events.n_active_units, [0, (counts > 0).sum()])
+    assert len(output.metrics) == len(EXPRESSIONS) * len(LEVELS)
+
+
+def test_a_scoring_error_raises_rather_than_failing_the_method(run, session, monkeypatch):
+    def broken(*args):
+        msg = "a bug in the benchmark"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(run, "score_events", broken)
+    with pytest.raises(RuntimeError, match="a bug in the benchmark"):
+        run.evaluate_session(session, "reference/0", [("Kay_ripple_detector", "default")])
+
+
 GRIDCHYN = (("recipe:gridchyn_2020", "literature"),)
 
 
