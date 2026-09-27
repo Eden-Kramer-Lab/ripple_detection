@@ -62,7 +62,7 @@ uv run python examples/measured_walkthrough.py
 
 ### Core Module Structure
 
-The package lives under `src/` (the Scientific Python guide's layout, so tests import the installed package, never the checkout) and is organized into six modules, one of them a package:
+The package lives under `src/` (the Scientific Python guide's layout, so tests import the installed package, never the checkout) and is organized into seven modules, one of them a package:
 
 1. **[src/ripple_detection/core.py](src/ripple_detection/core.py)** - Low-level signal processing utilities, and the event and interval rules (`merge_close_events`, `require_overlap`, `require_inside`, `intervals_to_mask`, `intersect_intervals`, ...). Intervals are inclusive, sorted and disjoint; event bounds are closed intervals on recorded timestamps
 
@@ -108,6 +108,12 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
    - Each method declares its requirements (`Requirement`) once, in its registration; `list_methods` reports them and `check_method`/`run_method` check them, and a test runs every method with exactly its declared inputs and with each removed. `behavior_intervals` are a per-call argument, not a `Recording` field
    - Every result starts with the same six columns, and its `attrs` (method, options, grid, inputs, diagnostics) are plain JSON types
    - The simulation script only supplies demonstration inputs; [implementation.md](docs/literature/implementation.md) owns usage and current implementation limits
+
+7. **[src/ripple_detection/evaluate.py](src/ripple_detection/evaluate.py)** - Comparing event inventories
+   - `match_events` and `EventMatching`: one-to-one matching, the most pairs then the largest summed IoU, solved exactly per connected component of the overlap graph (`linear_sum_assignment` with a per-pair bonus), so pair counts are symmetric; per-pair IoU, coverage, temporal precision and signed errors (detected minus reference), recall, precision, F1, split and merged events, `boundary_errors` against other bounds for the same reference rows
+   - `compare_detectors` (every pair of methods, a minus b, optional truth columns), `consensus_counts`, `label_by_overlap`
+   - A minimum IoU and ties between overlaps are judged to the timestamps' rounding, so results do not change with the clock origin
+   - The examples' scoring (`simulation_study.py`, `literature_recipes.py`) goes through `match_events`
 
 Two private modules serve callers rather than detection: [_call_hints.py](src/ripple_detection/_call_hints.py) wraps the public functions so a call written for 1.x fails with the 2.0 change behind it (add a removed or renamed argument to `REMOVED_ARGUMENTS` there, keyed by function, and only for a name a release shipped: users upgrade from a release, so a name that changed between releases gets no hint; `SAME_ROLE` maps other detectors' and libraries' names for a parameter by what it does), and [_descriptions.py](src/ripple_detection/_descriptions.py) holds what `describe()` reports. Warnings go through `core._warn_at_caller`, which attributes them to the first frame outside the package, so no function passes a `stacklevel`.
 

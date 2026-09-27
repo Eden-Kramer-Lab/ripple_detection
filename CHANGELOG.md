@@ -132,6 +132,17 @@ here is relative to 1.7.1.
   `simulate_network_session` renders them when given `non_events`, and
   `truth_windows` gives their windows as it does for events. The draws and the
   renderer take `sampling_frequency` for timestamps far from zero.
+- `ripple_detection.evaluate`, for comparing event inventories against a truth
+  or each other: `match_events` pairs them one-to-one (the most pairs, then the
+  largest summed intersection over union, solved exactly) and returns an
+  `EventMatching` with each pair's IoU, coverage, temporal precision and signed
+  onset, offset and peak errors (detected minus reference: negative is early),
+  recall, precision, F1, the split and merged events, and errors against other
+  bounds for the same true events; `compare_detectors` gives every pair of
+  methods' agreement and signed differences, and with a truth their agreement on
+  true and false events and the correlation of their errors;
+  `consensus_counts` which methods found each true event; `label_by_overlap` the
+  window each event overlaps longest.
 - `load_literature_parameters`, the detection parameters of 57 replay papers,
   and a simulation study comparing every detector (`examples/simulation_study.py`).
 - `load_literature_datasets`, a separate packaged catalog of public recording

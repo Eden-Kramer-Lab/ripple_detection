@@ -461,6 +461,39 @@ A zero-length interval has no duration to overlap, so point events, such as
 the peak times of interictal spikes, veto nothing until widened into windows:
 `exclude_overlap(ripples, peak_times[:, np.newaxis] + [-0.1, 0.1])`.
 
+### Evaluating detections
+
+`match_events` pairs two event inventories one-to-one, detections against a truth (hand
+labels, or simulated windows) or one detector against another. Two events overlap when they
+share time of positive length; each event is in at most one pair, and the matching keeps the
+most pairs and, among those, the largest summed intersection over union (IoU). Every signed
+error is detected minus reference, so negative means early:
+
+```python
+from ripple_detection import compare_detectors, match_events
+
+# true_windows: (n_true, 2) start and end times of events known to be there
+matching = match_events(true_windows, ripples)
+matching.recall, matching.precision, matching.f1
+matching.pairs  # per pair: iou, coverage, temporal_precision, onset_error, offset_error, ...
+matching.split_reference  # true events overlapped by two or more detections
+matching.merged_detected  # detections overlapping two or more true events
+
+# how two detectors differ on one recording: a minus b, per matched pair
+comparison = compare_detectors({"Kay": ripples, "HSE": bursts}, truth=true_windows)
+comparison[["jaccard", "median_onset_difference", "fraction_a_earlier_onset"]]
+```
+
+Both take a detector's DataFrame or an `(n_events, 2)` array; rows need not be sorted, and
+`pairs` refers to them by row position. `minimum_iou` drops pairs that overlap too little to
+count. With a truth, `compare_detectors` also gives the two detectors' agreement on true and
+on false events and the correlation of their errors on the true events both found.
+`consensus_counts` marks, per true event, which detectors found it, and `label_by_overlap`
+names each detection by the `label` of the window it overlaps longest (for the event types of
+`truth_windows`, below, rename its `type` column `label`). To measure boundary errors against other bounds for the same true
+events without matching again, as `truth_windows` at another fraction gives them, pass them
+to `matching.boundary_errors`.
+
 ### Detecting on a trace you build
 
 Published detectors differ mostly in the trace they threshold: the mean or the
