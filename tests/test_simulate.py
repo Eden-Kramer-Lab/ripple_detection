@@ -2404,7 +2404,6 @@ class TestDrawNonEvents:
         assert gamma.amplitude.between(1.5, 4.0).all()
         theta = by_kind["theta_burst"]
         assert theta.n_units.between(5, 15).all()
-        assert {5, 15} <= set(theta.n_units)
         assert (6 * theta.rise_sigma).between(0.1, 0.3).all()
         assert (theta.amplitude == 10.0).all()
 
@@ -2416,6 +2415,58 @@ class TestDrawNonEvents:
         half = (leakage.n_spikes - 1) * leakage.isi / 2
         np.testing.assert_allclose(windows.start_time, leakage.center_time - half)
         np.testing.assert_allclose(windows.end_time, leakage.center_time + half)
+
+    @pytest.mark.parametrize("kind", ["theta_burst", "emg"])
+    def test_non_events_that_do_not_fit_are_dropped(self, kind):
+        """Where spans are long against the time a kind may occur in, only
+        centres whose span at four side scales fits are kept: theta bursts of
+        0.3 s (0.2 s at four side scales) keep 0.1 s of each 0.5 s bout, EMG of
+        0.5 s keeps 1.33 s of a 4 s recording's middle 2 s."""
+        if kind == "theta_burst":
+            time = self.TIME
+            running = np.array([(2.0 + 2 * k, 2.5 + 2 * k) for k in range(148)])
+            options = {"theta_burst_duration": (0.3, 0.3), "running_intervals": running}
+            stretches, kept_time = running, 148 * 0.1
+        else:
+            time = simulate_time(4 * self.FS, self.FS)
+            options = {"emg_duration": (0.5, 0.5)}
+            stretches, kept_time = np.array([[1.0, time[-1] - 1.0]]), 2 - 2 / 3 - 1 / self.FS
+        rate = 6000.0  # per minute
+        table = draw_non_events(time, rates={kind: rate}, rng=3, **options)
+        start, end = _spans(table, 4)
+        inside = (start.to_numpy()[:, None] >= stretches[:, 0]) & (
+            end.to_numpy()[:, None] <= stretches[:, 1]
+        )
+        assert inside.any(axis=1).all()
+        expected = rate / 60 * kept_time
+        assert abs(len(table) - expected) < 4 * np.sqrt(expected)
+
+    def test_parameters_set_what_they_name(self):
+        table = draw_non_events(
+            self.TIME, rates=DENSE_RATES, running_intervals=self.RUNNING, n_channels=8,
+            spike_leakage_units=(2, 2), spike_leakage_spikes=(4, 4),
+            spike_leakage_isi=(0.005, 0.005), spike_leakage_amplitude=3.0,
+            emg_duration=(0.2, 0.3), emg_amplitude=0.7, fast_gamma_duration=(0.08, 0.1),
+            fast_gamma_snr=(5.0, 6.0), theta_burst_units=(3, 4),
+            theta_burst_duration=(0.15, 0.2), theta_burst_gain=4.0, rng=1,
+        )  # fmt: skip
+        by_kind = dict(tuple(table.groupby("non_event_type")))
+        leakage = by_kind["spike_leakage"]
+        assert set(leakage.channel) == set(range(8))
+        assert (leakage.n_units == 2).all()
+        assert (leakage.n_spikes == 4).all()
+        np.testing.assert_allclose(leakage.isi, 0.005)
+        assert (leakage.amplitude == 3.0).all()
+        emg = by_kind["emg"]
+        assert (6 * emg.rise_sigma).between(0.2, 0.3).all()
+        assert (emg.amplitude == 0.7).all()
+        gamma = by_kind["fast_gamma"]
+        assert (6 * gamma.rise_sigma).between(0.08, 0.1).all()
+        assert gamma.amplitude.between(5.0, 6.0).all()
+        theta = by_kind["theta_burst"]
+        assert set(theta.n_units) == {3, 4}
+        assert (6 * theta.rise_sigma).between(0.15, 0.2).all()
+        assert (theta.amplitude == 4.0).all()
 
     def test_kinds_draw_independently(self, non_events):
         """One kind's rate or ranges leave the other kinds' rows unchanged,
@@ -2600,6 +2651,65 @@ class TestNonEventRendering(_Renders):
         expected[samples] = 1.0
         np.testing.assert_array_equal(extra[:, units], expected)
 
+    def test_leaked_spikes_one_sample_apart_stay_apart(self):
+        """Spikes a sample apart, centred between samples, land on two
+        samples, not one: every spike is kept."""
+        isi = 1 / self.FS
+        row = _one_non_event_table(
+            "spike_leakage", center_time=3.0, n_spikes=2, isi=isi, rise_sigma=isi / 6,
+            decay_sigma=isi / 6,
+        )  # fmt: skip
+        leaked, plain = self._pair(row, sampling_frequency=self.FS)
+        extra = leaked.multiunit - plain.multiunit
+        assert extra.sum() == 4
+        assert np.count_nonzero((leaked.lfps - plain.lfps)[:, 1]) == 4
+
+    def test_rendered_in_id_order_not_time_order(self):
+        """Non-event 0 draws its units first wherever it lies: a later id at
+        an earlier time does not change them, and the table keeps id order."""
+        first = _one_non_event_table("spike_leakage", center_time=8.0)
+        second = _one_non_event_table("spike_leakage", non_event_id=1, center_time=3.0)
+        both = pd.concat([first, second], ignore_index=True)
+        alone, together, plain = (
+            self._render(_empty_table(), non_events=table) for table in (first, both, None)
+        )
+        pd.testing.assert_frame_equal(together.non_events, both)
+        near_first = np.abs(self.TIME - 8.0) < 0.05
+        np.testing.assert_array_equal(
+            (together.multiunit - plain.multiunit)[near_first],
+            (alone.multiunit - plain.multiunit)[near_first],
+        )
+
+    def test_leaked_spikes_go_to_pyramidal_units_on_top_of_their_counts(self):
+        """With one place, two other pyramidal units and many interneurons, a
+        three-unit leak takes exactly the first three; their drawn counts at
+        the leak's samples stay and gain one each."""
+        options = {
+            "unit_counts": {"place": 1, "pyramidal": 2, "interneuron": 40},
+            "baseline_rate": {"place": (1500.0, 1500.0), "pyramidal": (1500.0, 1500.0)},
+        }
+        leaked, plain = self._pair(_one_non_event_table("spike_leakage", n_units=3), **options)
+        samples = np.round((5.0 + (np.arange(5) - 2) * 0.004) * self.FS).astype(int)
+        assert (plain.multiunit[samples, :3] > 0).any()
+        expected = np.zeros_like(plain.multiunit)
+        expected[np.ix_(samples, [0, 1, 2])] = 1.0
+        np.testing.assert_array_equal(leaked.multiunit - plain.multiunit, expected)
+
+    def test_theta_burst_picks_n_units_place_units(self):
+        """Under refractory spiking each unit uses the same uniforms whatever
+        its intensity, so a unit a theta burst leaves out is unchanged: exactly
+        n_units place units change."""
+        options = {
+            "unit_counts": {"place": 10, "pyramidal": 5, "interneuron": 5},
+            "baseline_rate": {"place": (20.0, 20.0)},
+            "spike_model": "refractory",
+        }
+        row = _one_non_event_table("theta_burst", n_units=3, amplitude=40.0)
+        theta, plain = self._pair(row, **options)
+        changed = np.flatnonzero((theta.multiunit != plain.multiunit).any(axis=0))
+        assert changed.size == 3
+        assert (changed < 10).all()
+
     def test_emg_is_common_mode_and_high_passed(self):
         """Noise-free: the same burst on every channel and the radiatum, less
         than 5% of its power below 80 Hz, and a standard deviation of
@@ -2612,6 +2722,9 @@ class TestNonEventRendering(_Renders):
         frequencies = np.fft.rfftfreq(burst.size, 1 / self.FS)
         spectrum = np.abs(np.fft.rfft(burst)) ** 2
         assert spectrum[frequencies < 80].sum() < 0.05 * spectrum.sum()
+        # a 4th-order high-pass at 100 Hz, forward and backward: |H|^4 ~ 3e-4 at 60 Hz
+        low = spectrum[(frequencies > 40) & (frequencies < 70)].mean()
+        assert low < 0.01 * spectrum[(frequencies > 200) & (frequencies < 400)].mean()
         window, envelope = _event_envelope(self.TIME, 6.0, sigma, sigma, 2)
         core = envelope > np.exp(-0.5)
         assert np.std(burst[window][core] / envelope[core]) == pytest.approx(1.5, rel=0.05)
@@ -2660,6 +2773,12 @@ class TestNonEventRendering(_Renders):
         scaled, plain = self._pair(rows, channel_gains=gains)
         added = scaled.lfps - plain.lfps
         np.testing.assert_allclose(added, added[:, [0]] * gains, atol=1e-12)
+        # sized against the stationary noise: a slowly varying background
+        # leaves the burst as it is
+        varying, varying_plain = self._pair(rows, noise_log_amplitude=0.5)
+        np.testing.assert_allclose(
+            varying.lfps - varying_plain.lfps, session.lfps - noise.lfps, atol=1e-12
+        )
 
     def test_nearby_gamma_uses_its_band(self):
         """Bursts at 90-140 Hz reach their SNR in their stored band, whose
@@ -2672,7 +2791,8 @@ class TestNonEventRendering(_Renders):
         np.testing.assert_allclose(snr, 3.0, rtol=1e-6)
         reference = self._gamma_rows(np.linspace(62, 98, 10), np.full(10, 3.0), (60, 100))
         *_, reference_spillover = self._gamma_snr(reference, (60.0, 100.0))
-        assert nearby_spillover.max() > 10 * reference_spillover.max()
+        assert reference_spillover.max() < 1e-3
+        assert nearby_spillover.max() > 0.05  # near 140 Hz the ripple filter passes some
 
         one = {"frequency": 95.0, "amplitude": 3.0}
         sizes = {}
@@ -2742,17 +2862,54 @@ class TestNonEventRendering(_Renders):
             (_one_non_event_table("emg", rise_sigma=0.0), {}, "positive side scales"),
             (_one_non_event_table("emg", center_time=np.nan), {}, "finite times"),
             (_one_non_event_table("emg", center_time=11.99), {}, "inside the recording"),
-            (_one_non_event_table("emg", amplitude=-1.0), {}, "emg row's amplitude"),
+            (_one_non_event_table("emg", amplitude=-1.0), {}, "emg row"),
             (_one_non_event_table("spike_leakage", channel=4), {}, "spike_leakage row"),
             (_one_non_event_table("spike_leakage", n_units=51), {}, "1 to 50 units"),
             (_one_non_event_table("spike_leakage", isi=0.005), {}, "spike_leakage row"),
             (
                 _one_non_event_table(
-                    "spike_leakage", n_spikes=1, rise_sigma=1e-4, decay_sigma=1e-4
+                    "spike_leakage", n_spikes=1, rise_sigma=1e-9, decay_sigma=1e-9
                 ),
                 {},
                 "spike_leakage row",
             ),
+            (
+                # 0.9 samples apart, yet on two samples: only the interval rule rejects it
+                _one_non_event_table(
+                    "spike_leakage",
+                    center_time=3.0 + 0.25 / 1500,
+                    n_spikes=2,
+                    isi=0.9 / 1500,
+                    rise_sigma=0.15 / 1500,
+                    decay_sigma=0.15 / 1500,
+                ),
+                {},
+                "spike_leakage row",
+            ),
+            (_one_non_event_table("spike_leakage", amplitude=-2.0), {}, "spike_leakage row"),
+            (
+                _one_non_event_table("spike_leakage", decay_sigma=0.004),
+                {},
+                "spike_leakage row",
+            ),
+            (
+                _one_non_event_table(
+                    "spike_leakage",
+                    center_time=TIME[-1] - 0.7 / 1500,
+                    n_spikes=2,
+                    isi=1 / 1500,
+                    rise_sigma=1 / 9000,
+                    decay_sigma=1 / 9000,
+                ),
+                {},
+                "spike_leakage row",
+            ),
+            (
+                _one_non_event_table("fast_gamma", rise_sigma=1e-4, decay_sigma=1e-4),
+                {},
+                "fast_gamma row",
+            ),
+            (_one_non_event_table("emg", center_time=0.01), {}, "inside the recording"),
             (
                 _one_non_event_table("spike_leakage"),
                 {"unit_counts": {"interneuron": 3}},
@@ -2761,6 +2918,19 @@ class TestNonEventRendering(_Renders):
             (_one_non_event_table("theta_burst", n_units=41), {}, "theta_burst row"),
             (_one_non_event_table("theta_burst", amplitude=0.5), {}, "theta_burst row"),
             (_one_non_event_table("fast_gamma", amplitude=0.0), {}, "fast_gamma row"),
+            (
+                _non_event_tables(
+                    _one_non_event_table("fast_gamma", center_time=3.0),
+                    _one_non_event_table("fast_gamma", frequency=np.nan),
+                ),
+                {},
+                "fast_gamma row",
+            ),
+            (
+                _one_non_event_table("emg", rise_sigma=1e-5, decay_sigma=1e-5),
+                {},
+                "emg row",
+            ),
             (_one_non_event_table("fast_gamma", snr_band_low=np.nan), {}, "snr_band_low"),
             (_one_non_event_table("fast_gamma", frequency=120.0), {}, "must contain"),
             (_one_non_event_table("fast_gamma", snr_band_high=800.0), {}, "snr_band_low"),

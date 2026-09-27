@@ -2361,8 +2361,8 @@ def draw_non_events(
         ``fast_gamma_frequency`` or cannot be filtered at the sampling rate;
         an amplitude is negative or not finite, or ``theta_burst_gain``
         below 1; ``n_channels`` is not a whole number of at least 1; or
-        there are EMG bursts and the sampling rate is 200 Hz or less (no
-        room above the 100 Hz high-pass).
+        ``rates['emg']`` is positive and the sampling rate is 200 Hz or less
+        (no room above the 100 Hz high-pass).
 
     See Also
     --------
@@ -2380,8 +2380,11 @@ def draw_non_events(
     for ``fast_gamma`` its frequency, span and SNR; for ``theta_burst`` its
     unit count and span. A non-event whose span at four side scales leaves
     its stretch is dropped, not redrawn. So one kind's rate or ranges never
-    change another kind's non-events, and a parameter that sets only a size
-    or frequency changes only the values it governs.
+    change another kind's non-events other than their ``non_event_id``, and
+    a parameter that sets only a value (an amplitude, SNR, gain, frequency,
+    band, unit count or ``n_channels``) changes only the values it governs.
+    One that sets a span (a duration, or the leakage spike count and
+    interval) can also change which of its kind are dropped.
 
     Reference values and their sources (see ``draw_network_events``' Notes
     for the events'):
@@ -2757,6 +2760,17 @@ def _check_components(table: pd.DataFrame) -> None:
         raise ValueError(msg)
 
 
+def _leaked_samples(
+    center_time: float, n_spikes: int, isi: float, start: float, rate: float
+) -> IntArray:
+    """The samples of a leakage burst's spikes, ``n_spikes`` at intervals of
+    ``isi`` about ``center_time``: each the nearest to its spike, a tie going
+    to the later sample, so spikes a sample apart keep distinct samples."""
+    offsets = (np.arange(n_spikes) - (n_spikes - 1) / 2) * isi
+    samples: IntArray = np.floor((center_time + offsets - start) * rate + 0.5).astype(np.int64)
+    return samples
+
+
 def _validated_non_events(
     non_events: pd.DataFrame,
     time: FloatArray,
@@ -2802,11 +2816,6 @@ def _validated_non_events(
         table[kind == name] for name in ("spike_leakage", "fast_gamma", "theta_burst")
     )
     n_pyramidal = int(np.isin(unit_types, ["place", "pyramidal"]).sum())
-    last_sample = (
-        (leakage.center_time + (leakage.n_spikes - 1) * leakage.isi / 2 - time[0]) * rate
-        + _SPIKE_WAVEFORM.size
-        - 1
-    )
     fits = (
         leakage.channel.between(0, n_channels - 1)
         & leakage.n_units.between(1, n_pyramidal)
@@ -2815,19 +2824,31 @@ def _validated_non_events(
         & (leakage.amplitude >= 0)
         & np.isclose(leakage.rise_sigma, (leakage.n_spikes - 1) * leakage.isi / 6)
         & (leakage.rise_sigma == leakage.decay_sigma)
-        & (np.round(last_sample) < time.size)
-    )
+    ).to_numpy(dtype=bool, copy=True)
+    for index, row in enumerate(leakage.itertuples()):
+        if fits[index]:
+            samples = _leaked_samples(row.center_time, row.n_spikes, row.isi, time[0], rate)
+            fits[index] = bool(np.all(np.diff(samples) > 0)) and (
+                samples[-1] + _SPIKE_WAVEFORM.size <= time.size
+            )
     if not fits.all():
         msg = (
             f"A spike_leakage row needs a channel in 0..{n_channels - 1}, 1 to "
             f"{n_pyramidal} units (the place and other pyramidal units), at least 2 "
             f"spikes at intervals of at least one sample, {1 / rate:g} s, a non-negative "
-            "amplitude, side scales of (n_spikes - 1) isi / 6, and its spikes inside "
-            f"the recording; non-event {leakage.non_event_id[~fits].iloc[0]} has not."
+            "amplitude, side scales of (n_spikes - 1) isi / 6, and its spikes on "
+            "distinct samples inside the recording; non-event "
+            f"{leakage.non_event_id.to_numpy()[~fits][0]} has not."
         )
         raise ValueError(msg)
-    if not (table.amplitude[kind == "emg"] >= 0).all():
-        msg = "An emg row's amplitude, its peak standard deviation, must be non-negative."
+    emg = table[kind == "emg"]
+    if not (
+        (emg.amplitude >= 0) & (emg[["rise_sigma", "decay_sigma"]] >= 1 / rate).all(axis=1)
+    ).all():
+        msg = (
+            "An emg row needs a non-negative amplitude, its peak standard deviation, and "
+            f"side scales of at least one sample, {1 / rate:g} s."
+        )
         raise ValueError(msg)
     if (kind == "emg").any() and rate / 2 <= _EMG_HIGH_PASS:
         msg = (
@@ -2835,13 +2856,15 @@ def _validated_non_events(
             f"frequency, {rate / 2:g} Hz."
         )
         raise ValueError(msg)
-    fits = (gamma.amplitude > 0) & (gamma[["rise_sigma", "decay_sigma"]] >= 1 / rate).all(
-        axis=1
+    fits = (
+        (gamma.amplitude > 0)
+        & np.isfinite(gamma.frequency)
+        & (gamma[["rise_sigma", "decay_sigma"]] >= 1 / rate).all(axis=1)
     )
     if not fits.all():
         msg = (
-            "A fast_gamma row needs a positive amplitude, its SNR, and side scales of at "
-            f"least one sample, {1 / rate:g} s; non-event "
+            "A fast_gamma row needs a positive amplitude, its SNR, a finite frequency, and "
+            f"side scales of at least one sample, {1 / rate:g} s; non-event "
             f"{gamma.non_event_id[~fits].iloc[0]} has not."
         )
         raise ValueError(msg)
@@ -2891,8 +2914,7 @@ def _render_non_events(
     for row in table.itertuples():
         if row.non_event_type == "spike_leakage":
             units = rng.choice(pyramidal, size=row.n_units, replace=False)
-            offsets = (np.arange(row.n_spikes) - (row.n_spikes - 1) / 2) * row.isi
-            samples = np.round((row.center_time + offsets - time[0]) * rate).astype(np.int64)
+            samples = _leaked_samples(row.center_time, row.n_spikes, row.isi, time[0], rate)
             leaked.append((units, samples))
             for shift, value in enumerate(_SPIKE_WAVEFORM):
                 lfps[samples + shift, row.channel] += row.amplitude * value
@@ -3180,11 +3202,11 @@ def simulate_network_session(
         streams, in this order: noise, ripple phases, spatial profiles, noise
         modulation, baseline rates, burst participants, non-events (so
         adding them leaves the others unchanged), spikes; each is used in
-        table order. A theta burst changes its units' intensities, and so,
-        under Poisson spiking, the counts drawn after them. So a noise-only rendering (an empty
-        table) with the same seed has the same noise, and the spike
-        model or spatial profile does not change anything drawn from another
-        stream.
+        table order. So a noise-only rendering (an empty table) with the same
+        seed has the same noise, and the spike model or spatial profile does
+        not change anything drawn from another stream. A theta burst changes
+        its units' intensities, and so, under Poisson spiking, the counts
+        drawn after them.
     sampling_frequency : float, optional
         As in ``simulate_LFP``. Recorded in the result. Give it when the
         timestamps lie far from zero (a Unix time): there they round, the
