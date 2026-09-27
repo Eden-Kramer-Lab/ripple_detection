@@ -144,37 +144,48 @@ class ReferenceRevision:
 # report lists them.
 REFERENCE_REVISIONS: tuple[ReferenceRevision, ...] = ()
 
-# One factor at a time, in order: factor -> label -> overrides, for each level
-# other than the reference.
+# The label of the reference's place among a factor's levels.
+REFERENCE_LEVEL = "reference"
+
+# One factor at a time: factor -> label -> overrides, every level in the
+# designed order, the reference's (REFERENCE_LEVEL, no overrides) in place.
 _GRID: dict[str, dict[str, dict[str, Any]]] = {
     "ripple_snr": {
         "low": {"events.ripple_snr": (1.5, 3.0)},
+        REFERENCE_LEVEL: {},
         "high": {"events.ripple_snr": (4.0, 10.0)},
     },
     "participation": {
         "low": {"events.participation": (0.05, 0.2)},
+        REFERENCE_LEVEL: {},
         "high": {"events.participation": (0.5, 0.9)},
     },
     "n_units": {
         "30": {"render.unit_counts": {"place": 20, "pyramidal": 5, "interneuron": 5}},
+        REFERENCE_LEVEL: {},
         "120": {"render.unit_counts": {"place": 80, "pyramidal": 20, "interneuron": 20}},
     },
     "n_channels": {
         "1": {"render.n_channels": 1, "non_events.n_channels": 1},
+        REFERENCE_LEVEL: {},
         "16": {"render.n_channels": 16, "non_events.n_channels": 16},
     },
     "shared_noise_fraction": {
         "0.2": {"render.shared_noise_fraction": 0.2},
+        REFERENCE_LEVEL: {},
         "0.8": {"render.shared_noise_fraction": 0.8},
     },
     "noise_type": {
+        REFERENCE_LEVEL: {},
         "brown": {"render.noise_type": "brown"},
     },
     "event_rate": {
         "0.15": {"events.event_rate": 0.15},
+        REFERENCE_LEVEL: {},
         "0.6": {"events.event_rate": 0.6},
     },
     "type_mix": {
+        REFERENCE_LEVEL: {},
         "swr_only": {"events.type_probabilities": {"swr": 1.0}},
         "hard": {
             "events.type_probabilities": {
@@ -188,39 +199,48 @@ _GRID: dict[str, dict[str, dict[str, Any]]] = {
     },
     "burst_lag": {
         "0.0": {"events.burst_lag": 0.0},
+        REFERENCE_LEVEL: {},
         "0.03": {"events.burst_lag": 0.03},
     },
     "ripple_chirp": {
         "none": {"events.ripple_chirp": (0.0, 0.0)},
+        REFERENCE_LEVEL: {},
     },
     "spike_leakage_rate": {
         "0": {"non_events.rates.spike_leakage": 0.0},
+        REFERENCE_LEVEL: {},
         "6": {"non_events.rates.spike_leakage": 6.0},
     },
     "emg_rate": {
         "0": {"non_events.rates.emg": 0.0},
+        REFERENCE_LEVEL: {},
         "3": {"non_events.rates.emg": 3.0},
     },
     "fast_gamma_rate": {
         "0": {"non_events.rates.fast_gamma": 0.0},
+        REFERENCE_LEVEL: {},
         "6": {"non_events.rates.fast_gamma": 6.0},
     },
     "theta_burst_rate": {
         "0": {"non_events.rates.theta_burst": 0.0},
+        REFERENCE_LEVEL: {},
         "18": {"non_events.rates.theta_burst": 18.0},
     },
     "slow_amplitude": {
         "0": {"render.theta_amplitude": 0.0, "render.delta_amplitude": 0.0},
+        REFERENCE_LEVEL: {},
         "8": {"render.theta_amplitude": 8.0, "render.delta_amplitude": 8.0},
     },
 }
 
-# The simulator's alternative models, one at a time, as _GRID.
+# The simulator's alternative models, one at a time, as _GRID: the reference first.
 _ALTERNATIVES: dict[str, dict[str, dict[str, Any]]] = {
     "strength_correlation": {
+        REFERENCE_LEVEL: {},
         "coupled": {"events.strength_correlation": 0.6},
     },
     "spatial_profile": {
+        REFERENCE_LEVEL: {},
         "local": {
             "render.spatial_profile": "local",
             "render.channel_occupancy": 0.5,
@@ -229,24 +249,28 @@ _ALTERNATIVES: dict[str, dict[str, dict[str, Any]]] = {
         },
     },
     "noise_modulation": {
+        REFERENCE_LEVEL: {},
         "varying": {
             "render.noise_log_amplitude": 0.35,
             "render.noise_modulation_period": 60.0,
         },
     },
     "fast_gamma_band": {
+        REFERENCE_LEVEL: {},
         "nearby": {
             "non_events.fast_gamma_frequency": (90.0, 140.0),
             "non_events.fast_gamma_band": (90.0, 140.0),
         },
     },
     "spike_model": {
+        REFERENCE_LEVEL: {},
         "refractory": {
             "render.spike_model": "refractory",
             "render.refractory_period": 0.002,
         },
     },
     "envelope_power": {
+        REFERENCE_LEVEL: {},
         "quartic": {"events.envelope_power": 4},
     },
 }
@@ -306,6 +330,7 @@ def conditions() -> tuple[Condition, ...]:
         found.extend(
             Condition(f"{factor}={label}", factor, label, tuple(overrides.items()))
             for label, overrides in levels.items()
+            if label != REFERENCE_LEVEL
         )
     for first, second in _CROSSED:
         found.extend(
@@ -317,9 +342,41 @@ def conditions() -> tuple[Condition, ...]:
             )
             for label1, overrides1 in _GRID[first].items()
             for label2, overrides2 in _GRID[second].items()
+            if REFERENCE_LEVEL not in (label1, label2)
         )
     # a copy, so a caller changing a mapping value changes no later call's
     return copy.deepcopy(tuple(found))
+
+
+def factor_levels(factor: str) -> tuple[str, ...]:
+    """Every level of a one-factor ``factor``, in its designed order.
+
+    Parameters
+    ----------
+    factor : str
+        A factor of the grid (``"ripple_snr"``) or an alternative model
+        (``"spike_model"``), as a condition's ``factor`` names it.
+
+    Returns
+    -------
+    levels : tuple of str
+        The labels, the reference's in place as ``"reference"`` (not its
+        value): ``("low", "reference", "high")`` for ``ripple_snr``,
+        ``("reference", "brown")`` for ``noise_type``, ``("none",
+        "reference")`` for ``ripple_chirp``; the reference first for each
+        alternative model.
+
+    Raises
+    ------
+    ValueError
+        ``factor`` is not a one-factor factor (``"reference"`` and a crossed
+        pair are not).
+    """
+    levels = {**_GRID, **_ALTERNATIVES}
+    if factor not in levels:
+        msg = f"Unknown factor {factor!r}; use one of {', '.join(levels)}."
+        raise ValueError(msg)
+    return tuple(levels[factor])
 
 
 def select_conditions(text: str) -> tuple[Condition, ...]:

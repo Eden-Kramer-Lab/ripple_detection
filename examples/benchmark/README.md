@@ -16,9 +16,11 @@ written out in full: `"session"` (600 s at 1500 Hz), `"events"` (`draw_network_e
 `conditions()` gives the 43 conditions: the reference; 15 factors varied one at a time
 (28 levels); the simulator's six alternative models, one at a time; and the 8 cells of
 `ripple_snr` crossed with `participation` and with `spike_leakage_rate` that are not
-already in the grid. A condition changes values by dotted key, such as
-`"events.ripple_snr"` or `"non_events.rates.emg"`; `resolve` gives its full parameter
-set and `resolved_json` the same as sorted JSON, for saving and hashing. A reference
+already in the grid. `factor_levels(factor)` lists a factor's levels in their designed
+order with the reference's in place, labelled `"reference"`. A condition changes values
+by dotted key, such as `"events.ripple_snr"` or `"non_events.rates.emg"`; `resolve`
+gives its full parameter set and `resolved_json` the same as sorted JSON, for saving and
+hashing. A reference
 value changed after it was first set is recorded in `REFERENCE_REVISIONS` (its dotted
 key, the previous and revised values, the reason and the evidence), never silently; the
 simulator validation report lists every revision.

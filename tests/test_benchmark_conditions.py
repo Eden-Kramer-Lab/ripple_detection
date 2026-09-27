@@ -173,6 +173,24 @@ def test_conditions_are_unique_and_complete(module, by_id):
             assert "reference" not in labels
 
 
+def test_factor_levels(module):
+    """Each factor's levels in the designed order, the reference's in place."""
+    assert module.factor_levels("ripple_snr") == ("low", "reference", "high")
+    assert module.factor_levels("n_units") == ("30", "reference", "120")
+    assert module.factor_levels("noise_type") == ("reference", "brown")
+    assert module.factor_levels("type_mix") == ("reference", "swr_only", "hard")
+    assert module.factor_levels("ripple_chirp") == ("none", "reference")
+    assert module.factor_levels("spike_model") == ("reference", "refractory")
+    for factor in FACTOR_KEYS:
+        levels = module.factor_levels(factor)
+        assert levels.count("reference") == 1, factor
+        one_factor = [c.level for c in module.conditions() if c.factor == factor]
+        assert [level for level in levels if level != "reference"] == one_factor
+    for name in ("reference", "ripple_snr,participation", "snr"):
+        with pytest.raises(ValueError, match="Unknown factor"):
+            module.factor_levels(name)
+
+
 def test_every_condition_simulates(module):
     """The simulator accepts every condition's values."""
     for condition in module.conditions():
