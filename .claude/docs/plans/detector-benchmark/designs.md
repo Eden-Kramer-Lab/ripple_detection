@@ -339,8 +339,12 @@ As implemented in phase 1b (2026-09-26), where the design above left a choice op
   and other pyramidal units, a theta burst at most the place units. A gamma band must be
   filterable at the rate, and a gamma frequency finite. EMG needs the rate above 200 Hz, and EMG
   and gamma side scales of at least a sample.
-- **Leaked samples.** A spike takes its nearest sample, and a tie goes to the later one. A row
-  whose spikes would share a sample, or whose waveform would run past the recording, raises.
+- **Leaked samples.** A spike takes its nearest sample, and a tie goes to the later one. The
+  position is measured from the recording's first sample before the spike offsets are added.
+  A position within the clock's rounding (`_bound_tolerance`) below a tie counts as the tie, so
+  a burst takes the same samples at a Unix-time origin. A row whose spikes would share a
+  sample, or whose waveform would run past the recording, raises. `draw_non_events` holds EMG
+  and gamma spans to side scales of at least a sample, as the renderer does.
 - **Pinning.** `tests/test_snapshots.py` pins a seeded network session with no non-events. It
   was checked against the renderer before non-events were added.
 - **Benchmark note.** The three-sample leak waveform's ripple-band share depends on the ISI.

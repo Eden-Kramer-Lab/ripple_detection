@@ -1,6 +1,6 @@
 # Detector Benchmark Implementation Plan
 
-**Status:** Phase 1a done (2026-09-26, commits a326acf..94124f9 on `detector-benchmark`, independently reviewed). Its reference-value changes (event rate 0.3/s, interneurons 8-15 Hz) are in [designs.md#parameter-sources](designs.md#parameter-sources). Phase 1b done (2026-09-26, commits 9e089e1..c404d9f, independently reviewed for correctness and test quality; findings fixed). Its implementation choices are in [designs.md#non-events](designs.md#non-events). Next: phase 2.
+**Status:** Phase 1a done (2026-09-26, commits a326acf..94124f9 on `detector-benchmark`, independently reviewed). Its reference-value changes (event rate 0.3/s, interneurons 8-15 Hz) are in [designs.md#parameter-sources](designs.md#parameter-sources). Phase 1b done (2026-09-26, commits 9e089e1..53355b0 and a follow-up fix, independently reviewed for correctness and test quality; findings fixed). Its implementation choices are in [designs.md#non-events](designs.md#non-events). Next: phase 2.
 
 A systematic evaluation of how well ripple_detection's nine detectors and the literature recipes
 (`ripple_detection.literature_methods`) capture events, on simulated sessions whose truth is known: do
