@@ -743,42 +743,50 @@ def test_external_inventories_are_the_stated_detectors(recipe_configs, session, 
         recording = recipe_configs.make_recording(session, configs[name])
         np.testing.assert_array_equal(getattr(recording, source), expected, err_msg=name)
         record = recipe_configs.method_record(configs[name])
-        assert json.loads(record["input_policy"])["recording"][source]["detector"] == detector
         assert any(
             assumption.startswith(source) and detector in assumption
             for assumption in json.loads(record["assumptions"])
         )
 
 
-def test_input_policy_records_every_setting_of_each_detector(recipe_configs, configs):
-    recorded = {}
-    for name, source in (("yang_2024", "external_ripples"), ("carey_2019", "example_ripples")):
+def test_input_policy_records_each_stand_in_detector(recipe_configs, configs):
+    # Pinned here, not read from the module: what the benchmark chooses. A
+    # non-finite option is its repr, since None is already a setting ("no
+    # limit", "no mask"); every setting left unchosen is recorded too.
+    chosen = {
+        "external_ripples": (
+            "yang_2024",
+            {
+                "detector": "Zugaro_ripple_detector",
+                "channel": 0,
+                "band": [130.0, 200.0],
+                "columns": ["start_time", "end_time", "peak_time"],
+            },
+            {
+                "low_threshold": 2.0,
+                "high_threshold": 5.0,
+                "maximum_duration": 0.2,
+                "speed_threshold": "inf",
+            },
+        ),
+        "example_ripples": (
+            "carey_2019",
+            {
+                "detector": "Kay_ripple_detector",
+                "band": [150.0, 250.0],
+                "n_examples": 5,
+                "rank_by": "max_zscore",
+            },
+            {},
+        ),
+    }
+    for source, (name, settings, options) in chosen.items():
         policy = json.loads(recipe_configs.method_record(configs[name])["input_policy"])
-        spec = policy["recording"][source]
-        assert set(spec["options"]) == set(rd.get_detector(spec["detector"]).parameters)
-        recorded[source] = spec["options"]
-    # Configured values replace the defaults; a non-finite value is its repr,
-    # since None is already a setting ("no limit", "no mask").
-    assert recorded["external_ripples"] == {
-        "speed_threshold": "inf",
-        "low_threshold": 2.0,
-        "high_threshold": 5.0,
-        "minimum_inter_ripple_interval": 0.03,
-        "minimum_duration": 0.02,
-        "maximum_duration": 0.2,
-        "smoothing_window": 0.0088,
-        "normalization_mask": None,
-    }
-    assert recorded["example_ripples"] == {
-        "speed_threshold": 4.0,
-        "minimum_duration": 0.015,
-        "zscore_threshold": 2.0,
-        "smoothing_sigma": 0.004,
-        "close_ripple_threshold": 0.0,
-        "normalization_method": "zscore",
-        "normalization_mask": None,
-        "maximum_duration": None,
-    }
+        recorded = policy["recording"][source]
+        assert {key: value for key, value in recorded.items() if key != "options"} == settings
+        parameters = rd.get_detector(settings["detector"]).parameters
+        assert set(recorded["options"]) == set(parameters), source
+        assert {key: recorded["options"][key] for key in options} == options, source
 
 
 @pytest.mark.parametrize(
