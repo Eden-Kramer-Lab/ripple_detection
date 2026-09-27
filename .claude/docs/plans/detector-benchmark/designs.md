@@ -326,31 +326,45 @@ As implemented in phase 1b (2026-09-26), where the design above left a choice op
   drift from the spikes. Leaked spikes are added after the draw under either spike model, so
   they are not subject to `refractory_period` (as [refractory
   spiking](simulator-validation.md#refractory-spiking) specifies).
-- **EMG.** Noise is drawn over the envelope's window and filtered with `sosfiltfilt` without
-  padding; the edge transients fall where the envelope is below 1e-14. It is scaled by the
-  analytic SD of forward-backward-filtered unit white noise (`sqrt(mean |H|^4)`), so
-  `amplitude` is the expected SD at the peak.
+- **EMG.** Noise is drawn over the envelope's window plus the filter's settling length on
+  each side, which is where its impulse response keeps less than 1e-12 of its energy. It is
+  filtered with `sosfiltfilt` and cropped to the window, so the kept samples are stationary
+  filtered noise at any rate: near 200 Hz the settling length is hundreds of samples. It is
+  scaled by the SD of forward-backward-filtered unit white noise, computed from the filter's
+  frequency response (`sqrt(mean |H|^4)`), so `amplitude` is the expected SD at the peak.
 - **Gamma.** Added to the pyramidal-layer channels only, not the radiatum. A band's noise SD is
   computed once per distinct stored band.
 - **Theta.** The factors multiply a unit's intensity after the additive burst and interneuron
   gains. Under Poisson spiking the changed intensities also change the counts drawn for later
   units: statistically the same, not bit-identical.
+- **Order.** Non-events render after the sharp waves and before the slow field and the unit
+  draw (participants, then spikes). Theta factors enter the unit draw, and leaked spikes are
+  added after it. With separate streams, this order changes no draw.
 - **Render validation.** `envelope_power` must be 2. A leakage burst may use at most the place
   and other pyramidal units, a theta burst at most the place units. A gamma band must be
-  filterable at the rate, and a gamma frequency finite. EMG needs the rate above 200 Hz, and EMG
-  and gamma side scales of at least a sample.
+  filterable at the rate, and a gamma frequency finite. EMG needs the rate above 200 Hz.
+  EMG, gamma and theta side scales, and leakage intervals, must be at least a sample.
+- **One sample.** `draw_non_events` requires a whole sample at the rate its timestamps give.
+  The renderer accepts 0.99 of one, because a rate given to it can exceed the timestamps'
+  rate: by an ulp at most rates, and by up to 0.14% at a Unix time. So a drawn table always
+  renders. A leak interval under one sample that would put two spikes on a sample still
+  raises.
 - **Leaked samples.** A spike takes its nearest sample, and a tie goes to the later one. The
-  position is measured from the recording's first sample before the spike offsets are added.
-  A position within the clock's rounding (`_bound_tolerance`) below a tie counts as the tie, so
-  a burst takes the same samples at a Unix-time origin. A row whose spikes would share a
-  sample, or whose waveform would run past the recording, raises. `draw_non_events` holds EMG
-  and gamma spans to side scales of at least a sample, as the renderer does.
-- **Pinning.** `tests/test_snapshots.py` pins a seeded network session with no non-events. It
-  was checked against the renderer before non-events were added.
-- **Benchmark note.** The three-sample leak waveform's ripple-band share depends on the ISI.
-  At 4 ms (250 spikes/s) it holds 14.5% of the waveform's power, at 6 ms 10.6%, and at 3 ms
-  (333 spikes/s, above the band) only 2%. Leakage near the short end of the default ISI range
-  is a weak decoy for ripple-band detectors.
+  position is measured from the recording's first sample before the spike offsets are added,
+  so it rounds with the centre alone. A position up to 1 µs below a tie counts as the tie;
+  that is a constant, more than a Unix-time timestamp's rounding (0.12 µs). So exact ties
+  take the same sample at every origin, as does every spike farther than that rounding from
+  1 µs below a tie. A spike within it can move by a sample: exact invariance is impossible
+  once the centre itself rounds. A row whose spikes would share a sample, or whose waveform
+  would run past the recording, raises.
+- **Pinning.** `tests/test_snapshots.py` pins a seeded network session with no non-events,
+  checked against the renderer before non-events were added. It also pins a seeded
+  non-event table and the session rendered with it.
+- **Benchmark note.** The three-sample leak waveform's ripple-band share depends on the ISI
+  (and a little on the spike count). For five spikes at 1500 Hz, 4 ms (250 spikes/s) gives
+  14.5% of the waveform's power, 6 ms gives 10.6%, and 3 ms (333 spikes/s, above the band)
+  only 2%. Leakage near the short end of the default ISI range is a weak decoy for
+  ripple-band detectors.
 
 ## Truth windows
 
