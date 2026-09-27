@@ -524,11 +524,13 @@ def test_a_recording_holds_exactly_the_declared_inputs(recipe_configs, session):
     for config in configs:
         recording = recipe_configs.make_recording(session, config)
         eligible = recipe_configs.behavior_intervals(session, config)
+        names, takes_behavior_intervals = recipe_configs.supplied_inputs(config)
+        assert _supplied(recording) == set(names), config.config_id
+        assert (eligible is not None) == takes_behavior_intervals, config.config_id
         declared = set(recipe_configs.policy_inputs(config))
-        supplied = _supplied(recording) | (
-            {"behavior_intervals"} if eligible is not None else set()
+        assert declared == set(names) | (
+            {"behavior_intervals"} if takes_behavior_intervals else set()
         )
-        assert supplied == declared, config.config_id
         assert recording.fs == session.sampling_frequency
         np.testing.assert_array_equal(recording.time, session.time)
         for name, value in (
@@ -838,9 +840,9 @@ def test_method_records_are_flat_string_records(recipe_configs, catalog):
         assert json.loads(record["assumptions"]) == list(config.assumptions)
         policy = json.loads(record["input_policy"])
         assert policy["name"] == recipe_configs.INPUT_POLICY
-        assert set(policy["recording"]) | (
-            {"behavior_intervals"} if policy["behavior_intervals"] else set()
-        ) == set(recipe_configs.policy_inputs(config))
+        names, takes_behavior_intervals = recipe_configs.supplied_inputs(config)
+        assert set(policy["recording"]) == set(names)
+        assert (policy["behavior_intervals"] is not None) == takes_behavior_intervals
         records.append(record)
     table = pd.DataFrame(records)
     buffer = io.StringIO()

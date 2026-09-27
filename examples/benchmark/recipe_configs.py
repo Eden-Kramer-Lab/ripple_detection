@@ -344,6 +344,32 @@ def policy_inputs(config: RecipeConfig) -> tuple[str, ...]:
     )
 
 
+def supplied_inputs(config: RecipeConfig) -> tuple[tuple[str, ...], bool]:
+    """``policy_inputs(config)`` by where each goes.
+
+    Parameters
+    ----------
+    config : RecipeConfig
+
+    Returns
+    -------
+    recording : tuple of str
+        The ``Recording.from_arrays`` inputs, in declaration order.
+    takes_behavior_intervals : bool
+        Whether the call takes eligible epochs (``behavior_intervals``).
+
+    Raises
+    ------
+    KeyError
+        Unknown method.
+    TypeError
+        An option the method does not take.
+    """
+    inputs = policy_inputs(config)
+    recording = tuple(name for name in inputs if name != "behavior_intervals")
+    return recording, "behavior_intervals" in inputs
+
+
 def rest_intervals(session: rd.SimulatedSession) -> FloatArray:
     """The session's rest: its samples outside every running bout.
 
@@ -446,10 +472,10 @@ def make_recording(session: rd.SimulatedSession, config: RecipeConfig) -> Record
     Returns
     -------
     recording : Recording
-        ``Recording.from_arrays`` of exactly ``policy_inputs(config)`` (bar
-        ``behavior_intervals``, which go to each call), at the session's
-        rate. A selection of units the session does not label is empty and
-        ``check_method`` reports it; nothing stands in for it.
+        ``Recording.from_arrays`` of exactly the recording inputs of
+        ``supplied_inputs(config)``, at the session's rate. A selection of
+        units the session does not label is empty and ``check_method``
+        reports it; nothing stands in for it.
 
     Raises
     ------
@@ -477,9 +503,8 @@ def make_recording(session: rd.SimulatedSession, config: RecipeConfig) -> Record
         "external_ripples": lambda: external_ripples(session),
         "example_ripples": lambda: example_ripples(session),
     }
-    inputs = {
-        name: sources[name]() for name in policy_inputs(config) if name != "behavior_intervals"
-    }
+    names, _ = supplied_inputs(config)
+    inputs = {name: sources[name]() for name in names}
     return Recording.from_arrays(session.time, session.sampling_frequency, **inputs)
 
 
@@ -500,9 +525,8 @@ def behavior_intervals(
         ``behavior_intervals``, else None: epochs a method does not ask for
         would drop events.
     """
-    if "behavior_intervals" in policy_inputs(config):
-        return rest_intervals(session)
-    return None
+    _, takes_behavior_intervals = supplied_inputs(config)
+    return rest_intervals(session) if takes_behavior_intervals else None
 
 
 def run_recipe(
@@ -586,8 +610,8 @@ def input_policy(config: RecipeConfig) -> dict[str, Any]:
         ``assumptions`` are not those its method and options imply.
     """
     _check_provenance(config)
-    inputs = policy_inputs(config)
-    sources = {name: _SOURCES[name] for name in inputs if name != "behavior_intervals"}
+    names, takes_behavior_intervals = supplied_inputs(config)
+    sources = {name: _SOURCES[name] for name in names}
     for name, source in sources.items():
         if isinstance(source, dict):
             defaults = rd.get_detector(source["detector"]).parameters
@@ -596,7 +620,7 @@ def input_policy(config: RecipeConfig) -> dict[str, Any]:
         "name": config.input_policy,
         "recording": _json_ready(sources),
         "behavior_intervals": _SOURCES["behavior_intervals"]
-        if "behavior_intervals" in inputs
+        if takes_behavior_intervals
         else None,
         "values": "each result's attrs['inputs'] and attrs['behavior_intervals']",
     }
