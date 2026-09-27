@@ -737,7 +737,9 @@ class TestTimeOrigin:
         """Non-events follow the running bouts, not the clock: the table and
         its truth windows move by the origin; rendered, the LFP agrees to its
         slope times the timestamps' rounding and the spikes, leaked ones
-        included, are the same."""
+        included, are the same. (A leaked spike within the timestamps'
+        rounding of where its sample changes can move by one; none of this
+        draw's spikes is.)"""
         time = simulate_time(int(30 * FS), FS)
         running = np.asarray(RUNNING)
         rates = {"spike_leakage": 20.0, "emg": 10.0, "fast_gamma": 20.0, "theta_burst": 60.0}
@@ -772,32 +774,39 @@ class TestTimeOrigin:
 
     @pytest.mark.parametrize("origin", ORIGINS)
     def test_leaked_spikes_halfway_between_samples(self, origin):
-        """Leaked spikes that fall exactly halfway between samples take the
-        same samples at any origin: three 3 ms apart about 3 s (the first and
-        last halfway) and two a sample apart about 4 s (both halfway), which
-        must not collapse onto one sample."""
+        """Leaked spikes that fall halfway between samples, and one just short
+        of halfway, take the nearest sample, a tie the later one, at any
+        origin: three 3 ms apart about 3 s (the first and last halfway), two a
+        sample apart about 4 s (both halfway, not collapsed onto one), two
+        two samples apart about 5 s plus half a sample (a centre the clock
+        rounds far from zero), and three a sample apart 0.45 of a sample past
+        2 s."""
         time = simulate_time(int(6 * FS), FS)
-        nan = np.nan
+        n_spikes = np.array([3, 2, 2, 3])
+        isi = np.array([0.003, 1 / FS, 2 / FS, 1 / FS])
+        sigma = (n_spikes - 1) * isi / 6
         rows = pd.DataFrame(
             {
-                "non_event_id": [0, 1], "non_event_type": ["spike_leakage"] * 2,
-                "center_time": [3.0, 4.0], "rise_sigma": [0.001, 1 / (6 * FS)],
-                "decay_sigma": [0.001, 1 / (6 * FS)], "envelope_power": [2, 2],
-                "amplitude": [2.0, 2.0], "frequency": [nan, nan], "snr_band_low": [nan, nan],
-                "snr_band_high": [nan, nan], "channel": [0, 0], "n_units": [1, 1],
-                "n_spikes": [3, 2], "isi": [0.003, 1 / FS],
+                "non_event_id": np.arange(4), "non_event_type": "spike_leakage",
+                "center_time": [3.0, 4.0, 5.0 + 0.5 / FS, 2.0 + 0.45 / FS],
+                "rise_sigma": sigma, "decay_sigma": sigma, "envelope_power": 2,
+                "amplitude": 2.0, "frequency": np.nan, "snr_band_low": np.nan,
+                "snr_band_high": np.nan, "channel": 0, "n_units": 1, "n_spikes": n_spikes,
+                "isi": isi,
             }
         )  # fmt: skip
         events = rd.draw_network_events(time, event_rate=0.0)
         options = {"rng": 1, "sampling_frequency": FS, "noise_amplitude": 0.0}
         at_zero = rd.simulate_network_session(time, events, non_events=rows, **options)
+        moved = rows.assign(center_time=rows.center_time + origin)
         shifted = rd.simulate_network_session(
-            time + origin, events, non_events=rows.assign(center_time=rows.center_time + origin),
-            **options,
-        )  # fmt: skip
+            time + origin, events, non_events=moved, **options
+        )
         plain = rd.simulate_network_session(time, events, **options)
         leaked = np.flatnonzero((at_zero.multiunit - plain.multiunit).sum(axis=1))
-        np.testing.assert_array_equal(leaked, [4496, 4500, 4505, 6000, 6001])
+        np.testing.assert_array_equal(
+            leaked, [2999, 3000, 3001, 4496, 4500, 4505, 6000, 6001, 7500, 7502]
+        )
         np.testing.assert_array_equal(shifted.multiunit, at_zero.multiunit)
 
     @pytest.mark.parametrize("origin", ORIGINS)

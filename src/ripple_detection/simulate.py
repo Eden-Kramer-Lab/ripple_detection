@@ -6,7 +6,7 @@ the raw two-channel input of the Long detector, ``simulate_multiunit`` spike
 trains that burst with the ripples, and ``simulate_session`` all of them at once
 with the ground truth, for testing detectors against known events.
 ``draw_network_events`` draws latent network events of known types,
-``draw_non_events`` activity a detector should not report,
+``draw_non_events`` draws activity a detector should not report,
 ``simulate_network_session`` renders both into every detector input, and
 ``truth_windows`` gives their windows at any fraction of each envelope's peak.
 """
@@ -2124,23 +2124,31 @@ def _sorted_events(events: pd.DataFrame) -> pd.DataFrame:
     return events.iloc[order].reset_index(drop=True)
 
 
-_REFERENCE_NON_EVENT_RATES = {
+_REFERENCE_NON_EVENT_RATES = {  # per minute
     "spike_leakage": 2.0,
     "emg": 1.0,
     "fast_gamma": 2.0,
     "theta_burst": 6.0,
 }
-# when each kind of non-event occurs, and the uniforms each draws per non-event
+# when each kind of non-event occurs
 _NON_EVENT_STATES = {
     "spike_leakage": "rest",
     "emg": "any",
     "fast_gamma": "any",
     "theta_burst": "running",
 }
+# the uniforms each kind draws per non-event
 _NON_EVENT_UNIFORMS = {"spike_leakage": 4, "emg": 1, "fast_gamma": 3, "theta_burst": 2}
 _EMG_HIGH_PASS = 100.0  # Hz
-# a spike and its after-hyperpolarization, a sample each (about 1 ms at 1500 Hz)
+# a spike (one sample) and its after-hyperpolarization (two): 2 ms at 1500 Hz
 _SPIKE_WAVEFORM = np.array([-1.0, 0.45, 0.2])
+# how far below a tie between two samples a leaked spike still counts as the
+# tie, in seconds: more than a Unix-time timestamp's rounding (1.2e-7 s)
+_TIE_TOLERANCE = 1e-6
+# the fraction of a sample the renderer accepts as one: a drawn table meets a
+# whole sample at the rate its timestamps give, which a given rate may exceed
+# by up to 0.14% at a Unix time
+_ONE_SAMPLE = 0.99
 
 
 def _non_event_rates(rates: Mapping[str, float] | None) -> dict[str, float]:
@@ -2172,8 +2180,8 @@ def _check_sizing_band(
     name: str, band: object, frequencies: tuple[float, float], rate: float
 ) -> tuple[float, float]:
     """``band`` as ``(low, high)`` Hz with ``0 < low < high`` below Nyquist,
-    holding ``frequencies``, and narrow enough for ``filter_ripple_band`` to
-    design a filter at ``rate``."""
+    holding ``frequencies``, and with room for ``filter_ripple_band``'s
+    transition bands above 0 Hz and below Nyquist at ``rate``."""
     low, high = _check_range(
         name, band, lower=0, lower_strict=True, upper=rate / 2, upper_strict=True
     )
@@ -2188,6 +2196,19 @@ def _check_sizing_band(
     except ValueError as error:
         msg = f"{name} {band} Hz cannot be filtered at {rate:g} Hz: {error}"
         raise ValueError(msg) from error
+    return low, high
+
+
+def _check_span(name: str, value: object, rate: float) -> tuple[float, float]:
+    """A range of spans whose side scales, a sixth of each, are at least one
+    sample at ``rate``, which ``simulate_network_session`` then accepts."""
+    low, high = _check_range(name, value, lower=0, lower_strict=True)
+    if low / 6 < 1 / rate:
+        msg = (
+            f"{name} must give side scales, a sixth of the span, of at least one sample, "
+            f"{1 / rate:g} s, got {value}."
+        )
+        raise ValueError(msg)
     return low, high
 
 
@@ -2246,16 +2267,19 @@ def draw_non_events(
     ``spike_leakage``  rest      ``n_units`` place or other pyramidal units fire
                                  ``n_spikes`` spikes together at intervals of
                                  ``isi``, added to their spike counts, and each
-                                 spike leaves a three-sample biphasic waveform,
-                                 peak ``amplitude``, on LFP channel ``channel``
-    ``emg``            any       white noise high-passed at 100 Hz, its standard
+                                 spike time (the units share it) leaves one
+                                 three-sample biphasic waveform, peak
+                                 ``-amplitude``, on LFP channel ``channel``
+    ``emg``            any       white noise high-passed at 100 Hz (4th-order
+                                 Butterworth, forward and backward), its standard
                                  deviation ``amplitude`` at the envelope's peak,
                                  the same on every channel and the radiatum
     ``fast_gamma``     any       a burst at ``frequency``, sized as a ripple is but
                                  in its band (``snr_band_low``, ``snr_band_high``):
                                  its filtered peak is ``amplitude`` times the
                                  filtered stationary noise's standard deviation;
-                                 on every channel at the recording-wide gains
+                                 on every pyramidal-layer channel at the
+                                 recording-wide gains, not the radiatum
     ``theta_burst``    running   ``n_units`` place units' intensity multiplied by
                                  up to ``amplitude``; no LFP
     =================  ========  ===================================================
@@ -2288,7 +2312,8 @@ def draw_non_events(
         Range of the interval between a leakage burst's spikes, seconds, at
         least one sample. Default (0.003, 0.006).
     spike_leakage_amplitude : float, optional
-        Peak of a leaked spike's waveform in signal units, non-negative.
+        Magnitude of a leaked spike's (negative) peak, in signal units,
+        non-negative.
         Default 2.
     emg_duration : (float, float), optional
         Range of an EMG burst's nominal span, six side scales, symmetric,
@@ -2313,7 +2338,8 @@ def draw_non_events(
         Range of the number of place units in a theta burst, at least 1.
         Default (5, 15).
     theta_burst_duration : (float, float), optional
-        Range of a theta burst's nominal span, symmetric. Default (0.1, 0.3).
+        Range of a theta burst's nominal span, symmetric, with side scales of
+        at least one sample. Default (0.1, 0.3).
     theta_burst_gain : float, optional
         Peak intensity of a theta burst's units relative to their baseline,
         at least 1. Default 10.
@@ -2340,7 +2366,7 @@ def draw_non_events(
           for ``fast_gamma``; NaN otherwise.
         - ``channel`` (int): the leaked spikes' channel; -1 otherwise.
         - ``n_units`` (int): for ``spike_leakage`` and ``theta_burst``; 0
-          otherwise. Which units is drawn when the session is rendered.
+          otherwise. Which units are drawn when the session is rendered.
         - ``n_spikes`` (int), ``isi`` (float, seconds): for
           ``spike_leakage``; 0 and NaN otherwise.
 
@@ -2356,13 +2382,14 @@ def draw_non_events(
         non-finite rate; a range is not a finite ``(low, high)`` tuple with
         ``low <= high`` inside its bounds (positive durations, SNRs and
         intervals, unit and spike counts whole numbers of at least 1 and 2,
-        a leakage interval and EMG and gamma side scales of at least one
-        sample, gamma frequencies below Nyquist); ``fast_gamma_band`` does
+        a leakage interval and EMG, gamma and theta side scales of at least
+        one sample, gamma frequencies below Nyquist); ``fast_gamma_band`` does
         not hold ``fast_gamma_frequency`` or cannot be filtered at the
         sampling rate; an amplitude is negative or not finite, or
         ``theta_burst_gain`` below 1; ``n_channels`` is not a whole number of at least 1; or
         ``rates['emg']`` is positive and the sampling rate is 200 Hz or less
-        (no room above the 100 Hz high-pass).
+        (no room above the 100 Hz high-pass); or ``running_intervals`` is
+        invalid, as in ``draw_network_events``.
 
     See Also
     --------
@@ -2393,7 +2420,7 @@ def draw_non_events(
       2-6 ms, with a mode of 5.04 +/- 1.00 ms (Mizuseki et al. 2012,
       doi:10.1002/hipo.22002, Results, Figs. 2A-B), hence 3-6 ms. The unit
       and spike counts, the waveform (a spike and its after-hyperpolarization,
-      about 1 ms at 1500 Hz; three samples at any rate) and its amplitude are
+      three samples at any rate: 2 ms at 1500 Hz) and its amplitude are
       assumed.
     - Fast gamma, 60-100 Hz in the reference, an assumed control; nearby
       gamma of 90-140 Hz (Sullivan et al. 2011,
@@ -2425,7 +2452,7 @@ def draw_non_events(
     leakage_spikes = _check_count_range("spike_leakage_spikes", spike_leakage_spikes, 2)
     leakage_isi = _check_range("spike_leakage_isi", spike_leakage_isi, lower=1 / rate)
     leakage_amplitude = _check_scalar("spike_leakage_amplitude", spike_leakage_amplitude)
-    emg_span = _check_range("emg_duration", emg_duration, lower=6 / rate)
+    emg_span = _check_span("emg_duration", emg_duration, rate)
     emg_amplitude = _check_scalar("emg_amplitude", emg_amplitude)
     if per_minute["emg"] > 0 and nyquist <= _EMG_HIGH_PASS:
         msg = (
@@ -2438,12 +2465,10 @@ def draw_non_events(
         upper=nyquist, upper_strict=True,
     )  # fmt: skip
     gamma_band = _check_sizing_band("fast_gamma_band", fast_gamma_band, gamma_frequency, rate)
-    gamma_span = _check_range("fast_gamma_duration", fast_gamma_duration, lower=6 / rate)
+    gamma_span = _check_span("fast_gamma_duration", fast_gamma_duration, rate)
     gamma_snr = _check_range("fast_gamma_snr", fast_gamma_snr, lower=0, lower_strict=True)
     theta_units = _check_count_range("theta_burst_units", theta_burst_units, 1)
-    theta_span = _check_range(
-        "theta_burst_duration", theta_burst_duration, lower=0, lower_strict=True
-    )
+    theta_span = _check_span("theta_burst_duration", theta_burst_duration, rate)
     theta_gain = _check_scalar("theta_burst_gain", theta_burst_gain, lower=1.0)
     rng = _generator(rng)
 
@@ -2767,12 +2792,14 @@ def _leaked_samples(
     ``isi`` about ``center_time``, counted from the sample at ``start``: each
     the nearest to its spike, a tie going to the later sample, so spikes a
     sample apart keep distinct samples. Positions are measured from
-    ``start`` before the offsets are added, and a position within the
-    clock's rounding below a tie counts as the tie, so a burst takes the
-    same samples at any time origin."""
+    ``start`` before the offsets are added, so they round with the centre
+    alone, and a position up to 1 microsecond below a tie counts as the tie.
+    So a tie takes the same sample at any time origin, as does any spike
+    farther than the timestamps' rounding (0.12 microseconds at a Unix time)
+    from a microsecond below a tie; one within it can move by a sample."""
     center = (center_time - start) * rate
     offsets = (np.arange(n_spikes) - (n_spikes - 1) / 2) * (isi * rate)
-    tolerance = _bound_tolerance(np.array([center_time, start])) * rate
+    tolerance = _TIE_TOLERANCE * rate
     samples: IntArray = np.floor(center + offsets + 0.5 + tolerance).astype(np.int64)
     return samples
 
@@ -2826,11 +2853,12 @@ def _validated_non_events(
         leakage.channel.between(0, n_channels - 1)
         & leakage.n_units.between(1, n_pyramidal)
         & (leakage.n_spikes >= 2)
-        & (leakage.isi >= 1 / rate)
+        & (leakage.isi >= _ONE_SAMPLE / rate)
         & (leakage.amplitude >= 0)
         & np.isclose(leakage.rise_sigma, (leakage.n_spikes - 1) * leakage.isi / 6)
         & (leakage.rise_sigma == leakage.decay_sigma)
     ).to_numpy(dtype=bool, copy=True)
+    # distinct samples: isi * rate can round to just under one sample
     for index, row in enumerate(leakage.itertuples()):
         if fits[index]:
             samples = _leaked_samples(row.center_time, row.n_spikes, row.isi, time[0], rate)
@@ -2849,7 +2877,8 @@ def _validated_non_events(
         raise ValueError(msg)
     emg = table[kind == "emg"]
     if not (
-        (emg.amplitude >= 0) & (emg[["rise_sigma", "decay_sigma"]] >= 1 / rate).all(axis=1)
+        (emg.amplitude >= 0)
+        & (emg[["rise_sigma", "decay_sigma"]] >= _ONE_SAMPLE / rate).all(axis=1)
     ).all():
         msg = (
             "An emg row needs a non-negative amplitude, its peak standard deviation, and "
@@ -2865,7 +2894,7 @@ def _validated_non_events(
     fits = (
         (gamma.amplitude > 0)
         & np.isfinite(gamma.frequency)
-        & (gamma[["rise_sigma", "decay_sigma"]] >= 1 / rate).all(axis=1)
+        & (gamma[["rise_sigma", "decay_sigma"]] >= _ONE_SAMPLE / rate).all(axis=1)
     )
     if not fits.all():
         msg = (
@@ -2880,15 +2909,35 @@ def _validated_non_events(
             (low, high), (rows.frequency.min(), rows.frequency.max()), rate,
         )  # fmt: skip
     n_place = int((unit_types == "place").sum())
-    fits = theta.n_units.between(1, n_place) & (theta.amplitude >= 1)
+    fits = (
+        theta.n_units.between(1, n_place)
+        & (theta.amplitude >= 1)
+        & (theta[["rise_sigma", "decay_sigma"]] >= _ONE_SAMPLE / rate).all(axis=1)
+    )
     if not fits.all():
         msg = (
-            f"A theta_burst row needs 1 to {n_place} units (the place units) and an "
-            f"amplitude, its gain, of at least 1; non-event "
+            f"A theta_burst row needs 1 to {n_place} units (the place units), an "
+            "amplitude, its gain, of at least 1, and side scales of at least one sample, "
+            f"{1 / rate:g} s; non-event "
             f"{theta.non_event_id[~fits].iloc[0]} has not."
         )
         raise ValueError(msg)
     return table
+
+
+def _settling_samples(sos: FloatArray) -> int:
+    """Samples after which the impulse response of ``sos`` holds less than
+    1e-12 of its energy: how long its transients last."""
+    n_samples = 64
+    while True:
+        impulse = np.zeros(n_samples)
+        impulse[0] = 1.0
+        energy = signal.sosfilt(sos, impulse) ** 2
+        remaining = np.cumsum(energy[::-1])[::-1]
+        settled = np.flatnonzero(remaining < 1e-12 * remaining[0])
+        if settled.size:
+            return int(settled[0])
+        n_samples *= 2
 
 
 def _render_non_events(
@@ -2917,6 +2966,7 @@ def _render_non_events(
         sos = signal.butter(4, _EMG_HIGH_PASS, btype="highpass", fs=rate, output="sos")
         # forward and backward: the standard deviation of filtered unit white noise
         emg_sd = float(np.sqrt(np.mean(np.abs(signal.sosfreqz(sos, 4096, fs=rate)[1]) ** 4)))
+        pad = _settling_samples(sos)
     for row in table.itertuples():
         if row.non_event_type == "spike_leakage":
             units = rng.choice(pyramidal, size=row.n_units, replace=False)
@@ -2929,9 +2979,11 @@ def _render_non_events(
             time, row.center_time, row.rise_sigma, row.decay_sigma, row.envelope_power
         )
         if row.non_event_type == "emg":
-            # unpadded: the filter's edge transients fall where the envelope
-            # is below 1e-14 of its peak
-            noise = signal.sosfiltfilt(sos, rng.standard_normal(envelope.size), padlen=0)
+            # drawn and filtered a settling time beyond each end of the window,
+            # so the kept samples are stationary filtered noise
+            noise = signal.sosfiltfilt(
+                sos, rng.standard_normal(envelope.size + 2 * pad), padlen=0
+            )[pad : pad + envelope.size]
             burst = (row.amplitude / emg_sd) * noise * envelope
             lfps[window] += burst[:, np.newaxis]
             radiatum[window] += burst
@@ -3130,9 +3182,12 @@ def simulate_network_session(
     non_events : pandas.DataFrame, optional
         A non-event table, as ``draw_non_events`` returns, rendered in
         ``non_event_id`` order: leaked spikes and their waveforms, EMG,
-        gamma bursts and theta bursts, as that function describes. The
-        leaked spikes are added to the drawn counts, so they neither change
-        those counts nor obey ``refractory_period``. Default None: none.
+        gamma bursts and theta bursts, as that function describes. Leaked
+        spikes are added after the spike draw, so the drawn spikes are as
+        without them; they do not obey ``refractory_period``, and under
+        ``'refractory'`` a sample can then hold two spikes of a unit. Rows are
+        not checked against ``running_intervals``: a theta burst at rest
+        renders as one. Default None: none.
     n_channels : int, optional
         Pyramidal-layer channels; the radiatum channel is separate. Default 4.
     unit_counts : mapping of str to int, optional
@@ -3212,7 +3267,7 @@ def simulate_network_session(
         seed has the same noise, and the spike model or spatial profile does
         not change anything drawn from another stream. A theta burst changes
         its units' intensities, and so, under Poisson spiking, the counts
-        drawn after them.
+        drawn for every unit after the first it modulates.
     sampling_frequency : float, optional
         As in ``simulate_LFP``. Recorded in the result. Give it when the
         timestamps lie far from zero (a Unix time): there they round, the
@@ -3232,7 +3287,9 @@ def simulate_network_session(
         ``running_intervals``; and one ``ripple_times``,
         ``ripple_durations`` and ``ripple_frequencies`` entry per ripple
         row, so ``ripple_windows`` is each ripple's span at three side
-        scales.
+        scales; ``non_events`` the non-event table sorted by
+        ``non_event_id`` (empty when none were given). The signals and
+        ``multiunit`` include the non-events.
 
     Raises
     ------
@@ -3261,16 +3318,20 @@ def simulate_network_session(
         duplicate ``non_event_id``, a non-finite time or amplitude, a side
         scale that is not positive, an envelope power other than 2, a span
         at four side scales outside the recording, or a row its kind cannot
-        render (a leakage burst on a channel that does not exist, with more
-        units than the place and pyramidal units, fewer than 2 spikes, an
-        interval under a sample, side scales other than ``(n_spikes - 1) isi
-        / 6`` or spikes past the end; an EMG burst of negative amplitude, or
-        at a rate with no room above 100 Hz; a gamma burst of non-positive
-        SNR, side scales under a sample, or a sizing band that is not finite,
-        ordered, below Nyquist, holding its frequency and possible to
-        filter; a theta burst with more units than the place units or a gain
-        below 1), or has gamma bursts while ``noise_amplitude`` or every
-        channel gain is 0; ``spatial_profile`` or ``spike_model`` is unknown;
+        render (a leakage burst on a channel that does not exist, with no
+        units or more than the place and pyramidal units, a negative
+        amplitude, fewer than 2 spikes, an interval under a sample, side
+        scales other than ``(n_spikes - 1) isi / 6``, or spikes on a shared
+        sample or with a waveform past the end; an EMG burst of negative
+        amplitude or side scales under a sample, or at a rate with no room
+        above 100 Hz; a gamma burst of non-positive SNR, non-finite
+        frequency, side scales under a sample, or a sizing band that is not
+        finite, ordered, below Nyquist, holding its frequency and possible to
+        filter; a theta burst with no units or more than the place units, a
+        gain below 1 or side scales under a sample; "under a sample" allows
+        1% for a rate given that differs from the timestamps'), or has gamma
+        bursts while ``noise_amplitude`` or every channel gain is 0;
+        ``spatial_profile`` or ``spike_model`` is unknown;
         ``channel_occupancy`` lies outside (0, 1]; ``channel_gain_range`` is
         not a non-negative range; ``channel_delay``, ``noise_log_amplitude``
         or ``refractory_period`` is negative or not finite;

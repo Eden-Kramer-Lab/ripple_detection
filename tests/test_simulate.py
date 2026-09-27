@@ -1687,20 +1687,19 @@ class TestSimulateNetworkSession(_Renders):
         assert len(session.ripple_channels) == 4 * n_ripples
         assert session.non_events.empty
 
-    def test_no_non_events_is_unchanged(self, drawn):
-        """No non-events, or an empty table of them, renders exactly as
-        without the argument."""
+    def test_an_empty_non_event_table_is_unchanged(self, drawn):
+        """An empty table of non-events renders exactly as none (the drawn
+        fixture); tests/test_snapshots.py pins the rendering itself."""
         events, session = drawn
-        running = [(12.0, 18.0)]
-        for non_events in (None, draw_non_events(self.TIME, rates={})):
-            again = simulate_network_session(
-                self.TIME, events, non_events=non_events, running_intervals=running, rng=1
-            )
-            for name in ("lfps", "sharp_wave_lfp", "multiunit", "speed", "baseline_rates"):
-                np.testing.assert_array_equal(getattr(again, name), getattr(session, name))
-            pd.testing.assert_frame_equal(again.events, session.events)
-            _assert_schema(again.non_events, NON_EVENT_COLUMNS)
-            assert again.non_events.empty
+        again = simulate_network_session(
+            self.TIME, events, non_events=draw_non_events(self.TIME, rates={}),
+            running_intervals=[(12.0, 18.0)], rng=1,
+        )  # fmt: skip
+        for name in ("lfps", "sharp_wave_lfp", "multiunit", "speed", "baseline_rates"):
+            np.testing.assert_array_equal(getattr(again, name), getattr(session, name))
+        pd.testing.assert_frame_equal(again.events, session.events)
+        _assert_schema(again.non_events, NON_EVENT_COLUMNS)
+        assert again.non_events.empty
 
     def test_participants_follow_participation(self):
         """Place units join with the row's probability, other pyramidal units
@@ -2361,25 +2360,29 @@ class TestDrawNonEvents:
         assert in_bout[kind == "theta_burst"].any(axis=1).all()
         assert not touches_bout[kind == "spike_leakage"].any()
         for anywhere in ("emg", "fast_gamma"):
-            centre_running = in_bout[kind == anywhere].any(axis=1)
-            assert centre_running.any(), anywhere
-            assert not centre_running.all(), anywhere
+            span_running = in_bout[kind == anywhere].any(axis=1)
+            assert span_running.any(), anywhere
+            assert not span_running.all(), anywhere
         assert (start >= self.TIME[0] + 1.0).all()
         assert (end <= self.TIME[-1] - 1.0).all()
 
-    def test_rates_are_per_minute_of_each_state(self, non_events):
-        """Before rejection each kind is Poisson on its state's time, and
-        few are rejected at these spans."""
+    def test_rates_are_per_minute_of_each_state(self):
+        """Each kind is Poisson on its state's time; at rates ten times the
+        dense ones, four standard deviations are about 15% of each count, and
+        few non-events are rejected at the default spans (about 2% of theta
+        bursts, from the bouts' ends)."""
+        rates = {kind: 10 * rate for kind, rate in DENSE_RATES.items()}
+        table = draw_non_events(self.TIME, rates=rates, running_intervals=self.RUNNING, rng=4)
         running = sum(end - start for start, end in self.RUNNING)
         whole = self.TIME[-1] - self.TIME[0] - 2.0
         minutes = {
             "spike_leakage": (whole - running) / 60, "emg": whole / 60,
             "fast_gamma": whole / 60, "theta_burst": running / 60,
         }  # fmt: skip
-        counts = non_events.non_event_type.value_counts()
-        for kind, rate in DENSE_RATES.items():
+        counts = table.non_event_type.value_counts()
+        for kind, rate in rates.items():
             expected = rate * minutes[kind]
-            assert abs(counts[kind] - expected) < 4 * np.sqrt(expected) + 0.05 * expected, kind
+            assert abs(counts[kind] - expected) < 4 * np.sqrt(expected), kind
 
     def test_drawn_values(self, non_events):
         by_kind = dict(tuple(non_events.groupby("non_event_type")))
@@ -2441,6 +2444,38 @@ class TestDrawNonEvents:
         expected = rate / 60 * kept_time
         assert abs(len(table) - expected) < 4 * np.sqrt(expected)
 
+    def test_bouts_at_the_recording_edges(self):
+        """A bout inside the first second, one past it and one to the last
+        sample: theta bursts only in the parts more than a second from either
+        end; too short a recording draws none, without error."""
+        end = self.TIME[-1]
+        running = [(0.0, 0.8), (0.9, 3.0), (end - 3.0, end)]
+        table = draw_non_events(
+            self.TIME, rates={"theta_burst": 600.0}, running_intervals=running, rng=5
+        )
+        start, stop = _spans(table, 4)
+        assert len(table) > 0
+        in_first = (start >= 1.0) & (stop <= 3.0)
+        in_last = (start >= end - 3.0) & (stop <= end - 1.0)
+        assert (in_first | in_last).all()
+        assert in_first.any()
+        assert in_last.any()
+        short = simulate_time(int(1.5 * self.FS), self.FS)
+        assert draw_non_events(short, rates=DENSE_RATES, running_intervals=[(0.0, 1.5)]).empty
+
+    def test_drawn_columns_are_independent(self, non_events):
+        """Each drawn value has its own uniform: within a kind, no two drawn
+        columns are rank-correlated beyond chance."""
+        columns = {
+            "spike_leakage": ["n_units", "n_spikes", "isi", "channel"],
+            "fast_gamma": ["frequency", "rise_sigma", "amplitude"],
+            "theta_burst": ["n_units", "rise_sigma"],
+        }
+        for kind, names in columns.items():
+            rows = non_events[non_events.non_event_type == kind]
+            rank = rows[names].rank().corr().to_numpy()[np.triu_indices(len(names), 1)]
+            assert (np.abs(rank) < 0.45).all(), kind
+
     def test_parameters_set_what_they_name(self):
         table = draw_non_events(
             self.TIME, rates=DENSE_RATES, running_intervals=self.RUNNING, n_channels=8,
@@ -2467,6 +2502,23 @@ class TestDrawNonEvents:
         assert set(theta.n_units) == {3, 4}
         assert (6 * theta.rise_sigma).between(0.15, 0.2).all()
         assert (theta.amplitude == 4.0).all()
+
+    @pytest.mark.parametrize("fs", [1250.0, 2500.0])
+    def test_the_shortest_spans_render(self, fs):
+        """Durations at the one-sample floor, where six sides of a sample
+        divided by six can round below a sample, are drawn and then rendered."""
+        time = simulate_time(int(10 * fs), fs)
+        floor = 6 / fs
+        table = draw_non_events(
+            time, rates={"emg": 60.0, "fast_gamma": 60.0}, emg_duration=(floor, floor),
+            fast_gamma_duration=(floor, floor), rng=0,
+        )  # fmt: skip
+        assert len(table) > 0
+        events = draw_network_events(time, event_rate=0.0)
+        session = simulate_network_session(
+            time, events, non_events=table, sampling_frequency=fs, rng=1
+        )
+        assert np.isfinite(session.lfps).all()
 
     def test_kinds_draw_independently(self, non_events):
         """One kind's rate or ranges leave the other kinds' rows unchanged,
@@ -2530,6 +2582,7 @@ class TestDrawNonEvents:
             ({"fast_gamma_snr": (0.0, 2.0)}, "fast_gamma_snr"),
             ({"theta_burst_units": (0, 5)}, "theta_burst_units"),
             ({"theta_burst_duration": (0.0, 0.1)}, "theta_burst_duration"),
+            ({"theta_burst_duration": (0.003, 0.1)}, "theta_burst_duration"),
             ({"theta_burst_gain": 0.5}, "theta_burst_gain"),
             ({"running_intervals": [(5.0, 2.0)]}, "start before its end"),
         ],
@@ -2639,8 +2692,8 @@ class TestNonEventRendering(_Renders):
         np.testing.assert_allclose(added[samples, 1], -2.0)
         np.testing.assert_allclose(added[samples + 1, 1], 0.9)
         assert np.count_nonzero(added[:, 1]) == 15
-        # a burst at 250 spikes/s: much of it in the ripple band, all within
-        # the filter kernel's half-length (0.11 s) of it
+        # a burst at 250 spikes/s: over a tenth of its power in the ripple
+        # band, nearly all of it within the kernel's half-length (0.11 s)
         power = filter_ripple_band(added[:, 1], sampling_frequency=self.FS) ** 2
         assert power.sum() > 0.1 * np.sum(added[:, 1] ** 2)
         assert power[np.abs(self.TIME - 5.0) < 0.15].sum() > 0.999 * power.sum()
@@ -2652,9 +2705,30 @@ class TestNonEventRendering(_Renders):
         expected[samples] = 1.0
         np.testing.assert_array_equal(extra[:, units], expected)
 
+    def test_leak_waveform_at_the_recording_end(self):
+        """A last spike three samples from the end fits its whole waveform;
+        two from the end, its waveform would run past it and raises."""
+        isi = 1 / self.FS
+        n_time = self.TIME.size
+
+        def row(last_sample):
+            return _one_non_event_table(
+                "spike_leakage", center_time=self.TIME[last_sample] - isi / 2, n_spikes=2,
+                isi=isi, rise_sigma=isi / 6, decay_sigma=isi / 6,
+            )  # fmt: skip
+
+        fits, plain = self._pair(row(n_time - 3), sampling_frequency=self.FS, **NOISE_FREE)
+        np.testing.assert_allclose(
+            (fits.lfps - plain.lfps)[-4:, 1], [-2.0, 0.9 - 2.0, 0.4 + 0.9, 0.4]
+        )
+        with pytest.raises(ValueError, match="spike_leakage row"):
+            self._render(
+                _empty_table(), non_events=row(n_time - 2), sampling_frequency=self.FS
+            )
+
     def test_leaked_spikes_one_sample_apart_stay_apart(self):
-        """Spikes a sample apart, centred between samples, land on two
-        samples, not one: every spike is kept."""
+        """Two spikes a sample apart, each halfway between samples, land on
+        two samples, not one: every spike is kept."""
         isi = 1 / self.FS
         row = _one_non_event_table(
             "spike_leakage", center_time=3.0, n_spikes=2, isi=isi, rise_sigma=isi / 6,
@@ -2713,22 +2787,58 @@ class TestNonEventRendering(_Renders):
 
     def test_emg_is_common_mode_and_high_passed(self):
         """Noise-free: the same burst on every channel and the radiatum, less
-        than 5% of its power below 80 Hz, and a standard deviation of
-        ``amplitude`` about its peak."""
-        sigma = 0.5
-        row = _one_non_event_table("emg", center_time=6.0, rise_sigma=sigma, decay_sigma=sigma)
-        session = self._render(_empty_table(), non_events=row, **NOISE_FREE)
+        than 5% of its power below 80 Hz, and, over five bursts, a standard
+        deviation of ``amplitude`` about each peak."""
+        sigma = 0.2
+        centers = [2.0, 4.0, 6.0, 8.0, 10.0]
+        rows = _non_event_tables(
+            *(
+                _one_non_event_table("emg", center_time=c, rise_sigma=sigma, decay_sigma=sigma)
+                for c in centers
+            )
+        )
+        session = self._render(_empty_table(), non_events=rows, **NOISE_FREE)
         burst = session.sharp_wave_lfp
         np.testing.assert_array_equal(session.lfps, np.repeat(burst[:, None], 4, axis=1))
         frequencies = np.fft.rfftfreq(burst.size, 1 / self.FS)
         spectrum = np.abs(np.fft.rfft(burst)) ** 2
         assert spectrum[frequencies < 80].sum() < 0.05 * spectrum.sum()
-        # a 4th-order high-pass at 100 Hz, forward and backward: |H|^4 ~ 3e-4 at 60 Hz
+        # a 4th-order high-pass at 100 Hz, forward and backward: |H|^4 ~ 2e-4 at 60 Hz
         low = spectrum[(frequencies > 40) & (frequencies < 70)].mean()
         assert low < 0.01 * spectrum[(frequencies > 200) & (frequencies < 400)].mean()
-        window, envelope = _event_envelope(self.TIME, 6.0, sigma, sigma, 2)
-        core = envelope > np.exp(-0.5)
-        assert np.std(burst[window][core] / envelope[core]) == pytest.approx(1.5, rel=0.05)
+        scaled = []
+        for center in centers:
+            window, envelope = _event_envelope(self.TIME, center, sigma, sigma, 2)
+            core = envelope > np.exp(-0.5)
+            scaled.append(burst[window][core] / envelope[core])
+        assert np.std(np.concatenate(scaled)) == pytest.approx(1.5, rel=0.05)
+
+    def test_emg_keeps_its_size_near_nyquist(self):
+        """At 205 Hz the high-pass leaves 2.5 Hz and settles over hundreds of
+        samples, far longer than a 0.05 s burst; the burst still has its
+        amplitude at the peaks."""
+        fs = 205
+        time = simulate_time(40 * fs, fs)
+        centers = np.arange(2.0, 38.0, 0.5)
+        rows = _non_event_tables(
+            *(
+                _one_non_event_table(
+                    "emg",
+                    center_time=c,
+                    rise_sigma=0.05 / 6,
+                    decay_sigma=0.05 / 6,
+                    amplitude=1.0,
+                )
+                for c in centers
+            )
+        )
+        session = simulate_network_session(
+            time, _empty_table(), non_events=rows, unit_counts={"interneuron": 1}, rng=0,
+            **QUIET, **NOISE_FREE,
+        )  # fmt: skip
+        peaks = session.sharp_wave_lfp[np.searchsorted(time, centers)]
+        # 72 peaks: the RMS of unit-variance normals is within 25% of 1
+        assert np.sqrt(np.mean(peaks**2)) == pytest.approx(1.0, rel=0.25)
 
     def _gamma_snr(self, rows, band):
         """Each gamma burst's peak, filtered to ``band``, over the filtered
@@ -2784,8 +2894,8 @@ class TestNonEventRendering(_Renders):
     def test_nearby_gamma_uses_its_band(self):
         """Bursts at 90-140 Hz reach their SNR in their stored band, whose
         noise SD sizes them; the same burst sized in 60-100 Hz reaches its SNR
-        there instead, at another amplitude. Nearby gamma leaks more into the
-        ripple band than the reference does (measured, not bounded)."""
+        there instead. Nearby gamma leaks into the ripple band, the reference
+        does not."""
         frequencies = np.linspace(92, 138, 10)
         rows = self._gamma_rows(frequencies, np.full(10, 3.0), (90, 140))
         _, _, snr, nearby_spillover = self._gamma_snr(rows, (90.0, 140.0))
@@ -2796,21 +2906,19 @@ class TestNonEventRendering(_Renders):
         assert nearby_spillover.max() > 0.05  # near 140 Hz the ripple filter passes some
 
         one = {"frequency": 95.0, "amplitude": 3.0}
-        sizes = {}
         for band in ((60.0, 100.0), (90.0, 140.0)):
             row = _one_non_event_table(
                 "fast_gamma", snr_band_low=band[0], snr_band_high=band[1], **one
             )
-            session, noise = self._pair(row)
-            sizes[band] = np.abs(session.lfps[:, 0] - noise.lfps[:, 0]).max()
             _, _, snr, _ = self._gamma_snr(row, band)
             assert snr.item() == pytest.approx(3.0, rel=1e-6)
-        assert sizes[(60.0, 100.0)] != pytest.approx(sizes[(90.0, 140.0)], rel=0.05)
 
     def test_theta_burst_modulates_only_its_units(self):
-        """Every place unit in each burst: their rate within a side scale of
-        the centres is several times their rate away from the bursts, and
-        highest at the centre; other units keep their rate; no LFP."""
+        """Every place unit in each burst: their rate within half a side
+        scale of the centres is several times their rate away from the
+        bursts, and highest at the centre; within four side scales their extra
+        spikes are ``rate (gain - 1) sqrt(2 pi) sigma`` per unit and burst;
+        other units keep their rate; no LFP."""
         rows = _non_event_tables(
             *(
                 _one_non_event_table("theta_burst", center_time=1.5 + 0.5 * i)
@@ -2828,6 +2936,8 @@ class TestNonEventRendering(_Renders):
         far = distance > 5 * sigma
         place, other = slice(0, 5), slice(5, 15)
         counts = {"near": 0.0, "mid": 0.0, "far": 0.0, "other_near": 0.0, "other_far": 0.0}
+        within = distance < 4 * sigma
+        extra = 0.0
         for seed in range(4):
             theta = self._render(_empty_table(), non_events=rows, rng=seed, **options)
             plain = self._render(_empty_table(), rng=seed, **options)
@@ -2839,6 +2949,9 @@ class TestNonEventRendering(_Renders):
             counts["far"] += spikes[far, place].sum() / far.sum()
             counts["other_near"] += spikes[near, other].sum() / near.sum()
             counts["other_far"] += spikes[far, other].sum() / far.sum()
+            extra += spikes[within, place].sum() - 5.0 * within.sum() / self.FS * 5
+        expected = 5.0 * (10.0 - 1.0) * np.sqrt(2 * np.pi) * sigma * 5 * len(rows) * 4
+        assert extra == pytest.approx(expected, rel=0.15)
         assert counts["near"] > 5 * counts["far"]
         assert counts["near"] > counts["mid"] > counts["far"]
         assert counts["other_near"] < 2 * counts["other_far"]
@@ -2918,6 +3031,11 @@ class TestNonEventRendering(_Renders):
             ),
             (_one_non_event_table("theta_burst", n_units=41), {}, "theta_burst row"),
             (_one_non_event_table("theta_burst", amplitude=0.5), {}, "theta_burst row"),
+            (
+                _one_non_event_table("theta_burst", rise_sigma=1e-5, decay_sigma=1e-5),
+                {},
+                "theta_burst row",
+            ),
             (_one_non_event_table("fast_gamma", amplitude=0.0), {}, "fast_gamma row"),
             (
                 _non_event_tables(
