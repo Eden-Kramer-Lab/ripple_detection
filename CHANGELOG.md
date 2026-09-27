@@ -126,8 +126,11 @@ here is relative to 1.7.1.
   fraction of its envelope's peak. `SimulatedSession` gains `events`,
   `non_events`, `unit_types`, `baseline_rates`, `running_intervals` and
   `ripple_channels`; `simulate_session` fills `running_intervals` and leaves
-  the others empty, and its signals are unchanged. No simulator renders
-  non-events yet.
+  the others empty, and its signals are unchanged. `draw_non_events` draws
+  non-events, activity a detector should not report (spikes leaking into one
+  LFP channel, EMG, fast-gamma bursts, place-cell bursts while running), which
+  `simulate_network_session` renders when given `non_events` and
+  `truth_windows` windows like events.
 - `load_literature_parameters`, the detection parameters of 57 replay papers,
   and a simulation study comparing every detector (`examples/simulation_study.py`).
 - `load_literature_datasets`, a separate packaged catalog of public recording

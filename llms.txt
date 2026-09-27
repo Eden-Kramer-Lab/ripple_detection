@@ -75,7 +75,7 @@ the events first and `time` after the signal. Required positional arguments:
 - Intervals: `intervals_to_mask(time, intervals)`, `intersect_intervals(intervals, other_intervals)`; inclusive, sorted, disjoint `[start, end]` pairs.
 - State: `theta_delta_ratio(lfp, sampling_frequency, time=...)`, `state_intervals(values, time, threshold)`, `two_cluster_threshold(values)`, `histogram_minimum_threshold(values)`.
 - Every detector's result has `peak_time`, as does every `literature_methods` result.
-- Simulated truth by event type: `events = draw_network_events(time, running_intervals=...)`, `session = simulate_network_session(time, events, running_intervals=...)`, `truth_windows(session.events, fraction=0.1, expression="ripple" | "sharp_wave" | "burst" | "network")`; rows pair up across fractions.
+- Simulated truth by event type: `events = draw_network_events(time, running_intervals=...)`, `session = simulate_network_session(time, events, running_intervals=...)`, `truth_windows(session.events, fraction=0.1, expression="ripple" | "sharp_wave" | "burst" | "network")`; rows pair up across fractions. Non-events a detector should not report: `non_events = draw_non_events(time, running_intervals=...)`, `simulate_network_session(..., non_events=non_events)`, `truth_windows(session.non_events)`.
 
 ## Surveyed papers' methods
 

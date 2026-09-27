@@ -712,6 +712,27 @@ some channels with delays (`spatial_profile="local"` with `channel_occupancy` be
 `channel_delay` above 0), slowly varying background noise
 (`noise_log_amplitude`) and refractory spiking (`spike_model="refractory"`).
 
+To see what a detector reports that it should not, add non-events (`NON_EVENT_TYPES`): spikes
+of a few units leaking into one LFP channel at rest, broadband EMG on every channel, fast-gamma
+bursts, and bursts of place-cell firing while running. Each has a row and a truth window, so a
+false positive can be traced to its cause:
+
+```python
+from ripple_detection import draw_non_events
+
+non_events = draw_non_events(time, running_intervals=running, rng=2)  # one row per non-event
+session = simulate_network_session(
+    time, events, non_events=non_events, running_intervals=running, rng=1
+)
+decoys = truth_windows(session.non_events, fraction=0.1)  # 'id', 'type', 'start_time', ...
+```
+
+`draw_non_events`' docstring says how each kind is rendered and where its values come from.
+Fast gamma is sized like a ripple but in its own band (60-100 Hz by default); give
+`fast_gamma_frequency` and `fast_gamma_band` both `(90, 140)` for gamma just below the ripple
+band. With the same seed, a session rendered with non-events has the same noise, ripples and
+burst participants as one without.
+
 See the [examples](https://github.com/Eden-Kramer-Lab/ripple_detection/tree/master/examples/) directory for Jupyter notebooks demonstrating:
 
 - [Tutorial](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/ripple_detection_tutorial.ipynb) - A walk through detection on simulated data
