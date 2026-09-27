@@ -85,7 +85,8 @@ and the interpretation limits of the reference condition.
       absolute errors); method-order changes from 0.0 listed in `summary.md`. No headline
       number is reported at 0.0 without its IoU distribution.
   13. **Held-out thresholds**: where `summary.md` or the README recommends a threshold, it is
-      chosen on the calibration replicates and its performance is reported on the held-out ones
+      chosen on the calibration replicates (even ids) and its performance is reported on the
+      held-out ones (odd ids, the same in every condition)
       ([designs.md#operating-curves](designs.md#operating-curves)); the operating curves
       themselves stay descriptive. Failures stay counted per method (the output contract), and
       every summary reports each method's failure count so averages over the sessions that ran
@@ -138,7 +139,8 @@ and the interpretation limits of the reference condition.
 | `test_at_fp_rate_interpolates_in_log_rate` | Hand-built curve: interpolated values by hand; NaN outside the range; zero FP rate replaced by half the resolution. |
 | `test_at_fp_rate_keeps_one_setting` | Two settings share an FP rate, recall 0.8 with onset -10 ms and recall 0.6 with +20 ms: at that rate recall is 0.8 and onset -10 ms. |
 | `test_paired_timing_uses_shared_truth_only` | Two hand-built methods, one recovering only the three easy truth events (0 ms error) and one recovering all six (0, 0, 0, 20, 20, 20 ms): per-method medians 0 and 10 ms with n 3 and 6; the paired difference on the three shared events is 0. |
-| `test_held_out_threshold_reports_held_out_replicates` | A threshold chosen on replicates 0-4 of a 10-replicate condition is reported with the metrics of replicates 5-9 only. |
+| `test_held_out_threshold_reports_held_out_replicates` | A threshold chosen on the even replicates of a 10-replicate condition is reported with the metrics of the odd replicates only. |
+| `test_held_out_membership_is_the_same_in_every_condition` | For the reference (20 replicates) and a 10-replicate condition, every replicate id present in both is calibration in both or held out in both; the held-out ids they share are 1, 3, 5, 7, 9, and each condition's split is half and half. |
 | `test_matching_sensitivity_levels` | A session with a sliver detection: recall 1 at `minimum_iou` 0.0 and 0.5 at 0.2, both rows present. |
 | `test_false_positive_labels` | A hand-built session: an event over a leakage burst is labelled `spike_leakage`, one over a `burst_only` burst `burst_only:burst`, one over nothing `background`. |
 | `test_profile_and_consensus_on_tiny_run` | A two-session hand-built output directory (written by a fixture): detection profile and consensus tables equal hand values. |

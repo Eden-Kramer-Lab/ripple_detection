@@ -685,9 +685,11 @@ Per session, in a worker (`ProcessPoolExecutor`, default `os.cpu_count() - 1` wo
    `simplefilter("ignore")` and `try/except Exception` (broader than `simulation_study.py:108-118`'s
    `ValueError`: a recipe can raise others, e.g. a required baseline containing no valid spikes),
    recording `f"{type(error).__name__}: {error}"`.
-4. Per method × setting × expression in (`ripple`, `sharp_wave`, `burst`, `network`):
-   `match_events(truth_windows(events, 0.1, expression), detected)`, boundary errors at 0.25 and
-   0.5 via `boundary_errors`, the metrics row.
+4. Per method × setting × expression in (`ripple`, `sharp_wave`, `burst`, `network`) ×
+   `minimum_iou` in `MATCH_IOU_LEVELS`:
+   `match_events(truth_windows(events, 0.1, expression), detected, minimum_iou=minimum_iou)`,
+   boundary errors at 0.25 and 0.5 via `boundary_errors`, signed and absolute medians, the
+   metrics row.
 5. Return the session's truth, units, events and metrics frames; the parent collects them per
    condition and, when a condition's sessions are all done, writes every table into
    `conditions/<condition_id>.partial/`, then `done.json` (row counts and SHA-256 of every
@@ -752,11 +754,14 @@ error instead of its own -10 ms). Recipes are points `(fp_rate, recall)` on thei
 curves of the detectors with the same primary expression.
 
 The curves describe performance on the sessions they are read from. A threshold the benchmark
-recommends, or a single tuned number per method, is chosen on calibration replicates (the first
-half: 0-9 of the reference's 20, 0-4 of another condition's 10) and its recall, false-positive
-rate and boundary errors are reported on the held-out replicates (the second half), beside the
-descriptive curve. Replicate `k` keeps its seed in every condition, so the split is the same
-across conditions and comparisons still pair by replicate.
+recommends, or a single tuned number per method, is chosen on calibration replicates and its
+recall, false-positive rate and boundary errors are reported on the held-out replicates, beside
+the descriptive curve. Membership is by replicate id, the same in every condition: even ids
+calibrate, odd ids are held out (`is_held_out(replicate) = replicate % 2 == 1`), so the
+reference's 20 split 10/10 and another condition's 10 split 5/5, and a replicate never
+calibrates in one condition while being held out in another. Replicate `k` keeps its seed in
+every condition, so held-out comparisons across conditions still pair by replicate (odd ids
+0-9 are shared by every condition).
 
 ## Bootstrap and permutation tests
 
