@@ -337,7 +337,16 @@ As implemented in phase 1b (2026-09-26), where the design above left a choice op
   units: statistically the same, not bit-identical.
 - **Render validation.** `envelope_power` must be 2. A leakage burst may use at most the place
   and other pyramidal units, a theta burst at most the place units. A gamma band must be
-  filterable at the rate. EMG needs the rate above 200 Hz.
+  filterable at the rate, and a gamma frequency finite. EMG needs the rate above 200 Hz, and EMG
+  and gamma side scales of at least a sample.
+- **Leaked samples.** A spike takes its nearest sample, and a tie goes to the later one. A row
+  whose spikes would share a sample, or whose waveform would run past the recording, raises.
+- **Pinning.** `tests/test_snapshots.py` pins a seeded network session with no non-events. It
+  was checked against the renderer before non-events were added.
+- **Benchmark note.** The three-sample leak waveform's ripple-band share depends on the ISI.
+  At 4 ms (250 spikes/s) it holds 14.5% of the waveform's power, at 6 ms 10.6%, and at 3 ms
+  (333 spikes/s, above the band) only 2%. Leakage near the short end of the default ISI range
+  is a weak decoy for ripple-band detectors.
 
 ## Truth windows
 
