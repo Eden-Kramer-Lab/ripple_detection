@@ -94,15 +94,6 @@ def _index(events: EventInventory, n_events: int) -> pd.Index:
     return pd.RangeIndex(n_events)
 
 
-def _overlap_matrix(reference: FloatArray, detected: FloatArray) -> FloatArray:
-    """Intersection lengths, shape ``(n_reference, n_detected)``: 0 where two
-    events are disjoint or only touch. A difference of two floats is positive
-    exactly when the first is larger, so positive means overlapping."""
-    start = np.maximum(reference[:, :1], detected[:, 0])
-    end = np.minimum(reference[:, 1:], detected[:, 1])
-    return np.asarray(np.clip(end - start, 0.0, None))
-
-
 def _ulp(*bounds: FloatArray) -> float:
     """A unit in the last place (ulp) of the largest magnitude among the
     bounds: each is stored to half of it, 1.2e-7 s on a Unix clock."""
@@ -115,6 +106,39 @@ def _time_rounding(*bounds: FloatArray) -> float:
     its nominal value, with room: each bound is stored to half an ulp, and
     each subtraction adds about one more."""
     return 8 * _ulp(*bounds)
+
+
+def _overlapping_pairs(
+    first: FloatArray, second: FloatArray
+) -> tuple[IntArray, IntArray, FloatArray]:
+    """Every pair of a row of `first` and a row of `second` that overlap, as
+    the two row positions and the intersection length, ordered by `first`'s
+    row and then `second`'s. Touching is not overlap: a difference of two
+    floats is positive exactly when the first is larger.
+
+    Only rows of `second` starting before a `first` row ends, and no earlier
+    than its start less the longest `second` event (widened by the rounding
+    of that length), are candidates, so the work grows with the events and
+    their overlaps rather than with ``len(first) * len(second)``."""
+    empty = np.empty(0, dtype=int)
+    if not (len(first) and len(second)):
+        return empty, empty, np.empty(0)
+    by_start = np.argsort(second[:, 0], kind="stable")
+    starts = second[by_start, 0]
+    reach = float((second[:, 1] - second[:, 0]).max()) + _time_rounding(first, second)
+    low = np.searchsorted(starts, first[:, 0] - reach, side="left")
+    high = np.searchsorted(starts, first[:, 1], side="left")
+    counts = np.maximum(high - low, 0)
+    first_row = np.repeat(np.arange(len(first)), counts)
+    offset = np.arange(len(first_row)) - np.repeat(np.cumsum(counts) - counts, counts)
+    second_row = by_start[low[first_row] + offset]
+    start = np.maximum(first[first_row, 0], second[second_row, 0])
+    end = np.minimum(first[first_row, 1], second[second_row, 1])
+    intersection = end - start
+    keep = intersection > 0
+    first_row, second_row, intersection = first_row[keep], second_row[keep], intersection[keep]
+    order = np.lexsort((second_row, first_row))
+    return first_row[order], second_row[order], intersection[order]
 
 
 def _check_mapping(events: object) -> None:
@@ -148,56 +172,44 @@ def _ratio(numerator: FloatArray, denominator: FloatArray) -> FloatArray:
         return np.where(denominator > 0, numerator / denominator, np.nan)
 
 
-def _assign(eligible: BoolArray, iou: FloatArray) -> tuple[IntArray, IntArray]:
+def _assign(
+    n_reference: int, reference_row: IntArray, detected_row: IntArray, iou: FloatArray
+) -> IntArray:
     """The one-to-one assignment with the most pairs and then the largest
-    summed IoU, as reference and detected row positions sorted by reference.
+    summed IoU, among the eligible pairs given as edges (row positions and
+    IoU): the chosen edges' positions, sorted by reference row.
 
-    Solved exactly per connected component of the eligibility graph. Each
-    pair weighs ``bonus + iou`` with ``bonus`` above the component's largest
-    possible summed IoU, so no gain in IoU outweighs one more pair. The
-    maximum pair count does not depend on which side is the reference, so the
-    counts are symmetric even where summed IoUs tie."""
-    n_reference, n_detected = eligible.shape
-    reference_row, detected_row = np.nonzero(eligible)
+    Solved exactly per connected component of the edges. Each pair weighs
+    ``bonus + iou`` with ``bonus`` above the component's largest possible
+    summed IoU, so no gain in IoU outweighs one more pair. The maximum pair
+    count does not depend on which side is the reference, so the counts are
+    symmetric even where summed IoUs tie."""
+    if not len(reference_row):
+        return np.empty(0, dtype=int)
+    n_detected = int(detected_row.max()) + 1
     graph = coo_matrix(
         (np.ones(len(reference_row)), (reference_row, n_reference + detected_row)),
         shape=(n_reference + n_detected, n_reference + n_detected),
     )
     n_components, label = connected_components(graph, directed=False)
-    reference_label, detected_label = label[:n_reference], label[n_reference:]
-    reference_members = np.bincount(reference_label, minlength=n_components)
-    detected_members = np.bincount(detected_label, minlength=n_components)
-
-    # a component of one reference and one detected event is a single edge
-    single = (reference_members == 1) & (detected_members == 1)
-    is_single_reference = single[reference_label]
-    reference_of = np.full(n_components, -1)
-    reference_of[reference_label[is_single_reference]] = np.flatnonzero(is_single_reference)
-    is_single_detected = single[detected_label]
-    rows = [reference_of[detected_label[is_single_detected]]]
-    columns = [np.flatnonzero(is_single_detected)]
-
-    # a component with both kinds of event has at least one edge
-    larger = np.flatnonzero((reference_members > 0) & (detected_members > 0) & ~single)
-    reference_by_label = np.argsort(reference_label, kind="stable")
-    detected_by_label = np.argsort(detected_label, kind="stable")
-    reference_start = np.concatenate([[0], np.cumsum(reference_members)])
-    detected_start = np.concatenate([[0], np.cumsum(detected_members)])
-    for component in larger:
-        r = reference_by_label[reference_start[component] : reference_start[component + 1]]
-        d = detected_by_label[detected_start[component] : detected_start[component + 1]]
-        allowed = eligible[np.ix_(r, d)]
-        bonus = min(len(r), len(d)) + 1.0
-        weight = np.where(allowed, bonus + iou[np.ix_(r, d)], 0.0)
+    component = label[reference_row]
+    n_edges = np.bincount(component, minlength=n_components)
+    # a component of one edge is one reference and one detected event
+    chosen = [np.flatnonzero(n_edges[component] == 1)]
+    by_component = np.argsort(component, kind="stable")
+    first_edge = np.concatenate([[0], np.cumsum(n_edges)])
+    for c in np.flatnonzero(n_edges > 1):
+        edges = by_component[first_edge[c] : first_edge[c + 1]]
+        r, r_at = np.unique(reference_row[edges], return_inverse=True)
+        d, d_at = np.unique(detected_row[edges], return_inverse=True)
+        weight = np.zeros((len(r), len(d)))
+        weight[r_at, d_at] = min(len(r), len(d)) + 1.0 + iou[edges]
+        edge_at = np.full((len(r), len(d)), -1)
+        edge_at[r_at, d_at] = edges
         i, j = linear_sum_assignment(weight, maximize=True)
-        keep = allowed[i, j]
-        rows.append(r[i[keep]])
-        columns.append(d[j[keep]])
-
-    reference_index = np.concatenate(rows).astype(int)
-    detected_index = np.concatenate(columns).astype(int)
-    order = np.argsort(reference_index, kind="stable")
-    return reference_index[order], detected_index[order]
+        chosen.append(edge_at[i, j][edge_at[i, j] >= 0])
+    selected = np.concatenate(chosen)
+    return selected[np.argsort(reference_row[selected], kind="stable")]
 
 
 @dataclass(frozen=True, eq=False)
@@ -379,8 +391,8 @@ def match_events(
 
     Notes
     -----
-    Builds several dense ``(n_reference, n_detected)`` matrices: about 50 MB
-    at peak for 1000 events on each side.
+    Works on the overlapping pairs, not every pair: time and memory grow with
+    the events and their overlaps rather than with their product.
 
     Examples
     --------
@@ -402,30 +414,39 @@ def match_events(
     reference_peaks = _peaks(reference, len(reference_bounds))
     detected_peaks = _peaks(detected, len(detected_bounds))
 
-    intersection = _overlap_matrix(reference_bounds, detected_bounds)
+    reference_row, detected_row, intersection = _overlapping_pairs(
+        reference_bounds, detected_bounds
+    )
     reference_length = reference_bounds[:, 1] - reference_bounds[:, 0]
     detected_length = detected_bounds[:, 1] - detected_bounds[:, 0]
-    union = reference_length[:, None] + detected_length[None, :] - intersection
-    overlapping = intersection > 0
-    iou = np.where(overlapping, _ratio(intersection, union), 0.0)
-    eligible = overlapping
+    # every pair overlaps, so its union is positive
+    union = reference_length[reference_row] + detected_length[detected_row] - intersection
+    iou = intersection / union
+    eligible = np.ones(len(iou), dtype=bool)
     if minimum_iou > 0:
         # IoU's rounding, with u an ulp of the largest bound, each stored to
         # u/2: the intersection rounds by at most 1.5u and the union by 6.5u
         # (two lengths, the intersection and two sums), so IoU moves by at
         # most (1.5u + IoU 6.5u) / union <= 8u / union
         rounding = _time_rounding(reference_bounds, detected_bounds)
-        tolerance = rounding * _ratio(np.ones_like(union), union)
-        eligible = overlapping & (iou > minimum_iou + tolerance)
+        eligible = iou > minimum_iou + rounding * (1.0 / union)
 
-    r, d = _assign(eligible, iou)
+    edges = np.flatnonzero(eligible)[
+        _assign(
+            len(reference_bounds),
+            reference_row[eligible],
+            detected_row[eligible],
+            iou[eligible],
+        )
+    ]
+    r, d = reference_row[edges], detected_row[edges]
     pairs = pd.DataFrame(
         {
             "reference_index": r,
             "detected_index": d,
-            "iou": iou[r, d],
-            "coverage": _ratio(intersection[r, d], reference_length[r]),
-            "temporal_precision": _ratio(intersection[r, d], detected_length[d]),
+            "iou": iou[edges],
+            "coverage": _ratio(intersection[edges], reference_length[r]),
+            "temporal_precision": _ratio(intersection[edges], detected_length[d]),
             "onset_error": detected_bounds[d, 0] - reference_bounds[r, 0],
             "offset_error": detected_bounds[d, 1] - reference_bounds[r, 1],
             "peak_error": detected_peaks[d] - reference_peaks[r],
@@ -436,8 +457,8 @@ def match_events(
         reference=reference_bounds,
         detected=detected_bounds,
         pairs=pairs,
-        reference_overlaps=overlapping.sum(axis=1),
-        detected_overlaps=overlapping.sum(axis=0),
+        reference_overlaps=np.bincount(reference_row, minlength=len(reference_bounds)),
+        detected_overlaps=np.bincount(detected_row, minlength=len(detected_bounds)),
     )
 
 
@@ -786,11 +807,13 @@ def label_by_overlap(
     bounds = _checked_bounds(events, "events")
     window_bounds = _checked_bounds(windows, "windows")
     labels = np.full(len(bounds), unlabeled, dtype=object)
-    if len(bounds) and len(window_bounds):
-        overlap = _overlap_matrix(bounds, window_bounds)
-        longest = overlap.max(axis=1)
-        tied = overlap >= (longest - _time_rounding(bounds, window_bounds))[:, None]
-        best = np.argmax(tied & (overlap > 0), axis=1)
-        has_overlap = longest > 0
-        labels[has_overlap] = windows["label"].to_numpy()[best[has_overlap]]
+    event, window, overlap = _overlapping_pairs(bounds, window_bounds)
+    longest = np.zeros(len(bounds))
+    np.maximum.at(longest, event, overlap)
+    tied = overlap >= longest[event] - _time_rounding(bounds, window_bounds)
+    # the earliest window row among each event's longest overlaps
+    best = np.full(len(bounds), len(window_bounds))
+    np.minimum.at(best, event[tied], window[tied])
+    has_overlap = longest > 0
+    labels[has_overlap] = windows["label"].to_numpy()[best[has_overlap]]
     return pd.Series(labels, index=_index(events, len(bounds)), name="label")

@@ -494,8 +494,11 @@ As implemented in phase 2 (2026-09-27), where the code departs from the sketch a
   measured from their smallest value, not neighbour to neighbour, so errors 1 us apart on a
   Unix clock do not chain into one constant group. `TestTimeOrigin::test_evaluation` fails
   without each tolerance.
-- **Graph and solver.** Components come from a `coo_matrix` of eligible pairs (no `bmat`); a
-  component of one event a side is taken without `linear_sum_assignment`.
+- **Graph and solver.** No dense matrices: only overlapping pairs are built (candidates found
+  by sorted starts within the longest event's length), components come from a `coo_matrix` of
+  the eligible pairs (no `bmat`), and a component of one edge is taken without
+  `linear_sum_assignment`. `label_by_overlap` uses the same pairs. At 1000 events a side:
+  1.6 ms and 0.2 MB, from 14 ms and 49 MB with dense matrices; outputs identical.
 - **Checks.** `minimum_iou` must be below 1; `compare_detectors` and `consensus_counts` raise
   `TypeError` for events that are not a mapping (a DataFrame iterates over its columns).
 - **Indices.** `pairs` and the unmatched/split/merged arrays are row positions (for `.iloc`);
