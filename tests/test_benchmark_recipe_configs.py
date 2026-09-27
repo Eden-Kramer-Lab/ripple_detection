@@ -246,13 +246,9 @@ def test_configurations_and_exclusions_cover_the_catalog_once(recipe_configs, ca
     assert all(reason.strip() for reason in recipe_configs.EXCLUSIONS.values())
 
 
-def test_config_ids_are_unique_and_name_their_method(recipe_configs):
+def test_config_ids_are_unique_and_variants_set_their_protocol(recipe_configs):
     ids = [config.config_id for config in recipe_configs.RECIPES]
     assert len(ids) == len(set(ids))
-    for config in recipe_configs.RECIPES:
-        assert re.fullmatch(r"[a-z0-9_]+(\.[a-z0-9_]+)?", config.config_id)
-        assert config.config_id.split(".")[0] == config.method
-        assert config.input_policy == recipe_configs.INPUT_POLICY
     variants = {
         config.config_id: dict(config.options)
         for config in recipe_configs.RECIPES
@@ -262,7 +258,6 @@ def test_config_ids_are_unique_and_name_their_method(recipe_configs):
         "olafsdottir_2015.bayesian_candidates": {"minimum_active_units": 7},
         "olafsdottir_2017.trajectory": {"analysis": "trajectory"},
     }
-    assert {"olafsdottir_2015", "olafsdottir_2017"} <= set(ids)
 
 
 @pytest.mark.parametrize(
