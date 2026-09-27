@@ -160,7 +160,8 @@ def recipe_configs(benchmark_import):
     return benchmark_import("recipe_configs")
 
 
-def _simulate() -> rd.SimulatedSession:
+@pytest.fixture(scope="module")
+def session():
     """One minute with a running bout: two stretches of rest, ripples strong
     enough for every threshold rule, and units of every type."""
     time = np.arange(int(DURATION * FS)) / FS
@@ -170,11 +171,6 @@ def _simulate() -> rd.SimulatedSession:
     return rd.simulate_network_session(
         time, events, running_intervals=RUNNING, unit_counts=UNIT_COUNTS, rng=2
     )
-
-
-@pytest.fixture(scope="module")
-def session():
-    return _simulate()
 
 
 @pytest.fixture(scope="module")
@@ -204,9 +200,9 @@ def results(recipe_configs, session):
     }
 
 
-def _unconfigured(module, method):
-    """A configuration of ``method`` with no options, as an excluded one would be."""
-    return module.configure(method, "ripple")
+def _named(problems) -> set[str]:
+    """The input or option each ``check_method`` problem starts with."""
+    return {problem.split(":")[0].split(" - ")[0] for problem in problems}
 
 
 def _supplied(recording) -> set[str]:
@@ -349,11 +345,11 @@ def test_resolved_options_follow_the_packages_json_convention(recipe_configs, se
     assert resolved == recorded
     assert type(resolved["minimum_active_units"]) is type(recorded["minimum_active_units"])
     json.dumps(resolved, allow_nan=False)
-    unbounded = recipe_configs.RecipeConfig(
-        "nadasdy_1999",
+    unbounded = recipe_configs.configure(
         "nadasdy_1999",
         "ripple",
-        (("rms_window", np.float64(0.004)), ("bound_threshold", -np.inf)),
+        ("rms_window", np.float64(0.004)),
+        ("bound_threshold", -np.inf),
     )
     assert recipe_configs.resolved_options(unbounded) == {
         "rms_window": 0.004,
@@ -373,14 +369,14 @@ def test_every_configured_path_finds_events(results):
 
 def test_each_exclusion_is_what_check_method_reports(recipe_configs, session):
     for method, reason in recipe_configs.EXCLUSIONS.items():
-        config = _unconfigured(recipe_configs, method)
+        config = recipe_configs.configure(method, "ripple")
         problems = recipe_configs.check_recipe(
             config, *_call_inputs(recipe_configs, session, config)
         )
         # A reason starts with what it names ("rms_window, bound_threshold: ..."
         # or "input sampled at 4800 Hz: ..."): exactly what check_method reports.
         named = set(reason.split(": ", 1)[0].split(", "))
-        assert named == {problem.split(" - ")[0] for problem in problems}, method
+        assert named == _named(problems), method
 
 
 def test_primary_expressions_are_the_reviewed_table(recipe_configs):
@@ -604,7 +600,7 @@ def test_a_recording_holds_exactly_the_declared_inputs(recipe_configs, session):
     rest = recipe_configs.rest_intervals(session)
     configs = [
         *recipe_configs.RECIPES,
-        *(_unconfigured(recipe_configs, method) for method in recipe_configs.EXCLUSIONS),
+        *(recipe_configs.configure(method, "ripple") for method in recipe_configs.EXCLUSIONS),
     ]
     for config in configs:
         recording, eligible = _call_inputs(recipe_configs, session, config)
@@ -654,13 +650,7 @@ def test_a_recording_holds_exactly_the_declared_inputs(recipe_configs, session):
 def test_requirements_apply_under_their_own_conditions(
     recipe_configs, method, options, inputs, absent
 ):
-    config = recipe_configs.RecipeConfig(
-        method,
-        method,
-        "ripple",
-        tuple(options.items()),
-        recipe_configs.INPUT_POLICY,
-    )
+    config = recipe_configs.configure(method, "ripple", *options.items())
     declared = set(recipe_configs.policy_inputs(config))
     assert inputs <= declared
     assert not absent & declared
@@ -678,7 +668,7 @@ def test_unlabeled_units_are_not_selected(recipe_configs, session, configs):
         assert not recording.pyramidal.any()
         assert recording.templates == ()
         problems = recipe_configs.check_recipe(config, recording, eligible)
-        assert {problem.split(":")[0].split(" - ")[0] for problem in problems} == missing
+        assert _named(problems) == missing
         with pytest.raises(ValueError, match=next(iter(missing))):
             recipe_configs.run_recipe(config, recording, eligible)
 
