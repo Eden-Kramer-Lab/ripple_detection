@@ -2620,6 +2620,18 @@ class TestDrawNonEvents:
             draw_non_events(time, rates={"emg": 1.0}, **fits)
         assert len(draw_non_events(time, rates={"fast_gamma": 60.0}, rng=0, **fits)) > 0
 
+    def test_emg_needs_a_high_pass_that_settles(self):
+        """At a rate that rounds a hair above 200 Hz, the 100 Hz high-pass
+        has almost no passband and never settles: the draw says so rather
+        than leaving the renderer to search without end."""
+        time = simulate_time(2400, 200)  # its step gives 200.000000000004 Hz
+        fits = {
+            "spike_leakage_isi": (0.005, 0.01), "fast_gamma_frequency": (45.0, 55.0),
+            "fast_gamma_band": (40.0, 60.0),
+        }  # fmt: skip
+        with pytest.raises(ValueError, match="does not settle"):
+            draw_non_events(time, rates={"emg": 1.0}, **fits)
+
 
 NOISE_FREE = {"noise_amplitude": 0.0}
 
@@ -2793,12 +2805,13 @@ class TestNonEventRendering(_Renders):
             scaled.append(burst[window][core] / envelope[core])
         assert np.std(np.concatenate(scaled)) == pytest.approx(1.5, rel=0.05)
 
-    def test_emg_keeps_its_size_near_nyquist(self):
+    @pytest.mark.parametrize("fs", [200.05, 205.0])
+    def test_emg_keeps_its_size_near_nyquist(self, fs):
         """At 205 Hz the high-pass leaves 2.5 Hz and settles over hundreds of
-        samples, far longer than a 0.05 s burst; the burst still has its
-        amplitude at the peaks."""
-        fs = 205
-        time = simulate_time(40 * fs, fs)
+        samples, at 200.05 Hz 0.025 Hz and tens of thousands, far longer than a
+        0.05 s burst; the burst still has its amplitude at the peaks (sized
+        from a frequency grid fine enough for so narrow a passband)."""
+        time = simulate_time(int(40 * fs), fs)
         centers = np.arange(2.0, 38.0, 0.5)
         rows = _non_event_tables(
             *(
@@ -3032,6 +3045,13 @@ class TestNonEventRendering(_Renders):
     def test_emg_needs_room_above_its_high_pass(self):
         time = simulate_time(12 * 180, 180)
         with pytest.raises(ValueError, match="high-passed at 100 Hz"):
+            simulate_network_session(
+                time, _empty_table(), non_events=_one_non_event_table("emg"), rng=0
+            )
+
+    def test_emg_needs_a_high_pass_that_settles(self):
+        time = simulate_time(12 * 200, 200)  # its step gives 200.000000000004 Hz
+        with pytest.raises(ValueError, match="does not settle"):
             simulate_network_session(
                 time, _empty_table(), non_events=_one_non_event_table("emg"), rng=0
             )

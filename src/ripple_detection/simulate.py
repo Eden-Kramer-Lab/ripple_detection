@@ -2150,6 +2150,8 @@ _NON_EVENT_FILL = {
     "isi": np.nan,
 }
 _EMG_HIGH_PASS = 100.0  # Hz
+# the longest EMG filter transient, in samples, searched for before giving up
+_MAX_SETTLING = 2**20
 # a spike (one sample) and its after-hyperpolarization (two): 2 ms at 1500 Hz
 _SPIKE_WAVEFORM = np.array([-1.0, 0.45, 0.2])
 # how far below a tie between two samples a leaked spike still counts as the
@@ -2218,14 +2220,34 @@ def _check_span(name: str, value: object, step: float) -> tuple[float, float]:
     return low, high
 
 
-def _check_emg_room(rate: float, remedy: str = "") -> None:
-    """Raise unless ``rate`` leaves room above the EMG high-pass."""
+def _emg_filter(rate: float, remedy: str = "") -> tuple[FloatArray, int, float]:
+    """The EMG high-pass at ``rate`` as second-order sections, how many
+    samples its transients last, and the standard deviation of unit white
+    noise filtered by it forward and backward. ValueError, ending with
+    ``remedy``, when ``rate`` leaves no passband above the cutoff, or so
+    narrow a one that the filter does not settle within
+    ``_MAX_SETTLING`` samples (rates within about 0.005 Hz of 200 Hz)."""
     if rate / 2 <= _EMG_HIGH_PASS:
         msg = (
             f"EMG is high-passed at {_EMG_HIGH_PASS:g} Hz, at or above the Nyquist "
             f"frequency, {rate / 2:g} Hz{remedy}."
         )
         raise ValueError(msg)
+    sos = signal.butter(4, _EMG_HIGH_PASS, btype="highpass", fs=rate, output="sos")
+    pad = _settling_samples(sos)
+    if pad is None:
+        msg = (
+            f"EMG's {_EMG_HIGH_PASS:g} Hz high-pass leaves {rate / 2 - _EMG_HIGH_PASS:.3g} "
+            f"Hz below the Nyquist frequency at {rate!r} Hz and does not settle within "
+            f"{_MAX_SETTLING} samples{remedy}."
+        )
+        raise ValueError(msg)
+    # forward and backward: the standard deviation of filtered unit white noise,
+    # on a frequency grid fine enough to resolve a passband that takes ``pad``
+    # samples to settle (about 48 points across it)
+    response = signal.sosfreqz(sos, max(4096, 4 * pad), fs=rate)[1]
+    sd = float(np.sqrt(np.mean(np.abs(response) ** 4)))
+    return sos, pad, sd
 
 
 def _uniform_draws(u: FloatArray, bounds: tuple[float, float]) -> FloatArray:
@@ -2477,7 +2499,7 @@ def draw_non_events(
     emg_span = _check_span("emg_duration", emg_duration, step)
     emg_amplitude = _check_scalar("emg_amplitude", emg_amplitude)
     if per_minute["emg"] > 0:
-        _check_emg_room(rate, "; set rates['emg'] to 0")
+        _emg_filter(rate, "; set rates['emg'] to 0")
     gamma_frequency = _check_range(
         "fast_gamma_frequency", fast_gamma_frequency, lower=0, lower_strict=True,
         upper=nyquist, upper_strict=True,
@@ -2919,7 +2941,7 @@ def _validated_non_events(
             msg = f"Each {name} row needs {needs}; non-event {failing[0]} has not."
             raise ValueError(msg)
     if (kind == "emg").any():
-        _check_emg_room(rate)
+        _emg_filter(rate)
     gamma = table[kind == "fast_gamma"]
     for (low, high), rows in gamma.groupby(["snr_band_low", "snr_band_high"], dropna=False):
         frequencies = rows.frequency.to_numpy()
@@ -2930,11 +2952,12 @@ def _validated_non_events(
     return table
 
 
-def _settling_samples(sos: FloatArray) -> int:
+def _settling_samples(sos: FloatArray) -> int | None:
     """Samples after which the impulse response of ``sos`` holds less than
-    1e-12 of its energy: how long its transients last."""
+    1e-12 of its energy, how long its transients last; None if that is more
+    than ``_MAX_SETTLING``."""
     n_samples = 64
-    while True:
+    while n_samples <= 2 * _MAX_SETTLING:
         impulse = np.zeros(n_samples)
         impulse[0] = 1.0
         energy = signal.sosfilt(sos, impulse) ** 2
@@ -2942,8 +2965,9 @@ def _settling_samples(sos: FloatArray) -> int:
         settled = np.flatnonzero(remaining < 1e-12 * remaining[0])
         # settled in the first half, so the window holds the whole response
         if settled.size and settled[0] < n_samples // 2:
-            return int(settled[0])
+            return int(settled[0]) if settled[0] <= _MAX_SETTLING else None
         n_samples *= 2
+    return None
 
 
 def _render_non_events(
@@ -2969,10 +2993,7 @@ def _render_non_events(
     pyramidal = np.flatnonzero(np.isin(unit_types, ["place", "pyramidal"]))
     place = np.flatnonzero(unit_types == "place")
     if (table.non_event_type == "emg").any():
-        sos = signal.butter(4, _EMG_HIGH_PASS, btype="highpass", fs=rate, output="sos")
-        # forward and backward: the standard deviation of filtered unit white noise
-        emg_sd = float(np.sqrt(np.mean(np.abs(signal.sosfreqz(sos, 4096, fs=rate)[1]) ** 4)))
-        pad = _settling_samples(sos)
+        sos, pad, emg_sd = _emg_filter(rate)
     for row in table.itertuples():
         if row.non_event_type == "spike_leakage":
             units = rng.choice(pyramidal, size=row.n_units, replace=False)
