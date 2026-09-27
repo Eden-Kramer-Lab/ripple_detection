@@ -619,45 +619,43 @@ def test_the_policy_reads_no_truth(recipe_configs, session, configs, results):
         )
 
 
-def test_external_inventories_record_their_detector(recipe_configs, session, configs):
-    for name, source, detector in (
-        ("yang_2024", "external_ripples", "Zugaro_ripple_detector"),
-        ("grosmark_2016", "external_ripples", "Zugaro_ripple_detector"),
-        ("carey_2019", "example_ripples", "Kay_ripple_detector"),
+def test_external_inventories_are_the_stated_detectors(recipe_configs, session, configs):
+    # The settings are pinned here, not read from the module: the package's
+    # Zugaro stand-in on channel 0 and the five largest default Kay events.
+    filtered = rd.filter_ripple_band(session.lfps, FS, band=(130.0, 200.0), time=session.time)
+    zugaro = rd.Zugaro_ripple_detector(
+        session.time,
+        filtered[:, :1],
+        session.speed,
+        FS,
+        low_threshold=2.0,
+        high_threshold=5.0,
+        maximum_duration=0.2,
+        speed_threshold=np.inf,
+    )
+    external = zugaro[["start_time", "end_time", "peak_time"]].to_numpy()
+    kay = rd.Kay_ripple_detector(
+        session.time,
+        rd.filter_ripple_band(session.lfps, FS, time=session.time),
+        session.speed,
+        FS,
+    )
+    examples = kay.nlargest(5, "max_zscore")[["start_time", "end_time"]].to_numpy()
+    assert len(external)
+    assert len(examples) == 5
+    for name, source, detector, expected in (
+        ("yang_2024", "external_ripples", "Zugaro_ripple_detector", external),
+        ("grosmark_2016", "external_ripples", "Zugaro_ripple_detector", external),
+        ("carey_2019", "example_ripples", "Kay_ripple_detector", examples),
     ):
+        recording = recipe_configs.make_recording(session, configs[name])
+        np.testing.assert_array_equal(getattr(recording, source), expected, err_msg=name)
         record = recipe_configs.method_record(configs[name])
-        spec = json.loads(record["input_policy"])["recording"][source]
-        assert spec["detector"] == detector
+        assert json.loads(record["input_policy"])["recording"][source]["detector"] == detector
         assert any(
             assumption.startswith(source) and detector in assumption
             for assumption in json.loads(record["assumptions"])
         )
-        recording = recipe_configs.make_recording(session, configs[name])
-        filtered = rd.filter_ripple_band(
-            session.lfps, FS, band=tuple(spec["band"]), time=session.time
-        )
-        options = {
-            key: float(value) if value in ("inf", "-inf", "nan") else value
-            for key, value in spec["options"].items()
-        }
-        if source == "external_ripples":
-            events = getattr(rd, detector)(
-                session.time,
-                filtered[:, [spec["channel"]]],
-                session.speed,
-                FS,
-                **options,
-            )
-            expected = events[spec["columns"]].to_numpy()
-            found = recording.external_ripples
-        else:
-            events = getattr(rd, detector)(
-                session.time, filtered, session.speed, FS, **options
-            )
-            expected = bounds(events.nlargest(spec["n_examples"], spec["rank_by"]))
-            found = recording.example_ripples
-        assert len(expected)
-        np.testing.assert_array_equal(found, expected)
 
 
 def test_input_policy_records_every_setting_of_each_detector(recipe_configs, configs):
