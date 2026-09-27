@@ -28,7 +28,8 @@ Run files, written when the run starts:
 
 - ``manifest.json``: ``run_name``, ``git_commit``, ``package_version``,
   ``numpy_version``, ``scipy_version``, ``command``, ``started``, ``finished``
-  (null until the run ends), ``n_workers``.
+  (null until the run ends), ``n_workers`` (the processes the run, or its latest
+  resumption, used: at most one per session left to run).
 - ``run_spec.json``: what ``--resume`` checks: ``conditions`` (each condition's
   parameters after overrides such as ``--duration``), ``replicates`` and ``seeds``
   per condition, ``methods`` (each method and setting's record, as in
@@ -1627,9 +1628,7 @@ def run_benchmark(
             "command": command,
             "started": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "finished": None,
-            "n_workers": 1 if smoke else requested_workers,
         }
-        (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
         (root / "run_spec.json").write_text(json.dumps(spec, indent=2, sort_keys=True))
         _write_table(
             pd.DataFrame(
@@ -1664,6 +1663,11 @@ def run_benchmark(
             )
 
     n_workers = min(workers or requested_workers, max(1, len(tasks)))
+    if resume:
+        manifest = json.loads((root / "manifest.json").read_text())
+    (root / "manifest.json").write_text(
+        json.dumps({**manifest, "n_workers": n_workers}, indent=2)
+    )
     if n_workers == 1:
         for condition, replicate in tasks:
             finish(*_run_one(condition, replicate, methods, overrides))

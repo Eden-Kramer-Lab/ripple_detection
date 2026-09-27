@@ -955,6 +955,21 @@ def test_resume_after_two_finished_and_one_interrupted(run, cli, finished_run, t
     )
 
 
+def test_the_manifest_records_the_workers_used(cli, finished_run, tmp_path):
+    start, _, _ = cli
+    # four requested, one session to run: it runs in this process
+    root = start("one", condition_ids=["reference"], workers=4)
+    assert json.loads((root / "manifest.json").read_text())["n_workers"] == 1
+    # resuming records the workers the resumed run used
+    root = _copy(finished_run, tmp_path)
+    manifest = json.loads((root / "manifest.json").read_text())
+    (root / "manifest.json").write_text(json.dumps({**manifest, "n_workers": 7}))
+    (root / "conditions" / "emg_rate=3").rename(root / "conditions" / "emg_rate=3.partial")
+    start(resume=True, workers=4)
+    resumed = json.loads((root / "manifest.json").read_text())
+    assert resumed == {**manifest, "n_workers": 1, "finished": resumed["finished"]}
+
+
 def test_combine_is_derived(run, cli, finished_run, tmp_path):
     start, reports, sessions = cli
     root = _copy(finished_run, tmp_path)
