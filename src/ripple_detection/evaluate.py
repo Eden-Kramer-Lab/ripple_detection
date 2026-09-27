@@ -391,8 +391,14 @@ def match_events(
 
     Notes
     -----
-    Works on the overlapping pairs, not every pair: time and memory grow with
-    the events and their overlaps rather than with their product.
+    Candidate pairs are those starting within the longest detected event's
+    length of each other, and each group of events linked by overlaps is
+    solved as one dense block. For short events and small groups, as
+    detections usually are, this costs little (under a megabyte for 1000
+    events a side), but a very long detected event makes nearly every pair
+    a candidate (one spanning the session: about 28 MB for 1000 true events),
+    and a long chain of overlapping events is one large block (1000 a side,
+    each overlapping two: about 16 MB; 2000: about 65 MB).
 
     Examples
     --------

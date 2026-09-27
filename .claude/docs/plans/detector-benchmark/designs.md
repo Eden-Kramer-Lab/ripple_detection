@@ -494,11 +494,15 @@ As implemented in phase 2 (2026-09-27), where the code departs from the sketch a
   measured from their smallest value, not neighbour to neighbour, so errors 1 us apart on a
   Unix clock do not chain into one constant group. `TestTimeOrigin::test_evaluation` fails
   without each tolerance.
-- **Graph and solver.** No dense matrices: only overlapping pairs are built (candidates found
-  by sorted starts within the longest event's length), components come from a `coo_matrix` of
-  the eligible pairs (no `bmat`), and a component of one edge is taken without
-  `linear_sum_assignment`. `label_by_overlap` uses the same pairs. At 1000 events a side:
-  1.6 ms and 0.2 MB, from 14 ms and 49 MB with dense matrices; outputs identical.
+- **Graph and solver.** No dense matrices over every pair: only overlapping pairs are built
+  (candidates found by sorted starts within the longest detected event's length), components
+  come from a `coo_matrix` of the eligible pairs (no `bmat`), and a component of one edge is
+  taken without `linear_sum_assignment`. `label_by_overlap` uses the same pairs. Typical
+  inventories at 1000 events a side: 1.6 ms and 0.2 MB, from 14 ms and 49 MB with dense
+  matrices; outputs identical. Worst cases stay quadratic: a detected event spanning the
+  session makes nearly every pair a candidate (about 28 MB at 1000 true events), and each
+  component is still a dense block, so a chain of overlapping events costs about 16 MB at 1000
+  a side and 65 MB at 2000. The `match_events` docstring states both.
 - **Checks.** `minimum_iou` must be below 1; `compare_detectors` and `consensus_counts` raise
   `TypeError` for events that are not a mapping (a DataFrame iterates over its columns).
 - **Indices.** `pairs` and the unmatched/split/merged arrays are row positions (for `.iloc`);
