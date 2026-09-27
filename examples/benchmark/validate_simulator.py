@@ -7,7 +7,7 @@ in ``simulator_targets.csv``. It uses the public simulator and signal helpers
 only: no detector, recipe or literature method is imported or called.
 
     uv run python examples/benchmark/validate_simulator.py --validation-id v1
-        [--conditions all|ID,ID] [--replicates 5] [--duration S] [--workers N]
+        [--conditions all|ID,ID] [--replicates 20] [--duration S] [--workers N]
         [--output-root DIR] [--no-figures]
 
 writes ``<output-root>/<validation-id>/`` (by default
@@ -79,7 +79,8 @@ CONDITIONS_SOURCE = HERE / "conditions.py"
 PACKAGE = Path(rd.__file__).resolve().parent
 
 FIRST_REPLICATE = 10000
-DEFAULT_REPLICATES = 5
+# The predeclared replicates per condition; fewer cannot back a run.
+DEFAULT_REPLICATES = 20
 TRUTH_FRACTIONS = (0.1, 0.25, 0.5)
 
 # Measurement conventions, in seconds and hertz.
@@ -2172,8 +2173,9 @@ def require_ready_report(
     ------
     ReportNotReady
         Listing every problem: no readable ``spec.json``; a status other than
-        ready; a simulation fingerprint or target-table hash other than the
-        current one; an artifact missing or changed; a condition of
+        ready; fewer replicates than ``DEFAULT_REPLICATES``; a simulation
+        fingerprint or target-table hash other than the current one; an
+        artifact missing or changed; a condition of
         ``resolved`` the report does not cover, or covers with other
         parameters.
     """
@@ -2190,6 +2192,12 @@ def require_ready_report(
     if spec.get("status") != "ready":
         stated = "; ".join(spec.get("reasons") or []) or "no reason recorded"
         problems.append(f"its status is {spec.get('status')!r}, not 'ready' ({stated})")
+    n_replicates = len(spec.get("replicates") or [])
+    if n_replicates < DEFAULT_REPLICATES:
+        problems.append(
+            f"it has {n_replicates} replicates, fewer than the {DEFAULT_REPLICATES} "
+            "predeclared (DEFAULT_REPLICATES)"
+        )
     if spec.get("simulation_fingerprint") != simulation_fingerprint():
         problems.append(
             "the simulation code has changed since it was made "

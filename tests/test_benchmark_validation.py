@@ -98,11 +98,13 @@ def report(validate, tmp_path_factory):
 
 @pytest.fixture
 def ready_copy(report, tmp_path):
-    """The short report copied, its status set to ready."""
+    """The short report copied, its status set to ready and its replicates
+    to the predeclared count."""
     directory = tmp_path / "copy"
     shutil.copytree(report["directory"], directory)
     spec = json.loads((directory / "spec.json").read_text())
-    spec.update(status="ready", reasons=[])
+    replicates = list(range(10000, 10020))
+    spec.update(status="ready", reasons=[], replicates=replicates)
     (directory / "spec.json").write_text(json.dumps(spec))
     return directory
 
@@ -505,6 +507,16 @@ class TestPreflight:
         (tmp_path / "spec.json").write_text("{not json")
         with pytest.raises(validate.ReportNotReady, match="cannot be read"):
             validate.require_ready_report(tmp_path / "spec.json", resolved)
+
+    def test_too_few_replicates(self, validate, ready_copy, resolved):
+        assert validate.DEFAULT_REPLICATES == 20
+        spec = json.loads((ready_copy / "spec.json").read_text())
+        spec["replicates"] = spec["replicates"][:19]
+        (ready_copy / "spec.json").write_text(json.dumps(spec))
+        with pytest.raises(
+            validate.ReportNotReady, match=re.escape("19 replicates, fewer than the 20")
+        ):
+            validate.require_ready_report(ready_copy / "spec.json", resolved)
 
     def test_a_failed_report(self, validate, ready_copy, resolved):
         spec = json.loads((ready_copy / "spec.json").read_text())
