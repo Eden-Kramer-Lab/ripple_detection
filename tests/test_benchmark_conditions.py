@@ -171,6 +171,9 @@ def test_conditions_are_unique_and_complete(module, by_id):
             ]
             assert dict(condition.params) == {**dict(parts[0].params), **dict(parts[1].params)}
             assert "reference" not in labels
+    # frozen, but a mapping among the values makes a condition unhashable
+    with pytest.raises(TypeError, match="unhashable"):
+        hash(by_id["n_units=30"])
 
 
 def test_factor_levels(module):

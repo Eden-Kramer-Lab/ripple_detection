@@ -288,6 +288,10 @@ _FINAL_REST = 5.0  # the least rest after the last bout, seconds
 class Condition:
     """One simulation condition of the benchmark.
 
+    Frozen, but not hashable in general: ``params`` may hold a mapping (such
+    as ``render.unit_counts``), so key a collection of conditions by
+    ``condition_id``.
+
     Attributes
     ----------
     condition_id : str
