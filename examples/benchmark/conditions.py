@@ -592,12 +592,39 @@ def resolved_json(condition: Condition, overrides: Mapping[str, Any] | None = No
     return json.dumps(resolve(condition, overrides), sort_keys=True, allow_nan=False)
 
 
+# Mapping-valued keywords a condition replaces whole, whose entries may differ
+# from REFERENCE's.
+_REPLACED_WHOLE = frozenset({"events.type_probabilities"})
+
+
+def _dotted_keys(parameters: Mapping[str, Any], prefix: str = "") -> set[str]:
+    """Every section, keyword and mapping entry of ``parameters`` by dotted
+    key, the entries of ``_REPLACED_WHOLE`` aside."""
+    keys = set()
+    for name, value in parameters.items():
+        key = f"{prefix}{name}"
+        keys.add(key)
+        if isinstance(value, Mapping) and key not in _REPLACED_WHOLE:
+            keys |= _dotted_keys(value, f"{key}.")
+    return keys
+
+
 def parameters_from_json(text: str) -> dict[str, dict[str, Any]]:
     """Parameters saved as JSON, as ``resolve`` returns them.
 
     The inverse of ``resolved_json``, for a saved specification such as a
     run's ``conditions.csv`` ``params``: each list becomes a tuple again (every
     list-like value of ``REFERENCE`` is one), each mapping stays a mapping.
+
+    The saved set must have exactly ``REFERENCE``'s sections, keywords and the
+    entries of each mapping-valued keyword, since the simulator reads an entry
+    left out as a value of its own: a rate (``non_events.rates``) or a unit
+    count (``render.unit_counts``) as 0, a baseline range
+    (``render.baseline_rate``) as its default. The conditions change those
+    entry by entry, so a missing one was lost. ``events.type_probabilities``
+    is the exception: a condition replaces the mixture whole
+    (``type_mix=swr_only`` saves ``{"swr": 1.0}``), and a type it leaves out
+    never occurs, so its entries are taken as saved.
 
     Parameters
     ----------
@@ -612,8 +639,8 @@ def parameters_from_json(text: str) -> dict[str, dict[str, Any]]:
     Raises
     ------
     ValueError
-        A section or keyword ``REFERENCE`` has is missing, or one it lacks is
-        there: the simulator would otherwise fill in its own default.
+        A section, keyword or mapping entry ``REFERENCE`` has is missing, or
+        one it lacks is there.
     """
 
     def restored(value: Any) -> Any:
@@ -624,8 +651,7 @@ def parameters_from_json(text: str) -> dict[str, dict[str, Any]]:
         return value
 
     parameters: dict[str, dict[str, Any]] = restored(json.loads(text))
-    expected = {f"{s}.{k}" for s, values in REFERENCE.items() for k in values} | set(REFERENCE)
-    found = {f"{s}.{k}" for s, values in parameters.items() for k in values} | set(parameters)
+    expected, found = _dotted_keys(REFERENCE), _dotted_keys(parameters)
     if found != expected:
         msg = (
             f"The saved parameters lack {', '.join(sorted(expected - found)) or 'nothing'}; "

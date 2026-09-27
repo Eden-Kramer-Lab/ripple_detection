@@ -49,7 +49,10 @@ A saved parameter set regenerates its sessions without the condition:
 `parameters_from_json` reads `resolved_json`'s text, or a run's `conditions.csv`
 `params`, back as `resolve` gives it (ranges as tuples again), and
 `simulate_parameters(parameters, k)` simulates replicate `k` of it, as
-`simulate_condition` does.
+`simulate_condition` does. It refuses a set that lacks a keyword, or an entry of a
+mapping such as `non_events.rates`, that the simulator would fill in itself; only
+`events.type_probabilities`, which a condition replaces whole, may leave event types
+out.
 
 ## Literature method configurations
 

@@ -421,6 +421,41 @@ def test_parameters_from_json_names_what_a_saved_set_lacks(module, by_id):
         module.parameters_from_json(json.dumps(saved))
 
 
+@pytest.mark.parametrize(
+    ("section", "keyword", "entry"),
+    [
+        ("non_events", "rates", "emg"),
+        ("render", "unit_counts", "interneuron"),
+        ("render", "baseline_rate", "place"),
+    ],
+)
+def test_parameters_from_json_names_a_lost_entry_of_a_mapping(
+    module, by_id, section, keyword, entry
+):
+    """The simulator reads a left-out rate or unit count as 0, and a left-out
+    baseline range as its own default: an entry lost from a saved set would
+    change the session silently."""
+    saved = json.loads(module.resolved_json(by_id["reference"]))
+    del saved[section][keyword][entry]
+    saved[section][keyword]["extra"] = 1.0
+    key = f"{section}.{keyword}"
+    with pytest.raises(ValueError, match=rf"lack {key}\.{entry}; have {key}\.extra"):
+        module.parameters_from_json(json.dumps(saved))
+    saved[section][keyword] = 1.0
+    lost = rf"lack ({key}\.\w+, )+{key}\.\w+; have nothing else"
+    with pytest.raises(ValueError, match=lost):
+        module.parameters_from_json(json.dumps(saved))
+
+
+def test_a_saved_mixture_of_event_types_may_leave_types_out(module, by_id):
+    """A mixture is replaced whole (type_mix=swr_only), and a type it leaves
+    out never occurs: a partial one is read as it is."""
+    saved = json.loads(module.resolved_json(by_id["type_mix=swr_only"]))
+    assert saved["events"]["type_probabilities"] == {"swr": 1.0}
+    loaded = module.parameters_from_json(json.dumps(saved))
+    assert loaded["events"]["type_probabilities"] == {"swr": 1.0}
+
+
 def test_a_saved_specification_reproduces_the_session(module, by_id):
     """The resolved parameters alone, as conditions.csv saves them, simulate
     the condition's session."""
