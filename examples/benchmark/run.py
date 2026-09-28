@@ -662,7 +662,7 @@ def _median(values: pd.Series[float] | np.ndarray[Any, Any]) -> float:
 
 
 def score_events(
-    windows: Mapping[str, Sequence[pd.DataFrame]],
+    windows: Mapping[str, Sequence[pd.DataFrame | np.ndarray[Any, Any]]],
     detected: pd.DataFrame,
     minutes_outside: float,
 ) -> pd.DataFrame:
@@ -670,12 +670,12 @@ def score_events(
 
     Parameters
     ----------
-    windows : mapping of str to sequence of pandas.DataFrame
+    windows : mapping of str to sequence of pandas.DataFrame or ndarray
         By expression, its truth windows at each of ``TRUTH_FRACTIONS``, as
-        ``truth_window_sets`` gives; matching uses the first.
+        ``truth_window_sets`` gives, or their ``[start_time, end_time]`` as
+        arrays of shape (n_windows, 2); matching uses the first.
     detected : pandas.DataFrame
-        The events, with ``start_time``, ``end_time`` and, optionally,
-        ``peak_time``.
+        The events, with ``start_time`` and ``end_time``.
     minutes_outside : float
         Minutes of the session outside every network window at fraction 0.1,
         the time false positives are counted over.
@@ -691,9 +691,10 @@ def score_events(
         events count any overlap, so they are the same at every level.
     """
     rows = []
+    detected_bounds = _bounds(detected)
     for expression, sets in windows.items():
         for level in MATCH_IOU_LEVELS:
-            matching = rd.match_events(sets[0], detected, minimum_iou=level)
+            matching = rd.match_events(sets[0], detected_bounds, minimum_iou=level)
             pairs = matching.pairs
             row: dict[str, Any] = {
                 "expression": expression,
@@ -710,8 +711,9 @@ def score_events(
                 "median_coverage": _median(pairs.coverage),
                 "median_temporal_precision": _median(pairs.temporal_precision),
             }
-            for percent, truth in zip(_PERCENTS, sets, strict=True):
-                errors = matching.boundary_errors(truth[["start_time", "end_time"]])
+            for position, (percent, truth) in enumerate(zip(_PERCENTS, sets, strict=True)):
+                # the pairs hold their errors against the windows they matched
+                errors = pairs if position == 0 else matching.boundary_errors(truth)
                 for kind in ("onset", "offset"):
                     signed = errors[f"{kind}_error"].to_numpy()
                     row[f"median_{kind}_error_{percent}"] = _median(signed)
@@ -825,9 +827,12 @@ def evaluate_session(
     started = wall_clock.perf_counter()
     fs = session.sampling_frequency
     duration = len(session.time) / fs
-    windows = truth_window_sets(session.events)
-    network = _bounds(windows["network"][0])
-    event_time = _interval_union(network)
+    # as arrays once, for every call's scores and the truth's active units
+    windows = {
+        expression: tuple(_bounds(frame) for frame in frames)
+        for expression, frames in truth_window_sets(session.events).items()
+    }
+    event_time = _interval_union(windows["network"][0])
     minutes_outside = (duration - event_time) / 60
     running = np.sum(np.diff(session.running_intervals, axis=1))
 
@@ -884,7 +889,7 @@ def evaluate_session(
     truth_counts = []
     for expression in EXPRESSIONS:
         truth = windows[expression][0]
-        n_units, n_principal = active_counts(_bounds(truth), session)
+        n_units, n_principal = active_counts(truth, session)
         truth_counts.append(
             pd.DataFrame(
                 {
