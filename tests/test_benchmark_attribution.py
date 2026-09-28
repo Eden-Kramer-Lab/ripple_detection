@@ -418,7 +418,7 @@ def test_perturbations(attribution, recipes):
 def test_sensitivity(attribution, recipes, contexts):
     table = attribution.sensitivity(recipes, contexts, "lfp")
     space = {factor.name: factor for factor in attribution.factor_space(recipes, "lfp")}
-    ids = attribution.in_space_ids("lfp")
+    ids = attribution.family_templates(recipes, "lfp")
     expected = [
         (config_id, name, attribution._as_text(value))
         for config_id in ids
@@ -512,7 +512,7 @@ def test_edge_sessions(attribution, recipes, short_run, contexts):
     for family in attribution.FAMILIES:
         cut = []
         for config in recipes:
-            if config.config_id not in attribution.in_space_ids(family):
+            if config.config_id not in attribution.family_templates(recipes, family):
                 continue
             events = attribution.recipe_events(config, gap)
             ends = (events[:, 1] <= before) & (events[:, 1] > before - reach)
@@ -612,8 +612,8 @@ def test_bounds_are_fractions_of_the_threshold(attribution, recipes):
             attribution.factor_space(recipes, family), reference, 64
         )
         pairs = [
-            (attribution.TEMPLATES[config_id][0], reference)
-            for config_id in attribution.in_space_ids(family)
+            (template, reference)
+            for template in attribution.family_templates(recipes, family).values()
         ]
         subsets = [
             dataclasses.replace(first, **{name: getattr(second, name) for name in subset})
@@ -687,10 +687,10 @@ def test_reference_template(attribution):
 def test_identical_templates_count_once(attribution, recipes, monkeypatch):
     templates = attribution.TEMPLATES
     assert templates["grosmark_2016"][0] == templates["yang_2024"][0]
-    written = attribution.in_space_ids("spikes")
+    written = tuple(attribution.family_templates(recipes, "spikes"))
     assert "grosmark_2016" in written
-    distinct = attribution.distinct_ids("spikes")
-    assert distinct == tuple(i for i in written if i != "grosmark_2016")
+    distinct = attribution.distinct_templates(attribution.family_templates(recipes, "spikes"))
+    assert tuple(distinct) == tuple(i for i in written if i != "grosmark_2016")
     # the reference takes each template once: counted twice, the second
     # template would win the mode and move the median
     first = _spike_template(attribution)
@@ -698,18 +698,20 @@ def test_identical_templates_count_once(attribution, recipes, monkeypatch):
     reference = attribution.reference_template("spikes", [first, second, second])
     assert (reference.units, reference.threshold) == ("all", 2.5)
     assert attribution.reference_template("spikes") == attribution.reference_template(
-        "spikes", [templates[i][0] for i in distinct]
+        "spikes", list(distinct.values())
     )
     # the stop rule counts templates, not configurations: eight written, seven distinct
     kept = [c for c in recipes if c.config_id in written[:7] or c.config_id == "grosmark_2016"]
     monkeypatch.setattr(attribution, "RECIPES", tuple(kept))
-    assert len(attribution.in_space_ids("spikes")) == 8
+    assert len(attribution.family_templates(kept, "spikes")) == 8
     with pytest.raises(SystemExit, match="7 represented methods"):
         attribution.main(["--run-name", "x", "--family", "spikes", "--analysis", "sobol"])
 
 
-def test_the_lowest_agreement_pairs_are_decomposed(attribution, monkeypatch):
-    ids = attribution.distinct_ids("spikes")
+def test_the_lowest_agreement_pairs_are_decomposed(attribution, recipes, monkeypatch):
+    ids = tuple(
+        attribution.distinct_templates(attribution.family_templates(recipes, "spikes"))
+    )
     names = {attribution.compile(attribution.TEMPLATES[i][0]): i for i in ids}
     assert len(names) == len(ids)
     agreement = {
@@ -1123,9 +1125,9 @@ def test_sobol(attribution, recipes, short_run):
     np.testing.assert_array_equal(selected["total"], total)
 
 
-def test_shapley_pairs(attribution, short_run):
+def test_shapley_pairs(attribution, recipes, short_run):
     rows, values = attribution.shapley_pairs("lfp", short_run)
-    ids = attribution.in_space_ids("lfp")
+    ids = list(attribution.family_templates(recipes, "lfp"))
     pairs = list(dict.fromkeys(values["pair"]))
     # every configuration against the reference, then the lowest-agreement pairs
     assert pairs[: len(ids)] == [f"{config_id}|reference" for config_id in ids]
@@ -1240,7 +1242,8 @@ def test_the_command_line(attribution, recipes, short_run, tmp_path, monkeypatch
     copy = tmp_path / "run"
     shutil.copytree(short_run, copy)
     results = tmp_path / "results"
-    names = ("gupta_2010", "karlsson_2009", "igata_2021", *attribution.in_space_ids("lfp"))
+    lfp = attribution.family_templates(recipes, "lfp")
+    names = ("gupta_2010", "karlsson_2009", "igata_2021", *lfp)
     kept = [c for c in recipes if c.config_id in names]
     monkeypatch.setattr(attribution, "RECIPES", tuple(kept))
     checked = []
@@ -1276,7 +1279,7 @@ def test_the_command_line(attribution, recipes, short_run, tmp_path, monkeypatch
     ]
     assert fixed[list(attribution.Y_NAMES[:3])].notna().all().all()
     perturbed = pd.read_csv(results / "lfp_sensitivity.csv")
-    assert set(perturbed["config_id"]) == set(attribution.in_space_ids("lfp"))
+    assert set(perturbed["config_id"]) == set(lfp)
     assert "template values no perturbation changes" in capsys.readouterr().err
     rows = pd.read_csv(copy / "attribution" / "lfp_oat.csv.gz")
     assert set(rows["y"]) == set(attribution.Y_NAMES)
@@ -1301,7 +1304,9 @@ def test_the_override_runs_a_family_below_the_minimum_labelled(
     shutil.copytree(short_run, copy)
     results = tmp_path / "results"
     kept = [
-        c for c in recipes if c.config_id in ("gupta_2010", *attribution.in_space_ids("lfp"))
+        c
+        for c in recipes
+        if c.config_id in ("gupta_2010", *attribution.family_templates(recipes, "lfp"))
     ]
     monkeypatch.setattr(attribution, "RECIPES", tuple(kept))
     monkeypatch.setattr(attribution, "check_report", lambda directory, parameters: None)

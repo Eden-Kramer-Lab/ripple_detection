@@ -1516,18 +1516,11 @@ def sensitivity(
     """
     space = {factor.name: factor for factor in factor_space(recipes, family)}
     cases = []
-    for config in recipes:
-        if config.config_id not in TEMPLATES:
-            continue
-        template = TEMPLATES[config.config_id][0]
-        if family_of(template) != family:
-            continue
+    for config_id, template in family_templates(recipes, family).items():
         right = compile(template)
         for name, value in perturbations(template, space):
             changed = compile(dataclasses.replace(template, **{name: value}))
-            cases.append(
-                (config.config_id, name, getattr(template, name), value, changed, right)
-            )
+            cases.append((config_id, name, getattr(template, name), value, changed, right))
     first: dict[int, str] = {}
     for context in contexts:
         for i, (*_, changed, right) in enumerate(cases):
@@ -1863,52 +1856,11 @@ class Factor:
         return self.levels
 
 
-def in_space_ids(family: str) -> tuple[str, ...]:
-    """The configurations of a family with a template written, in configuration order.
+def family_templates(recipes: Sequence[RecipeConfig], family: str) -> dict[str, Template]:
+    """The templates written for configurations of ``recipes`` in a family.
 
     Written, not verified: ``verify_all`` decides which of them stand for
     their methods on a run's sessions.
-
-    Parameters
-    ----------
-    family : {"spikes", "lfp"}
-
-    Returns
-    -------
-    config_ids : tuple of str
-    """
-    return tuple(
-        config.config_id
-        for config in RECIPES
-        if config.config_id in TEMPLATES
-        and family_of(TEMPLATES[config.config_id][0]) == family
-    )
-
-
-def distinct_ids(family: str) -> tuple[str, ...]:
-    """``in_space_ids`` with each template once: of identical ones, the first.
-
-    Two methods with one template (``grosmark_2016`` is ``yang_2024``'s rule)
-    are one point of the space: they count once for the stop rule, the
-    reference configuration and the Shapley pairs, though both are verified
-    and listed.
-
-    Parameters
-    ----------
-    family : {"spikes", "lfp"}
-
-    Returns
-    -------
-    config_ids : tuple of str
-    """
-    first: dict[Template, str] = {}
-    for config_id in in_space_ids(family):
-        first.setdefault(TEMPLATES[config_id][0], config_id)
-    return tuple(first.values())
-
-
-def family_templates(recipes: Sequence[RecipeConfig], family: str) -> list[Template]:
-    """The distinct templates of ``recipes`` in a family, in their order.
 
     Parameters
     ----------
@@ -1917,14 +1869,44 @@ def family_templates(recipes: Sequence[RecipeConfig], family: str) -> list[Templ
 
     Returns
     -------
-    templates : list
-        Each once: of identical templates, the first.
+    templates : dict of str to template
+        By configuration id, in configuration order.
     """
     if family not in FAMILIES:
         msg = f"family must be one of {FAMILIES}; got {family!r}."
         raise ValueError(msg)
-    found = [TEMPLATES[c.config_id][0] for c in recipes if c.config_id in TEMPLATES]
-    return list(dict.fromkeys(template for template in found if family_of(template) == family))
+    written = (
+        (config.config_id, TEMPLATES[config.config_id][0])
+        for config in recipes
+        if config.config_id in TEMPLATES
+    )
+    return {
+        config_id: template for config_id, template in written if family_of(template) == family
+    }
+
+
+def distinct_templates(templates: Mapping[str, Template]) -> dict[str, Template]:
+    """``templates`` with each template once: of identical ones, the first.
+
+    Two methods with one template (``grosmark_2016`` is ``yang_2024``'s rule)
+    are one point of the space: they count once for the stop rule, the
+    factor space, the reference configuration and the Shapley pairs, though
+    both are verified and listed.
+
+    Parameters
+    ----------
+    templates : mapping of str to template
+        Such as ``family_templates``', by configuration id.
+
+    Returns
+    -------
+    templates : dict of str to template
+        In the order given.
+    """
+    first: dict[Template, str] = {}
+    for config_id, template in templates.items():
+        first.setdefault(template, config_id)
+    return {config_id: template for template, config_id in first.items()}
 
 
 def factor_space(recipes: Sequence[RecipeConfig], family: str) -> tuple[Factor, ...]:
@@ -1942,7 +1924,7 @@ def factor_space(recipes: Sequence[RecipeConfig], family: str) -> tuple[Factor, 
         In the template's field order; a field with a single value among the
         templates is left out, since no configuration varies it.
     """
-    templates = family_templates(recipes, family)
+    templates = list(distinct_templates(family_templates(recipes, family)).values())
     if not templates:
         return ()
     factors = []
@@ -1982,7 +1964,7 @@ def reference_template(family: str, templates: Sequence[TemplateT] | None = None
     chosen = (
         list(dict.fromkeys(templates))
         if templates is not None
-        else family_templates(RECIPES, family)
+        else list(distinct_templates(family_templates(RECIPES, family)).values())
     )
     if not chosen:
         msg = f"The {family} family has no template to take a reference from."
@@ -2690,7 +2672,7 @@ def _differing(first: Template, second: Template) -> tuple[str, ...]:
 def shapley_pair_list(
     family: str, run_directory: str | os.PathLike[str], *, workers: int = 1
 ) -> list[tuple[str, str]]:
-    """The pairs decomposed: each represented template (``distinct_ids``)
+    """The pairs decomposed: each represented template (``distinct_templates``)
     against the family's reference, then the ``N_LOWEST_PAIRS`` pairs of them
     with the lowest mean Jaccard on the reference sessions.
 
@@ -2705,8 +2687,9 @@ def shapley_pair_list(
     pairs : list of (str, str)
         ``(a, b)`` by configuration id, ``"reference"`` for the reference.
     """
-    ids = distinct_ids(family)
-    pipelines = [compile(TEMPLATES[config_id][0]) for config_id in ids]
+    templates = distinct_templates(family_templates(RECIPES, family))
+    ids = tuple(templates)
+    pipelines = [compile(template) for template in templates.values()]
     combinations = list(itertools.combinations(range(len(ids)), 2))
     outputs = evaluate_many(
         [pipelines[i] for i, _ in combinations],
@@ -2749,8 +2732,7 @@ def shapley_pairs(
         exact), ``v_empty``, ``v_all``.
     """
     reference = reference_template(family)
-    templates = {config_id: TEMPLATES[config_id][0] for config_id in in_space_ids(family)}
-    templates[REFERENCE_CONDITION] = reference
+    templates = {**family_templates(RECIPES, family), REFERENCE_CONDITION: reference}
     pairs = shapley_pair_list(family, run_directory, workers=workers)
     keys, configurations, references = [], [], []
     for a, b in pairs:
@@ -3050,20 +3032,17 @@ def smoke(
         timings.append(wall_clock.perf_counter() - begun)
     seconds = float(np.mean(timings))
     d = len(factors)
-    ids = distinct_ids(family)
+    templates = distinct_templates(family_templates(RECIPES, family))
     oat = 1 + sum(len(factor.points()) for factor in factors)
     shapley_configurations = 0
-    for config_id in ids:
-        size = len(_differing(TEMPLATES[config_id][0], reference))
+    for written in templates.values():
+        size = len(_differing(written, reference))
         shapley_configurations += (
             2**size if size <= SHAPLEY_EXACT_UP_TO else SHAPLEY_PERMUTATIONS * size
         )
-    pairwise = len(ids) * (len(ids) - 1) // 2
+    pairwise = len(templates) * (len(templates) - 1) // 2
     largest = max(
-        (
-            len(_differing(TEMPLATES[x][0], TEMPLATES[y][0]))
-            for x, y in itertools.combinations(ids, 2)
-        ),
+        (len(_differing(x, y)) for x, y in itertools.combinations(templates.values(), 2)),
         default=0,
     )
     lowest_bound = min(N_LOWEST_PAIRS, pairwise) * (
@@ -3084,7 +3063,7 @@ def smoke(
     return {
         "family": family,
         "free_cores": _free_cores(),
-        "n_in_space": len(ids),
+        "n_in_space": len(templates),
         "d": d,
         "configurations_timed": len(timings),
         "seconds_per_configuration": seconds,
@@ -3111,11 +3090,11 @@ def verify_family(family: str, run_directory: str | os.PathLike[str]) -> pd.Data
         ``verify_all``'s, after ``check_report``.
     """
     check_report(run_directory, reference_parameters(run_directory))
+    templates = family_templates(RECIPES, family)
     recipes = [
         config
         for config in RECIPES
-        if config.config_id in FIXED_POINTS
-        or family_of(TEMPLATES[config.config_id][0]) == family
+        if config.config_id in FIXED_POINTS or config.config_id in templates
     ]
     return verify_all(recipes, verification_contexts(run_directory))
 
@@ -3217,8 +3196,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.smoke:
         print(json.dumps(smoke(args.family, run_directory, workers=args.workers), indent=2))
         return
-    expected = set(in_space_ids(args.family))
-    n_distinct = len(distinct_ids(args.family))
+    templates = family_templates(RECIPES, args.family)
+    n_distinct = len(distinct_templates(templates))
     refused = n_distinct < MINIMUM_IN_SPACE and not args.below_minimum
     refusal = (
         f"The {args.family} family has {n_distinct} represented methods, fewer than "
@@ -3236,8 +3215,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             verification["in_space"] & (verification["family"] == args.family), "config_id"
         ]
     )
-    if found != expected:
-        failed = verification[verification["config_id"].isin(expected - found)]
+    if found != set(templates):
+        failed = verification[verification["config_id"].isin(set(templates) - found)]
         msg = "Templates not verified on the run's sessions:\n" + "\n".join(
             f"- {row.config_id}: {row.reason}" for row in failed.itertuples()
         )
