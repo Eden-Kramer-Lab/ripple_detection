@@ -1965,11 +1965,21 @@ def test_rates_by_state_by_hand(analyze, tiny_tables):
     assert rates.loc[MALLORY[0], "minutes"].tolist() == pytest.approx([0.25, 5 / 60])
 
 
-def test_an_event_at_a_bout_end_is_running(analyze):
-    bouts = UNIX_ORIGIN + np.array([[10.0, 15.0], [20.0, 25.0]])
-    times = UNIX_ORIGIN + np.array([9.999, 10.0, 15.0, 15.001, 25.0, 30.0])
-    # both ends of a bout are in it
-    assert analyze._running(times, bouts).tolist() == [False, True, True, False, True, False]
+def test_an_event_at_a_bout_end_is_running(analyze, tiny_tables):
+    kay = tiny_tables.events[tiny_tables.events.method == KAY[0]]
+    # Kay's last two events, in each session: one peaks where a bout starts,
+    # the other where it ends
+    bouts = {
+        session: np.array(
+            [[peaks.iloc[-2], peaks.iloc[-2] + 1.0], [peaks.iloc[-1] - 1.0, peaks.iloc[-1]]]
+        )
+        for session, peaks in kay.groupby("session_id").peak_time
+    }
+    assert bouts["reference/1"][0, 0] > UNIX_ORIGIN
+    rates = _by(
+        analyze.rates_by_state(tiny_tables, bouts=bouts, n_resamples=FEW), "method", "state"
+    )
+    assert rates.loc[KAY[0], "n_events"].tolist() == [8, 4]
 
 
 def test_session_bouts_are_the_simulated_schedule(analyze, benchmark_import):

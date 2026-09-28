@@ -99,15 +99,19 @@ from conditions import (
 from numpy.typing import ArrayLike
 from recipe_configs import RECIPES
 from run import (
+    _KEY,
+    _PRINCIPAL,
     MATCH_IOU_LEVELS,
     OUTPUT,
     THRESHOLD_SWEEPS,
+    _bounds,
     _concat,
     load_truth,
     read_table,
     setting_label,
     truth_window_sets,
 )
+from run import _PERCENTS as PERCENTS
 from scipy.cluster.hierarchy import linkage
 from scipy.spatial.distance import squareform
 from validate_simulator import replace_directory
@@ -139,7 +143,6 @@ _EXACT_UP_TO = 16
 # The settings of the main analyses: detectors at their defaults, and recipes.
 MAIN_SETTINGS = ("default", "literature")
 REFERENCE_CONDITION = "reference"
-_KEY = ["session_id", "method", "setting"]
 
 # The catalog's output of a method whose events are time points, and the two
 # scoring rules.
@@ -147,7 +150,6 @@ POINT_OUTPUT = "ripple peaks"
 PEAK_CONTAINMENT = "peak_containment"
 INTERVAL = "interval"
 
-PERCENTS = tuple(round(100 * fraction) for fraction in TRUTH_FRACTIONS)
 # The label of a false positive that overlaps no truth window.
 BACKGROUND = "background"
 # The type that has two or three ripples, for split and merge rates.
@@ -157,9 +159,7 @@ ERROR_COLUMNS = tuple(
     f"{kind}_error_{percent}" for percent in PERCENTS for kind in ("onset", "offset")
 )
 PAIR_COLUMNS = (
-    "session_id",
-    "method",
-    "setting",
+    *_KEY,
     "expression",
     "minimum_iou",
     "truth_row",
@@ -170,9 +170,7 @@ PAIR_COLUMNS = (
     *ERROR_COLUMNS,
 )
 OVERLAP_COLUMNS = (
-    "session_id",
-    "method",
-    "setting",
+    *_KEY,
     "subset",
     "n_truth",
     "n_split",
@@ -180,9 +178,7 @@ OVERLAP_COLUMNS = (
     "n_merged",
 )
 FALSE_POSITIVE_COLUMNS = (
-    "session_id",
-    "method",
-    "setting",
+    *_KEY,
     "event_index",
     "start_time",
     "end_time",
@@ -192,9 +188,7 @@ SESSION_COMPARISON_COLUMNS = ("session_id", "truth_expression", *COMPARISON_COLU
 CONSENSUS_COLUMNS = ("session_id", "row", "type", "n_methods", "n_methods_run")
 GROUP_COLUMNS = ("session_id", "n_methods", "n_events", "start_time", "end_time")
 POINT_COLUMNS = (
-    "session_id",
-    "method",
-    "setting",
+    *_KEY,
     "expression",
     "n_reference",
     "n_detected",
@@ -636,8 +630,8 @@ def _missing(sessions: pd.DataFrame, methods: pd.DataFrame, ran: pd.DataFrame) -
     ``method``, ``setting``. Every session should hold every method and
     setting, so one missing failed, never found zero events."""
     expected = sessions[["session_id"]].merge(methods[["method", "setting"]], how="cross")
-    missing = expected.merge(ran, on=_KEY, how="left", indicator=True)
-    return missing[missing["_merge"] == "left_only"][_KEY].reset_index(drop=True)
+    missing = expected.merge(ran, on=list(_KEY), how="left", indicator=True)
+    return missing[missing["_merge"] == "left_only"][list(_KEY)].reset_index(drop=True)
 
 
 def load_run(
@@ -689,7 +683,9 @@ def load_run(
     recorded = read_table(root / "failures.csv", keep=selected)
     failures = (
         _missing(sessions, methods, ran)
-        .merge(recorded.drop_duplicates(_KEY)[[*_KEY, "error"]], on=_KEY, how="left")
+        .merge(
+            recorded.drop_duplicates(list(_KEY))[[*_KEY, "error"]], on=list(_KEY), how="left"
+        )
         .fillna({"error": ""})
     )
     truth = {
@@ -822,10 +818,6 @@ _MATCH_COLUMNS = {
     "false_positive_groups": GROUP_COLUMNS,
     "points": POINT_COLUMNS,
 }
-
-
-def _bounds(frame: pd.DataFrame) -> np.ndarray[Any, Any]:
-    return np.asarray(frame[["start_time", "end_time"]], dtype=float).reshape(-1, 2)
 
 
 def label_windows(events: pd.DataFrame, non_events: pd.DataFrame) -> pd.DataFrame:
@@ -1549,35 +1541,28 @@ def recall(
 # Every condition, against the primary expression
 
 COUNT_COLUMNS = (
-    "session_id",
-    "method",
-    "setting",
+    *_KEY,
     "minimum_iou",
     "n_reference",
     "n_detected",
     "n_matched",
 )
 ERROR_ROW_COLUMNS = (
-    "session_id",
-    "method",
-    "setting",
+    *_KEY,
     "minimum_iou",
     "onset_error",
     "offset_error",
 )
 EXPRESSION_COUNT_COLUMNS = (*COUNT_COLUMNS[:3], "expression", *COUNT_COLUMNS[3:])
-PARTICIPATION_COLUMNS = ("session_id", "method", "setting", "n_events", "principal_fraction")
+PARTICIPATION_COLUMNS = (*_KEY, "n_events", "principal_fraction")
 _EVENT_READ = (
-    "session_id",
-    "method",
-    "setting",
+    *_KEY,
     "event_index",
     "start_time",
     "end_time",
     "peak_time",
     "n_active_principal",
 )
-_PRINCIPAL = ("place", "pyramidal")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1749,7 +1734,7 @@ def load_scores(run_directory: str | os.PathLike[str], *, workers: int = 1) -> C
         list(EXPRESSION_COUNT_COLUMNS)
     ].reset_index(drop=True)
     metrics = metrics.merge(primary, on=["method", "setting", "expression"])
-    ran = metrics[_KEY].drop_duplicates().reset_index(drop=True)
+    ran = metrics[list(_KEY)].drop_duplicates().reset_index(drop=True)
     failures = _missing(sessions, methods, ran)
 
     # the reference's sweeps, for the curves, and every condition's main settings
@@ -1818,12 +1803,12 @@ def _participation(
         principal
     ).to_numpy(dtype=float)
     sums = (
-        main[_KEY]
+        main[list(_KEY)]
         .assign(n_events=1, principal_fraction=fraction)
-        .groupby(_KEY)[["n_events", "principal_fraction"]]
+        .groupby(list(_KEY))[["n_events", "principal_fraction"]]
         .sum()
     )
-    table = _by_intervals(main_rows(ran)).join(sums, on=_KEY)
+    table = _by_intervals(main_rows(ran)).join(sums, on=list(_KEY))
     return (
         table.fillna({"n_events": 0, "principal_fraction": 0.0})
         .astype({"n_events": int})[list(PARTICIPATION_COLUMNS)]
@@ -2055,7 +2040,7 @@ def false_positive_classes(
     counted = matches.false_positives.groupby([*_KEY, "label"]).size()
     frame = _by_intervals(tables.ran).merge(pd.DataFrame({"label": labels}), how="cross")
     frame = frame.join(counted.rename("n_events"), on=[*_KEY, "label"]).fillna({"n_events": 0})
-    frame["n_unmatched"] = frame.groupby(_KEY)["n_events"].transform("sum")
+    frame["n_unmatched"] = frame.groupby(list(_KEY))["n_events"].transform("sum")
     counts = ["n_events", "n_unmatched"]
     classes = _pooled_ratios(
         frame,
@@ -3561,7 +3546,7 @@ def condition_pool(
     sessions = scores.sessions[scores.sessions["condition_id"].isin(condition_ids)]
     sessions = set(sessions.loc[sessions["replicate"].isin(replicates), "session_id"])
     counts = main_rows(_session_counts(scores, 0.0, sessions)).merge(
-        scores.participation, on=_KEY, how="left"
+        scores.participation, on=list(_KEY), how="left"
     )
     participation = ["n_events", "principal_fraction"]
     counts[participation] = counts[participation].astype(float).fillna(0.0)
@@ -4624,18 +4609,20 @@ def matching_sensitivity(
     n_truth = (
         matches.windows.groupby(["session_id", "expression"]).size().rename("n_reference")
     )
-    n_events = tables.events.groupby(_KEY).size().rename("n_detected")
+    n_events = tables.events.groupby(list(_KEY)).size().rename("n_detected")
     frame = _by_intervals(tables.ran).merge(primary, on=["method", "setting"])
     frame = frame.join(n_truth, on=["session_id", "primary_expression"]).join(
-        n_events, on=_KEY
+        n_events, on=list(_KEY)
     )
     frame = frame.fillna({"n_reference": 0, "n_detected": 0})
     by = ["method", "setting", "minimum_iou"]
     parts = []
     for level in MATCH_IOU_LEVELS:
         at_level = pairs[pairs["minimum_iou"] == level]
-        found = at_level.groupby(_KEY).size().rename("n_matched")
-        counted = frame.join(found, on=_KEY).fillna({"n_matched": 0}).assign(minimum_iou=level)
+        found = at_level.groupby(list(_KEY)).size().rename("n_matched")
+        counted = (
+            frame.join(found, on=list(_KEY)).fillna({"n_matched": 0}).assign(minimum_iou=level)
+        )
         parts.append(counted)
     counted = pd.concat(parts, ignore_index=True)
     counted = counted.assign(
@@ -4770,14 +4757,6 @@ def session_bouts(sessions: pd.DataFrame) -> dict[str, np.ndarray[Any, Any]]:
     return bouts
 
 
-def _running(times: np.ndarray[Any, Any], bouts: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
-    """Whether each time is inside a bout, bounds included."""
-    position = np.searchsorted(bouts[:, 0], times, side="right") - 1
-    inside = position >= 0
-    inside[inside] = times[inside] <= bouts[position[inside], 1]
-    return inside
-
-
 def rates_by_state(
     tables: RunTables,
     *,
@@ -4787,7 +4766,8 @@ def rates_by_state(
     """Each main method's events per minute at rest and while running.
 
     An event is placed by its ``peak_time``, else its bounds' midpoint
-    (``event_times``). Beside each rate, the true rate in that state: network
+    (``event_times``); one on a bout's start or end, to the timestamps'
+    rounding, is running (``intervals_to_mask``). Beside each rate, the true rate in that state: network
     events per minute of rest (they occur at rest only), and theta bursts, the
     non-events of running, per minute of running.
 
@@ -4811,12 +4791,12 @@ def rates_by_state(
     durations = tables.sessions.set_index("session_id")["duration_s"]
     frames = []
     for session_id, events in tables.events.groupby("session_id", sort=False):
-        running = _running(event_times(events), bouts[session_id])
+        running = rd.intervals_to_mask(event_times(events), bouts[session_id])
         frames.append(
-            events[_KEY].assign(rest=(~running).astype(int), running=running.astype(int))
+            events[list(_KEY)].assign(rest=(~running).astype(int), running=running.astype(int))
         )
     placed = _concat(frames, [*_KEY, "rest", "running"])
-    counted = placed.groupby(_KEY)[["rest", "running"]].sum()
+    counted = placed.groupby(list(_KEY))[["rest", "running"]].sum()
     truth = []
     for session_id, (events, non_events) in tables.truth.items():
         running_minutes = float(np.sum(np.diff(bouts[session_id], axis=1))) / 60
@@ -4829,7 +4809,7 @@ def rates_by_state(
                 "running_true": int((non_events["non_event_type"] == "theta_burst").sum()),
             }
         )
-    frame = tables.ran.join(counted, on=_KEY).fillna({"rest": 0, "running": 0})
+    frame = tables.ran.join(counted, on=list(_KEY)).fillna({"rest": 0, "running": 0})
     frame = frame.merge(pd.DataFrame(truth), on="session_id")
     parts = []
     for state in STATES:
@@ -4932,9 +4912,11 @@ def participation_bias(
         right_on=["session_id", "expression", "row"],
     )[[*_KEY, "id"]].drop_duplicates()
     found = found.merge(bursts, on=["session_id", "id"])
-    matched = found.groupby(_KEY)["n_participants"].agg(matched_sum="sum", matched_n="size")
+    matched = found.groupby(list(_KEY))["n_participants"].agg(
+        matched_sum="sum", matched_n="size"
+    )
     every = bursts.groupby("session_id")["n_participants"].agg(all_sum="sum", all_n="size")
-    frame = _by_intervals(tables.ran).join(matched, on=_KEY).join(every, on="session_id")
+    frame = _by_intervals(tables.ran).join(matched, on=list(_KEY)).join(every, on="session_id")
     frame = frame.fillna(0.0)
     by = ["method", "setting"]
     intervals = grouped_intervals(
@@ -5114,14 +5096,14 @@ def appendix_expressions(
     by = ["method", "setting", "expression"]
     counts = ["n_reference", "n_detected", "n_matched"]
     n_reference = matches.windows.groupby(["session_id", "expression"]).size()
-    n_detected = tables.events.groupby(_KEY).size()
+    n_detected = tables.events.groupby(list(_KEY)).size()
     found = matches.pairs[matches.pairs["minimum_iou"] == 0]
     n_matched = found.groupby([*by, "session_id"]).size()
     frame = _by_intervals(tables.ran).merge(
         pd.DataFrame({"expression": EXPRESSION_ORDER}), how="cross"
     )
     frame = frame.join(n_reference.rename("n_reference"), on=["session_id", "expression"])
-    frame = frame.join(n_detected.rename("n_detected"), on=_KEY)
+    frame = frame.join(n_detected.rename("n_detected"), on=list(_KEY))
     frame = frame.join(n_matched.rename("n_matched"), on=[*by, "session_id"])
     frame = _concat(
         [frame.fillna(dict.fromkeys(counts, 0)), matches.points],
@@ -6479,9 +6461,8 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
 
 SPOT_SELECTIONS = ("missed", "found", "false_positive")
 SPOT_COLUMNS = ("session_id", "start_time", "end_time", "label")
-# Events drawn per spot check, and seconds shown on each side of one.
+# Events drawn per spot check.
 SPOT_EVENTS = 6
-_SPOT_MARGIN = 0.15
 
 
 def select_from(
@@ -6640,7 +6621,7 @@ def spot_check(
         No event is selected, or the figure would be over ``SIZE_LIMIT``.
     """
     import matplotlib.pyplot as plt
-    from spot_check import draw_window, load_session, session_failures
+    from spot_check import _MARGIN, draw_window, load_session, session_failures
 
     if selected.empty:
         msg = f"{name}: no event is selected."
@@ -6669,8 +6650,8 @@ def spot_check(
                 filtered,
                 windows,
                 found,
-                row.start_time - _SPOT_MARGIN,
-                row.end_time + _SPOT_MARGIN,
+                row.start_time - _MARGIN,
+                row.end_time + _MARGIN,
                 f"{session_id}, {row.label}, {row.start_time:.3f}-{row.end_time:.3f} s",
                 methods,
                 failed,

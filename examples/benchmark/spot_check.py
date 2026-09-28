@@ -48,7 +48,7 @@ METHODS = (
     ("recipe:jadhav_2016", "literature"),
     ("recipe:mallory_2025", "literature"),
 )
-# Seconds shown on each side of an event's network window.
+# Seconds shown on each side of an event's window (analyze.spot_check's too).
 _MARGIN = 0.15
 _COLORS = {
     "ripple": "#0072B2",
