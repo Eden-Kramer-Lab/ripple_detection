@@ -147,6 +147,8 @@ ROUNDING = 1e-9  # relative: a statistic on a bound, to rounding, lies within it
 # Artifacts the repository does not keep (measurements.csv is tens of MB): their
 # hashes are recorded, a copy that is present must match, but none is required.
 UNCOMMITTED_ARTIFACTS = ("measurements.csv",)
+# Place cells and other pyramidal cells, the principal units.
+_PRINCIPAL = ("place", "pyramidal")
 
 # The target table's labels of the six alternative models, their levels, and
 # their condition ids.
@@ -1027,8 +1029,7 @@ def measure_session(
     baseline_mask = rest_mask & ~interval_mask(
         time, network[["start_time", "end_time"]].to_numpy()
     )
-    samples, units, counts = spike_train(session.multiunit)
-    unit_types, baseline_rates = session.unit_types, session.baseline_rates
+    spikes = _Spikes.of(session)
     lfps, radiatum = session.lfps, session.sharp_wave_lfp
     ripple_channels = session.ripple_channels
     snippets = _examples(session) if keep_traces else {}
@@ -1050,19 +1051,7 @@ def measure_session(
     _rms_durations(out, time, events, lfps[:, 0], noise.lfps[:, 0], rate)
     del noise, lfps, radiatum
     _spike_measures(
-        out,
-        time,
-        events,
-        non_events,
-        samples,
-        units,
-        counts,
-        unit_types,
-        baseline_rates,
-        rest,
-        rest_mask,
-        baseline_mask,
-        parameters,
+        out, time, events, non_events, spikes, rest, rest_mask, baseline_mask, parameters
     )
     _model_metadata(out, events, non_events, parameters)
     return SessionResult(
@@ -1290,45 +1279,10 @@ def _ripple_measures(
         for position, row in enumerate(table.itertuples()):
             channels = channels_of[row.event_id, row.component]
             anchor = _anchor(channels)
-            window = _component_window(time, row)
-            waveform = difference[window, anchor]
             group = str(row.event_type)
-            out.sample("ripple_peak_frequency", group, [fft_peak_frequency(waveform, rate)])
-            padded = _component_window(time, row, pad=int(0.05 * rate))
-            analytic_time = time[padded]
-            frequency = instantaneous_frequency(analytic_time, difference[padded, anchor])
-            before = _nearest(analytic_time, row.center_time - FREQUENCY_OFFSET)
-            after = _nearest(analytic_time, row.center_time + FREQUENCY_OFFSET)
-            out.sample(
-                "ripple_frequency_decline", group, [frequency[before] - frequency[after]]
-            )
-            envelope = np.abs(signal.hilbert(difference[padded, anchor]))
-            peak = int(np.argmax(envelope))
-            out.sample(
-                "ripple_envelope_peak_offset_ms",
-                group,
-                [(analytic_time[peak] - row.center_time) * 1e3],
-            )
-            for fraction in TRUTH_FRACTIONS:
-                run = run_around(envelope, peak, fraction * envelope[peak])
-                assert run is not None
-                bounds = truth[fraction].iloc[position]
-                out.sample(
-                    f"ripple_hilbert_start_error_ms_{fraction:g}",
-                    group,
-                    [(analytic_time[run[0]] - bounds.start_time) * 1e3],
-                )
-                out.sample(
-                    f"ripple_hilbert_end_error_ms_{fraction:g}",
-                    group,
-                    [(analytic_time[run[1]] - bounds.end_time) * 1e3],
-                )
-                if fraction in (0.1, 0.5):
-                    out.sample(
-                        f"ripple_hilbert_width_ms_{fraction:g}",
-                        group,
-                        [(analytic_time[run[1]] - analytic_time[run[0]]) * 1e3],
-                    )
+            bounds = {fraction: truth[fraction].iloc[position] for fraction in TRUTH_FRACTIONS}
+            _ripple_timing(out, time, row, difference[:, anchor], bounds, rate)
+            waveform = difference[_component_window(time, row), anchor]
             gain = float(channels.gain[channels.channel == anchor].iloc[0])
             filtered_peak = _padded_filtered_peak(waveform, rate)
             sizing.append(filtered_peak / (row.amplitude * gain))
@@ -1345,20 +1299,9 @@ def _ripple_measures(
                 for c in range(difference.shape[1])
             ]
             out.sample("ripple_snr_recording_wide", group, [np.mean(per_channel)])
-            reference = difference[wide, anchor]
-            for channel in channels.itertuples():
-                if channel.channel == anchor:
-                    continue
-                trace = difference[wide, channel.channel]
-                if channel.gain == 0:
-                    energy_mismatch += bool(np.any(trace != 0))
-                    continue
-                expected = (channel.gain / gain) * fractional_shift(
-                    reference, channel.delay_s * rate
-                )
-                residuals.append(
-                    float(np.linalg.norm(trace - expected) / np.linalg.norm(trace))
-                )
+            found, mismatches = _channel_residuals(difference[wide], channels, anchor, rate)
+            residuals += found
+            energy_mismatch += mismatches
         del difference
     sizing_array = np.asarray(sizing)
     spread = (
@@ -1384,6 +1327,106 @@ def _ripple_measures(
         len(residuals),
         "; ".join(notes),
     )
+
+
+def _ripple_timing(
+    out: _Collector,
+    time: FloatArray,
+    row: Any,
+    trace: FloatArray,
+    bounds: Mapping[float, Any],
+    rate: float,
+) -> None:
+    """One isolated ripple's peak frequency, frequency decline, and Hilbert
+    envelope's peak and crossings against its truth windows.
+
+    Parameters
+    ----------
+    out : _Collector
+    time : ndarray, shape (n_time,)
+    row : namedtuple
+        The ripple's row of the event table.
+    trace : ndarray, shape (n_time,)
+        The isolated ripple on its anchor channel, noise removed.
+    bounds : mapping of float to pandas.Series
+        Its truth window (``start_time``, ``end_time``) at each of
+        ``TRUTH_FRACTIONS``.
+    rate : float
+        Hz.
+    """
+    group = str(row.event_type)
+    waveform = trace[_component_window(time, row)]
+    out.sample("ripple_peak_frequency", group, [fft_peak_frequency(waveform, rate)])
+    padded = _component_window(time, row, pad=int(0.05 * rate))
+    analytic_time = time[padded]
+    frequency = instantaneous_frequency(analytic_time, trace[padded])
+    before = _nearest(analytic_time, row.center_time - FREQUENCY_OFFSET)
+    after = _nearest(analytic_time, row.center_time + FREQUENCY_OFFSET)
+    out.sample("ripple_frequency_decline", group, [frequency[before] - frequency[after]])
+    envelope = np.abs(signal.hilbert(trace[padded]))
+    peak = int(np.argmax(envelope))
+    out.sample(
+        "ripple_envelope_peak_offset_ms",
+        group,
+        [(analytic_time[peak] - row.center_time) * 1e3],
+    )
+    for fraction in TRUTH_FRACTIONS:
+        run = run_around(envelope, peak, fraction * envelope[peak])
+        assert run is not None
+        out.sample(
+            f"ripple_hilbert_start_error_ms_{fraction:g}",
+            group,
+            [(analytic_time[run[0]] - bounds[fraction].start_time) * 1e3],
+        )
+        out.sample(
+            f"ripple_hilbert_end_error_ms_{fraction:g}",
+            group,
+            [(analytic_time[run[1]] - bounds[fraction].end_time) * 1e3],
+        )
+        if fraction in (0.1, 0.5):
+            out.sample(
+                f"ripple_hilbert_width_ms_{fraction:g}",
+                group,
+                [(analytic_time[run[1]] - analytic_time[run[0]]) * 1e3],
+            )
+
+
+def _channel_residuals(
+    traces: FloatArray, channels: pd.DataFrame, anchor: int, rate: float
+) -> tuple[list[float], int]:
+    """How far each channel carrying one isolated ripple is from its anchor's
+    waveform shifted by the stored delay and scaled by the stored gains.
+
+    Parameters
+    ----------
+    traces : ndarray, shape (n_window, n_channels)
+        The isolated ripple on every channel, noise removed.
+    channels : pandas.DataFrame
+        Its rows of ``ripple_channels``.
+    anchor : int
+    rate : float
+        Hz.
+
+    Returns
+    -------
+    residuals : list of float
+        The relative residual of each other channel with a nonzero gain.
+    mismatches : int
+        Zero-gain channels that carry any of it.
+    """
+    reference = traces[:, anchor]
+    gain = float(channels.gain[channels.channel == anchor].iloc[0])
+    residuals, mismatches = [], 0
+    for channel in channels.itertuples():
+        if channel.channel == anchor:
+            continue
+        trace = traces[:, channel.channel]
+        if channel.gain == 0:
+            mismatches += bool(np.any(trace != 0))
+            continue
+        expected = (channel.gain / gain) * fractional_shift(reference, channel.delay_s * rate)
+        residuals.append(float(np.linalg.norm(trace - expected) / np.linalg.norm(trace)))
+    return residuals, mismatches
 
 
 def _spatial_draws(
@@ -1544,16 +1587,51 @@ def _rms_durations(
         )
 
 
+@dataclass(frozen=True)
+class _Spikes:
+    """A session's spikes, without its spike array.
+
+    Attributes
+    ----------
+    samples, units : ndarray of int, shape (n_nonzero,)
+        The sample and unit of each nonzero count, sorted by sample then unit
+        (``spike_train``).
+    counts : ndarray, shape (n_nonzero,)
+    unit_types : ndarray of str, shape (n_units,)
+    baseline_rates : ndarray, shape (n_units,)
+        Each unit's drawn baseline intensity, spikes/s.
+    """
+
+    samples: IntArray
+    units: IntArray
+    counts: FloatArray
+    unit_types: Any
+    baseline_rates: FloatArray
+
+    @classmethod
+    def of(cls, session: rd.SimulatedSession) -> _Spikes:
+        """The spikes of ``session``."""
+        samples, units, counts = spike_train(session.multiunit)
+        return cls(samples, units, counts, session.unit_types, session.baseline_rates)
+
+    def members(self, *unit_types: str) -> IntArray:
+        """The units of any of ``unit_types``, by index."""
+        return np.flatnonzero(np.isin(self.unit_types, unit_types))
+
+    def counts_in(self, mask: BoolArray) -> FloatArray:
+        """Each unit's spikes at the samples ``mask`` selects, shape (n_units,)."""
+        at = mask[self.samples]
+        return np.bincount(
+            self.units[at], weights=self.counts[at], minlength=self.unit_types.size
+        )
+
+
 def _spike_measures(
     out: _Collector,
     time: FloatArray,
     events: pd.DataFrame,
     non_events: pd.DataFrame,
-    samples: IntArray,
-    units: IntArray,
-    counts: FloatArray,
-    unit_types: Any,
-    baseline_rates: FloatArray,
+    spikes: _Spikes,
     rest: FloatArray,
     rest_mask: BoolArray,
     baseline_mask: BoolArray,
@@ -1563,42 +1641,50 @@ def _spike_measures(
     inter-spike intervals, silent gaps and the spike model's realized rate."""
     rate = float(parameters["session"]["sampling_frequency"])
     step = 1.0 / rate
-    render = parameters["render"]
-    n_units = unit_types.size
-    principal = np.flatnonzero(np.isin(unit_types, ["place", "pyramidal"]))
-    interneurons = np.flatnonzero(unit_types == "interneuron")
-    populations = {"pyramidal": principal, "interneuron": interneurons}
+    ripples = events[events.expression == "ripple"]
+    _firing_rates(out, time, ripples, spikes, rest_mask, baseline_mask, step)
+    _participation(out, time, events, ripples, spikes)
+    _count_variability(out, time, spikes, rest_mask, rate)
+    _spike_intervals(out, time, spikes, rest, rest_mask)
+    _rate_realization(out, time, ripples, non_events, spikes, rest_mask, parameters, step)
 
-    def counts_in(mask: BoolArray) -> FloatArray:
-        at = mask[samples]
-        return np.bincount(units[at], weights=counts[at], minlength=n_units)
 
-    rest_counts = counts_in(rest_mask)
-    rest_seconds = rest_mask.sum() * step
-    rest_rates = rest_counts / rest_seconds
+def _firing_rates(
+    out: _Collector,
+    time: FloatArray,
+    ripples: pd.DataFrame,
+    spikes: _Spikes,
+    rest_mask: BoolArray,
+    baseline_mask: BoolArray,
+    step: float,
+) -> None:
+    """Baseline rates at rest, ripple gains, and each type's drawn and
+    realized rates."""
+    principal, interneurons = spikes.members(*_PRINCIPAL), spikes.members("interneuron")
+    rest_rates = spikes.counts_in(rest_mask) / (rest_mask.sum() * step)
     out.sample("pyramidal_baseline_rate", "pyramidal", rest_rates[principal])
     out.sample("interneuron_baseline_rate", "interneuron", rest_rates[interneurons])
-    ripples = events[events.expression == "ripple"]
     strong = ripples[ripples.event_type.isin(["swr", "ripple_doublet"])].center_time.to_numpy()
     window_mask = interval_mask(
         time, np.column_stack([strong - GAIN_WINDOW, strong + GAIN_WINDOW])
     )
-    window_counts, baseline_counts = counts_in(window_mask), counts_in(baseline_mask)
-    for label, members in populations.items():
+    window_counts = spikes.counts_in(window_mask)
+    baseline_counts = spikes.counts_in(baseline_mask)
+    for label, members in (("pyramidal", principal), ("interneuron", interneurons)):
         window_seconds = window_mask.sum() * step * members.size
         baseline_seconds = baseline_mask.sum() * step * members.size
         quantity = f"{label}_ripple_gain"
         out.sample(quantity, "window", [window_counts[members].sum()], [window_seconds])
         out.sample(quantity, "baseline", [baseline_counts[members].sum()], [baseline_seconds])
     for unit_type in rd.UNIT_TYPES:
-        members = np.flatnonzero(unit_types == unit_type)
+        members = spikes.members(unit_type)
         if not members.size:
             continue
         out.measure(
             "baseline_rate_drawn",
             unit_type,
             "mean_hz",
-            baseline_rates[members].mean(),
+            spikes.baseline_rates[members].mean(),
             members.size,
         )
         out.measure(
@@ -1618,11 +1704,22 @@ def _spike_measures(
             members.size,
         )
 
+
+def _participation(
+    out: _Collector,
+    time: FloatArray,
+    events: pd.DataFrame,
+    ripples: pd.DataFrame,
+    spikes: _Spikes,
+) -> None:
+    """Observed participation around each event's first ripple, and the
+    latent recruitment beside it."""
+    principal = spikes.members(*_PRINCIPAL)
     first_ripples = ripples[ripples.component == 0]
     fractions = observed_participation(
         time,
-        samples,
-        units,
+        spikes.samples,
+        spikes.units,
         principal,
         first_ripples.center_time.to_numpy(),
         PARTICIPATION_WINDOW,
@@ -1637,24 +1734,43 @@ def _spike_measures(
         )
         out.summarize("latent_recruitment", str(event_type), latent)
 
+
+def _count_variability(
+    out: _Collector, time: FloatArray, spikes: _Spikes, rest_mask: BoolArray, rate: float
+) -> None:
+    """Each unit's Fano factor of its counts in bins wholly at rest."""
     n_bin = max(round(COUNT_BIN * rate), 1)
     n_bins = time.size // n_bin
     whole_bins = rest_mask[: n_bins * n_bin].reshape(n_bins, n_bin).all(axis=1)
-    binned = np.zeros((n_bins, n_units))
-    inside = samples < n_bins * n_bin
-    np.add.at(binned, (samples[inside] // n_bin, units[inside]), counts[inside])
+    binned = np.zeros((n_bins, spikes.unit_types.size))
+    inside = spikes.samples < n_bins * n_bin
+    np.add.at(
+        binned,
+        (spikes.samples[inside] // n_bin, spikes.units[inside]),
+        spikes.counts[inside],
+    )
     binned = binned[whole_bins]
     means = binned.mean(axis=0)
     fano = np.where(means > 0, binned.var(axis=0) / np.where(means > 0, means, 1), np.nan)
     for unit_type in rd.UNIT_TYPES:
-        members = np.flatnonzero(unit_types == unit_type)
+        members = spikes.members(unit_type)
         if members.size:
             out.summarize("count_fano_10ms", unit_type, fano[members])
 
-    at_rest = rest_mask[samples]
-    for label, members in (*populations.items(), ("all", np.arange(n_units))):
-        chosen = at_rest & np.isin(units, members)
-        gaps = silent_gaps(time, samples[chosen], rest)
+
+def _spike_intervals(
+    out: _Collector, time: FloatArray, spikes: _Spikes, rest: FloatArray, rest_mask: BoolArray
+) -> None:
+    """Population silent gaps and single units' inter-spike intervals at
+    rest, and the most spikes in one sample."""
+    at_rest = rest_mask[spikes.samples]
+    for label, members in (
+        ("pyramidal", spikes.members(*_PRINCIPAL)),
+        ("interneuron", spikes.members("interneuron")),
+        ("all", np.arange(spikes.unit_types.size)),
+    ):
+        chosen = at_rest & np.isin(spikes.units, members)
+        gaps = silent_gaps(time, spikes.samples[chosen], rest)
         out.summarize("population_silent_gap_ms", label, gaps * 1e3)
         out.measure(
             "population_silent_gap_ms",
@@ -1663,7 +1779,7 @@ def _spike_measures(
             gaps.max() * 1e3 if gaps.size else np.nan,
             gaps.size,
         )
-        intervals = _unit_intervals(time, samples[chosen], units[chosen], rest)
+        intervals = _unit_intervals(time, spikes.samples[chosen], spikes.units[chosen], rest)
         out.summarize("inter_spike_interval_ms", label, intervals * 1e3)
         out.measure(
             "inter_spike_interval_ms",
@@ -1672,20 +1788,39 @@ def _spike_measures(
             float(np.mean(intervals < 0.002)) if intervals.size else np.nan,
             intervals.size,
         )
-    out.measure("spikes_per_sample", "all", "max", counts.max(initial=0.0), counts.size)
+    out.measure(
+        "spikes_per_sample", "all", "max", spikes.counts.max(initial=0.0), spikes.counts.size
+    )
 
+
+def _rate_realization(
+    out: _Collector,
+    time: FloatArray,
+    ripples: pd.DataFrame,
+    non_events: pd.DataFrame,
+    spikes: _Spikes,
+    rest_mask: BoolArray,
+    parameters: Mapping[str, Mapping[str, Any]],
+    step: float,
+) -> None:
+    """Interneuron spikes against the spike model's expected count, and,
+    under the refractory model, its violations."""
+    render = parameters["render"]
+    interneurons = spikes.members("interneuron")
     # interneurons fire at their baseline intensity outside every ripple's
     # eight-scale window, at rest (theta bursts and leaks recruit no interneuron)
     quiet = rest_mask & ~interval_mask(time, component_spans(ripples, 2 * step))
-    observed = float(counts_in(quiet)[interneurons].sum())
-    rates = baseline_rates[interneurons]
+    observed = float(spikes.counts_in(quiet)[interneurons].sum())
+    rates = spikes.baseline_rates[interneurons]
     if render["spike_model"] == "refractory":
         rates = refractory_rate(rates, step, float(render["refractory_period"]))
     expected = float(rates.sum() * quiet.sum() * step)
     out.sample("interneuron_rate_realization", "interneuron", [observed], [expected])
 
     if render["spike_model"] == "refractory":
-        _check_refractory(out, time, non_events, samples, units, counts, render)
+        _check_refractory(
+            out, time, non_events, spikes.samples, spikes.units, spikes.counts, render
+        )
 
 
 def _unit_intervals(
@@ -2288,9 +2423,9 @@ def validate(
     ]
     if workers > 1:
         with ProcessPoolExecutor(max_workers=workers) as pool:
-            results = list(pool.map(_measure_task, tasks))
+            results = list(pool.map(measure_session, *zip(*tasks, strict=True)))
     else:
-        results = [_measure_task(task) for task in tasks]
+        results = [measure_session(*task) for task in tasks]
     parameters = {c.condition_id: resolve(c, overrides) for c in selected}
     return write_report(
         output_root / validation_id,
@@ -2303,11 +2438,6 @@ def validate(
         figures,
         clock.perf_counter() - started,
     )
-
-
-def _measure_task(task: tuple[Condition, int, Mapping[str, Any], bool]) -> SessionResult:
-    condition, replicate, overrides, keep_traces = task
-    return measure_session(condition, replicate, overrides, keep_traces)
 
 
 def write_report(
@@ -2327,16 +2457,23 @@ def write_report(
     checks = build_checks(results, selected, parameters, targets)
     measurements = build_measurements(results)
     reasons = readiness(checks, targets)
+    # the reference and the alternative models, whose targets gate readiness
+    shown = [
+        c.condition_id
+        for c in selected
+        if c.condition_id == "reference" or c.condition_id in MODEL_LABELS.values()
+    ]
     with replace_directory(directory) as partial_directory:
         measurements.to_csv(partial_directory / "measurements.csv", index=False)
         checks.to_csv(partial_directory / "checks.csv", index=False)
-        pictures = _figures(partial_directory, results, checks, selected) if figures else []
+        pictures = _figures(partial_directory, results, checks, shown) if figures else []
         (partial_directory / "report.md").write_text(
             _report_text(
                 validation_id,
                 checks,
                 reasons,
                 selected,
+                shown,
                 replicates,
                 overrides,
                 pictures,
@@ -2481,12 +2618,14 @@ def _report_text(
     checks: pd.DataFrame,
     reasons: Sequence[str],
     selected: Sequence[Condition],
+    shown: Sequence[str],
     replicates: Sequence[int],
     overrides: Mapping[str, Any],
     pictures: Sequence[str],
     results: Sequence[SessionResult],
 ) -> str:
-    """The report's Markdown."""
+    """The report's Markdown; ``shown`` are the conditions of its targets
+    table, the others' targets listed as stress levels."""
     status = "not ready" if reasons else "ready"
     lines = [
         f"# Simulator validation `{validation_id}`",
@@ -2518,11 +2657,6 @@ def _report_text(
         "",
     ]
     targets = checks[checks.kind == "target"]
-    shown = [
-        c.condition_id
-        for c in selected
-        if c.condition_id == "reference" or c.condition_id in MODEL_LABELS.values()
-    ]
     header = "| target | evidence | statistic | bounds | " + " | ".join(shown) + " |"
     lines += [header, "|" + " --- |" * (4 + len(shown))]
     for quantity, rows in targets.groupby("check", sort=False):
@@ -2618,17 +2752,13 @@ def _figures(
     directory: Path,
     results: Sequence[SessionResult],
     checks: pd.DataFrame,
-    selected: Sequence[Condition],
+    shown: Sequence[str],
 ) -> list[str]:
-    """Draw the report's PNGs into ``directory``; return their names."""
+    """Draw the report's PNGs of the ``shown`` conditions into ``directory``;
+    return their names."""
     import matplotlib as mpl
 
     mpl.use("Agg")
-    shown = [
-        c.condition_id
-        for c in selected
-        if c.condition_id == "reference" or c.condition_id in MODEL_LABELS.values()
-    ]
     names = [
         _plot_targets(directory, checks, shown),
         _plot_distributions(directory, results, shown),
