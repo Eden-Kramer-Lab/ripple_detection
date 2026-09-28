@@ -676,6 +676,9 @@ uv run python examples/benchmark/attribution.py --run-name v1 --family lfp \
 
 `--analysis` is `oat`, `sobol`, `shapley` or `all` (the default); `--smoke` times 20
 configurations on one session and prints each analysis's cost, writing nothing;
+`--sobol-n` is the rows of each Sobol sample matrix, 256 by default or 128 when the smoke
+test puts 256 past four hours on the workers there are (the tables' `sobol_n` column says
+which);
 `--run-directory` and `--results-directory` read and write elsewhere. Before anything
 runs, the command checks the run's validation report (ready, and the one the run
 recorded), simulates the reference condition's first five sessions again from the saved

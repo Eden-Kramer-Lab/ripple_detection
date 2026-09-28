@@ -13,7 +13,7 @@ Usage, from the repository root (see README.md, "Attribution")::
 
     uv run python examples/benchmark/attribution.py --run-name NAME
         --family spikes|lfp [--analysis oat|sobol|shapley|all] [--workers N]
-        [--smoke] [--below-minimum] [--run-directory PATH]
+        [--smoke] [--sobol-n 128|256] [--below-minimum] [--run-directory PATH]
         [--results-directory PATH]
 
 It reads a finished run's reference condition (``conditions.csv``'s saved
@@ -52,7 +52,7 @@ matched events over the union against the reference configuration's (1 when
 both are empty).
 
 Analyses (``--analysis``): ``oat`` (``one_at_a_time``), ``sobol`` (``sobol``, at
-``SOBOL_N`` rows) and ``shapley`` (``shapley_pairs``). A family with fewer than
+``--sobol-n`` rows, ``SOBOL_N`` or 128) and ``shapley`` (``shapley_pairs``). A family with fewer than
 ``MINIMUM_IN_SPACE`` represented methods (identical templates once) runs no Sobol
 or Shapley analysis: the command stops and says so, unless ``--below-minimum``
 is given, when it runs them and every output of the family carries
@@ -2609,10 +2609,10 @@ def sobol(
     rows : pandas.DataFrame
         ``_rows``' output: ``matrix`` (``"A"``, ``"B"`` or ``"AB"``),
         ``column`` (the factor from ``B``, ``AB`` only), ``row``, then the
-        factors, ``y``, ``value`` and each session's.
+        factors, ``y``, ``value`` and each session's, and ``sobol_n``, ``n``.
     indices : pandas.DataFrame
         One row per ``Y`` and factor: ``y``, ``factor``, then
-        ``sobol_intervals``' columns.
+        ``sobol_intervals``' columns and ``sobol_n``.
     """
     factors = factor_space(RECIPES, family)
     reference = reference_template(family)
@@ -2638,7 +2638,8 @@ def sobol(
         tables.append(table.assign(y=name, factor=[f.name for f in factors]))
     indices = pd.concat(tables, ignore_index=True)
     columns = ["y", "factor", *[c for c in indices.columns if c not in ("y", "factor")]]
-    return _rows("sobol", keys, templates, outputs), indices[columns]
+    rows = _rows("sobol", keys, templates, outputs).assign(sobol_n=n)
+    return rows, indices[columns].assign(sobol_n=n)
 
 
 def _differing(first: Template, second: Template) -> tuple[str, ...]:
@@ -3078,7 +3079,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--analysis", default="all", choices=("oat", "sobol", "shapley", "all")
     )
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
-    parser.add_argument("--smoke", action="store_true")
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="time a few configurations on one session and print each analysis's cost",
+    )
+    parser.add_argument(
+        "--sobol-n",
+        type=int,
+        choices=(128, 256),
+        default=SOBOL_N,
+        help=f"rows of each Sobol sample matrix (default {SOBOL_N}; 128 when the smoke "
+        "test puts 256 past four hours)",
+    )
     parser.add_argument(
         "--below-minimum",
         action="store_true",
@@ -3167,7 +3180,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         if analysis == "oat":
             rows, summary = one_at_a_time(args.family, run_directory, workers=args.workers)
         elif analysis == "sobol":
-            rows, summary = sobol(args.family, run_directory, workers=args.workers)
+            rows, summary = sobol(
+                args.family, run_directory, n=args.sobol_n, workers=args.workers
+            )
             _save_figure(
                 results / f"{args.family}_sobol.png",
                 plot_sobol(summary, args.family, caveat=caveat),

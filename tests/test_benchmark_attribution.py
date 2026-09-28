@@ -948,6 +948,9 @@ def test_sobol(attribution, recipes, short_run):
     }
     assert len(indices) == d * len(attribution.Y_NAMES)
     assert list(indices.columns[:2]) == ["y", "factor"]
+    # the number of rows is written with both tables
+    assert (rows["sobol_n"] == 4).all()
+    assert (indices["sobol_n"] == 4).all()
     f1 = rows[rows["y"] == "f1"]
     y = f1["value"].to_numpy()
     first, total = attribution.sobol_indices(y[:4], y[4:8], y[8:].reshape(d, 4))
@@ -1091,13 +1094,13 @@ def test_the_override_runs_a_family_below_the_minimum_labelled(
     monkeypatch.setattr(attribution, "RECIPES", tuple(kept))
     monkeypatch.setattr(attribution, "check_report", lambda directory, parameters: None)
     sobol = attribution.sobol
-    monkeypatch.setattr(
-        attribution,
-        "sobol",
-        lambda family, run_directory, **options: sobol(
-            family, run_directory, **{**options, "n": 4}
-        ),
-    )
+    asked = []
+
+    def small_sobol(family, run_directory, *, n, workers):
+        asked.append(n)
+        return sobol(family, run_directory, n=4, workers=workers)
+
+    monkeypatch.setattr(attribution, "sobol", small_sobol)
     drawn = []
     for name in ("plot_sobol", "plot_shapley"):
         monkeypatch.setattr(
@@ -1106,7 +1109,8 @@ def test_the_override_runs_a_family_below_the_minimum_labelled(
     monkeypatch.setattr(attribution, "_save_figure", lambda path, figure: drawn.append(figure))
     arguments = ["--run-name", "x", "--family", "lfp", "--workers", "1"]
     arguments += ["--run-directory", str(copy), "--results-directory", str(results)]
-    attribution.main([*arguments, "--analysis", "all", "--below-minimum"])
+    attribution.main([*arguments, "--analysis", "all", "--below-minimum", "--sobol-n", "128"])
+    assert asked == [128]
     caveat = "rests on 4 methods, below the design's 8; the maintainer chose to run it"
     assert caveat in capsys.readouterr().err
     written = sorted(path.name for path in results.iterdir())
