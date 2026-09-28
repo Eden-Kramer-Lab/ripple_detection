@@ -958,10 +958,21 @@ As implemented after an external statistical review (2026-09-28), the maintainer
 - **Audit of the other p-values.** `method_differences` and `paired_timing` test the mean of
   per-session values that they report as the estimate (consistent; the pooled median beside it
   carries no test); matching sensitivity, candidate ranks, the attribution's one factor at a
-  time and the orders carry no p-value; candidate trends copy their tables'. Left open:
-  `operating_differences` reports a difference read off pooled curves but tests per-session
-  read-offs by sign flip, and a swap of two detectors' sessions has no pooled counterpart when
-  their sweeps have different settings.
+  time and the orders carry no p-value; candidate trends copy their tables'.
+- **Operating differences.** Their difference is read off pooled curves, but was tested by a
+  sign flip of per-session read-offs, and a swap of two detectors' sessions has no pooled
+  counterpart when their sweeps have different settings (15 of the 21 pairs). The maintainer
+  chose the bootstrap-inverted p-value (`bootstrap_p`): `2 min(share of draws <= 0, share of
+  draws >= 0)`, capped at 1, over the defined draws (`n_draws`, replacing `n_paired`) of the
+  same resampled pooled differences as the interval, so estimate, interval and p-value are one
+  statistic for every pair and p < 0.05 when the 95 % interval excludes 0 (to within one draw,
+  where the interpolated bound can fall either side). Approximate, not an exact randomization
+  test; a p of 0 means no draw on one side. On v1, 22 of 29 compared rows have p < 0.05 (23
+  by sign flip; three rows changed side); Roumis minus Kay at 1 per minute went from 0.123 to
+  0.29, its interval still holding 0.
+- **Rebuilds keep other commands' results.** `analyze.py` rebuilt `results/<run>` keeping
+  only `trends.md` and `spot_checks/`, deleting the attribution's `attribution/`; `KEPT` now
+  lists all three and a rebuild copies each over.
 - **Reversals.** `reversed` required only opposite point estimates. It now requires a supported
   reference order, opposite signs and an alternative interval excluding 0; opposite point
   estimates whose alternative interval holds 0 are `point_reversed`, counted in `summary.md`
