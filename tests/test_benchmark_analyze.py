@@ -334,6 +334,21 @@ def test_paired_bootstrap_keeps_replicates_paired(analyze):
     assert unpaired.loc["difference", "low"] < 1 < unpaired.loc["difference", "high"]
 
 
+def test_paired_bootstrap_refuses_a_statistic_indexed_by_its_draws(analyze):
+    frame = _per_session([1.0, 2.0, 3.0], shift=0.0)
+    # indexed by session: a resample's relabelled ids are not the estimate's
+    by_session = functools.partial(
+        analyze.paired_bootstrap,
+        frame,
+        lambda f: f.groupby("session_id")["value"].mean(),
+        n_resamples=5,
+    )
+    with pytest.raises(ValueError, match="index is not the estimate's"):
+        by_session(key="session_id")
+    with pytest.raises(ValueError, match="key must be 'session_id' or 'replicate'"):
+        analyze.paired_bootstrap(frame, _mean_by_method, key="method", n_resamples=5)
+
+
 def test_sign_flip_exact(analyze):
     assert analyze.sign_flip_test([1, 1, 1, 1]) == 2 / 16
     assert analyze.sign_flip_test([1, -1]) == 1.0

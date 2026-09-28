@@ -221,10 +221,11 @@ def paired_bootstrap(
     condition, where every method's rows of a session come together, and
     ``key="replicate"`` whenever the statistic compares conditions, since a
     replicate's sessions share a seed in every condition and drawing the
-    replicate keeps them together. A value drawn twice is two draws: its
-    rows' ``session_id`` and ``replicate`` become text with ``"#<k>"``
-    appended, ``k`` the draw's position, so a statistic grouping by either
-    keeps both copies.
+    replicate keeps them together. A value drawn twice is two draws: in a
+    resample, every row's ``session_id`` and ``replicate`` are text, the
+    original value with ``"#<k>"`` appended, ``k`` the draw's position, so
+    a statistic grouping by either keeps both copies (and must not index its
+    result by them).
 
     Parameters
     ----------
@@ -232,7 +233,8 @@ def paired_bootstrap(
         With ``session_id`` and ``replicate`` columns.
     statistic : callable
         ``statistic(frame)`` gives a Series of estimates, each resample's
-        with the same index (an entry a resample lacks is NaN there).
+        with the same index as the estimate's (NaN for an entry a resample
+        cannot give).
     key : {"session_id", "replicate"}
         The column whose values are drawn.
     n_resamples : int, optional
@@ -249,7 +251,17 @@ def paired_bootstrap(
         ``frame`` itself, and ``low`` and ``high``, the resamples'
         ``(1 - level) / 2`` and ``(1 + level) / 2`` quantiles (NaN draws left
         out).
+
+    Raises
+    ------
+    ValueError
+        ``key`` is neither ``"session_id"`` nor ``"replicate"``, or a
+        resample's statistic is not indexed as the estimate is (a statistic
+        indexed by the drawn sessions, say).
     """
+    if key not in ("session_id", "replicate"):
+        msg = f"key must be 'session_id' or 'replicate', got {key!r}."
+        raise ValueError(msg)
     rng = np.random.default_rng(seed)
     values = frame[key].unique()
     positions = frame.groupby(key, sort=False).indices
@@ -282,7 +294,14 @@ def paired_bootstrap(
         resampled = frame.iloc[np.concatenate(rows)].reset_index(drop=True)
         resampled["session_id"] = np.concatenate(session_ids)
         resampled["replicate"] = np.concatenate(replicate_ids)
-        draws.append(statistic(resampled))
+        draw = statistic(resampled)
+        if not draw.index.equals(estimate.index):
+            msg = (
+                "A resample's statistic index is not the estimate's: the statistic "
+                "must not be indexed by the drawn sessions or replicates."
+            )
+            raise ValueError(msg)
+        draws.append(draw)
     table = pd.DataFrame(draws)
     alpha = (1 - level) / 2
     return pd.DataFrame(
