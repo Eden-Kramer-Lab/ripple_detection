@@ -56,10 +56,11 @@ reported beside, never subtracted from, observed participation.
 ## 5. No supported order between Roumis and Kay at 1 false positive a minute
 
 Against ripple truth at 1 false positive a minute, Roumis has the highest recall, 0.786 (0.766,
-0.804), and Kay the next, 0.784 (0.762, 0.802); their paired difference is +0.002 (-0.002, +0.008),
-sign-flip p = 0.123 over 19 sessions, so the data do not order them. Long's and Yu's curves do not
-reach that rate. Spot check `06_operating_order_Roumis_ripple_detector_reference.png`: the two
-detectors give the same events on the events drawn.
+0.804), and Kay the next, 0.784 (0.762, 0.802); their paired difference is +0.002 (-0.002, +0.008)
+over 20 sessions, bootstrap p = 0.29 (approximate, from the interval's 2000 resamples), so the
+data do not order them. Long's and Yu's curves do not reach that rate. Spot check
+`06_operating_order_Roumis_ripple_detector_reference.png`: the two detectors give the same
+events on the events drawn.
 
 ## Not a detector trend: `noise_type=brown`
 
