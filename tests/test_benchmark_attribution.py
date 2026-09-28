@@ -1012,6 +1012,21 @@ def test_evaluate_many_on_two_workers(attribution, short_run):
     assert attribution._WORKER_CONTEXT == {}
 
 
+def test_the_evaluation_simulates_without_checking(attribution, short_run, monkeypatch):
+    """The command checks each session once; evaluating only simulates it again."""
+
+    def refuse(run_directory, replicate, session):
+        message = "checked again"
+        raise AssertionError(message)
+
+    monkeypatch.setattr(attribution, "check_regenerated", refuse)
+    pipeline = attribution.compile(attribution.TEMPLATES["pfeiffer_2015"][0])
+    found = attribution.evaluate_many([pipeline], [pipeline], short_run)
+    assert found[0]["jaccard_reference"] == [1.0] * attribution.K
+    with pytest.raises(AssertionError, match="checked again"):
+        attribution.reference_session(short_run, 0)
+
+
 def test_a_failing_configuration_is_named(attribution, short_run):
     good = attribution.compile(attribution.TEMPLATES["pfeiffer_2015"][0])
     bad = dataclasses.replace(good, steps=(attribution.Step("bogus"),))

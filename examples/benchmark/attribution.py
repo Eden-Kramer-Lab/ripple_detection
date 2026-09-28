@@ -1647,29 +1647,51 @@ def reference_session(
     -------
     session : SimulatedSession
         ``simulate_parameters(parameters, replicate)``, checked against what
-        the run saved for it: the seed and duration in ``sessions.csv.gz``, the
-        latent event and non-event tables in ``truth.csv.gz``, the ripple
-        channels in ``ripple_channels.csv.gz``, value for value, and the
-        public-call events of ``SAVED_EVENT_CHECKS`` against its
-        ``events.csv.gz``, bound for bound (so the signals, not only the
-        truth, are the run's).
+        the run saved for it (``check_regenerated``).
+
+    Raises
+    ------
+    ValueError
+        As ``check_regenerated``.
+    """
+    if parameters is None:
+        parameters = reference_parameters(run_directory)
+    session = simulate_parameters(parameters, replicate)
+    check_regenerated(run_directory, replicate, session)
+    return session
+
+
+def check_regenerated(
+    run_directory: str | os.PathLike[str], replicate: int, session: rd.SimulatedSession
+) -> None:
+    """Check a session simulated again against the run's replicate ``replicate``.
+
+    Against what the run saved for it: the seed and duration in
+    ``sessions.csv.gz``, the latent event and non-event tables in
+    ``truth.csv.gz``, the ripple channels in ``ripple_channels.csv.gz``, value
+    for value, and the public-call events of ``SAVED_EVENT_CHECKS`` against its
+    ``events.csv.gz``, bound for bound (so the signals, not only the truth, are
+    the run's).
+
+    Parameters
+    ----------
+    run_directory : str or path-like
+    replicate : int
+    session : SimulatedSession
 
     Raises
     ------
     ValueError
         The run holds no such session or ran no ``SAVED_EVENT_CHECKS`` call
-        on it, or any of those differ: the sessions would not be the run's.
+        on it, or any of those differ: the session is not the run's.
     """
     directory = Path(run_directory) / "conditions" / REFERENCE_CONDITION
-    if parameters is None:
-        parameters = reference_parameters(run_directory)
     session_id = f"{REFERENCE_CONDITION}/{replicate}"
     rows = read_table(directory / "sessions.csv.gz")
     row = rows[rows["session_id"] == session_id]
     if len(row) != 1:
         msg = f"{directory} holds no session {session_id}."
         raise ValueError(msg)
-    session = simulate_parameters(parameters, replicate)
     duration = len(session.time) / session.sampling_frequency
     problems = []
     if int(row["seed"].iloc[0]) != session_seed(replicate):
@@ -1712,7 +1734,6 @@ def reference_session(
             f"from {directory}."
         )
         raise ValueError(msg)
-    return session
 
 
 def _same_frame(first: pd.DataFrame, second: pd.DataFrame) -> bool:
@@ -1722,7 +1743,10 @@ def _same_frame(first: pd.DataFrame, second: pd.DataFrame) -> bool:
 
 
 def reference_contexts(
-    run_directory: str | os.PathLike[str], replicates: Iterable[int] = range(K)
+    run_directory: str | os.PathLike[str],
+    replicates: Iterable[int] = range(K),
+    *,
+    checked: bool = True,
 ) -> Iterable[SessionContext]:
     """A context per reference session, built one at a time.
 
@@ -1731,15 +1755,21 @@ def reference_contexts(
     run_directory : str or path-like
     replicates : iterable of int, optional
         Default ``0`` to ``K - 1``.
+    checked : bool, optional
+        Whether each session is checked against the run (``check_regenerated``).
+        The command checks each once, in its verification pass; the workers
+        evaluating configurations only simulate them again.
 
     Yields
     ------
     context : SessionContext
-        Of ``reference_session``, labelled ``"reference/<replicate>"``.
+        Of the session simulated again, labelled ``"reference/<replicate>"``.
     """
     parameters = reference_parameters(run_directory)
     for replicate in replicates:
-        session = reference_session(run_directory, replicate, parameters)
+        session = simulate_parameters(parameters, replicate)
+        if checked:
+            check_regenerated(run_directory, replicate, session)
         context = SessionContext(session, f"{REFERENCE_CONDITION}/{replicate}")
         del session  # the context keeps an integer copy of the counts
         yield context
@@ -2118,7 +2148,8 @@ def _worker_context(run_directory: str, replicate: int) -> SessionContext:
     key = (run_directory, replicate)
     if key not in _WORKER_CONTEXT:
         _release_worker_context()
-        _WORKER_CONTEXT[key] = next(iter(reference_contexts(run_directory, [replicate])))
+        contexts = reference_contexts(run_directory, [replicate], checked=False)
+        _WORKER_CONTEXT[key] = next(iter(contexts))
     return _WORKER_CONTEXT[key]
 
 
@@ -2162,6 +2193,9 @@ def evaluate_many(
     pipelines, references : sequence of Pipeline
         Each pipeline with what its ``jaccard_reference`` compares with.
     run_directory : str or path-like
+        The run whose reference sessions each process simulates again without
+        checking them against it: the caller checks them first
+        (``reference_contexts``), as the command's verification pass does.
     workers : int, optional
         Processes (``ProcessPoolExecutor``); each holds one session at a time,
         taking a chunk of configurations of one session.
