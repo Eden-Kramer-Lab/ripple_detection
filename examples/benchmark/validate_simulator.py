@@ -83,6 +83,7 @@ from conditions import (
     differing_keys,
     render_tables,
     resolve,
+    resolved_json,
     select_conditions,
     session_seed,
     simulate_parameters,
@@ -2250,7 +2251,9 @@ def write_report(
             "replicates": list(replicates),
             "seeds": {str(r): session_seed(r) for r in replicates},
             "overrides": dict(overrides),
-            "conditions": {cid: _canonical(value) for cid, value in parameters.items()},
+            "conditions": {
+                c.condition_id: json.loads(resolved_json(c, overrides)) for c in selected
+            },
             "reference_revisions": revision_records(REFERENCE_REVISIONS),
             "versions": versions(),
             "validator_hash": validator_hash(),

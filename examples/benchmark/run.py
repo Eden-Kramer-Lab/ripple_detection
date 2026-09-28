@@ -147,6 +147,7 @@ from conditions import (
     conditions,
     differing_keys,
     resolve,
+    resolved_json,
     select_conditions,
     session_seed,
     simulate_condition,
@@ -1649,9 +1650,7 @@ def run_benchmark(
                         "condition_id": c.condition_id,
                         "factor": c.factor,
                         "level": c.level,
-                        "params": json.dumps(
-                            spec["conditions"][c.condition_id], sort_keys=True
-                        ),
+                        "params": resolved_json(c, overrides),
                     }
                     for c in selected
                 ],
