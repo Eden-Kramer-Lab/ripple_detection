@@ -3149,10 +3149,6 @@ def plot_shapley(values: pd.DataFrame, pair: str, y: str, *, caveat: str = "") -
 # Command line
 
 
-def _results_csv(path: Path, frame: pd.DataFrame) -> None:
-    write_result(path, frame.to_csv(index=False).encode())
-
-
 def _save_figure(path: Path, figure: Any) -> None:
     import io
 
@@ -3162,6 +3158,44 @@ def _save_figure(path: Path, figure: Any) -> None:
     figure.savefig(buffer, format="png", dpi=120)
     plt.close(figure)
     write_result(path, buffer.getvalue())
+
+
+@dataclasses.dataclass(frozen=True)
+class FamilyOutput:
+    """Where the command writes a family's outputs, each named with the family
+    first and every table with its ``caveat`` column.
+
+    Attributes
+    ----------
+    family : str
+    caveat : str
+        ``family_caveat``'s; the figures take it in their titles.
+    results : pathlib.Path
+        The results directory: tables as ``<family>_<name>.csv``, figures as
+        ``<family>_<name>.png``.
+    rows : pathlib.Path
+        Each configuration's rows, ``<family>_<name>.csv.gz``.
+    """
+
+    family: str
+    caveat: str
+    results: Path
+    rows: Path
+
+    def table(self, name: str, frame: pd.DataFrame) -> None:
+        """Write a results table, refused over ``analyze.SIZE_LIMIT``."""
+        content = frame.assign(caveat=self.caveat).to_csv(index=False).encode()
+        write_result(self.results / f"{self.family}_{name}.csv", content)
+
+    def raw(self, name: str, frame: pd.DataFrame) -> None:
+        """Write an analysis's rows, one per configuration and ``Y``."""
+        _write_table(
+            frame.assign(caveat=self.caveat), self.rows / f"{self.family}_{name}.csv.gz"
+        )
+
+    def figure(self, name: str, figure: Any) -> None:
+        """Write a figure as PNG, and close it."""
+        _save_figure(self.results / f"{self.family}_{name}.png", figure)
 
 
 def _free_cores() -> float:
@@ -3430,16 +3464,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             f"- {row.config_id}: {row.reason}" for row in failed.itertuples()
         )
         raise SystemExit(msg)
-    output = run_directory / "attribution"
-    output.mkdir(parents=True, exist_ok=True)
-    results.mkdir(parents=True, exist_ok=True)
-
-    def write(name: str, frame: pd.DataFrame) -> None:
-        _results_csv(results / f"{args.family}_{name}.csv", frame.assign(caveat=caveat))
-
-    write("in_space", verification)
+    out = FamilyOutput(args.family, caveat, results, run_directory / "attribution")
+    out.rows.mkdir(parents=True, exist_ok=True)
+    out.results.mkdir(parents=True, exist_ok=True)
+    out.table("in_space", verification)
     sensitive = perturbed.table()
-    write("sensitivity", sensitive)
+    out.table("sensitivity", sensitive)
     blind = sensitive.loc[~sensitive["exercised"]].drop_duplicates(["config_id", "factor"])
     print(
         f"{args.family}: {len(blind)} template values no perturbation changes on the "
@@ -3447,7 +3477,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         file=sys.stderr,
     )
     space = factor_space(RECIPES, args.family)
-    write(
+    out.table(
         "factor_space",
         pd.DataFrame(
             [
@@ -3456,8 +3486,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             ]
         ),
     )
-    write("reference", pd.DataFrame([_key_columns(reference_template(args.family))]))
-    write("fixed_points", fixed.table())
+    out.table("reference", pd.DataFrame([_key_columns(reference_template(args.family))]))
+    out.table("fixed_points", fixed.table())
     for analysis in analyses:
         if analysis != "oat" and refused:
             raise SystemExit(refusal)
@@ -3468,22 +3498,19 @@ def main(argv: Sequence[str] | None = None) -> None:
             rows, summary = sobol(
                 args.family, run_directory, n=args.sobol_n, workers=args.workers
             )
-            _save_figure(
-                results / f"{args.family}_sobol.png",
-                plot_sobol(summary, args.family, caveat=caveat),
-            )
+            out.figure("sobol", plot_sobol(summary, args.family, caveat=caveat))
         else:
             rows, summary = shapley_pairs(
                 args.family, run_directory, agreement.table(), workers=args.workers
             )
             for pair in dict.fromkeys(summary["pair"]):
                 slug = pair.replace("|", "__").replace(".", "-")
-                _save_figure(
-                    results / f"{args.family}_shapley_{slug}.png",
+                out.figure(
+                    f"shapley_{slug}",
                     plot_shapley(summary, pair, "jaccard_reference", caveat=caveat),
                 )
-        _write_table(rows.assign(caveat=caveat), output / f"{args.family}_{analysis}.csv.gz")
-        write(analysis, summary)
+        out.raw(analysis, rows)
+        out.table(analysis, summary)
         print(
             f"{args.family} {analysis}: {len(rows) // len(Y_NAMES)} configurations, "
             f"{wall_clock.perf_counter() - started:.0f} s",
