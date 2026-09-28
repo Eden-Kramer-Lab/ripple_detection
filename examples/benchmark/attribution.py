@@ -1242,6 +1242,10 @@ _PARTICIPATION_UNITS = (
 )
 _PEAKS = "local peaks each with its own window, not a thresholded interval"
 _RECTIFIED = "the rectified filtered LFP with raw thresholds, not an envelope's z-score"
+_RECTIFIED_SLEEP = (
+    "the rectified filtered LFP (100-400 Hz) z-scored over sleep, not an envelope; "
+    "crossings 20 ms apart or less joined"
+)
 
 # Every configuration without a template, and why.
 FIXED_POINTS: dict[str, str] = {
@@ -1307,8 +1311,8 @@ FIXED_POINTS: dict[str, str] = {
     "wu_2014_ripples": _PEAKS,
     "davidson_2009_ripples": _PEAKS,
     "ji_2007_ripples": f"{_RECTIFIED}, merged before a peak is required",
-    "lee_2002_ripples": f"{_RECTIFIED}, crossings joined",
-    "foster_2006_ripples": f"{_RECTIFIED}, crossings joined",
+    "lee_2002_ripples": _RECTIFIED_SLEEP,
+    "foster_2006_ripples": f"lee_2002_ripples' rule: {_RECTIFIED_SLEEP}",
     "denovellis_2021_mua": "2 ms bins and a 15 ms minimum above threshold",
     "maboudi_2018_open_field": "pfeiffer_2013's rule: bounds trimmed to 20 ms spike "
     "windows and an active-fraction rule",
