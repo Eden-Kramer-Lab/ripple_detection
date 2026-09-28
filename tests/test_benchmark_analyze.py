@@ -634,6 +634,131 @@ def _quick(analysis):
     )
 
 
+DAVIDSON = ("recipe:davidson_2009_ripples", "literature")
+LEE = ("recipe:lee_2002", "literature")
+
+
+def test_point_inventories_come_from_the_catalog(analyze):
+    from ripple_detection.literature_methods import list_methods
+
+    outputs = list_methods().set_index("name")["output"]
+    expected = {
+        f"recipe:{config.config_id}"
+        for config in analyze.RECIPES
+        if outputs[config.method] == "ripple peaks"
+    }
+    assert analyze.point_methods() == expected
+    assert {DAVIDSON[0], "recipe:wu_2014_ripples"} <= expected
+    assert analyze.scoring_rule(DAVIDSON[0]) == "peak_containment"
+    # single-sample events are intervals all the same
+    assert analyze.scoring_rule(LEE[0]) == "interval"
+    assert analyze.scoring_rule(KAY[0]) == "interval"
+
+
+@pytest.mark.parametrize("origin", [0.0, UNIX_ORIGIN])
+def test_match_peaks_by_hand(analyze, origin):
+    windows = origin + np.array([[1.0, 1.1], [1.05, 1.2], [3.0, 3.1], [5.0, 5.1]])
+    peaks = origin + np.array([1.08, 1.09, 3.1, 4.0, 5.1 + 1e-5])
+    pairs = analyze.match_peaks(windows, peaks)
+    # the first two windows share both points, one each; the third's end is
+    # closed; a point outside every window, and one past the last's end, match none
+    assert pairs.tolist() == [[0, 0], [1, 1], [2, 2]]
+    # a point within the timestamps' rounding of a bound is on it
+    on_bound = np.nextafter(np.nextafter(windows[3, 1], np.inf), np.inf)
+    assert analyze.match_peaks(windows[3:], [on_bound]).tolist() == [[0, 0]]
+    assert analyze.match_peaks(np.empty((0, 2)), peaks).shape == (0, 2)
+    assert analyze.match_peaks(windows, []).shape == (0, 2)
+
+
+def _largest_matching(windows, peaks):
+    """The most window-point pairs, by trying every assignment."""
+    if not len(windows):
+        return 0
+    (start, end), rest = windows[0], windows[1:]
+    best = _largest_matching(rest, peaks)
+    for position, peak in enumerate(peaks):
+        if start <= peak <= end:
+            others = peaks[:position] + peaks[position + 1 :]
+            best = max(best, 1 + _largest_matching(rest, others))
+    return best
+
+
+def test_match_peaks_is_the_largest_matching(analyze):
+    rng = np.random.default_rng(0)
+    for _ in range(300):
+        starts = rng.integers(0, 8, size=rng.integers(0, 6)).astype(float)
+        windows = np.column_stack([starts, starts + rng.integers(0, 4, size=starts.size)])
+        peaks = rng.integers(0, 10, size=rng.integers(0, 6)).astype(float)
+        pairs = analyze.match_peaks(windows, peaks)
+        assert len(pairs) == _largest_matching(windows.tolist(), peaks.tolist())
+        # one to one, each point inside its window
+        assert len(set(pairs[:, 0])) == len(set(pairs[:, 1])) == len(pairs)
+        for row, position in pairs:
+            assert windows[row, 0] <= peaks[position] <= windows[row, 1]
+
+
+def _point_session(run, origin):
+    """The tiny session with Kay, Davidson's ripple peaks and Lee's
+    single-sample events, all from ``origin``: Davidson's points lie on the
+    first ripple's peak, on the second's end (closed), twice inside the
+    doublet's second ripple, and on nothing."""
+    session = _tiny_session(run, origin)
+    windows = rd.truth_windows(session["events"], 0.1, "ripple")
+    second_end = windows["end_time"].iloc[1]
+    peaks = np.array([origin + 2.0, second_end, origin + 8.1, origin + 8.12, origin + 12.0])
+    session["detected"] = {
+        KAY: session["detected"][KAY],
+        DAVIDSON: np.column_stack([peaks, peaks]),
+        LEE: origin + np.array([(6.0, 6.0), (2.0, 2.0)]),
+    }
+    return session
+
+
+@pytest.fixture(scope="module")
+def point_run(run, tmp_path_factory):
+    sessions = [_point_session(run, 0.0), _point_session(run, UNIX_ORIGIN)]
+    return _write_run(run, tmp_path_factory.mktemp("points"), sessions)
+
+
+def test_point_inventories_are_scored_apart(analyze, point_run):
+    tables = analyze.load_run(point_run)
+    matches = analyze.match_run(tables)
+    assert tables.methods.set_index("method")["scoring"].to_dict() == {
+        DAVIDSON[0]: "peak_containment",
+        KAY[0]: "interval",
+        LEE[0]: "interval",
+    }
+    table = analyze.point_inventories(tables, matches, n_resamples=FEW)
+    row = table.iloc[0]
+    assert len(table) == 1
+    assert (row.method, row.scoring) == (DAVIDSON[0], "peak_containment")
+    # in each session: four ripple windows, five points, three matched
+    assert [row.n_reference, row.n_detected, row.n_matched] == [8, 10, 6]
+    assert [row.recall, row.precision] == [0.75, 0.6]
+    minutes = ((20.0 - tables.sessions.event_time_s) / 60).sum()
+    assert row.false_positives_per_minute == pytest.approx(4 / minutes)
+    assert row.recall_low == row.recall_high == 0.75
+    # an interval rule never sees Davidson; Lee's single samples it does
+    interval_tables = [
+        analyze.detection_profile(tables, matches, n_resamples=FEW),
+        analyze.false_positive_classes(tables, matches, n_resamples=FEW),
+        analyze.overlap_quality(tables, matches, n_resamples=FEW),
+        analyze.boundary_errors(tables, matches, n_resamples=FEW),
+        analyze.splits_and_merges(tables, matches, n_resamples=FEW),
+        matches.pairs,
+        matches.false_positives,
+    ]
+    for frame in interval_tables:
+        assert DAVIDSON[0] not in set(frame.method)
+    assert LEE[0] in set(interval_tables[0].method)
+    agreement = analyze.pairwise_agreement(tables, matches, n_resamples=FEW)
+    assert set(agreement.method_a) | set(agreement.method_b) == {KAY[0], LEE[0]}
+    assert set(analyze.agreement_dendrogram(tables, matches).method) == {KAY[0], LEE[0], ""}
+    assert analyze.consensus(tables, matches).n_methods_compared.unique().tolist() == [2]
+    counts = analyze.failure_counts(tables).set_index("method")
+    assert counts.loc[DAVIDSON[0], "scoring"] == "peak_containment"
+
+
 def test_the_command_writes_every_table_and_the_summary(analyze, tiny_run, tmp_path):
     results = tmp_path / "results" / "tiny"
     analyses = [_quick(analysis) for analysis in analyze.ANALYSES]

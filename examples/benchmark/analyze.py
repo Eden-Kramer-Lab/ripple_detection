@@ -67,6 +67,7 @@ import numpy as np
 import pandas as pd
 from conditions import TRUTH_FRACTIONS
 from numpy.typing import ArrayLike
+from recipe_configs import RECIPES
 from run import OUTPUT, TABLES, _concat, load_truth, read_table, truth_window_sets
 from scipy.cluster.hierarchy import linkage
 from scipy.spatial.distance import squareform
@@ -74,6 +75,7 @@ from validate_simulator import replace_directory
 
 import ripple_detection as rd
 from ripple_detection.evaluate import COMPARISON_COLUMNS
+from ripple_detection.literature_methods import list_methods
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -100,6 +102,12 @@ REFERENCE_CONDITION = "reference"
 _KEY = ["session_id", "method", "setting"]
 # Rows of a large table read at once.
 _CHUNK_ROWS = 1_000_000
+
+# The catalog's output of a method whose events are time points, and the two
+# scoring rules.
+POINT_OUTPUT = "ripple peaks"
+PEAK_CONTAINMENT = "peak_containment"
+INTERVAL = "interval"
 
 PERCENTS = tuple(round(100 * fraction) for fraction in TRUTH_FRACTIONS)
 # The label of a false positive that overlaps no truth window.
@@ -145,6 +153,7 @@ FALSE_POSITIVE_COLUMNS = (
 SESSION_COMPARISON_COLUMNS = ("session_id", "truth_expression", *COMPARISON_COLUMNS)
 CONSENSUS_COLUMNS = ("session_id", "row", "type", "n_methods", "n_methods_run")
 GROUP_COLUMNS = ("session_id", "n_methods", "n_events", "start_time", "end_time")
+POINT_COLUMNS = ("session_id", "method", "setting", "n_reference", "n_detected", "n_matched")
 QUANTILES = (0.05, 0.25, 0.5, 0.75, 0.95)
 QUANTILE_NAMES = ("q05", "q25", "median", "q75", "q95")
 OVERLAP_MEASURES = ("iou", "coverage", "temporal_precision")
@@ -345,6 +354,118 @@ def write_result(path: str | Path, content: bytes) -> None:
     Path(path).write_bytes(content)
 
 
+# Point inventories
+
+
+@functools.cache
+def point_methods() -> frozenset[str]:
+    """The methods whose events are time points, scored by peak containment.
+
+    A configured literature method whose catalog entry (``list_methods()``)
+    gives ``output`` ``"ripple peaks"``: every event it returns is one time
+    point, which no interval rule can credit. Decided by the catalog, never by
+    the events' lengths: a method whose intervals happen to be one sample
+    long is still an interval method.
+
+    Returns
+    -------
+    methods : frozenset of str
+        ``"recipe:<config_id>"`` names.
+    """
+    outputs = list_methods().set_index("name")["output"]
+    return frozenset(
+        f"recipe:{config.config_id}"
+        for config in RECIPES
+        if outputs[config.method] == POINT_OUTPUT
+    )
+
+
+def scoring_rule(method: str) -> str:
+    """How a method's events are matched to the truth.
+
+    Parameters
+    ----------
+    method : str
+        A registry name or ``"recipe:<config_id>"``.
+
+    Returns
+    -------
+    rule : {"peak_containment", "interval"}
+        ``PEAK_CONTAINMENT`` for the methods in ``point_methods``,
+        ``INTERVAL`` for every other.
+    """
+    return PEAK_CONTAINMENT if method in point_methods() else INTERVAL
+
+
+def _by_intervals(frame: pd.DataFrame, column: str = "method") -> pd.DataFrame:
+    """The rows of ``frame`` whose method is scored by intervals."""
+    return frame[~frame[column].isin(point_methods())]
+
+
+def match_peaks(windows: ArrayLike, peaks: ArrayLike) -> np.ndarray[Any, Any]:
+    """Pair truth windows one to one with the time points inside them.
+
+    A point matches a window that contains it, bounds included, to the
+    timestamps' rounding (8 units in the last place of the largest
+    magnitude, as ``match_events`` judges a touch). Windows are taken in
+    order of their ends, each given the earliest unused point inside it:
+    for points in intervals this gives the most pairs there can be.
+
+    Parameters
+    ----------
+    windows : array_like, shape (n_windows, 2)
+        ``[start, end]`` of each window.
+    peaks : array_like, shape (n_peaks,)
+
+    Returns
+    -------
+    pairs : ndarray of int, shape (n_pairs, 2)
+        The window row and the point's position of each pair, by window row.
+    """
+    windows = np.asarray(windows, dtype=float).reshape(-1, 2)
+    peaks = np.asarray(peaks, dtype=float).reshape(-1)
+    scale = max((float(np.abs(a).max()) for a in (windows, peaks) if a.size), default=0.0)
+    tolerance = 8 * float(np.spacing(scale))
+    order = np.argsort(peaks, kind="stable")
+    ordered = peaks[order]
+    # the next unused point at or after each position (a union-find, halving paths)
+    following = np.arange(len(peaks) + 1)
+
+    def unused(position: int) -> int:
+        while following[position] != position:
+            following[position] = following[following[position]]
+            position = int(following[position])
+        return position
+
+    pairs = []
+    for row in np.lexsort((windows[:, 0], windows[:, 1])):
+        start, end = windows[row]
+        position = unused(int(np.searchsorted(ordered, start - tolerance, side="left")))
+        if position < len(peaks) and ordered[position] <= end + tolerance:
+            pairs.append((int(row), int(order[position])))
+            following[position] = position + 1
+    return np.array(sorted(pairs), dtype=int).reshape(-1, 2)
+
+
+def event_times(events: pd.DataFrame) -> np.ndarray[Any, Any]:
+    """Each event's time: its ``peak_time``, else its bounds' midpoint.
+
+    Parameters
+    ----------
+    events : pandas.DataFrame
+        ``events.csv`` rows.
+
+    Returns
+    -------
+    times : ndarray, shape (n_events,)
+    """
+    peak = events["peak_time"].to_numpy(dtype=float)
+    middle = (
+        events["start_time"].to_numpy(dtype=float) + events["end_time"].to_numpy(float)
+    ) / 2
+    return np.where(np.isfinite(peak), peak, middle)
+
+
 # Loading a run
 
 
@@ -375,7 +496,8 @@ class RunTables:
         The ``sessions.csv.gz`` rows read.
     methods : pandas.DataFrame
         One row per method and setting of those sessions' ``methods.csv``,
-        sorted: ``method``, ``setting``, ``primary_expression``, ``role``.
+        sorted: ``method``, ``setting``, ``primary_expression``, ``role``,
+        ``scoring`` (``scoring_rule``).
     ran : pandas.DataFrame
         One row per session, method and setting with scores: ``session_id``,
         ``method``, ``setting``.
@@ -477,6 +599,7 @@ def load_run(
         .sort_values(["method", "setting"])
         .reset_index(drop=True)
     )
+    methods["scoring"] = methods["method"].map(scoring_rule)
     metrics = _read_selected(root / "metrics.csv.gz", ids, settings)
     ran = metrics[_KEY].drop_duplicates().reset_index(drop=True)
     # every session should hold every method and setting: one without scores failed
@@ -515,13 +638,14 @@ def failure_counts(tables: RunTables) -> pd.DataFrame:
     -------
     counts : pandas.DataFrame
         One row per method and setting (``tables.methods``' order):
-        ``method``, ``setting``, ``primary_expression``, ``n_sessions`` (the
-        sessions it has scores on, which every analysis pools), ``n_failures``
-        (those it has none on) and ``error``, the first failure's message.
+        ``method``, ``setting``, ``primary_expression``, ``scoring``,
+        ``n_sessions`` (the sessions it has scores on, which every analysis
+        pools), ``n_failures`` (those it has none on) and ``error``, the first
+        failure's message.
     """
     ran = tables.ran.groupby(["method", "setting"]).size().rename("n_sessions")
     failed = tables.failures.groupby(["method", "setting"])
-    counts = tables.methods[["method", "setting", "primary_expression"]].join(
+    counts = tables.methods[["method", "setting", "primary_expression", "scoring"]].join(
         ran, on=["method", "setting"]
     )
     counts = counts.join(failed.size().rename("n_failures"), on=["method", "setting"])
@@ -582,6 +706,11 @@ class Matches:
         The main methods' false positives joined by overlap into connected
         groups, one row per group: ``n_methods`` it spans, ``n_events``,
         ``start_time``, ``end_time``.
+    points : pandas.DataFrame
+        One row per method and setting in ``point_methods``, scored by peak
+        containment (``match_peaks``) against its primary expression's
+        windows at 10 %: ``n_reference``, ``n_detected``, ``n_matched``. These
+        methods are in no other table: an interval rule cannot credit a point.
     """
 
     windows: pd.DataFrame
@@ -591,6 +720,7 @@ class Matches:
     comparisons: pd.DataFrame
     consensus: pd.DataFrame
     false_positive_groups: pd.DataFrame
+    points: pd.DataFrame
 
 
 _MATCH_COLUMNS = {
@@ -601,6 +731,7 @@ _MATCH_COLUMNS = {
     "comparisons": SESSION_COMPARISON_COLUMNS,
     "consensus": CONSENSUS_COLUMNS,
     "false_positive_groups": GROUP_COLUMNS,
+    "points": POINT_COLUMNS,
 }
 
 
@@ -653,6 +784,7 @@ def match_session(
     ran: Sequence[tuple[str, str]],
     primary: Mapping[tuple[str, str], str],
     levels: Sequence[float] = (0.0,),
+    points: Collection[str] = (),
 ) -> Matches:
     """Match one session's events to its truth again.
 
@@ -669,6 +801,9 @@ def match_session(
         Each one's primary expression.
     levels : sequence of float, optional
         The ``minimum_iou`` levels of ``pairs``; 0 is always among them.
+    points : collection of str, optional
+        Methods whose events are time points (``point_methods``): scored by
+        peak containment in ``points`` and left out of every other table.
 
     Returns
     -------
@@ -698,13 +833,25 @@ def match_session(
     )
     labels = label_windows(event_table, non_event_table)
     by_method = dict(tuple(events.groupby(["method", "setting"], sort=False)))
-    pairs, overlaps, false_positives = [], [], []
+    pairs, overlaps, false_positives, peaks = [], [], [], []
     detected = {}
     for method, setting in ran:
         rows = by_method.get((method, setting), events.iloc[:0]).sort_values("event_index")
         bounds, index = _bounds(rows), rows["event_index"].to_numpy()
-        detected[method, setting] = bounds
         key = {"session_id": session_id, "method": method, "setting": setting}
+        if method in points:
+            reference = truth_bounds[primary[method, setting]][0]
+            found = match_peaks(reference, event_times(rows))
+            peaks.append(
+                {
+                    **key,
+                    "n_reference": len(reference),
+                    "n_detected": len(rows),
+                    "n_matched": len(found),
+                }
+            )
+            continue
+        detected[method, setting] = bounds
         for expression, references in truth_bounds.items():
             for level in levels:
                 matching = rd.match_events(references[0], bounds, minimum_iou=level)
@@ -792,6 +939,7 @@ def match_session(
         comparisons=comparisons,
         consensus=consensus,
         false_positive_groups=groups,
+        points=pd.DataFrame(peaks, columns=list(POINT_COLUMNS)),
     )
 
 
@@ -893,7 +1041,8 @@ def match_run(
         [tables.truth[session_id] for session_id in session_ids],
         [ran.get(session_id, []) for session_id in session_ids],
     )
-    match = functools.partial(match_session, primary=primary, levels=levels)
+    points = set(tables.methods.loc[tables.methods["scoring"] == PEAK_CONTAINMENT, "method"])
+    match = functools.partial(match_session, primary=primary, levels=levels, points=points)
     if workers == 1:
         sessions = list(map(match, *arguments))
     else:
@@ -1138,7 +1287,9 @@ def detection_profile(
         right_on=["session_id", "row"],
     )
     n_found = found.groupby([*_KEY, "type"]).size().rename("n_found")
-    frame = tables.ran.merge(pd.DataFrame({"type": rd.EVENT_TYPES}), how="cross")
+    frame = _by_intervals(tables.ran).merge(
+        pd.DataFrame({"type": rd.EVENT_TYPES}), how="cross"
+    )
     frame = frame.join(n_true, on=["session_id", "type"]).join(n_found, on=[*_KEY, "type"])
     frame = _with_replicate(frame.fillna({"n_true": 0, "n_found": 0}), tables)
     by = ["method", "setting", "type"]
@@ -1198,7 +1349,7 @@ def false_positive_classes(
     """
     labels = _false_positive_labels(matches)
     counted = matches.false_positives.groupby([*_KEY, "label"]).size()
-    frame = tables.ran.merge(pd.DataFrame({"label": labels}), how="cross")
+    frame = _by_intervals(tables.ran).merge(pd.DataFrame({"label": labels}), how="cross")
     frame = frame.join(counted.rename("n_events"), on=[*_KEY, "label"]).fillna({"n_events": 0})
     frame["n_unmatched"] = frame.groupby(_KEY)["n_events"].transform("sum")
     frame = _with_replicate(frame, tables)
@@ -1265,9 +1416,8 @@ def consensus(tables: RunTables, matches: Matches) -> pd.DataFrame:
         .drop(columns="_rank")
         .reset_index(drop=True)
     )
-    main = main_rows(tables.methods)
-    table["n_methods_compared"] = len(main)
-    table["n_failed_calls"] = len(main_rows(tables.failures))
+    table["n_methods_compared"] = len(_by_intervals(main_rows(tables.methods)))
+    table["n_failed_calls"] = len(_by_intervals(main_rows(tables.failures)))
     return table
 
 
@@ -1321,6 +1471,64 @@ def splits_and_merges(
         "merge_rate_high",
     ]
     return _in_order(_with_failures(rates[columns], tables), "subset", ("all", DOUBLET))
+
+
+def _minutes_outside(sessions: pd.DataFrame) -> pd.Series:
+    """Each session's minutes outside every network window at 10 %, the time
+    false positives are counted over, by ``session_id``."""
+    minutes = (sessions["duration_s"] - sessions["event_time_s"]).to_numpy(dtype=float) / 60
+    return pd.Series(minutes, index=sessions["session_id"].to_numpy(), name="minutes")
+
+
+def point_inventories(
+    tables: RunTables, matches: Matches, *, n_resamples: int = N_RESAMPLES
+) -> pd.DataFrame:
+    """Recall, precision and false positives of the methods that return points.
+
+    Scored by peak containment (``match_peaks``) against the primary
+    expression's windows at 10 %, never pooled with an interval score: no
+    IoU, coverage, boundary or timing measure exists for a point.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+    n_resamples : int, optional
+
+    Returns
+    -------
+    points : pandas.DataFrame
+        One row per method and setting in ``point_methods``: ``method``,
+        ``setting``, ``scoring`` (``"peak_containment"``), ``n_reference``,
+        ``n_detected``, ``n_matched``, ``minutes`` (outside every network
+        window, pooled over the sessions it has scores on), then ``recall``,
+        ``precision`` and ``false_positives_per_minute``, each pooled with
+        ``_low`` and ``_high``; ``primary_expression``, ``n_sessions``,
+        ``n_failures``.
+    """
+    counts = ["n_reference", "n_detected", "n_matched"]
+    frame = matches.points.assign(
+        n_unmatched=matches.points["n_detected"] - matches.points["n_matched"],
+        minutes=matches.points["session_id"].map(_minutes_outside(tables.sessions)),
+    )
+    frame = _with_replicate(frame, tables)
+    by = ["method", "setting"]
+    intervals = grouped_intervals(
+        frame,
+        by,
+        _ratio_of_sums(
+            ("n_matched", "n_reference"),
+            ("n_matched", "n_detected"),
+            ("n_unmatched", "minutes"),
+        ),
+        ["recall", "precision", "false_positives_per_minute"],
+        [*counts, "n_unmatched", "minutes"],
+        n_resamples=n_resamples,
+    )
+    totals = frame.groupby(by)[[*counts, "minutes"]].sum().reset_index()
+    table = totals.astype(dict.fromkeys(counts, int)).merge(intervals, on=by)
+    table.insert(2, "scoring", PEAK_CONTAINMENT)
+    return _with_failures(table, tables)
 
 
 def _with_pair_failures(frame: pd.DataFrame, tables: RunTables) -> pd.DataFrame:
@@ -1432,7 +1640,7 @@ def agreement_dendrogram(tables: RunTables, matches: Matches) -> pd.DataFrame:
         merge (``node`` n, n + 1, ..., ``method`` ``""``, the two nodes it
         joins, their distance and the leaves under it).
     """
-    methods = sorted(main_rows(tables.methods)["method"])
+    methods = sorted(_by_intervals(main_rows(tables.methods))["method"])
     network = matches.comparisons[matches.comparisons["truth_expression"] == "network"]
     tree = agreement_linkage(
         methods, network.groupby(["method_a", "method_b"])["jaccard"].mean()
@@ -1588,9 +1796,9 @@ def overlap_quality(
     quality = quality.merge(
         _long_intervals(medians, by, OVERLAP_MEASURES), on=[*by, "measure"]
     )
-    primary = tables.methods[["method", "setting", "primary_expression"]].rename(
-        columns={"primary_expression": "expression"}
-    )
+    primary = _by_intervals(tables.methods)[
+        ["method", "setting", "primary_expression"]
+    ].rename(columns={"primary_expression": "expression"})
     found = recall(tables, matches, primary, n_resamples=n_resamples)
     quality = quality.merge(
         found[[*by, "recall", "recall_low", "recall_high"]], on=by, how="left"
@@ -1665,7 +1873,7 @@ def boundary_errors(
         a method that finds only easy events can time them better;
         ``primary_expression``, ``n_sessions``, ``n_failures``.
     """
-    scored = tables.methods[["method", "setting", "primary_expression"]].rename(
+    scored = _by_intervals(tables.methods)[["method", "setting", "primary_expression"]].rename(
         columns={"primary_expression": "expression"}
     )
     joint = scored[scored["expression"] == "network"]
@@ -1756,7 +1964,7 @@ def paired_timing(
         ``_low`` and ``_high``; and ``_p``, ``sign_flip_test`` on those
         per-session medians; then ``n_failures_a``, ``n_failures_b``.
     """
-    members = main_rows(tables.methods)
+    members = _by_intervals(main_rows(tables.methods))
     members = members[members["primary_expression"] == expression]["method"]
     comparisons = matches.comparisons[
         (matches.comparisons["truth_expression"] == expression)
@@ -2211,6 +2419,12 @@ ANALYSES: tuple[Analysis, ...] = (
         lambda tables, _matches: failure_counts(tables),
         "Each method's sessions with scores and failures (a missing result, never zero "
         "events), with the first error.",
+    ),
+    Analysis(
+        "point_inventories",
+        point_inventories,
+        "Recall, precision and false positives per minute of the methods that return "
+        "time points, scored by peak containment and never pooled with interval scores.",
     ),
     Analysis(
         "detection_profile",
