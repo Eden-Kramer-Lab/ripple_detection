@@ -947,37 +947,50 @@ As implemented after an external statistical review (2026-09-28), the maintainer
   (`paired_changes`: robustness, crossed cells, model sensitivity's measures; and model
   sensitivity's recall at a target) was reported as a pooled value with a bootstrap interval of
   that pooled value, but tested by a sign flip of the mean of per-replicate changes, which can
-  differ in sign (Carey under coupled strengths at 0.5 per minute: change -0.0145, p 0.645).
-  `swap_test` now tests the pooled change itself: each replicate's two sessions are
-  exchangeable under the null, so the change is pooled again, through the same `Pool`
-  (`_swap_pool`: each unit's rows twice, as they are and moved to the partner condition,
-  weighted `1 - s` and `s`), under every exchange up to 16 replicates, else 10,000 random
-  ones (seed 0, `(k + 1) / (n + 1)`); patterns whose statistic is undefined are left out.
-  Carey's p is now 0.064. `n_paired` is the replicates pooled. `sign_flip_test` stays for
-  per-session means.
+  differ in sign (Carey under coupled strengths at 0.5 per minute: change -0.0145, p 0.645). A
+  paired-swap randomization test of the pooled change was tried first and withdrawn: it
+  exchanges a replicate's event counts with its sessions, so with 10 to 100 times fewer events
+  on one side it gave p < 0.05 in 34-74 % of simulated cases with no change, and on v1 about
+  160 rows had p < 0.05 while their interval held 0. The maintainer chose the
+  bootstrap-inverted p-value (`bootstrap_p`) everywhere a pooled statistic is compared:
+  `2 min(share of draws <= 0, share of draws >= 0)`, capped at 1, over the defined draws
+  (`n_draws`) of the same resampled pooled differences as the interval (the operating
+  differences, the pooled changes and the recalls at a target), so estimate, interval and
+  p-value are one statistic and p < 0.05 when the 95 % interval excludes 0 (within one draw,
+  where the interpolated bound can fall either side; on v1 every compared row agrees).
+  Approximate, not an exact test; p takes the values `2k / n_draws`, so 0 means below
+  `2 / n_draws`. p is NaN and `n_draws` 0 wherever the estimate is missing (some resamples can
+  reach a target the pooled curve does not). `sign_flip_test` stays for per-session means.
+  Carey's p is now 0.028 (interval -0.023 to -0.001).
+- **What an estimate rests on.** Beside each such p-value: `n_draws`, the replicates (or
+  sessions) whose own value is defined on each side (`n_defined`, `n_defined_reference`;
+  `n_defined_a`, `n_defined_b`) and the pooled events on each side (`n_events`, ...: true
+  events found for recall and the errors, and for a recall at a target at the swept setting
+  nearest it; events detected for precision and false positives; events with participation
+  for participation). `n_paired` is gone. On v1, 164 rows of the three robustness tables rest
+  on fewer than 10 events on a side, 77 of them with p < 0.05.
 - **Audit of the other p-values.** `method_differences` and `paired_timing` test the mean of
   per-session values that they report as the estimate (consistent; the pooled median beside it
   carries no test); matching sensitivity, candidate ranks, the attribution's one factor at a
   time and the orders carry no p-value; candidate trends copy their tables'.
-- **Operating differences.** Their difference is read off pooled curves, but was tested by a
-  sign flip of per-session read-offs, and a swap of two detectors' sessions has no pooled
-  counterpart when their sweeps have different settings (15 of the 21 pairs). The maintainer
-  chose the bootstrap-inverted p-value (`bootstrap_p`): `2 min(share of draws <= 0, share of
-  draws >= 0)`, capped at 1, over the defined draws (`n_draws`, replacing `n_paired`) of the
-  same resampled pooled differences as the interval, so estimate, interval and p-value are one
-  statistic for every pair and p < 0.05 when the 95 % interval excludes 0 (to within one draw,
-  where the interpolated bound can fall either side). Approximate, not an exact randomization
-  test; a p of 0 means no draw on one side. On v1, 22 of 29 compared rows have p < 0.05 (23
-  by sign flip; three rows changed side); Roumis minus Kay at 1 per minute went from 0.123 to
-  0.29, its interval still holding 0.
+- **Operating differences.** Their difference is read off pooled curves but was tested by a
+  sign flip of per-session read-offs; they now take `bootstrap_p` as above. On v1, 22 of 29
+  compared rows have p < 0.05 (23 by sign flip; three rows changed side); Roumis minus Kay at
+  1 per minute went from 0.123 to 0.29, its interval still holding 0.
 - **Rebuilds keep other commands' results.** `analyze.py` rebuilt `results/<run>` keeping
   only `trends.md` and `spot_checks/`, deleting the attribution's `attribution/`; `KEPT` now
-  lists all three and a rebuild copies each over.
-- **Reversals.** `reversed` required only opposite point estimates. It now requires a supported
-  reference order, opposite signs and an alternative interval excluding 0; opposite point
-  estimates whose alternative interval holds 0 are `point_reversed`, counted in `summary.md`
-  among the orders that lose support. On v1: `spatial_profile=local` 13 reversals (16 before),
+  lists all three, copied into the new directory last, just before the rename, so what is
+  written into them while the tables are built survives too.
+- **Reversals.** `reversed` required only opposite point estimates. It is now a supported
+  reference order whose alternative interval lies on the other side of 0 from the reference
+  estimate (an alternative estimate outside its own interval can no longer count as both
+  surviving and reversed); opposite point estimates whose alternative interval holds 0 are
+  `point_reversed`, supported or not, and `summary.md` counts the supported ones among the
+  orders that lose support. On v1: `spatial_profile=local` 13 reversals (16 before),
   `noise_modulation=varying` 0 (1 before, interval -0.089 to +0.168).
+- **Counts on v1** of p < 0.05 among the 15,982 compared rows of the robustness, crossed and
+  model-sensitivity tables: 4,866 by sign flip, 5,092 by the swap test, 5,446 by the
+  bootstrap p (every one with an interval excluding 0).
 
 ## Attribution
 
