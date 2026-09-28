@@ -1277,6 +1277,14 @@ def test_smoke(attribution, recipes, short_run, monkeypatch):
     assert report["n_in_space"] == 4
     assert report["configurations_timed"] == attribution.SMOKE_CONFIGURATIONS
     assert report["configurations"]["sobol_128"] == 128 * (d + 2)
+    # every subset each represented template's pair with the reference asks for
+    reference = attribution.reference_template("lfp")
+    templates = attribution.distinct_templates(attribution.family_templates(recipes, "lfp"))
+    subsets = [
+        attribution.shapley_subsets(attribution._differing(template, reference))
+        for template in templates.values()
+    ]
+    assert report["configurations"]["shapley_reference_pairs"] == sum(map(len, subsets))
     hours = report["hours"]["sobol_256"]
     per = report["seconds_per_configuration"]
     assert hours == pytest.approx(256 * (d + 2) * attribution.K * per / 4 / 3600)

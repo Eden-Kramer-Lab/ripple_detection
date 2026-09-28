@@ -166,6 +166,8 @@ Y_NAMES = ("f1", "f1_network", "events_per_minute", "onset_error_25", "jaccard_r
 # Fewer represented methods than this and a family runs no Sobol or Shapley.
 MINIMUM_IN_SPACE = 8
 SOBOL_N = 256
+# The rows of each Sobol sample matrix the command offers.
+SOBOL_N_CHOICES = (128, 256)
 SOBOL_SEED = 0
 N_SOBOL_RESAMPLES = 1000
 OAT_POINTS = 5
@@ -3242,28 +3244,24 @@ def smoke(
     seconds = float(np.mean(timings))
     d = len(factors)
     templates = distinct_templates(family_templates(RECIPES, family))
-    oat = 1 + sum(len(factor.points()) for factor in factors)
-    shapley_configurations = 0
-    for written in templates.values():
-        size = len(_differing(written, reference))
-        shapley_configurations += (
-            2**size if size <= SHAPLEY_EXACT_UP_TO else SHAPLEY_PERMUTATIONS * size
-        )
+
+    def n_subsets(size: int) -> int:
+        # the configurations shapley_pairs evaluates for a pair differing in
+        # ``size`` factors
+        return len(shapley_subsets(tuple(range(size))))
+
     pairwise = len(templates) * (len(templates) - 1) // 2
     largest = max(
         (len(_differing(x, y)) for x, y in itertools.combinations(templates.values(), 2)),
         default=0,
     )
-    lowest_bound = min(N_LOWEST_PAIRS, pairwise) * (
-        2**largest if largest <= SHAPLEY_EXACT_UP_TO else SHAPLEY_PERMUTATIONS * largest
-    )
     counts = {
-        "oat": oat,
-        "sobol_256": 256 * (d + 2),
-        "sobol_128": 128 * (d + 2),
-        "shapley_reference_pairs": shapley_configurations,
-        "shapley_pair_selection": pairwise,
-        "shapley_lowest_pairs_at_most": lowest_bound,
+        "oat": 1 + sum(len(factor.points()) for factor in factors),
+        **{f"sobol_{n}": n * (d + 2) for n in SOBOL_N_CHOICES},
+        "shapley_reference_pairs": sum(
+            n_subsets(len(_differing(written, reference))) for written in templates.values()
+        ),
+        "shapley_lowest_pairs_at_most": min(N_LOWEST_PAIRS, pairwise) * n_subsets(largest),
     }
 
     def hours(configurations: int) -> float:
@@ -3397,7 +3395,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument(
         "--sobol-n",
         type=int,
-        choices=(128, 256),
+        choices=SOBOL_N_CHOICES,
         default=SOBOL_N,
         help=f"rows of each Sobol sample matrix (default {SOBOL_N}; 128 when the smoke "
         "test puts 256 past four hours)",
@@ -3428,7 +3426,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     templates = family_templates(RECIPES, args.family)
     n_distinct = len(distinct_templates(templates))
-    refused = n_distinct < MINIMUM_IN_SPACE and not args.below_minimum
+    caveat = family_caveat(n_distinct, below_minimum=args.below_minimum)
+    refused = bool(caveat) and not args.below_minimum
     refusal = (
         f"The {args.family} family has {n_distinct} represented methods, fewer than "
         f"{MINIMUM_IN_SPACE}: no Sobol or Shapley analysis is run (--below-minimum "
@@ -3436,7 +3435,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     if args.analysis in ("sobol", "shapley") and refused:
         raise SystemExit(refusal)
-    caveat = family_caveat(n_distinct, below_minimum=args.below_minimum)
     if caveat:
         print(f"The {args.family} family {caveat}.", file=sys.stderr)
     analyses = ("oat", "sobol", "shapley") if args.analysis == "all" else (args.analysis,)
