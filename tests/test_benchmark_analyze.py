@@ -1977,6 +1977,13 @@ def test_candidate_trends_carry_their_evidence(analyze):
     assert "spot_event_type" not in trends.columns
 
 
+def test_a_spot_check_knows_which_methods_failed(benchmark_import, tiny_run):
+    spot_check = benchmark_import("spot_check")
+    # Mallory failed on the second session only: its lane says so there
+    assert spot_check.session_failures(tiny_run.parent, "reference/1") == {MALLORY}
+    assert spot_check.session_failures(tiny_run.parent, "reference/0") == set()
+
+
 def test_select_events_for_a_spot_check(analyze, tiny_tables, point_run):
     select = functools.partial(analyze.select_from, tiny_tables)
     # Kay's one event over the doublet matches one of its two ripples

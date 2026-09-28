@@ -17,7 +17,7 @@ Usage, from the repository root::
 from __future__ import annotations
 
 import argparse
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -93,6 +93,28 @@ def load_session(
     )
 
 
+def session_failures(run_directory: Path, session_id: str) -> set[tuple[str, str]]:
+    """The methods and settings that failed on a run's session.
+
+    Parameters
+    ----------
+    run_directory : pathlib.Path
+        ``examples/benchmark/output/<run_name>``.
+    session_id : str
+        ``"{condition_id}/{replicate}"``.
+
+    Returns
+    -------
+    failed : set of (method, setting)
+        From the condition's ``failures.csv``: a method with no events there
+        found none, one listed here was never run to the end.
+    """
+    condition_id = session_id.rsplit("/", 1)[0]
+    failures = read_table(run_directory / "conditions" / condition_id / "failures.csv")
+    own = failures[failures.session_id == session_id]
+    return set(own[["method", "setting"]].itertuples(index=False, name=None))
+
+
 def chosen_events(events: pd.DataFrame, event_type: str, per_type: int) -> list[int]:
     """Up to ``per_type`` event ids of ``event_type``, spread over the session.
 
@@ -122,6 +144,7 @@ def _draw_event(
     windows: Mapping[str, Sequence[pd.DataFrame]],
     found: pd.DataFrame,
     event_id: int,
+    failed: Collection[tuple[str, str]] = (),
 ) -> None:
     """One event: signals, spikes, then the truth and each method's events."""
     network = windows["network"][0].set_index("id").loc[event_id]
@@ -134,6 +157,7 @@ def _draw_event(
         network.start_time - _MARGIN,
         network.end_time + _MARGIN,
         f"event {event_id}, network peak {network.peak_time:.3f} s",
+        failed=failed,
     )
 
 
@@ -147,9 +171,16 @@ def draw_window(
     end: float,
     title: str,
     methods: Sequence[tuple[str, str]] = METHODS,
+    failed: Collection[tuple[str, str]] = (),
 ) -> None:
     """A stretch of a session: signals, spikes, the truth windows of every
     expression at every fraction, and each method's events.
+
+    Every window and event overlapping the stretch is drawn, a neighbouring
+    event's included. An event of zero length (a point) is a diamond with a
+    dark edge, which a line of no length would not show; a method that
+    failed on the session has "failed" across its lane, not an empty lane,
+    which would read as no events found.
 
     Parameters
     ----------
@@ -166,6 +197,8 @@ def draw_window(
     title : str
     methods : sequence of (method, setting), optional
         The methods whose events are drawn, a lane each.
+    failed : collection of (method, setting), optional
+        Those that failed on the session (``session_failures``).
     """
     shown = (session.time >= start) & (session.time <= end)
     time = session.time[shown]
@@ -199,14 +232,35 @@ def draw_window(
                 )
         labels.append(f"truth {expression}")
     for lane, (method, setting) in enumerate(methods, start=len(EXPRESSIONS)):
+        labels.append(method.removeprefix("recipe:").removesuffix("_ripple_detector"))
+        if (method, setting) in failed:
+            lanes.text(
+                (start + end) / 2,
+                lane,
+                "failed",
+                ha="center",
+                va="center",
+                fontsize=6,
+                color="#D55E00",
+            )
+            continue
         rows_found = found[(found.method == method) & (found.setting == setting)]
         near = rows_found[(rows_found.end_time >= start) & (rows_found.start_time <= end)]
         for row in near.itertuples():
+            if row.end_time <= row.start_time:
+                lanes.plot(
+                    [row.start_time],
+                    [lane],
+                    marker="D",
+                    markersize=4,
+                    markerfacecolor="white",
+                    markeredgecolor="black",
+                )
+                continue
             lanes.plot(
                 [row.start_time, row.end_time], [lane, lane], color="black", linewidth=3
             )
             lanes.plot([row.peak_time], [lane], marker="|", color="white", markersize=6)
-        labels.append(method.removeprefix("recipe:").removesuffix("_ripple_detector"))
     lanes.set_yticks(range(len(labels)), labels, fontsize=6)
     lanes.set_ylim(len(labels) - 0.5, -0.5)
     lanes.set_xlim(start, end)
@@ -234,6 +288,7 @@ def plot_session(run_directory: Path, session_id: str, per_type: int = 6) -> lis
     import matplotlib.pyplot as plt
 
     session, found = load_session(run_directory, session_id)
+    failed = session_failures(run_directory, session_id)
     filtered = rd.filter_ripple_band(session.lfps, session.sampling_frequency)
     windows = truth_window_sets(session.events)
     directory = run_directory / "spot_check"
@@ -252,7 +307,7 @@ def plot_session(run_directory: Path, session_id: str, per_type: int = 6) -> lis
         )
         blocks = figure.subfigures(n_rows, 2, squeeze=False).ravel()
         for block, event_id in zip(blocks, ids, strict=False):
-            _draw_event(block, session, filtered, windows, found, event_id)
+            _draw_event(block, session, filtered, windows, found, event_id, failed)
         path = directory / f"{session_id.replace('/', '_')}_{event_type}.png"
         figure.savefig(path, dpi=110)
         plt.close(figure)

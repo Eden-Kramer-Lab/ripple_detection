@@ -6321,7 +6321,7 @@ def spot_check(
         No event is selected, or the figure would be over ``SIZE_LIMIT``.
     """
     import matplotlib.pyplot as plt
-    from spot_check import draw_window, load_session
+    from spot_check import draw_window, load_session, session_failures
 
     if selected.empty:
         msg = f"{name}: no event is selected."
@@ -6340,6 +6340,7 @@ def spot_check(
     position = 0
     for session_id, rows in chosen.groupby("session_id", sort=False):
         session, found = load_session(Path(run_directory), str(session_id))
+        failed = session_failures(Path(run_directory), str(session_id))
         filtered = rd.filter_ripple_band(session.lfps, session.sampling_frequency)
         windows = truth_window_sets(session.events)
         for row in rows.itertuples(index=False):
@@ -6353,6 +6354,7 @@ def spot_check(
                 row.end_time + _SPOT_MARGIN,
                 f"{session_id}, {row.label}, {row.start_time:.3f}-{row.end_time:.3f} s",
                 methods,
+                failed,
             )
             position += 1
     directory = Path(results_directory) / SPOT_CHECKS
