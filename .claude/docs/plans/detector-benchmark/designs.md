@@ -941,6 +941,33 @@ decided during the phase:
   a later simulator version:** size EMG and spike leakage against the noise, as fast gamma is,
   then revalidate and rerun.
 
+As implemented after an external statistical review (2026-09-28), the maintainer approving:
+
+- **One statistic for estimate, interval and test.** A change between conditions
+  (`paired_changes`: robustness, crossed cells, model sensitivity's measures; and model
+  sensitivity's recall at a target) was reported as a pooled value with a bootstrap interval of
+  that pooled value, but tested by a sign flip of the mean of per-replicate changes, which can
+  differ in sign (Carey under coupled strengths at 0.5 per minute: change -0.0145, p 0.645).
+  `swap_test` now tests the pooled change itself: each replicate's two sessions are
+  exchangeable under the null, so the change is pooled again, through the same `Pool`
+  (`_swap_pool`: each unit's rows twice, as they are and moved to the partner condition,
+  weighted `1 - s` and `s`), under every exchange up to 16 replicates, else 10,000 random
+  ones (seed 0, `(k + 1) / (n + 1)`); patterns whose statistic is undefined are left out.
+  Carey's p is now 0.064. `n_paired` is the replicates pooled. `sign_flip_test` stays for
+  per-session means.
+- **Audit of the other p-values.** `method_differences` and `paired_timing` test the mean of
+  per-session values that they report as the estimate (consistent; the pooled median beside it
+  carries no test); matching sensitivity, candidate ranks, the attribution's one factor at a
+  time and the orders carry no p-value; candidate trends copy their tables'. Left open:
+  `operating_differences` reports a difference read off pooled curves but tests per-session
+  read-offs by sign flip, and a swap of two detectors' sessions has no pooled counterpart when
+  their sweeps have different settings.
+- **Reversals.** `reversed` required only opposite point estimates. It now requires a supported
+  reference order, opposite signs and an alternative interval excluding 0; opposite point
+  estimates whose alternative interval holds 0 are `point_reversed`, counted in `summary.md`
+  among the orders that lose support. On v1: `spatial_profile=local` 13 reversals (16 before),
+  `noise_modulation=varying` 0 (1 before, interval -0.089 to +0.168).
+
 ## Attribution
 
 Module `examples/benchmark/attribution.py`. This phase defines experimental `Step`,
