@@ -11,6 +11,8 @@ import gzip
 import json
 import math
 import shutil
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pandas as pd
@@ -887,6 +889,49 @@ def test_evaluate_many_on_two_workers(attribution, short_run):
         means = attribution.evaluate_config(pipeline, contexts, reference)
         assert means == {name: attribution._mean(found[name]) for name in attribution.Y_NAMES}
     assert attribution._WORKER_CONTEXT == {}
+
+
+def test_a_failing_configuration_is_named(attribution, short_run):
+    good = attribution.compile(attribution.TEMPLATES["pfeiffer_2015"][0])
+    bad = dataclasses.replace(good, steps=(attribution.Step("bogus"),))
+    pipelines = [good, good, bad]
+    named = (
+        r"(?s)configuration 2 \(the chunk from 2\) on reference/0"
+        r".*ValueError: Unknown post step 'bogus'.*Step\(operation='bogus'"
+    )
+    with pytest.raises(RuntimeError, match=named):
+        attribution.evaluate_many(pipelines, [good] * 3, short_run, chunk_size=2)
+    # the session this process held is released, failure or not
+    assert attribution._WORKER_CONTEXT == {}
+
+
+def test_a_failing_chunk_cancels_the_queued_ones(attribution, monkeypatch):
+    """Threads stand in for the processes, so the stub chunks are seen."""
+    release = threading.Event()
+    started = []
+
+    def evaluate_chunk(run_directory, replicate, start, pipelines, references):
+        started.append((replicate, start))
+        if len(started) == 1:
+            msg = "the first chunk failed"
+            raise RuntimeError(msg)
+        # the others hold their worker until the test ends; the timeout only
+        # bounds a run that waits for every queued chunk
+        release.wait(timeout=2.0)
+        return [{}] * len(pipelines)
+
+    monkeypatch.setattr(attribution, "ProcessPoolExecutor", ThreadPoolExecutor)
+    monkeypatch.setattr(attribution, "_evaluate_chunk", evaluate_chunk)
+    try:
+        with pytest.raises(RuntimeError, match="the first chunk failed"):
+            attribution.evaluate_many(
+                [None] * 4, [None] * 4, "unused", workers=2, chunk_size=1
+            )
+        # the failed chunk, the one beside it and at most one the freed worker
+        # took before the queue was cancelled; not all twenty
+        assert len(started) <= 3
+    finally:
+        release.set()
 
 
 def test_one_at_a_time(attribution, analyze, recipes, short_run):

@@ -89,7 +89,7 @@ import sys
 import time as wall_clock
 from collections import OrderedDict
 from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -2135,14 +2135,26 @@ def _worker_context(run_directory: str, replicate: int) -> SessionContext:
 def _evaluate_chunk(
     run_directory: str,
     replicate: int,
+    start: int,
     pipelines: Sequence[Pipeline],
     references: Sequence[Pipeline],
 ) -> list[dict[str, float]]:
+    """The ``Y``s of a chunk of configurations, those from ``start`` on, on one
+    session; a failure names the configuration, its chunk, the session and
+    its pipeline."""
     context = _worker_context(run_directory, replicate)
-    return [
-        evaluate_session(pipeline, context, reference)
-        for pipeline, reference in zip(pipelines, references, strict=True)
-    ]
+    rows: list[dict[str, float]] = []
+    try:
+        for pipeline, reference in zip(pipelines, references, strict=True):
+            rows.append(evaluate_session(pipeline, context, reference))
+    except Exception as error:
+        msg = (
+            f"configuration {start + len(rows)} (the chunk from {start}) on "
+            f"{context.label} raised {type(error).__name__}: {error}\n"
+            f"Its pipeline: {pipelines[len(rows)]!r}"
+        )
+        raise RuntimeError(msg) from error
+    return rows
 
 
 def evaluate_many(
@@ -2170,6 +2182,13 @@ def evaluate_many(
     -------
     outputs : list of dict of str to list of float
         Per pipeline, by ``Y_NAMES``, the value on each of the ``K`` sessions.
+
+    Raises
+    ------
+    RuntimeError
+        The first configuration to fail, named with its chunk, session and
+        pipeline; no queued chunk starts after it, and this process's session
+        is released.
     """
     directory = str(run_directory)
     tasks = [
@@ -2182,16 +2201,26 @@ def evaluate_many(
     def arguments(task: tuple[int, int]) -> tuple[Any, ...]:
         replicate, start = task
         stop = start + chunk_size
-        return directory, replicate, pipelines[start:stop], references[start:stop]
+        return directory, replicate, start, pipelines[start:stop], references[start:stop]
 
     if workers == 1:
-        for task in tasks:
-            found[task] = _evaluate_chunk(*arguments(task))
-        _release_worker_context()
+        try:
+            for task in tasks:
+                found[task] = _evaluate_chunk(*arguments(task))
+        finally:
+            _release_worker_context()
     else:
-        with ProcessPoolExecutor(max_workers=workers) as pool:
-            futures = {task: pool.submit(_evaluate_chunk, *arguments(task)) for task in tasks}
-            found = {task: future.result() for task, future in futures.items()}
+        pool = ProcessPoolExecutor(max_workers=workers)
+        try:
+            futures = {pool.submit(_evaluate_chunk, *arguments(task)): task for task in tasks}
+            for future in as_completed(futures):
+                found[futures[future]] = future.result()
+        except BaseException:
+            # stop at the first failure: no queued chunk starts, and the error
+            # is raised without waiting for the running ones
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        pool.shutdown()
     outputs: list[dict[str, list[float]]] = [{name: [] for name in Y_NAMES} for _ in pipelines]
     for (_, start), rows in sorted(found.items()):
         for offset, row in enumerate(rows):
