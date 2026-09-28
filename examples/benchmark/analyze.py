@@ -65,10 +65,18 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
-from conditions import TRUTH_FRACTIONS
+from conditions import ALTERNATIVES, REFERENCE_LEVEL, TRUTH_FRACTIONS
 from numpy.typing import ArrayLike
 from recipe_configs import RECIPES
-from run import OUTPUT, TABLES, _concat, load_truth, read_table, truth_window_sets
+from run import (
+    MATCH_IOU_LEVELS,
+    OUTPUT,
+    TABLES,
+    _concat,
+    load_truth,
+    read_table,
+    truth_window_sets,
+)
 from scipy.cluster.hierarchy import linkage
 from scipy.spatial.distance import squareform
 from validate_simulator import replace_directory
@@ -1251,6 +1259,426 @@ def recall(
     )
     totals = frame.groupby(by)[["n_truth", "n_found"]].sum().astype(int).reset_index()
     return totals.merge(intervals, on=by)
+
+
+# Every condition, against the primary expression
+
+COUNT_COLUMNS = (
+    "session_id",
+    "method",
+    "setting",
+    "minimum_iou",
+    "n_reference",
+    "n_detected",
+    "n_matched",
+)
+ERROR_ROW_COLUMNS = (
+    "session_id",
+    "method",
+    "setting",
+    "minimum_iou",
+    "onset_error",
+    "offset_error",
+)
+PARTICIPATION_COLUMNS = ("session_id", "method", "setting", "n_events", "principal_fraction")
+# The conditions whose sweeps are read: the reference and each alternative model.
+CURVE_CONDITIONS = (
+    REFERENCE_CONDITION,
+    *(
+        f"{factor}={level}"
+        for factor, levels in ALTERNATIVES.items()
+        for level in levels
+        if level != REFERENCE_LEVEL
+    ),
+)
+_EVENT_READ = (
+    "session_id",
+    "method",
+    "setting",
+    "event_index",
+    "start_time",
+    "end_time",
+    "peak_time",
+    "n_active_principal",
+)
+_PRINCIPAL = ("place", "pyramidal")
+
+
+@dataclasses.dataclass(frozen=True)
+class ConditionScores:
+    """Every condition's scores against each method's primary expression.
+
+    Attributes
+    ----------
+    sessions : pandas.DataFrame
+        One row per session: ``session_id``, ``condition_id``, ``replicate``,
+        ``duration_s``, ``rest_s``, ``event_time_s`` and ``minutes`` (outside
+        every network window at 10 %, the time false positives are counted
+        over).
+    conditions : pandas.DataFrame
+        The run's ``conditions.csv``: ``condition_id``, ``factor``, ``level``.
+    methods : pandas.DataFrame
+        One row per method and setting: ``method``, ``setting``,
+        ``primary_expression``, ``scoring``.
+    counts : pandas.DataFrame
+        One row per session, method, setting and ``minimum_iou`` with scores
+        (``COUNT_COLUMNS``): ``n_reference``, ``n_detected``, ``n_matched``
+        against the primary expression's windows at 10 %: the runner's
+        ``metrics.csv`` for an interval method, peak containment
+        (``match_peaks``) for a point method, whose ``minimum_iou`` is NaN.
+    errors : pandas.DataFrame
+        One row per matched pair of an interval method against its primary
+        expression (``ERROR_ROW_COLUMNS``): ``onset_error`` and
+        ``offset_error`` against the windows at 10 %, detected minus truth,
+        in seconds; ``session_id``, ``method`` and ``setting`` categorical.
+        The main settings at ``minimum_iou`` 0 in every session; in the
+        sessions of ``CURVE_CONDITIONS`` every setting at every level of
+        ``MATCH_IOU_LEVELS``.
+    participation : pandas.DataFrame
+        One row per session and main setting of an interval method with
+        scores: ``n_events`` and ``principal_fraction``, the sum over its
+        events of the fraction of place and pyramidal units active in each.
+    failures : pandas.DataFrame
+        One row per session, method and setting without scores:
+        ``session_id``, ``method``, ``setting``.
+    """
+
+    sessions: pd.DataFrame
+    conditions: pd.DataFrame
+    methods: pd.DataFrame
+    counts: pd.DataFrame
+    errors: pd.DataFrame
+    participation: pd.DataFrame
+    failures: pd.DataFrame
+
+
+def _read_columns(
+    path: Path, columns: Sequence[str], keep: Callable[[pd.DataFrame], pd.Series] | None = None
+) -> pd.DataFrame:
+    """Some columns of a runner table, read chunk by chunk with
+    ``read_table``'s conventions, keeping the rows ``keep`` marks."""
+    table = TABLES[path.name]
+    reader = pd.read_csv(
+        path,
+        chunksize=_CHUNK_ROWS,
+        usecols=list(columns),
+        dtype={column: str for column in columns if column in table.text},
+        keep_default_na=False,
+        na_values={column: [""] for column in columns if column not in table.text},
+        float_precision="round_trip",
+    )
+    chunks = [chunk if keep is None else chunk[keep(chunk)] for chunk in reader]
+    kept = [chunk for chunk in chunks if len(chunk)] or chunks[:1]
+    return pd.concat(kept, ignore_index=True)[list(columns)]
+
+
+def score_primary(
+    session_id: str,
+    events: pd.DataFrame,
+    event_table: pd.DataFrame,
+    ran: Sequence[tuple[str, str, str]],
+    levels: Sequence[float],
+    categories: Mapping[str, Sequence[str]],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """One session's pairs against each method's primary expression.
+
+    Parameters
+    ----------
+    session_id : str
+    events : pandas.DataFrame
+        The session's ``events.csv`` rows.
+    event_table : pandas.DataFrame
+        Its latent event table.
+    ran : sequence of (method, setting, primary expression)
+        The methods and settings to score.
+    levels : sequence of float
+        The ``minimum_iou`` levels of an interval method's pairs.
+    categories : mapping of str to sequence of str
+        The categories of ``session_id``, ``method`` and ``setting`` in the
+        errors.
+
+    Returns
+    -------
+    errors : pandas.DataFrame
+        ``ERROR_ROW_COLUMNS``, one row per pair of an interval method.
+    points : pandas.DataFrame
+        ``COUNT_COLUMNS``, one row per point method, ``minimum_iou`` NaN.
+    """
+    windows = {
+        expression: _bounds(rd.truth_windows(event_table, TRUTH_FRACTIONS[0], expression))
+        for expression in {expression for _, _, expression in ran}
+    }
+    by_method = dict(tuple(events.groupby(["method", "setting"], sort=False)))
+    errors, points = [], []
+    for method, setting, expression in ran:
+        rows = by_method.get((method, setting), events.iloc[:0]).sort_values("event_index")
+        reference = windows[expression]
+        if method in point_methods():
+            found = match_peaks(reference, event_times(rows))
+            points.append(
+                {
+                    "session_id": session_id,
+                    "method": method,
+                    "setting": setting,
+                    "minimum_iou": np.nan,
+                    "n_reference": len(reference),
+                    "n_detected": len(rows),
+                    "n_matched": len(found),
+                }
+            )
+            continue
+        bounds = _bounds(rows)
+        for level in levels:
+            pairs = rd.match_events(reference, bounds, minimum_iou=level).pairs
+            errors.append(
+                pd.DataFrame(
+                    {
+                        "method": method,
+                        "setting": setting,
+                        "minimum_iou": level,
+                        "onset_error": pairs["onset_error"].to_numpy(dtype=float),
+                        "offset_error": pairs["offset_error"].to_numpy(dtype=float),
+                    }
+                )
+            )
+    found = _concat(errors, ERROR_ROW_COLUMNS[1:]).assign(session_id=session_id)
+    for column in ("session_id", "method", "setting"):
+        found[column] = pd.Categorical(found[column], categories=categories[column])
+    found = found.astype({"minimum_iou": float, "onset_error": float, "offset_error": float})
+    return found[list(ERROR_ROW_COLUMNS)], pd.DataFrame(points, columns=list(COUNT_COLUMNS))
+
+
+def load_scores(
+    run_directory: str | os.PathLike[str],
+    *,
+    curve_conditions: Collection[str] = CURVE_CONDITIONS,
+    workers: int = 1,
+) -> ConditionScores:
+    """Read every condition's scores against the primary expressions.
+
+    Parameters
+    ----------
+    run_directory : str or path-like
+        ``examples/benchmark/output/<run_name>``: its ``conditions.csv`` and
+        ``combined/`` are read.
+    curve_conditions : collection of str, optional
+        The conditions whose every setting is matched at every level of
+        ``MATCH_IOU_LEVELS``, for the operating curves; the others' main
+        settings are matched at IoU 0. Those the run lacks are skipped.
+    workers : int, optional
+        Processes matching sessions again; 1 matches in this one.
+
+    Returns
+    -------
+    scores : ConditionScores
+    """
+    root = Path(run_directory)
+    combined = root / "combined"
+    sessions = read_table(combined / "sessions.csv.gz")[
+        ["session_id", "condition_id", "replicate", "duration_s", "rest_s", "event_time_s"]
+    ]
+    sessions = sessions.assign(minutes=_minutes_outside(sessions).to_numpy())
+    conditions = read_table(root / "conditions.csv")[["condition_id", "factor", "level"]]
+    methods = (
+        _read_columns(combined / "methods.csv", ["method", "setting", "primary_expression"])
+        .drop_duplicates(["method", "setting"])
+        .sort_values(["method", "setting"])
+        .reset_index(drop=True)
+    )
+    methods["scoring"] = methods["method"].map(scoring_rule)
+    metrics = _read_columns(
+        combined / "metrics.csv.gz", [*COUNT_COLUMNS[:4], "expression", *COUNT_COLUMNS[4:]]
+    )
+    primary = methods[["method", "setting", "primary_expression"]].rename(
+        columns={"primary_expression": "expression"}
+    )
+    metrics = metrics.merge(primary, on=["method", "setting", "expression"])
+    ran = metrics[_KEY].drop_duplicates().reset_index(drop=True)
+    expected = sessions[["session_id"]].merge(methods[["method", "setting"]], how="cross")
+    missing = expected.merge(ran, on=_KEY, how="left", indicator=True)
+    failures = missing[missing["_merge"] == "left_only"][_KEY].reset_index(drop=True)
+
+    curve_sessions = set(
+        sessions.loc[sessions["condition_id"].isin(curve_conditions), "session_id"]
+    )
+    events = _read_columns(
+        combined / "events.csv.gz",
+        _EVENT_READ,
+        lambda chunk: (
+            chunk["setting"].isin(MAIN_SETTINGS) | chunk["session_id"].isin(curve_sessions)
+        ),
+    )
+    truth = load_truth(combined / "truth.csv.gz")
+    scored = ran.merge(primary, on=["method", "setting"])
+    scored = scored[
+        scored["setting"].isin(MAIN_SETTINGS) | scored["session_id"].isin(curve_sessions)
+    ]
+    to_score = {
+        session_id: list(rows[["method", "setting", "expression"]].itertuples(False, None))
+        for session_id, rows in scored.groupby("session_id", sort=False)
+    }
+    by_session = dict(tuple(events.groupby("session_id", sort=False)))
+    session_ids = [s for s in sessions["session_id"] if s in to_score]
+    categories = {
+        "session_id": list(sessions["session_id"]),
+        "method": sorted(set(methods["method"])),
+        "setting": sorted(set(methods["setting"])),
+    }
+    arguments = (
+        session_ids,
+        [by_session.get(s, events.iloc[:0]) for s in session_ids],
+        [truth[s][0] for s in session_ids],
+        [to_score[s] for s in session_ids],
+        [MATCH_IOU_LEVELS if s in curve_sessions else (0.0,) for s in session_ids],
+    )
+    score = functools.partial(score_primary, categories=categories)
+    if workers == 1:
+        found = list(map(score, *arguments))
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            found = list(pool.map(score, *arguments))
+    errors = _concat([session_errors for session_errors, _ in found], ERROR_ROW_COLUMNS)
+    points = _concat([session_points for _, session_points in found], COUNT_COLUMNS)
+    interval = _by_intervals(metrics)[list(COUNT_COLUMNS)]
+    counts = _concat([interval, points], COUNT_COLUMNS).astype(
+        {"n_reference": int, "n_detected": int, "n_matched": int, "minimum_iou": float}
+    )
+    return ConditionScores(
+        sessions=sessions,
+        conditions=conditions,
+        methods=methods,
+        counts=counts,
+        errors=errors,
+        participation=_participation(events, ran, read_table(combined / "units.csv.gz")),
+        failures=failures,
+    )
+
+
+def _participation(
+    events: pd.DataFrame, ran: pd.DataFrame, units: pd.DataFrame
+) -> pd.DataFrame:
+    """Each session and main setting of an interval method: its events and
+    the sum of their fractions of principal units active."""
+    principal = units[units["unit_type"].isin(_PRINCIPAL)].groupby("session_id").size()
+    main = _by_intervals(main_rows(events))
+    fraction = main["n_active_principal"].to_numpy(dtype=float) / main["session_id"].map(
+        principal
+    ).to_numpy(dtype=float)
+    sums = (
+        main[_KEY]
+        .assign(n_events=1, principal_fraction=fraction)
+        .groupby(_KEY)[["n_events", "principal_fraction"]]
+        .sum()
+    )
+    table = _by_intervals(main_rows(ran)).join(sums, on=_KEY)
+    return (
+        table.fillna({"n_events": 0, "principal_fraction": 0.0})
+        .astype({"n_events": int})[list(PARTICIPATION_COLUMNS)]
+        .reset_index(drop=True)
+    )
+
+
+# Resampling with weights: the draws of paired_bootstrap, as counts per unit
+
+
+def resample_weights(
+    n_units: int, *, n_resamples: int = N_RESAMPLES, seed: int = SEED
+) -> np.ndarray[Any, Any]:
+    """How often each unit is drawn in each resample of ``paired_bootstrap``.
+
+    ``paired_bootstrap`` draws the values of its key, in the order
+    ``frame[key].unique()`` lists them, with replacement; a unit drawn ``k``
+    times counts ``k`` times. A statistic that pools over units is then the
+    same computed with these counts as weights, without building each
+    resample's frame.
+
+    Parameters
+    ----------
+    n_units : int
+    n_resamples : int, optional
+    seed : int, optional
+
+    Returns
+    -------
+    weights : ndarray, shape (n_resamples, n_units)
+        Whole numbers; each row sums to ``n_units``.
+    """
+    rng = np.random.default_rng(seed)
+    weights = np.zeros((n_resamples, n_units))
+    for draw in weights:
+        draw += np.bincount(rng.choice(n_units, size=n_units, replace=True), minlength=n_units)
+    return weights
+
+
+class WeightedMedians:
+    """The median of each group of values, each value counted a whole number
+    of times.
+
+    Parameters
+    ----------
+    values : array_like, shape (n_values,)
+        Finite.
+    groups : array_like of int, shape (n_values,)
+        Each value's group, in ``[0, n_groups)``.
+    n_groups : int
+    """
+
+    def __init__(self, values: ArrayLike, groups: ArrayLike, n_groups: int) -> None:
+        values = np.asarray(values, dtype=float)
+        groups = np.asarray(groups, dtype=int)
+        self.order = np.lexsort((values, groups))
+        self.values = values[self.order]
+        ordered = groups[self.order]
+        self.starts = np.searchsorted(ordered, np.arange(n_groups), side="left")
+        self.ends = np.searchsorted(ordered, np.arange(n_groups), side="right")
+
+    def __call__(self, counts: ArrayLike) -> np.ndarray[Any, Any]:
+        """The medians, each value counted ``counts`` times.
+
+        Parameters
+        ----------
+        counts : array_like, shape (n_values,)
+            Whole numbers.
+
+        Returns
+        -------
+        medians : ndarray, shape (n_groups,)
+            The mean of the two middle values of an even count; NaN for a
+            group counting nothing.
+        """
+        medians = np.full(len(self.starts), np.nan)
+        if not len(self.values):
+            return medians
+        running = np.concatenate([[0.0], np.cumsum(np.asarray(counts, float)[self.order])])
+        before, total = running[self.starts], running[self.ends] - running[self.starts]
+        found = total > 0
+        middle = []
+        for position in (np.floor((total - 1) / 2), np.floor(total / 2)):
+            index = np.searchsorted(running[1:], before + position, side="right")
+            middle.append(self.values[np.minimum(index, len(self.values) - 1)])
+        medians[found] = ((middle[0] + middle[1]) / 2)[found]
+        return medians
+
+
+def percentile_intervals(
+    draws: ArrayLike, level: float = LEVEL
+) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+    """``paired_bootstrap``'s interval from a matrix of resampled statistics.
+
+    Parameters
+    ----------
+    draws : array_like, shape (n_resamples, n_statistics)
+    level : float, optional
+
+    Returns
+    -------
+    low, high : ndarray, shape (n_statistics,)
+        The ``(1 - level) / 2`` and ``(1 + level) / 2`` quantiles of each
+        column, NaN draws left out.
+    """
+    alpha = (1 - level) / 2
+    quantiles = pd.DataFrame(np.asarray(draws, dtype=float)).quantile([alpha, 1 - alpha])
+    return quantiles.to_numpy()[0], quantiles.to_numpy()[1]
 
 
 # The analyses

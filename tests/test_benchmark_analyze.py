@@ -759,6 +759,78 @@ def test_point_inventories_are_scored_apart(analyze, point_run):
     assert counts.loc[DAVIDSON[0], "scoring"] == "peak_containment"
 
 
+def test_resample_weights_are_the_bootstrap_draws(analyze):
+    rng = np.random.default_rng(1)
+    frame = _per_session(rng.integers(0, 50, size=7).tolist(), shift=3)
+    sums = analyze.paired_bootstrap(
+        frame, lambda f: f.groupby("method")["value"].sum(), key="session_id", n_resamples=200
+    )
+    weights = analyze.resample_weights(7, n_resamples=200)
+    assert (weights.sum(axis=1) == 7).all()
+    per_session = frame.pivot_table(index="session_id", columns="method", values="value")
+    # the sessions in the order paired_bootstrap lists them
+    per_session = per_session.loc[frame.session_id.unique()]
+    low, high = analyze.percentile_intervals(weights @ per_session.to_numpy())
+    assert low.tolist() == sums.low.tolist()
+    assert high.tolist() == sums.high.tolist()
+
+
+def test_weighted_medians_count_each_value(analyze):
+    rng = np.random.default_rng(2)
+    values = rng.normal(size=60).round(1)
+    groups = rng.integers(0, 5, size=60)
+    medians = analyze.WeightedMedians(values, groups, 6)
+    for _ in range(20):
+        counts = rng.integers(0, 3, size=60)
+        expected = [
+            np.median(np.repeat(values[groups == g], counts[groups == g]))
+            if counts[groups == g].sum()
+            else np.nan
+            for g in range(6)
+        ]
+        np.testing.assert_allclose(medians(counts), expected, rtol=0, atol=1e-12)
+    assert np.isnan(analyze.WeightedMedians([], [], 2)(np.array([]))).all()
+
+
+def test_scores_of_every_condition_match_the_runner(analyze, run, tiny_run, tiny_matches):
+    scores = analyze.load_scores(tiny_run.parent)
+    metrics = run.read_table(tiny_run / "metrics.csv.gz")
+    primary = {KAY[0]: "ripple", MALLORY[0]: "burst"}
+    expected = metrics[metrics.expression == metrics.method.map(primary)]
+    key = ["session_id", "method", "setting", "minimum_iou"]
+    got = scores.counts.sort_values(key).reset_index(drop=True)
+    pd.testing.assert_frame_equal(
+        got,
+        expected[list(analyze.COUNT_COLUMNS)].sort_values(key).reset_index(drop=True),
+        check_dtype=False,
+    )
+    assert scores.failures.to_dict("records") == [
+        {"session_id": "reference/1", "method": MALLORY[0], "setting": MALLORY[1]}
+    ]
+    # the errors at IoU 0 of the main settings are the pairs matched again
+    errors = scores.errors.astype(dict.fromkeys(("session_id", "method", "setting"), str))
+    pairs = tiny_matches.pairs
+    for method, expression in primary.items():
+        mine = analyze.main_rows(errors[(errors.method == method) & (errors.minimum_iou == 0)])
+        theirs = pairs[(pairs.method == method) & (pairs.expression == expression)]
+        assert sorted(mine.onset_error) == sorted(theirs.onset_error_10)
+    # every setting of the reference at every level, for the operating curves
+    sweep = errors[errors.setting == KAY_SWEEP[1]]
+    assert sorted(sweep.minimum_iou.unique()) == [0.0, 0.2, 0.5]
+    assert scores.sessions.minutes.tolist() == pytest.approx(
+        ((20.0 - scores.sessions.event_time_s) / 60).tolist()
+    )
+
+
+def test_scores_count_point_inventories_by_containment(analyze, point_run):
+    scores = analyze.load_scores(point_run.parent)
+    points = scores.counts[scores.counts.method == DAVIDSON[0]]
+    assert points.minimum_iou.isna().all()
+    assert points[["n_reference", "n_detected", "n_matched"]].sum().tolist() == [8, 10, 6]
+    assert DAVIDSON[0] not in set(scores.errors.method.astype(str))
+    assert DAVIDSON[0] not in set(scores.participation.method)
+
+
 def test_the_command_writes_every_table_and_the_summary(analyze, tiny_run, tmp_path):
     results = tmp_path / "results" / "tiny"
     analyses = [_quick(analysis) for analysis in analyze.ANALYSES]
