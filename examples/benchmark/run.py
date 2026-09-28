@@ -177,24 +177,13 @@ from ripple_detection.core import FloatArray
 MATCH_IOU_LEVELS = (0.0, 0.2, 0.5)
 EXPRESSIONS = (*rd.EXPRESSIONS, "network")
 
+_ZSCORE_SWEEP = ("zscore_threshold", (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0))
 THRESHOLD_SWEEPS: dict[str, tuple[str, tuple[Any, ...]]] = {
-    "Kay_ripple_detector": ("zscore_threshold", (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0)),
-    "Karlsson_ripple_detector": (
-        "zscore_threshold",
-        (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0),
-    ),
-    "Roumis_ripple_detector": (
-        "zscore_threshold",
-        (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0),
-    ),
-    "Shvartsman_ripple_detector": (
-        "zscore_threshold",
-        (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0),
-    ),
-    "multiunit_HSE_detector": (
-        "zscore_threshold",
-        (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0),
-    ),
+    "Kay_ripple_detector": _ZSCORE_SWEEP,
+    "Karlsson_ripple_detector": _ZSCORE_SWEEP,
+    "Roumis_ripple_detector": _ZSCORE_SWEEP,
+    "Shvartsman_ripple_detector": _ZSCORE_SWEEP,
+    "multiunit_HSE_detector": _ZSCORE_SWEEP,
     "Zugaro_ripple_detector": ("high_threshold", (2.5, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0)),
     "Carey_candidate_detector": ("high_threshold", (1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0)),
     "Yu_ripple_detector": ("percentile", (99.0, 99.5, 99.9, 99.95, 99.99, 99.995, 99.999)),
@@ -229,6 +218,8 @@ _LONG_BOUND = 0.5
 _PRINCIPAL = ("place", "pyramidal")
 _ERROR_LENGTH = 200
 _RESULT_INDEX = "event_number"
+# gzip without a timestamp, so the same rows give the same bytes
+_GZIP: dict[str, Any] = {"method": "gzip", "mtime": 0}
 # What run_spec.json records of the validation report.
 _REPORT_IDENTITY = ("path", "sha256", "simulation_fingerprint", "target_table_hash")
 
@@ -615,12 +606,9 @@ def method_calls(session: rd.SimulatedSession) -> list[MethodCall]:
         }
         calls.append((name, setting, _detector_call(detector, attrs)))
 
-    integer_session: list[rd.SimulatedSession] = []
-
+    @functools.cache
     def counted() -> rd.SimulatedSession:
-        if not integer_session:
-            integer_session.append(_integer_counts(session))
-        return integer_session[0]
+        return _integer_counts(session)
 
     calls.extend(
         (f"recipe:{config.config_id}", "literature", _recipe_call(config, session, counted))
@@ -915,7 +903,7 @@ def evaluate_session(
     }
     ran = [call[:2] for call in calls]
     return SessionOutput(
-        sessions=_table_frame([sessions], [c for c in SESSION_COLUMNS if c in sessions]),
+        sessions=pd.DataFrame([sessions]),
         truth=_truth(session, session_id),
         truth_counts=_concat(truth_counts, TRUTH_COUNT_COLUMNS),
         ripple_channels=session.ripple_channels.assign(session_id=session_id)[
@@ -1001,7 +989,7 @@ def run_session(
 def _write_table(frame: pd.DataFrame, path: Path) -> int:
     """Write ``frame`` without its index, gzip-compressed for a ``.gz`` path
     with no timestamp, so the same rows give the same bytes."""
-    compression: Any = {"method": "gzip", "mtime": 0} if path.suffix == ".gz" else None
+    compression = _GZIP if path.suffix == ".gz" else None
     frame.to_csv(path, index=False, compression=compression)
     return len(frame)
 
@@ -1069,10 +1057,7 @@ def _write_results(
     ] or [results[0][1].assign(session_id=results[0][0])]
     table = pd.concat(frames)
     table = table[["session_id", *(c for c in table.columns if c != "session_id")]]
-    compression: Any = {"method": "gzip", "mtime": 0}
-    table.to_csv(
-        directory / f"{stem}.csv.gz", index_label=_RESULT_INDEX, compression=compression
-    )
+    table.to_csv(directory / f"{stem}.csv.gz", index_label=_RESULT_INDEX, compression=_GZIP)
     sidecar = {
         "saved_with_ripple_detection_version": rd.__version__,
         "sessions": {
@@ -1509,13 +1494,13 @@ def _smoke_report(
     free_cores = (os.cpu_count() or 1) - round(os.getloadavg()[0])
     available = _available_memory()
     limits = [requested_workers, free_cores - 1]
+    memory_limit = "unknown"
     if available is not None:
         limits.append(int(0.7 * available // peak))
+        memory_limit = str(limits[-1])
     lines.append(
         f"  workers = min(requested {requested_workers}, free cores - 1 = {free_cores - 1}, "
-        "0.7 x available memory / peak = "
-        + (f"{int(0.7 * available // peak)}" if available is not None else "unknown")
-        + f") = {max(1, min(limits))}"
+        f"0.7 x available memory / peak = {memory_limit}) = {max(1, min(limits))}"
     )
     return "\n".join(lines)
 
