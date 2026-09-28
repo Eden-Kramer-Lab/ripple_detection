@@ -913,14 +913,15 @@ def _hand_scores(analyze, counts, errors=(), minutes=10.0):
     methods = counts[["method", "setting"]].drop_duplicates().reset_index(drop=True)
     methods["primary_expression"] = np.where(methods.method == MALLORY[0], "burst", "ripple")
     methods["scoring"] = methods.method.map(analyze.scoring_rule)
+    cells = {c: [part.split("=") for part in c.split(",")] for c in sessions.condition_id}
     conditions = pd.DataFrame(
         [
             {
                 "condition_id": c,
-                "factor": c.split("=")[0] if "=" in c else "reference",
-                "level": c.split("=")[1] if "=" in c else "reference",
+                "factor": ",".join(part[0] for part in parts) if "=" in c else "reference",
+                "level": ",".join(part[-1] for part in parts),
             }
-            for c in sessions.condition_id.unique()
+            for c, parts in cells.items()
         ]
     )
     errors = pd.DataFrame(
@@ -1027,6 +1028,76 @@ def test_held_out_threshold_reports_held_out_replicates(analyze):
     assert (
         none[["calibration_recall", "recall", "recall_low", "median_onset_error"]].isna().all()
     )
+
+
+def _snr_run(analyze, shift=-2, extra_reference=2):
+    """Kay on four replicates of the reference and of each ripple SNR level,
+    the low level finding ``-shift`` fewer of 10 windows in every replicate
+    and the high one as many more, with onsets 5 ms later and earlier; the
+    reference holds ``extra_reference`` more replicates, shared by no other."""
+    matched = [5, 7, 6, 4, 8, 6][: 4 + extra_reference]
+    counts, errors = [], []
+    for condition, step, onset in (
+        ("reference", 0, 0.0),
+        ("ripple_snr=low", shift, 0.005),
+        ("ripple_snr=high", -shift, -0.005),
+    ):
+        for replicate, found in enumerate(
+            matched if condition == "reference" else matched[:4]
+        ):
+            counts.append(_kay(condition, replicate, "default", found + step, 12))
+            errors += [
+                _error(condition, replicate, "default", replicate / 100 + onset + delta)
+                for delta in (-0.001, 0.001)
+            ]
+    return _hand_scores(analyze, counts, errors)
+
+
+def test_robustness_pairs_conditions_by_replicate(analyze):
+    table = analyze.robustness(_snr_run(analyze), n_resamples=FEW)
+    assert table.factor.unique().tolist() == ["ripple_snr"]
+    recall = table[table.measure == "recall"].set_index("level")
+    assert recall.index.tolist() == ["low", "reference", "high"]
+    # pooled over the four shared replicates, the reference's two others left out
+    assert recall.n_replicates.unique().tolist() == [4]
+    assert recall.value.tolist() == pytest.approx([0.35, 0.55, 0.75])
+    # every replicate moves by the same amount, so paired resamples do too
+    assert recall.change.tolist() == pytest.approx([-0.2, 0.0, 0.2])
+    for level, change in (("low", -0.2), ("high", 0.2)):
+        row = recall.loc[level]
+        assert [row.change_low, row.change_high] == pytest.approx([change, change])
+        assert (row.change_p, row.n_paired) == (2 / 16, 4)
+    # while the values themselves vary with the replicates drawn
+    assert recall.loc["low", "value_low"] < 0.35 < recall.loc["low", "value_high"]
+    onset = table[table.measure == "median_onset_error"].set_index("level")
+    assert onset.change.tolist() == pytest.approx([0.005, 0.0, -0.005])
+    assert onset.loc["low", "change_low"] == pytest.approx(0.005)
+    listed = analyze.recall_changes(table)
+    assert listed[["factor", "method", "lowest", "highest"]].to_numpy().tolist() == [
+        ["ripple_snr", KAY[0], "low", "high"]
+    ]
+    assert listed.span.tolist() == pytest.approx([0.4])
+    assert analyze.recall_changes(table, threshold=0.5).empty
+
+
+def test_robustness_crossed_cells(analyze):
+    counts = []
+    for condition, found in (
+        ("reference", 6),
+        ("ripple_snr=low", 4),
+        ("participation=high", 7),
+        ("ripple_snr=low,participation=high", 3),
+    ):
+        counts += [_kay(condition, replicate, "default", found, 12) for replicate in range(3)]
+    table = analyze.robustness_crossed(_hand_scores(analyze, counts), n_resamples=FEW)
+    recall = table[table.measure == "recall"]
+    assert recall[["factors", "level_1", "level_2"]].to_numpy().tolist() == [
+        ["ripple_snr,participation", "low", "reference"],
+        ["ripple_snr,participation", "low", "high"],
+        ["ripple_snr,participation", "reference", "reference"],
+        ["ripple_snr,participation", "reference", "high"],
+    ]
+    assert recall.change.tolist() == pytest.approx([-0.2, -0.3, 0.0, 0.1])
 
 
 def test_the_command_writes_every_table_and_the_summary(analyze, tiny_run, tmp_path):

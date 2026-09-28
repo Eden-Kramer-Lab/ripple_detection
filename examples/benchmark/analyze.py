@@ -65,7 +65,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
-from conditions import ALTERNATIVES, REFERENCE_LEVEL, TRUTH_FRACTIONS
+from conditions import ALTERNATIVES, REFERENCE_LEVEL, TRUTH_FRACTIONS, factor_levels
 from numpy.typing import ArrayLike
 from recipe_configs import RECIPES
 from run import (
@@ -3069,6 +3069,394 @@ def held_out_thresholds(
             row["n_failures"] = int(sum(failed.get((method, s), 0) for s in settings))
             rows.append(row)
     return pd.DataFrame(rows)
+
+
+# Across conditions, paired by replicate
+
+# What a main setting is measured by across conditions: pooled over the
+# replicates, against the primary expression at IoU 0.
+MEASURES = (
+    "recall",
+    "precision",
+    "false_positives_per_minute",
+    "median_onset_error",
+    "median_offset_error",
+    "participation",
+)
+# The measures a point method has: no pair has bounds.
+POINT_MEASURES = ("recall", "precision", "false_positives_per_minute")
+ROBUSTNESS_MEASURES = ("recall", "precision", "median_onset_error")
+CHANGE_COLUMNS = (
+    "condition_id",
+    "method",
+    "setting",
+    "primary_expression",
+    "scoring",
+    "measure",
+    "n_replicates",
+    "value",
+    "value_low",
+    "value_high",
+    "change",
+    "change_low",
+    "change_high",
+    "change_p",
+    "n_paired",
+    "n_failures",
+)
+# A method whose recall moves more than this across a factor's levels is listed.
+RECALL_CHANGE = 0.1
+
+
+def _measured(pooled: Mapping[str, np.ndarray[Any, Any]]) -> dict[str, np.ndarray[Any, Any]]:
+    """Every one of ``MEASURES`` of pooled counts and errors."""
+    rates = _rates(pooled)
+    return {
+        "recall": rates["recall"],
+        "precision": rates["precision"],
+        "false_positives_per_minute": rates["fp_rate"],
+        "median_onset_error": pooled["onset_error"],
+        "median_offset_error": pooled["offset_error"],
+        "participation": _ratio(pooled["principal_fraction"], pooled["n_events"]),
+    }
+
+
+def _main_methods(scores: ConditionScores) -> pd.DataFrame:
+    """The main settings: ``method``, ``setting``, ``primary_expression``,
+    ``scoring``."""
+    return main_rows(scores.methods).reset_index(drop=True)
+
+
+def condition_pool(
+    scores: ConditionScores, condition_ids: Sequence[str], replicates: Sequence[int]
+) -> tuple[Pool, pd.MultiIndex]:
+    """The main settings in some conditions, pooled over shared replicates.
+
+    Parameters
+    ----------
+    scores : ConditionScores
+    condition_ids : sequence of str
+    replicates : sequence of int
+        The units: a replicate's session in every condition shares its seed,
+        so drawing it keeps the conditions paired.
+
+    Returns
+    -------
+    pool : Pool
+        Counts (with participation), and signed onset and offset errors at
+        IoU 0, of each group.
+    groups : pandas.MultiIndex
+        ``(condition_id, method, setting)``, every condition with every main
+        setting.
+    """
+    main = _main_methods(scores)
+    groups = pd.MultiIndex.from_tuples(
+        [
+            (condition, method, setting)
+            for condition in condition_ids
+            for method, setting in main[["method", "setting"]].itertuples(index=False)
+        ],
+        names=["condition_id", "method", "setting"],
+    )
+    sessions = scores.sessions[scores.sessions["condition_id"].isin(condition_ids)]
+    sessions = set(sessions.loc[sessions["replicate"].isin(replicates), "session_id"])
+    counts = main_rows(_session_counts(scores, 0.0, sessions)).merge(
+        scores.participation, on=_KEY, how="left"
+    )
+    counts = counts.fillna({"n_events": 0, "principal_fraction": 0.0})
+    errors = main_rows(_session_errors(scores, 0.0, sessions))
+    units = pd.Index(replicates)
+    keys = ["condition_id", "method", "setting"]
+    pool = Pool(
+        counts,
+        _codes(counts, ["replicate"], units),
+        _codes(counts, keys, groups),
+        errors,
+        _codes(errors, ["replicate"], units),
+        _codes(errors, keys, groups),
+        len(units),
+        len(groups),
+        (*_COUNTED, "n_events", "principal_fraction"),
+        ("onset_error", "offset_error"),
+    )
+    return pool, groups
+
+
+def paired_changes(
+    scores: ConditionScores,
+    condition_ids: Sequence[str],
+    reference: str,
+    *,
+    measures: Sequence[str] = MEASURES,
+    n_resamples: int = N_RESAMPLES,
+) -> pd.DataFrame:
+    """Each main setting's measures in some conditions, and their changes from one.
+
+    Over the replicates every condition has, a replicate's sessions in each
+    condition sharing its seed (common random numbers): each value is pooled
+    over them, and each change is the value minus the reference condition's,
+    both from the same resamples of replicates (``paired_bootstrap`` with
+    ``key="replicate"``), its p-value ``sign_flip_test`` over the
+    per-replicate changes where both are defined.
+
+    Parameters
+    ----------
+    scores : ConditionScores
+    condition_ids : sequence of str
+        Present in the run; ``reference`` among them.
+    reference : str
+    measures : sequence of str, optional
+        Of ``MEASURES``; a point method gets only ``POINT_MEASURES``.
+    n_resamples : int, optional
+
+    Returns
+    -------
+    changes : pandas.DataFrame
+        One row per condition, main setting and measure (``CHANGE_COLUMNS``):
+        ``n_replicates`` (pooled), ``value`` with ``_low`` and ``_high``;
+        ``change`` (value minus the reference's) with ``_low``, ``_high``
+        and ``_p``, ``n_paired`` (replicates in the test); ``n_failures``
+        (the condition's sessions without the method's scores, of those
+        replicates). Errors are seconds, detected minus truth at 10 %;
+        participation is the mean fraction of place and pyramidal units
+        active in the method's events.
+    """
+    listed = scores.sessions[scores.sessions["condition_id"].isin(condition_ids)]
+    shared = set.intersection(
+        *(set(rows["replicate"]) for _, rows in listed.groupby("condition_id"))
+    )
+    replicates = sorted(shared)
+    pool, groups = condition_pool(scores, condition_ids, replicates)
+    base = groups.get_indexer(
+        pd.MultiIndex.from_arrays(
+            [
+                [reference] * len(groups),
+                groups.get_level_values("method"),
+                groups.get_level_values("setting"),
+            ]
+        )
+    )
+
+    def statistic(weights: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
+        found = _measured(pool(weights))
+        values = np.array([found[name] for name in measures])
+        return np.stack([values, values - values[:, base]])
+
+    estimate = statistic(np.ones(len(replicates)))
+    draws = np.array(
+        [statistic(w) for w in resample_weights(len(replicates), n_resamples=n_resamples)]
+    )
+    low, high = _conditional_intervals(estimate, draws)
+    alone = np.array([statistic(w) for w in np.eye(len(replicates))])[:, 1]
+    main = _main_methods(scores).set_index(["method", "setting"])
+    kept = listed[listed["replicate"].isin(replicates)]["session_id"]
+    failed = scores.failures[scores.failures["session_id"].isin(kept)]
+    failed = failed.assign(
+        condition_id=failed["session_id"].map(listed.set_index("session_id")["condition_id"])
+    )
+    n_failed = failed.groupby(["condition_id", "method", "setting"]).size()
+    rows = []
+    for position, (condition, method, setting) in enumerate(groups):
+        scoring = main.loc[(method, setting), "scoring"]
+        for index, measure in enumerate(measures):
+            if scoring == PEAK_CONTAINMENT and measure not in POINT_MEASURES:
+                continue
+            per_replicate = alone[:, index, position]
+            finite = per_replicate[np.isfinite(per_replicate)]
+            rows.append(
+                {
+                    "condition_id": condition,
+                    "method": method,
+                    "setting": setting,
+                    "primary_expression": main.loc[(method, setting), "primary_expression"],
+                    "scoring": scoring,
+                    "measure": measure,
+                    "n_replicates": len(replicates),
+                    "value": estimate[0, index, position],
+                    "value_low": low[0, index, position],
+                    "value_high": high[0, index, position],
+                    "change": estimate[1, index, position],
+                    "change_low": low[1, index, position],
+                    "change_high": high[1, index, position],
+                    "change_p": sign_flip_test(finite),
+                    "n_paired": len(finite),
+                    "n_failures": int(n_failed.get((condition, method, setting), 0)),
+                }
+            )
+    return pd.DataFrame(rows, columns=list(CHANGE_COLUMNS))
+
+
+def _level_conditions(scores: ConditionScores, factor: str) -> list[tuple[str, str]]:
+    """A one-factor factor's (level, condition id) in its levels' order,
+    those the run holds."""
+    present = set(scores.sessions["condition_id"])
+    found = []
+    for level in factor_levels(factor):
+        condition = REFERENCE_CONDITION if level == REFERENCE_LEVEL else f"{factor}={level}"
+        if condition in present:
+            found.append((level, condition))
+    return found
+
+
+def robustness(
+    scores: ConditionScores,
+    *,
+    measures: Sequence[str] = ROBUSTNESS_MEASURES,
+    n_resamples: int = N_RESAMPLES,
+) -> pd.DataFrame:
+    """Each main setting's recall, precision and onset error along each factor.
+
+    For each one-factor factor of the run's conditions (the grid's and the
+    alternative models'), ``paired_changes`` over its levels, the reference
+    condition in place, on the replicates they share.
+
+    Parameters
+    ----------
+    scores : ConditionScores
+    measures : sequence of str, optional
+    n_resamples : int, optional
+
+    Returns
+    -------
+    robustness : pandas.DataFrame
+        ``factor``, ``level`` (``factor_levels``' order), then
+        ``CHANGE_COLUMNS``, each change from the reference level.
+    """
+    factors = [
+        factor
+        for factor in dict.fromkeys(scores.conditions["factor"])
+        if factor != REFERENCE_CONDITION and "," not in factor
+    ]
+    parts = []
+    for factor in factors:
+        levels = _level_conditions(scores, factor)
+        if len(levels) < 2 or REFERENCE_CONDITION not in dict(levels).values():
+            continue
+        changes = paired_changes(
+            scores,
+            [condition for _, condition in levels],
+            REFERENCE_CONDITION,
+            measures=measures,
+            n_resamples=n_resamples,
+        )
+        level_of = {condition: level for level, condition in levels}
+        changes.insert(0, "level", changes["condition_id"].map(level_of))
+        changes.insert(0, "factor", factor)
+        parts.append(changes)
+    return _concat(parts, ["factor", "level", *CHANGE_COLUMNS])
+
+
+def robustness_crossed(
+    scores: ConditionScores,
+    *,
+    measures: Sequence[str] = ROBUSTNESS_MEASURES,
+    n_resamples: int = N_RESAMPLES,
+) -> pd.DataFrame:
+    """Each main setting's measures over the cells of each crossed pair of factors.
+
+    A cell is a level of each factor: both at the reference is the reference
+    condition, one at the reference that factor's one-factor condition, and
+    neither the crossed condition. ``paired_changes`` over the cells the run
+    holds, from the reference.
+
+    Parameters
+    ----------
+    scores : ConditionScores
+    measures : sequence of str, optional
+    n_resamples : int, optional
+
+    Returns
+    -------
+    crossed : pandas.DataFrame
+        ``factors`` (``"<first>,<second>"``), ``level_1``, ``level_2``, then
+        ``CHANGE_COLUMNS``.
+    """
+    present = set(scores.sessions["condition_id"])
+    pairs = [factor for factor in dict.fromkeys(scores.conditions["factor"]) if "," in factor]
+    parts = []
+    for pair in pairs:
+        first, second = pair.split(",")
+        cells = {}
+        for level_1 in factor_levels(first):
+            for level_2 in factor_levels(second):
+                named = [
+                    f"{factor}={level}"
+                    for factor, level in ((first, level_1), (second, level_2))
+                    if level != REFERENCE_LEVEL
+                ]
+                condition = ",".join(named) or REFERENCE_CONDITION
+                if condition in present:
+                    cells[condition] = (level_1, level_2)
+        if REFERENCE_CONDITION not in cells or len(cells) < 2:
+            continue
+        changes = paired_changes(
+            scores,
+            list(cells),
+            REFERENCE_CONDITION,
+            measures=measures,
+            n_resamples=n_resamples,
+        )
+        firsts = {condition: levels[0] for condition, levels in cells.items()}
+        seconds = {condition: levels[1] for condition, levels in cells.items()}
+        changes.insert(0, "level_2", changes["condition_id"].map(seconds))
+        changes.insert(0, "level_1", changes["condition_id"].map(firsts))
+        changes.insert(0, "factors", pair)
+        parts.append(changes)
+    return _concat(parts, ["factors", "level_1", "level_2", *CHANGE_COLUMNS])
+
+
+def recall_changes(table: pd.DataFrame, threshold: float = RECALL_CHANGE) -> pd.DataFrame:
+    """The methods whose recall moves more than ``threshold`` across a factor.
+
+    Parameters
+    ----------
+    table : pandas.DataFrame
+        ``robustness``' rows.
+    threshold : float, optional
+
+    Returns
+    -------
+    changes : pandas.DataFrame
+        One row per factor and main setting whose pooled recall, over the
+        factor's levels, spans more than ``threshold``: ``factor``,
+        ``method``, ``setting``, ``lowest`` and ``highest`` (the levels),
+        ``recall_lowest``, ``recall_highest``, ``span``; largest span first.
+    """
+    columns = [
+        "factor",
+        "method",
+        "setting",
+        "lowest",
+        "highest",
+        "recall_lowest",
+        "recall_highest",
+        "span",
+    ]
+    recall_rows = table[(table["measure"] == "recall") & np.isfinite(table["value"])]
+    rows = []
+    for (factor, method, setting), group in recall_rows.groupby(
+        ["factor", "method", "setting"], sort=False
+    ):
+        low, high = group.loc[group["value"].idxmin()], group.loc[group["value"].idxmax()]
+        span = high["value"] - low["value"]
+        if span > threshold:
+            rows.append(
+                [
+                    factor,
+                    method,
+                    setting,
+                    low["level"],
+                    high["level"],
+                    low["value"],
+                    high["value"],
+                    span,
+                ]
+            )
+    return (
+        pd.DataFrame(rows, columns=columns)
+        .sort_values("span", ascending=False, kind="stable")
+        .reset_index(drop=True)
+    )
 
 
 # Figures (matplotlib is imported only inside them)
