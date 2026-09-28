@@ -37,7 +37,7 @@ from run import EXPRESSIONS, OUTPUT, read_table, truth_window_sets
 import ripple_detection as rd
 
 if TYPE_CHECKING:
-    from matplotlib.figure import SubFigure
+    from matplotlib.figure import Figure, SubFigure
 
 # The methods drawn beside the truth: three detectors at their defaults, a
 # ripple recipe and a population-burst recipe.
@@ -145,28 +145,31 @@ def chosen_events(events: pd.DataFrame, event_type: str, per_type: int) -> list[
     return [int(ids[int(pick)]) for pick in picks]
 
 
-def _draw_event(
-    figure: SubFigure,
-    session: rd.SimulatedSession,
-    filtered: np.ndarray[Any, Any],
-    windows: Mapping[str, Sequence[pd.DataFrame]],
-    found: pd.DataFrame,
-    event_id: int,
-    failed: Collection[tuple[str, str]] = (),
-) -> None:
-    """One event: signals, spikes, then the truth and each method's events."""
-    network = windows["network"][0].set_index("id").loc[event_id]
-    draw_window(
-        figure,
-        session,
-        filtered,
-        windows,
-        found,
-        network.start_time - _MARGIN,
-        network.end_time + _MARGIN,
-        f"event {event_id}, network peak {network.peak_time:.3f} s",
-        failed=failed,
-    )
+def window_grid(n_windows: int, title: str) -> tuple[Figure, list[SubFigure]]:
+    """A figure for ``n_windows`` stretches of a session, two a row, each a
+    subfigure for ``draw_window``.
+
+    Parameters
+    ----------
+    n_windows : int
+    title : str
+        The figure's.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    blocks : list of SubFigure
+        One per window, in order; the grid's last, when unused, is hidden.
+    """
+    import matplotlib.pyplot as plt
+
+    n_rows = (n_windows + 1) // 2
+    figure = plt.figure(figsize=(12, 4.5 * n_rows), layout="constrained")
+    figure.suptitle(title, fontsize=10)
+    blocks = figure.subfigures(n_rows, 2, squeeze=False).ravel()
+    for block in blocks[n_windows:]:
+        block.set_visible(False)
+    return figure, list(blocks[:n_windows])
 
 
 def draw_window(
@@ -306,16 +309,25 @@ def plot_session(run_directory: Path, session_id: str, per_type: int = 6) -> lis
         ids = chosen_events(session.events, event_type, per_type)
         if not ids:
             continue
-        n_rows = (len(ids) + 1) // 2
-        figure = plt.figure(figsize=(12, 4.5 * n_rows), layout="constrained")
-        figure.suptitle(
+        figure, blocks = window_grid(
+            len(ids),
             f"{session_id}: {event_type}; truth at fractions "
             f"{', '.join(map(str, TRUTH_FRACTIONS))} (thin to thick)",
-            fontsize=10,
         )
-        blocks = figure.subfigures(n_rows, 2, squeeze=False).ravel()
-        for block, event_id in zip(blocks, ids, strict=False):
-            _draw_event(block, session, filtered, windows, found, event_id, failed)
+        network = windows["network"][0].set_index("id")
+        for block, event_id in zip(blocks, ids, strict=True):
+            event = network.loc[event_id]
+            draw_window(
+                block,
+                session,
+                filtered,
+                windows,
+                found,
+                event.start_time - _MARGIN,
+                event.end_time + _MARGIN,
+                f"event {event_id}, network peak {event.peak_time:.3f} s",
+                failed=failed,
+            )
         path = directory / f"{session_id.replace('/', '_')}_{event_type}.png"
         figure.savefig(path, dpi=110)
         plt.close(figure)

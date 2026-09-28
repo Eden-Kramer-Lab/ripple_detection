@@ -5318,6 +5318,62 @@ def _tall(n_rows: int) -> float:
     return 1.5 + 0.12 * n_rows
 
 
+def _method_panels(
+    methods: Sequence[str], n_panels: int, width: float
+) -> tuple[Figure, np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+    """A figure of ``n_panels`` side by side, ``width`` inches wide, sharing
+    a row per method, labelled on the first panel: the figure, its axes and
+    each method's height (the first at the top)."""
+    import matplotlib.pyplot as plt
+
+    figure, axes = plt.subplots(
+        1, n_panels, figsize=(width, _tall(len(methods))), sharey=True, squeeze=False
+    )
+    y = np.arange(len(methods))[::-1]
+    axes[0, 0].set_yticks(y, list(methods), fontsize=_FONT)
+    return figure, axes[0], y
+
+
+def _symmetric(values: np.ndarray[Any, Any]) -> tuple[float, float]:
+    """Colour limits symmetric about 0 holding every finite value; (-1, 1)
+    for none."""
+    limit = np.nanmax(np.abs(values)) if np.isfinite(values).any() else 1.0
+    return -limit, limit
+
+
+def _pair_heatmaps(
+    table: pd.DataFrame,
+    methods: Sequence[str],
+    panels: Sequence[tuple[str, str]],
+    n_rows: int,
+    *,
+    step: float = 0.09,
+    antisymmetric: bool = False,
+    scale: float = 1.0,
+    cmap: str = "RdBu_r",
+    limits: tuple[float, float] | None = None,
+    shrink: float = 0.5,
+) -> Figure:
+    """A pair table's columns as method-by-method heatmaps, row A and column
+    B (``_pair_grid``), one panel per ``(column, title)`` on ``n_rows`` rows:
+    ``limits`` shared by every panel with one colorbar, or (None) each
+    panel's own limits, symmetric about 0, and colorbar."""
+    import matplotlib.pyplot as plt
+
+    size = 2 + step * len(methods)
+    n_columns = len(panels) // n_rows
+    figure, axes = plt.subplots(n_rows, n_columns, figsize=(n_columns * size, n_rows * size))
+    for axis, (column, title) in zip(np.ravel(axes), panels, strict=True):
+        values = _pair_grid(table, column, methods, antisymmetric=antisymmetric) * scale
+        low, high = _symmetric(values) if limits is None else limits
+        image = _heatmap(axis, values, methods, methods, title, cmap=cmap, vmin=low, vmax=high)
+        if limits is None:
+            figure.colorbar(image, ax=axis, shrink=shrink)
+    if limits is not None:
+        figure.colorbar(image, ax=axes, shrink=shrink)
+    return figure
+
+
 def plot_detection_profile(profile: pd.DataFrame) -> Figure:
     """``detection_profile``'s recall, method by event type.
 
@@ -5406,24 +5462,15 @@ def plot_pairwise_agreement(agreement: pd.DataFrame) -> Figure:
     -------
     figure : matplotlib.figure.Figure
     """
-    import matplotlib.pyplot as plt
-
-    methods = _leaf_order(agreement)
-    size = 2 + 0.09 * len(methods)
-    figure, axes = plt.subplots(2, 2, figsize=(2 * size, 2 * size))
-    for axis, name in zip(axes.flat, AGREEMENT, strict=True):
-        image = _heatmap(
-            axis,
-            _pair_grid(agreement, name, methods, antisymmetric=False),
-            methods,
-            methods,
-            f"{name} (mean over sessions)",
-            cmap="viridis",
-            vmin=0,
-            vmax=1,
-        )
-    figure.colorbar(image, ax=axes, shrink=0.3)
-    return figure
+    return _pair_heatmaps(
+        agreement,
+        _leaf_order(agreement),
+        [(name, f"{name} (mean over sessions)") for name in AGREEMENT],
+        2,
+        cmap="viridis",
+        limits=(0, 1),
+        shrink=0.3,
+    )
 
 
 def plot_agreement_dendrogram(dendrogram: pd.DataFrame) -> Figure:
@@ -5506,16 +5553,13 @@ def plot_overlap_quality(quality: pd.DataFrame) -> Figure:
     -------
     figure : matplotlib.figure.Figure
     """
-    import matplotlib.pyplot as plt
-
     methods = list(dict.fromkeys(quality["method"]))
-    figure, axes = plt.subplots(1, 3, figsize=(10, _tall(len(methods))), sharey=True)
+    figure, axes, _ = _method_panels(methods, len(OVERLAP_MEASURES), 10)
     for axis, measure in zip(axes, OVERLAP_MEASURES, strict=True):
         rows = quality[quality["measure"] == measure].set_index("method").loc[methods]
         _boxes(axis, rows)
         axis.set_xlim(0, 1)
         axis.set_title(measure, fontsize=8)
-    axes[0].set_yticks(np.arange(len(methods))[::-1], methods, fontsize=_FONT)
     figure.suptitle("Matched pairs against the primary expression: 5-95 % and IQR", fontsize=8)
     return figure
 
@@ -5572,31 +5616,17 @@ def plot_paired_timing(timing: pd.DataFrame) -> Figure:
     -------
     figure : matplotlib.figure.Figure
     """
-    import matplotlib.pyplot as plt
-
     shown = timing[timing["fraction"] == TRUTH_FRACTIONS[0]]
-    methods = sorted(set(shown["method_a"]) | set(shown["method_b"]))
-    size = 2 + 0.12 * len(methods)
-    figure, axes = plt.subplots(2, 2, figsize=(2 * size, 2 * size))
-    for axis, stem in zip(
-        axes.flat,
-        ("onset_signed", "offset_signed", "onset_absolute", "offset_absolute"),
-        strict=True,
-    ):
-        values = _pair_grid(shown, f"{stem}_estimate", methods, antisymmetric=True) * _MS
-        limit = np.nanmax(np.abs(values)) if np.isfinite(values).any() else 1.0
-        image = _heatmap(
-            axis,
-            values,
-            methods,
-            methods,
-            f"{stem} (ms, A - B)",
-            cmap="RdBu_r",
-            vmin=-limit,
-            vmax=limit,
-        )
-        figure.colorbar(image, ax=axis, shrink=0.5)
-    return figure
+    stems = ("onset_signed", "offset_signed", "onset_absolute", "offset_absolute")
+    return _pair_heatmaps(
+        shown,
+        sorted(set(shown["method_a"]) | set(shown["method_b"])),
+        [(f"{stem}_estimate", f"{stem} (ms, A - B)") for stem in stems],
+        2,
+        step=0.12,
+        antisymmetric=True,
+        scale=_MS,
+    )
 
 
 def plot_method_differences(differences: pd.DataFrame) -> Figure:
@@ -5612,26 +5642,14 @@ def plot_method_differences(differences: pd.DataFrame) -> Figure:
     -------
     figure : matplotlib.figure.Figure
     """
-    import matplotlib.pyplot as plt
-
-    methods = sorted(set(differences["method_a"]) | set(differences["method_b"]))
-    size = 2 + 0.09 * len(methods)
-    figure, axes = plt.subplots(1, 2, figsize=(2 * size, size))
-    for axis, name in zip(axes, DIFFERENCES[:2], strict=True):
-        values = _pair_grid(differences, name, methods, antisymmetric=True) * _MS
-        limit = np.nanmax(np.abs(values)) if np.isfinite(values).any() else 1.0
-        image = _heatmap(
-            axis,
-            values,
-            methods,
-            methods,
-            f"{name} (ms, A - B)",
-            cmap="RdBu_r",
-            vmin=-limit,
-            vmax=limit,
-        )
-        figure.colorbar(image, ax=axis, shrink=0.5)
-    return figure
+    return _pair_heatmaps(
+        differences,
+        sorted(set(differences["method_a"]) | set(differences["method_b"])),
+        [(name, f"{name} (ms, A - B)") for name in DIFFERENCES[:2]],
+        1,
+        antisymmetric=True,
+        scale=_MS,
+    )
 
 
 def plot_error_correlations(correlations: pd.DataFrame) -> Figure:
@@ -5646,24 +5664,13 @@ def plot_error_correlations(correlations: pd.DataFrame) -> Figure:
     -------
     figure : matplotlib.figure.Figure
     """
-    import matplotlib.pyplot as plt
-
-    methods = sorted(set(correlations["method_a"]) | set(correlations["method_b"]))
-    size = 2 + 0.09 * len(methods)
-    figure, axes = plt.subplots(1, 2, figsize=(2 * size, size))
-    for axis, name in zip(axes, CORRELATIONS, strict=True):
-        image = _heatmap(
-            axis,
-            _pair_grid(correlations, name, methods, antisymmetric=False),
-            methods,
-            methods,
-            name,
-            cmap="RdBu_r",
-            vmin=-1,
-            vmax=1,
-        )
-    figure.colorbar(image, ax=axes, shrink=0.5)
-    return figure
+    return _pair_heatmaps(
+        correlations,
+        sorted(set(correlations["method_a"]) | set(correlations["method_b"])),
+        [(name, name) for name in CORRELATIONS],
+        1,
+        limits=(-1, 1),
+    )
 
 
 def plot_splits_and_merges(rates: pd.DataFrame) -> Figure:
@@ -5679,30 +5686,13 @@ def plot_splits_and_merges(rates: pd.DataFrame) -> Figure:
     -------
     figure : matplotlib.figure.Figure
     """
-    import matplotlib.pyplot as plt
-
     methods = list(dict.fromkeys(rates["method"]))
-    figure, axes = plt.subplots(1, 2, figsize=(9, _tall(len(methods))), sharey=True)
-    y = np.arange(len(methods))[::-1]
+    figure, axes, y = _method_panels(methods, 2, 9)
     for axis, rate in zip(axes, ("split_rate", "merge_rate"), strict=True):
         for offset, (subset, color) in enumerate((("all", "C0"), (DOUBLET, "C1"))):
             rows = rates[rates["subset"] == subset].set_index("method").loc[methods]
-            error = np.abs(
-                rows[[f"{rate}_low", f"{rate}_high"]].to_numpy().T - rows[rate].to_numpy()
-            )
-            axis.errorbar(
-                rows[rate],
-                y + 0.2 * offset,
-                xerr=error,
-                fmt=".",
-                color=color,
-                label=subset,
-                markersize=3,
-                elinewidth=0.6,
-            )
+            _dots(axis, rows, rate, y + 0.2 * offset, color=color, label=subset)
         axis.set_title(rate.replace("_", " "), fontsize=8)
-        axis.tick_params(labelsize=_FONT)
-    axes[0].set_yticks(y, methods, fontsize=_FONT)
     axes[1].legend(fontsize=_FONT)
     return figure
 
@@ -5737,15 +5727,11 @@ def plot_point_inventories(points: pd.DataFrame) -> Figure:
     -------
     figure : matplotlib.figure.Figure
     """
-    import matplotlib.pyplot as plt
-
     columns = ("recall", "precision", "false_positives_per_minute")
-    figure, axes = plt.subplots(1, 3, figsize=(9, _tall(len(points))), sharey=True)
-    y = np.arange(len(points))[::-1]
+    figure, axes, y = _method_panels(points["method"], len(columns), 9)
     for axis, column in zip(axes, columns, strict=True):
         _dots(axis, points, column, y, color="C0")
         axis.set_title(f"{column.replace('_', ' ')} (peak containment)", fontsize=8)
-    axes[0].set_yticks(y, list(points["method"]), fontsize=_FONT)
     return figure
 
 
@@ -5878,15 +5864,10 @@ def plot_held_out_thresholds(thresholds: pd.DataFrame) -> Figure:
     -------
     figure : matplotlib.figure.Figure
     """
-    import matplotlib.pyplot as plt
-
     targets = list(dict.fromkeys(thresholds["fp_target"]))
     methods = sorted(set(thresholds["method"]))
-    figure, axes = plt.subplots(
-        1, len(targets), figsize=(3 * len(targets), _tall(len(methods))), sharey=True
-    )
-    y = np.arange(len(methods))[::-1]
-    for axis, target in zip(np.atleast_1d(axes), targets, strict=True):
+    figure, axes, y = _method_panels(methods, len(targets), 3 * len(targets))
+    for axis, target in zip(axes, targets, strict=True):
         rows = thresholds[thresholds["fp_target"] == target].set_index("method").loc[methods]
         _dots(axis, rows, "recall", y, color="C0", label="held out")
         axis.scatter(
@@ -5899,8 +5880,7 @@ def plot_held_out_thresholds(thresholds: pd.DataFrame) -> Figure:
         )
         axis.set_title(f"{target:g} per minute", fontsize=8)
         axis.set_xlim(0, 1)
-    np.atleast_1d(axes)[0].set_yticks(y, methods, fontsize=_FONT)
-    np.atleast_1d(axes)[-1].legend(fontsize=_FONT)
+    axes[-1].legend(fontsize=_FONT)
     return figure
 
 
@@ -5987,7 +5967,7 @@ def plot_robustness_crossed(table: pd.DataFrame) -> Figure:
         values = _grid(
             own.assign(change=own["change"] * scale), "row", "cell", "change", methods, cells
         )
-        limit = np.nanmax(np.abs(values)) if np.isfinite(values).any() else 1.0
+        low, high = _symmetric(values)
         image = _heatmap(
             axis,
             values,
@@ -5995,8 +5975,8 @@ def plot_robustness_crossed(table: pd.DataFrame) -> Figure:
             cells,
             f"{pair}: {measure} change from reference",
             cmap="RdBu_r",
-            vmin=-limit,
-            vmax=limit,
+            vmin=low,
+            vmax=high,
         )
         figure.colorbar(image, ax=axis, shrink=0.3)
     return figure
@@ -6015,17 +5995,13 @@ def plot_rates_by_state(rates: pd.DataFrame) -> Figure:
     -------
     figure : matplotlib.figure.Figure
     """
-    import matplotlib.pyplot as plt
-
     methods = list(dict.fromkeys(rates["method"]))
-    figure, axes = plt.subplots(1, 2, figsize=(9, _tall(len(methods))), sharey=True)
-    y = np.arange(len(methods))[::-1]
+    figure, axes, y = _method_panels(methods, len(STATES), 9)
     for axis, state in zip(axes, STATES, strict=True):
         rows = rates[rates["state"] == state].set_index("method").loc[methods]
         _dots(axis, rows, "rate", y, color="C0")
         axis.axvline(rows["true_rate"].median(), color="C3", linewidth=0.8)
         axis.set_title(f"events per minute, {state} (red: true)", fontsize=8)
-    axes[0].set_yticks(y, methods, fontsize=_FONT)
     return figure
 
 
@@ -6041,13 +6017,9 @@ def plot_participation_bias(bias: pd.DataFrame) -> Figure:
     -------
     figure : matplotlib.figure.Figure
     """
-    import matplotlib.pyplot as plt
-
-    figure, axis = plt.subplots(figsize=(5, _tall(len(bias))))
-    y = np.arange(len(bias))[::-1]
+    figure, (axis,), y = _method_panels(bias["method"], 1, 5)
     _dots(axis, bias, "ratio_of_means", y, color="C0")
     axis.axvline(1.0, color="0.6", linewidth=0.8)
-    axis.set_yticks(y, list(bias["method"]), fontsize=_FONT)
     axis.set_title("Recruited cells of matched events over all events' (mean)", fontsize=8)
     return figure
 
@@ -6064,17 +6036,13 @@ def plot_boundary_effect(effect: pd.DataFrame) -> Figure:
     -------
     figure : matplotlib.figure.Figure
     """
-    import matplotlib.pyplot as plt
-
     methods = list(dict.fromkeys(effect["method"]))
-    figure, axes = plt.subplots(1, 2, figsize=(9, _tall(len(methods))), sharey=True)
-    y = np.arange(len(methods))[::-1]
+    figure, axes, y = _method_panels(methods, len(SELECTIONS), 9)
     for axis, selection in zip(axes, SELECTIONS, strict=True):
         rows = effect[effect["selection"] == selection].set_index("method").loc[methods]
         _dots(axis, rows, "mean_difference", y, color="C0")
         axis.axvline(0.0, color="0.6", linewidth=0.8)
         axis.set_title(f"{selection} units active: detected bounds - truth window", fontsize=8)
-    axes[0].set_yticks(y, methods, fontsize=_FONT)
     return figure
 
 
@@ -6090,11 +6058,8 @@ def plot_matching_sensitivity(sensitivity: pd.DataFrame) -> Figure:
     -------
     figure : matplotlib.figure.Figure
     """
-    import matplotlib.pyplot as plt
-
     methods = list(dict.fromkeys(sensitivity["method"]))
-    figure, axes = plt.subplots(1, 2, figsize=(9, _tall(len(methods))), sharey=True)
-    y = np.arange(len(methods))[::-1]
+    figure, axes, y = _method_panels(methods, 2, 9)
     for axis, column in zip(axes, ("recall", "precision"), strict=True):
         for position, level in enumerate(dict.fromkeys(sensitivity["minimum_iou"])):
             rows = (
@@ -6112,7 +6077,6 @@ def plot_matching_sensitivity(sensitivity: pd.DataFrame) -> Figure:
             )
         axis.set_title(column, fontsize=8)
         axis.set_xlim(0, 1)
-    axes[0].set_yticks(y, methods, fontsize=_FONT)
     axes[1].legend(fontsize=_FONT)
     return figure
 
@@ -6131,20 +6095,11 @@ def plot_model_sensitivity(changes: pd.DataFrame) -> Figure:
     -------
     figure : matplotlib.figure.Figure
     """
-    import matplotlib.pyplot as plt
-
     alternatives = list(dict.fromkeys(changes["alternative"]))
     recall = changes[changes["measure"] == "recall"]
     methods = list(dict.fromkeys(recall["method"] + " (" + recall["setting"] + ")"))
-    figure, axes = plt.subplots(
-        1,
-        len(alternatives),
-        figsize=(2.6 * len(alternatives), _tall(len(methods))),
-        sharey=True,
-        squeeze=False,
-    )
-    y = np.arange(len(methods))[::-1]
-    for axis, alternative in zip(axes[0], alternatives, strict=True):
+    figure, axes, y = _method_panels(methods, len(alternatives), 2.6 * len(alternatives))
+    for axis, alternative in zip(axes, alternatives, strict=True):
         own = recall[recall["alternative"] == alternative]
         own = own.set_index(own["method"] + " (" + own["setting"] + ")").reindex(methods)
         _dots(axis, own, "change", y, color="C0")
@@ -6162,7 +6117,6 @@ def plot_model_sensitivity(changes: pd.DataFrame) -> Figure:
         axis.scatter(shown["change"], y[rows] + 0.3, marker="^", s=8, color="C1")
         axis.axvline(0.0, color="0.6", linewidth=0.8)
         axis.set_title(f"{alternative}\nrecall change", fontsize=7)
-    axes[0][0].set_yticks(y, methods, fontsize=_FONT)
     return figure
 
 
@@ -6700,8 +6654,7 @@ def spot_check(
     ValueError
         No event is selected, or the figure would be over ``SIZE_LIMIT``.
     """
-    import matplotlib.pyplot as plt
-    from spot_check import _MARGIN, draw_window, load_session, session_failures
+    from spot_check import _MARGIN, draw_window, load_session, session_failures, window_grid
 
     if selected.empty:
         msg = f"{name}: no event is selected."
@@ -6711,12 +6664,9 @@ def spot_check(
         rng.choice(len(selected), size=min(n_events, len(selected)), replace=False)
     )
     chosen = selected.iloc[picks]
-    n_rows = (len(chosen) + 1) // 2
-    figure = plt.figure(figsize=(12, 4.5 * n_rows), layout="constrained")
-    figure.suptitle(f"{name}: {len(chosen)} of {len(selected)} selected events", fontsize=10)
-    blocks = figure.subfigures(n_rows, 2, squeeze=False).ravel()
-    for block in blocks[len(chosen) :]:
-        block.set_visible(False)
+    figure, blocks = window_grid(
+        len(chosen), f"{name}: {len(chosen)} of {len(selected)} selected events"
+    )
     position = 0
     for session_id, rows in chosen.groupby("session_id", sort=False):
         session, found = load_session(Path(run_directory), str(session_id))
