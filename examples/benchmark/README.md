@@ -455,8 +455,8 @@ such as `lee_2002`'s, keeps the interval rule: the catalog decides, not the even
   every setting ran, read off at 0.5, 1, 2 and 5 per minute, and a threshold per target
   chosen on the even replicates and judged on the odd ones.
 - `operating_differences`: for each pair of detectors sharing a primary expression, the
-  difference in recall at each target, paired by session, with its interval and
-  sign-flip test.
+  difference in recall at each target, paired by session, with its interval and an
+  approximate p-value from the same resamples.
 - `robustness_<measure>` and `robustness_crossed_<measure>` (recall, precision, onset):
   each main setting along each factor and over the cells of the two crossed pairs.
 - `rates_by_state`, `participation_bias` and `boundary_effect`: event rates at rest and
@@ -490,9 +490,14 @@ exchangeable, so the change is pooled again under every exchange of them (every 
 to 16 replicates, else 10,000 at random), and the p-value is the share at least as large
 in size. A mean of per-replicate changes can differ in sign from the pooled change when
 replicates hold different numbers of events, so a test of it would not test the estimate
-shown. `operating_differences` is the exception: its difference in recall is read off
-the pooled curves, while its sign-flip p-value is over the differences read off each
-session's own curves, a statistic other than the one shown.
+shown. `operating_differences` cannot be tested so: two detectors' sweeps have different
+settings, so a session's two curves cannot be exchanged. Its p-value (`bootstrap_p`) is
+twice the smaller share of the resampled pooled differences at or below 0 and at or
+above 0 (capped at 1, over the resamples in which both curves reach the target,
+`n_draws`), from the resamples its interval comes from: estimate, interval and p-value
+are one statistic, and p < 0.05 when the 95 % interval excludes 0 (to within one
+resample). It inverts the interval, an approximation, not an exact randomization test;
+a p-value of 0 means no resample on one side, below 1 / `n_draws`.
 
 What each column means is in the docstring of the function that builds the table: the
 function of the table's name, except `failures` (`failure_counts`),

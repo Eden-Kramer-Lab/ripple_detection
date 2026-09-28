@@ -441,6 +441,48 @@ def test_swap_test_leaves_out_undefined_patterns(analyze):
     assert np.isnan(p[1])
 
 
+def test_bootstrap_p_by_hand(analyze):
+    draws = np.array(
+        [
+            [-1.0, np.nan, 0.0, 1.0, np.nan],
+            [1.0, -1.0, 1.0, 2.0, np.nan],
+            [2.0, 1.0, 2.0, 3.0, np.nan],
+            [3.0, 2.0, 3.0, 4.0, np.nan],
+            [4.0, 3.0, 4.0, 5.0, np.nan],
+        ]
+    )
+    p, n_draws = analyze.bootstrap_p(draws)
+    # 1 of 5 at or below 0; 1 of the 4 defined; a draw at 0 counts on both
+    # sides; none at or below 0; no draw defined
+    np.testing.assert_array_equal(p[:4], [2 / 5, 2 / 4, 2 / 5, 0.0])
+    assert np.isnan(p[4])
+    assert n_draws.tolist() == [5, 4, 5, 5, 0]
+    # capped at 1: every draw at 0 is on both sides
+    assert analyze.bootstrap_p(np.zeros((4, 1)))[0].tolist() == [1.0]
+
+
+def test_bootstrap_p_below_005_when_the_interval_excludes_0(analyze):
+    """The p-value and the 95 % percentile interval come from the same draws,
+    so p < 0.05 exactly when the interval excludes 0, but within one draw of
+    p = 0.05, where the interpolated bound can fall on either side."""
+    rng = np.random.default_rng(4)
+    draws = rng.normal(size=(2000, 1)) + np.linspace(-4, 4, 401)
+    draws[rng.random(draws.shape) < 0.01] = np.nan
+    p, n_draws = analyze.bootstrap_p(draws)
+    low, high = analyze.percentile_intervals(draws)
+    excludes = (low > 0) | (high < 0)
+    boundary = np.abs(p - 0.05) <= 2 / n_draws
+    assert boundary.sum() <= 3
+    np.testing.assert_array_equal((p < 0.05)[~boundary], excludes[~boundary])
+    assert excludes.any()
+    assert (~excludes).any()
+    # at the boundary: 50 of 2000 draws at or below 0, the 2.5 % quantile
+    # interpolated between the 50th (0) and the 51st (1)
+    edge = np.concatenate([np.zeros(50), np.ones(1950)])[:, np.newaxis]
+    assert analyze.bootstrap_p(edge)[0].tolist() == [0.05]
+    assert analyze.percentile_intervals(edge)[0][0] > 0
+
+
 def test_choose_setting_boundary_and_ties(analyze):
     # a setting exactly at the target is allowed
     assert analyze.choose_setting([0.5, 0.8], [0.5, 1.0], 1.0) == 1
@@ -2426,7 +2468,6 @@ def _hand_orders(analyze, alternative="spike_model=refractory"):
     found = analyze.SweepRecalls(
         estimate=estimate,
         draws=draws,
-        alone=np.full((4, 2, 2, len(_HAND_TARGETS)), np.nan),
         replicates=[{0, 1, 2, 3}, {0, 1, 2, 3}],
         nearest=np.full((2, 2, len(_HAND_TARGETS)), "2.0", dtype=object),
     )
@@ -2622,10 +2663,36 @@ def test_operating_differences_are_paired_by_session(analyze):
     assert [row.difference, row.difference_low, row.difference_high] == pytest.approx(
         [-0.1, -0.1, -0.1]
     )
-    assert (row.difference_p, row.n_paired, row.n_replicates) == (2 / 16, 4, 4)
+    # the p-value from those same resamples: none at or above 0
+    assert (row.difference_p, row.n_draws, row.n_replicates) == (0.0, FEW, 4)
     unreached = at_one.loc[(KAY[0], ROUMIS)]
     assert (unreached.reached_a, unreached.reached_b) == (True, False)
     assert np.isnan(unreached.difference)
+    assert np.isnan(unreached.difference_p)
+    assert unreached.n_draws == 0
+
+
+def test_operating_differences_test_the_resamples_of_their_interval(analyze):
+    """Kay's recall at 1 false positive a minute is 0.7 in every session,
+    Karlsson's 0.8, 0.6, 0.7 and 0.5, at the same false-positive rates, so a
+    resample's pooled difference is its weighted mean of +0.1, -0.1, 0 and
+    -0.2: the p-value is from those same resamples."""
+    counts = []
+    for replicate, (first, second) in enumerate([(9, 7), (7, 5), (8, 6), (6, 4)]):
+        counts += _curve("reference", replicate, KAY[0], ((8, 28), (6, 11)))
+        counts += _curve(
+            "reference", replicate, SWEPT_KARLSSON, ((first, first + 20), (second, second + 5))
+        )
+    table = analyze.operating_differences(_hand_scores(analyze, counts), n_resamples=FEW)
+    row = table[table.fp_target == 1.0].iloc[0]
+    assert row.difference == pytest.approx(-0.05)
+    draws = analyze.resample_weights(4, n_resamples=FEW) @ np.array([0.1, -0.1, 0.0, -0.2]) / 4
+    p, n_draws = analyze.bootstrap_p(draws[:, np.newaxis])
+    assert row.difference_p == pytest.approx(p[0])
+    assert row.n_draws == n_draws[0] == FEW
+    assert 0 < row.difference_p < 1
+    low, high = analyze.percentile_intervals(draws[:, np.newaxis])
+    assert [row.difference_low, row.difference_high] == pytest.approx([low[0], high[0]])
 
 
 def test_operating_order_trend_is_the_paired_difference(analyze):
@@ -2639,10 +2706,11 @@ def test_operating_order_trend_is_the_paired_difference(analyze):
     row = trends[trends.kind == "operating_order"].iloc[0]
     # the leader is the detector with the best recall, the difference paired
     assert row.method == KAY[0]
-    assert [row.value, row.low, row.high, row.p] == pytest.approx([0.1, 0.1, 0.1, 2 / 16])
-    assert f"{KAY[0]} minus {SWEPT_KARLSSON} +0.100 (+0.100, +0.100), sign-flip p 0.125" in (
-        row.statement
-    )
+    assert [row.value, row.low, row.high, row.p] == pytest.approx([0.1, 0.1, 0.1, 0.0])
+    assert (
+        f"{KAY[0]} minus {SWEPT_KARLSSON} +0.100 (+0.100, +0.100), bootstrap p < 1/{FEW} "
+        f"(approximate, from the interval's {FEW} resamples) over 4 sessions, paired."
+    ) in row.statement
     # a detector whose curve does not reach the target is named, not dropped
     assert f"{ROUMIS} does not reach 1 false positive a minute" in row.statement
     # the settings to look at: each curve's nearest to 1 per minute (2 and 0.5

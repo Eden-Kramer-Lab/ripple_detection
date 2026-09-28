@@ -53,8 +53,9 @@ p-value ``sign_flip_test``'s, two-sided, over them. A change between conditions 
 the value pooled over the replicates minus the reference's pooled value, and its
 p-value ``swap_test``'s of that same pooled change, each replicate's two sessions
 exchanged between the conditions. ``operating_differences``' pooled difference in
-recall is the exception: its p-value is a sign flip over each session's own
-difference, its curves read off alone.
+recall cannot be tested so (two detectors' sweeps differ, so their sessions cannot
+be exchanged): its p-value inverts the percentile interval from the same resamples
+(``bootstrap_p``), an approximation.
 
 Signs and units. Times and errors are seconds (the figures show milliseconds). A
 signed error is detected minus truth: negative, early. A difference between two
@@ -2027,6 +2028,38 @@ def percentile_intervals(
     quantiles = pd.DataFrame(np.asarray(draws, dtype=float)).quantile([alpha, 1 - alpha])
     low, high = quantiles.to_numpy(dtype=float, copy=True)
     return low, high
+
+
+def bootstrap_p(draws: ArrayLike) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+    """Two-sided p-value of 0 from a statistic's bootstrap resamples.
+
+    ``2 min(share of draws <= 0, share of draws >= 0)``, capped at 1, over
+    the defined (finite) draws: the percentile interval inverted, so from
+    the same draws as ``percentile_intervals``' 95 % interval, p < 0.05
+    exactly when that interval excludes 0 (but within one draw of p = 0.05,
+    where the interpolated bound can fall on either side). An
+    approximation, not an exact randomization test; 0 means no draw on one
+    side, below ``1 / n_draws``.
+
+    Parameters
+    ----------
+    draws : array_like, shape (n_resamples, n_statistics)
+
+    Returns
+    -------
+    p : ndarray, shape (n_statistics,)
+        NaN for a statistic without a defined draw.
+    n_draws : ndarray of int, shape (n_statistics,)
+        The defined draws each p-value is over.
+    """
+    draws = np.asarray(draws, dtype=float)
+    defined = np.isfinite(draws)
+    n_draws = defined.sum(axis=0)
+    below = (defined & (draws <= 0)).sum(axis=0)
+    above = (defined & (draws >= 0)).sum(axis=0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        p = np.minimum(1.0, 2 * np.minimum(below, above) / n_draws)
+    return p, n_draws
 
 
 # The analyses
@@ -4228,8 +4261,6 @@ class SweepRecalls:
     estimate : ndarray, shape (n_conditions, n_detectors, n_targets)
     draws : ndarray, shape (n_resamples, n_conditions, n_detectors, n_targets)
         ``paired_bootstrap``'s resamples of replicates, as weights.
-    alone : ndarray, shape (n_replicates, n_conditions, n_detectors, n_targets)
-        Each replicate's own curves read off.
     replicates : list of set
         Per detector, the replicates pooled: those on which every setting of
         its sweep ran in every condition, so that the conditions are paired.
@@ -4241,7 +4272,6 @@ class SweepRecalls:
 
     estimate: np.ndarray[Any, Any]
     draws: np.ndarray[Any, Any]
-    alone: np.ndarray[Any, Any]
     replicates: list[set[Any]]
     nearest: np.ndarray[Any, Any]
 
@@ -4250,7 +4280,6 @@ class SweepRecalls:
         return SweepRecalls(
             self.estimate[:, [a, b]],
             self.draws[:, :, [a, b]],
-            self.alone[:, :, [a, b]],
             [self.replicates[a], self.replicates[b]],
             self.nearest[:, [a, b]],
         )
@@ -4307,7 +4336,6 @@ def _sweep_recalls(
     return SweepRecalls(
         estimate=statistic(np.ones(len(replicates))),
         draws=np.array([statistic(w) for w in weights]),
-        alone=np.array([statistic(w) for w in np.eye(len(replicates))]),
         replicates=paired,
         nearest=nearest,
     )
@@ -4429,41 +4457,6 @@ def _same_primary_pairs(
         shared = sorted(found.replicates[a] & found.replicates[b])
         pair = [detectors[a], detectors[b]]
         yield a, b, _sweep_recalls(scores, conditions, shared, pair, targets, n_resamples)
-
-
-def _paired_test(
-    difference: np.ndarray[Any, Any], draws: np.ndarray[Any, Any], alone: np.ndarray[Any, Any]
-) -> tuple[
-    np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]
-]:
-    """A paired difference's interval and test.
-
-    Parameters
-    ----------
-    difference : ndarray, any shape
-    draws : ndarray, shape (n_resamples, *difference.shape)
-        Its resampled values.
-    alone : ndarray, shape (n_units, *difference.shape)
-        Each unit's own.
-
-    Returns
-    -------
-    low, high : ndarray, shaped as ``difference``
-        ``_conditional_intervals``'.
-    p : ndarray, shaped as ``difference``
-        ``sign_flip_test`` over the units whose own difference is finite;
-        NaN where ``difference`` is not.
-    n_paired : ndarray of int, shaped as ``difference``
-        Those units; 0 where ``difference`` is not finite.
-    """
-    low, high = _conditional_intervals(difference, draws)
-    p = np.full(difference.shape, np.nan)
-    n_paired = np.zeros(difference.shape, dtype=int)
-    for index in zip(*np.nonzero(np.isfinite(difference)), strict=True):
-        own = alone[(slice(None), *index)]
-        finite = own[np.isfinite(own)]
-        p[index], n_paired[index] = sign_flip_test(finite), len(finite)
-    return low, high, p, n_paired
 
 
 def _status(value: ArrayLike, n_failures: ArrayLike, otherwise: str) -> Any:
@@ -4737,7 +4730,7 @@ DIFFERENCE_COLUMNS = (
     "difference_low",
     "difference_high",
     "difference_p",
-    "n_paired",
+    "n_draws",
     "n_replicates",
     "n_dropped",
 )
@@ -4756,8 +4749,10 @@ def operating_differences(
     Each detector's recall is read off its sweep (``at_fp_rate``, IoU 0),
     pooled over the condition's sessions both detectors ran every setting
     on; the interval is from the same resamples of sessions for both
-    (``resample_weights``), the p-value ``sign_flip_test``'s over each
-    session's difference, its own curves read off alone.
+    (``resample_weights``), and the p-value (``bootstrap_p``) from the same
+    resampled differences, so estimate, interval and p-value are of one
+    statistic: approximate, not an exact randomization test (two detectors'
+    sessions cannot be exchanged when their sweeps have different settings).
 
     Parameters
     ----------
@@ -4775,9 +4770,10 @@ def operating_differences(
         looks), ``recall_a`` and ``recall_b``, ``reached_a`` and ``reached_b``
         (whether each curve reaches the target; a recall it does not reach
         is NaN, never the curve's end), ``difference`` (A minus B) with
-        ``_low``, ``_high`` and ``_p``, ``n_paired`` (sessions whose own
-        curves both reach it), ``n_replicates`` (sessions pooled) and
-        ``n_dropped`` (the condition's other sessions).
+        ``_low``, ``_high`` and ``_p``, ``n_draws`` (the resamples in which
+        both pooled curves reach the target, those the interval and p-value
+        are over), ``n_replicates`` (sessions pooled) and ``n_dropped`` (the
+        condition's other sessions).
     """
     detectors = _detectors(scores)
     primary = _primary_of(scores)
@@ -4789,11 +4785,12 @@ def operating_differences(
     for a, b, own in _same_primary_pairs(
         scores, [condition], detectors, found, targets, n_resamples
     ):
-        estimate, draws, alone, paired = own.estimate, own.draws, own.alone, own.replicates[0]
+        estimate, paired = own.estimate, own.replicates[0]
         difference = estimate[0, 0] - estimate[0, 1]
-        low, high, p, n_paired = _paired_test(
-            difference, draws[:, 0, 0] - draws[:, 0, 1], alone[:, 0, 0] - alone[:, 0, 1]
-        )
+        resampled = own.draws[:, 0, 0] - own.draws[:, 0, 1]
+        low, high = _conditional_intervals(difference, resampled)
+        p, n_draws = bootstrap_p(resampled)
+        p[~np.isfinite(difference)] = np.nan
         for t, target in enumerate(targets):
             rows.append(
                 {
@@ -4811,7 +4808,7 @@ def operating_differences(
                     "difference_low": low[t],
                     "difference_high": high[t],
                     "difference_p": p[t],
-                    "n_paired": n_paired[t],
+                    "n_draws": n_draws[t],
                     "n_replicates": len(paired),
                     "n_dropped": len(replicates) - len(paired),
                 }
@@ -6772,7 +6769,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
             first, second = reached.iloc[0], reached.iloc[1]
             unreached = sorted(own.loc[own["recall"].isna(), "method"])
             value = low = high = p = np.nan
-            n_paired = 0
+            n_draws = n_replicates = 0
             settings = {first.method: "", second.method: ""}
             if len(differences):
                 pair = differences[
@@ -6788,7 +6785,8 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                     low, high = sorted(
                         (sign * found.difference_low, sign * found.difference_high)
                     )
-                    p, n_paired = found.difference_p, int(found.n_paired)
+                    p, n_draws = found.difference_p, int(found.n_draws)
+                    n_replicates = int(found.n_replicates)
                     settings = {
                         found.method_a: found.setting_a,
                         found.method_b: found.setting_b,
@@ -6798,8 +6796,9 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                 f"the highest recall, {first.recall:.3f} ({first.recall_low:.3f}, "
                 f"{first.recall_high:.3f}); next {second.method}, {second.recall:.3f} "
                 f"({second.recall_low:.3f}, {second.recall_high:.3f}); {first.method} "
-                f"minus {second.method} {value:+.3f} ({low:+.3f}, {high:+.3f}), sign-flip "
-                f"p {p:.3g} over {n_paired} sessions, paired."
+                f"minus {second.method} {value:+.3f} ({low:+.3f}, {high:+.3f}), bootstrap "
+                f"p {f'< 1/{n_draws}' if p == 0 else f'{p:.3g}'} (approximate, from the "
+                f"interval's {n_draws} resamples) over {n_replicates} sessions, paired."
             )
             if unreached:
                 verb = "does" if len(unreached) == 1 else "do"
@@ -7299,8 +7298,9 @@ ANALYSES: tuple[Analysis, ...] = (
         OPERATING_DIFFERENCES,
         _of_scores(operating_differences),
         "For each pair of detectors sharing a primary expression, the difference in recall "
-        "(A minus B) at each target rate, paired by session, with its interval and "
-        "sign-flip test; missing where a curve does not reach the target.",
+        "(A minus B) at each target rate, paired by session, with its interval and an "
+        "approximate p-value from the same resamples; missing where a curve does not reach "
+        "the target.",
     ),
     Analysis(
         "held_out_thresholds",
@@ -7486,10 +7486,11 @@ def _summary(
             "conditions the other condition minus the reference. Intervals are 95 % "
             "paired-bootstrap intervals over sessions within a condition and over "
             "replicates across conditions. p-values are two-sided: of a difference between "
-            "methods summarized per session, a sign-flip test over those per-session values "
-            "(of an operating difference, over each session's own); of a change between "
-            "conditions, a paired-swap test of the pooled change itself, each replicate's "
-            "two sessions exchanged."
+            "methods summarized per session, a sign-flip test over those per-session values; "
+            "of a change between conditions, a paired-swap test of the pooled change itself, "
+            "each replicate's two sessions exchanged; of an operating difference, "
+            "2 min(share of resamples <= 0, share >= 0) over the resamples of its interval, "
+            "approximate (below 0.05 when the interval excludes 0), not an exact test."
         ),
         "",
         *_point_lines(tables),
