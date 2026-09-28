@@ -856,10 +856,12 @@ def _post_step(step: Step, events: FloatArray, context: SessionContext) -> Float
     parameters = dict(step.parameters)
     recording = context.recording
     if step.operation == "active_units":
+        # the counts need only the samples inside the events
+        inside = recording.intervals_to_mask(events)
         kept = rd.require_active_units(
             events,
-            recording.multiunit,
-            recording.time,
+            recording.multiunit[inside],
+            recording.time[inside],
             minimum_active_units=parameters["minimum"],
             units=context.units(parameters["units"]),
         )
