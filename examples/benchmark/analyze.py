@@ -58,6 +58,7 @@ import io
 import itertools
 import json
 import os
+import shutil
 import time as wall_clock
 from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
@@ -6354,7 +6355,7 @@ def spot_check(
                 methods,
             )
             position += 1
-    directory = Path(results_directory) / "spot_checks"
+    directory = Path(results_directory) / SPOT_CHECKS
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{name}.png"
     write_result(path, _png(figure))
@@ -6745,6 +6746,9 @@ ANALYSES: tuple[Analysis, ...] = (
 _DPI = 100
 FLOAT_FORMAT = "%.6g"
 CANDIDATES = "candidate_trends"
+# What is written by hand in a results directory, kept when it is rebuilt.
+TRENDS = "trends.md"
+SPOT_CHECKS = "spot_checks"
 
 
 def _png(figure: Figure) -> bytes:
@@ -6797,6 +6801,7 @@ def _summary(
     validation: pd.DataFrame | None,
     scores: ConditionScores | None = None,
     validation_problem: str = "",
+    trends_written: bool = False,
 ) -> str:
     """``summary.md``: what was analysed, the conventions, each file with
     its sentence, the failures (of the reference, and of every condition
@@ -6959,10 +6964,19 @@ def _summary(
         "## Trends and spot checks",
         "",
         (
-            f"No trend is stated yet. `{CANDIDATES}.csv` lists candidates with their evidence "
-            "rows; each is reported only once its underlying events have been looked at (a "
-            "figure in `spot_checks/`, and a sentence here), and once it is checked not to "
-            "come from failures, empty sweeps or a unit error."
+            "The trends stated so far, each with what its spot check showed, are in "
+            f"[{TRENDS}]({TRENDS})."
+            if trends_written
+            else f"No `{TRENDS}` has been written yet: no trend is stated."
+        ),
+        "",
+        (
+            f"`{CANDIDATES}.csv` lists candidates with their evidence rows; each is stated "
+            f"(in `{TRENDS}`, with a sentence on what its spot check showed) only once its "
+            f"underlying events have been looked at (a figure in `{SPOT_CHECKS}/`) and it is "
+            "checked not to come from failures, empty sweeps or a unit error. "
+            f"`{TRENDS}` and `{SPOT_CHECKS}/` are written by hand and carried over when "
+            "`analyze.py` rebuilds this directory; every other file is rebuilt."
         ),
     ]
     return "\n".join(lines) + "\n"
@@ -7031,7 +7045,9 @@ def analyze_run(
     results_directory : str or path-like
         Rebuilt from scratch (in ``<name>.partial``, renamed into place):
         ``<name>.csv`` per analysis, ``<name>.png`` per figure (none for an
-        empty table), ``candidate_trends.csv`` and ``summary.md``.
+        empty table), ``candidate_trends.csv`` and ``summary.md``. What is
+        written there by hand, ``trends.md`` and ``spot_checks/``, is copied
+        into the rebuilt directory.
     workers : int, optional
         Processes for matching the sessions again.
     figures : bool, optional
@@ -7068,7 +7084,13 @@ def analyze_run(
 
         mpl.use("Agg")
     files, results = [], {}
-    with replace_directory(Path(results_directory)) as partial:
+    previous = Path(results_directory)
+    with replace_directory(previous) as partial:
+        # the hand-written trends and their spot checks outlive a rebuild
+        if (previous / SPOT_CHECKS).is_dir():
+            shutil.copytree(previous / SPOT_CHECKS, partial / SPOT_CHECKS)
+        if (previous / TRENDS).is_file():
+            shutil.copy2(previous / TRENDS, partial / TRENDS)
         for analysis in analyses:
             started = wall_clock.perf_counter()
             table = analysis.table(inputs)
@@ -7103,6 +7125,7 @@ def analyze_run(
             inputs.validation,
             scores,
             inputs.validation_problem,
+            (partial / TRENDS).is_file(),
         )
         write_result(partial / "summary.md", summary.encode())
     return seconds

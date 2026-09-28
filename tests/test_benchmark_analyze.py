@@ -2077,6 +2077,28 @@ def test_the_command_writes_every_table_and_the_summary(analyze, two_condition_r
     ]
 
 
+def test_the_command_keeps_the_hand_written_spot_checks(analyze, tiny_run, tmp_path):
+    results = tmp_path / "results"
+    (results / "spot_checks").mkdir(parents=True)
+    (results / "spot_checks" / "kay_missed_weak.png").write_bytes(b"figure")
+    (results / "trends.md").write_text("# Trends\n\nKay misses weak ripples.\n")
+    (results / "stale.csv").write_text("an earlier analysis\n")
+    failures = next(a for a in analyze.ANALYSES if a.name == "failures")
+    analyze.analyze_run(tiny_run.parent, results, figures=False, analyses=[failures])
+    # the tables are rebuilt; what was written by hand is carried over
+    assert not (results / "stale.csv").exists()
+    assert (results / "spot_checks" / "kay_missed_weak.png").read_bytes() == b"figure"
+    assert (results / "trends.md").read_text() == "# Trends\n\nKay misses weak ripples.\n"
+    summary = (results / "summary.md").read_text()
+    assert "[trends.md](trends.md)" in summary
+    assert "carried over" in summary
+    # without them, the summary says there are none yet
+    fresh = tmp_path / "fresh"
+    analyze.analyze_run(tiny_run.parent, fresh, figures=False, analyses=[failures])
+    assert not (fresh / "spot_checks").exists()
+    assert "No `trends.md` has been written yet" in (fresh / "summary.md").read_text()
+
+
 def test_a_file_over_the_limit_stops_the_command(analyze, tiny_run, tmp_path):
     results = tmp_path / "results"
     results.mkdir()

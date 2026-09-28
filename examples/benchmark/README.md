@@ -382,8 +382,11 @@ six alternative models; robustness and model sensitivity read every condition, p
 by replicate. It rebuilds `examples/benchmark/results/<run_name>/`: one CSV and one PNG
 per analysis, `candidate_trends.csv`, and `summary.md`, which names each file with one
 sentence on what it shows, lists every method that failed on some session and the lists
-the analyses call for (below). No file may pass 1 MB: the command stops before writing
-one and leaves the previous results in place. `--run-directory` and
+the analyses call for (below). What is written there by hand, `trends.md` (the trends
+stated, each with what its spot check showed) and the figures in `spot_checks/`, is
+carried over into the rebuilt directory, and `summary.md` links `trends.md`. No file may
+pass 1 MB: the command stops before writing one and leaves the previous results in
+place. `--run-directory` and
 `--results-directory` read and write elsewhere.
 
 Two scoring rules. An interval method is matched one to one to the truth windows of its
