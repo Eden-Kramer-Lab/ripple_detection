@@ -560,6 +560,10 @@ class RunTables:
     truth : dict of str to (pandas.DataFrame, pandas.DataFrame)
         By ``session_id``, its latent event and non-event tables, as
         ``run.load_truth`` restores them.
+    conditions : tuple of str
+        The conditions of the sessions read, in the run's order.
+    settings : tuple of str or None
+        The settings read; None for every setting, sweeps included.
     """
 
     sessions: pd.DataFrame
@@ -570,6 +574,8 @@ class RunTables:
     events: pd.DataFrame
     truth_counts: pd.DataFrame
     truth: dict[str, tuple[pd.DataFrame, pd.DataFrame]]
+    conditions: tuple[str, ...]
+    settings: tuple[str, ...] | None
 
 
 def _selected(
@@ -672,6 +678,8 @@ def load_run(
         events=_read_selected(root / "events.csv.gz", ids, settings),
         truth_counts=_selected(read_table(root / "truth_counts.csv.gz"), ids, None),
         truth=truth,
+        conditions=tuple(dict.fromkeys(sessions["condition_id"])),
+        settings=None if settings is None else tuple(settings),
     )
 
 
@@ -6401,7 +6409,8 @@ class Inputs:
     Attributes
     ----------
     tables : RunTables
-        The reference condition's main settings.
+        The reference condition's main settings, as ``load_run`` reads them
+        by default: anything else is refused.
     matches : Matches
         Its sessions matched again at every level of ``MATCH_IOU_LEVELS``.
     scores : ConditionScores
@@ -6421,6 +6430,22 @@ class Inputs:
     validation: pd.DataFrame | None
     validation_problem: str = ""
     cache: dict[Any, Any] = dataclasses.field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Refuse tables that are not the reference's main settings alone,
+        which every analysis of ``tables`` describes itself as."""
+        settings = self.tables.settings
+        if (
+            self.tables.conditions != (REFERENCE_CONDITION,)
+            or settings is None
+            or set(settings) != set(MAIN_SETTINGS)
+        ):
+            msg = (
+                "The analyses of the reference need the reference condition's main "
+                f"settings alone; the tables hold the conditions {self.tables.conditions} "
+                f"and the settings {settings or 'all'}."
+            )
+            raise ValueError(msg)
 
 
 def _cached(inputs: Inputs, key: Any, compute: Callable[[], Any]) -> Any:

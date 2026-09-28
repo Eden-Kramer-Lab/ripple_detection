@@ -439,6 +439,27 @@ def test_loading_reads_back_what_the_run_wrote(analyze, run, tiny_run, tiny_tabl
     assert tiny_tables.events.end_time.max() > UNIX_ORIGIN
 
 
+def test_the_reference_analyses_take_reference_main_tables(
+    analyze, tiny_tables, two_condition_run
+):
+    assert (tiny_tables.conditions, tiny_tables.settings) == (
+        ("reference",),
+        ("default", "literature"),
+    )
+    everything = analyze.load_run(two_condition_run, conditions=None, settings=None)
+    assert everything.conditions == ("reference", "spike_model=refractory")
+    assert everything.settings is None
+    # the analyses of the reference refuse any other selection
+    for tables in (
+        everything,
+        analyze.load_run(two_condition_run, settings=None),
+        analyze.load_run(two_condition_run, conditions=["spike_model=refractory"]),
+    ):
+        with pytest.raises(ValueError, match="the reference condition's main settings"):
+            analyze.Inputs(tables, None, None, None)
+    analyze.Inputs(tiny_tables, None, None, None)
+
+
 def test_loading_an_unknown_condition_raises(analyze, tiny_run):
     with pytest.raises(ValueError, match=r"no session of the conditions \['ripple_snr=low'\]"):
         analyze.load_run(tiny_run, conditions=["reference", "ripple_snr=low"])
