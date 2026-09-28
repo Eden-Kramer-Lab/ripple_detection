@@ -359,6 +359,8 @@ TABLES: dict[str, Table] = {
 }
 # The run's table of its conditions.
 CONDITIONS_TABLE = Table(CONDITION_COLUMNS, frozenset(CONDITION_COLUMNS))
+# Rows of a large table read at once, when only some are kept.
+_CHUNK_ROWS = 1_000_000
 
 # (method, setting, prepare): prepare builds the call's inputs and returns the
 # method's call itself.
@@ -1038,7 +1040,12 @@ def _write_table(frame: pd.DataFrame, path: Path) -> int:
     return len(frame)
 
 
-def read_table(path: str | os.PathLike[str]) -> pd.DataFrame:
+def read_table(
+    path: str | os.PathLike[str],
+    *,
+    columns: Sequence[str] | None = None,
+    keep: Callable[[pd.DataFrame], pd.Series[bool]] | None = None,
+) -> pd.DataFrame:
     """Read a table the runner wrote, its text as text.
 
     Parameters
@@ -1046,6 +1053,11 @@ def read_table(path: str | os.PathLike[str]) -> pd.DataFrame:
     path : str or path-like
         A table of a condition or of ``combined/``, by its file name in
         ``TABLES``, or ``conditions.csv``.
+    columns : sequence of str, optional
+        Read these alone, in this order; default every column.
+    keep : callable, optional
+        ``keep(rows)``: whether to keep each row. The table is then read
+        ``_CHUNK_ROWS`` rows at a time, so a large table is never held whole.
 
     Returns
     -------
@@ -1066,13 +1078,24 @@ def read_table(path: str | os.PathLike[str]) -> pd.DataFrame:
     if table is None:
         msg = f"{name} is not a table the runner writes; use conditions.csv or {list(TABLES)}."
         raise ValueError(msg)
-    return pd.read_csv(
-        path,
-        dtype=dict.fromkeys(table.text, str),
-        keep_default_na=False,
-        na_values={column: [""] for column in table.columns if column not in table.text},
-        float_precision="round_trip",
-    )
+    read = table.columns if columns is None else tuple(columns)
+    options: dict[str, Any] = {
+        "usecols": None if columns is None else list(read),
+        "dtype": {column: str for column in read if column in table.text},
+        "keep_default_na": False,
+        "na_values": {column: [""] for column in read if column not in table.text},
+        "float_precision": "round_trip",
+    }
+    if keep is None:
+        frame = pd.read_csv(path, **options)
+    else:
+        chunks = [
+            chunk[keep(chunk)] for chunk in pd.read_csv(path, chunksize=_CHUNK_ROWS, **options)
+        ]
+        # chunks left empty add nothing (and would make pandas warn about dtypes)
+        frame = pd.concat([chunk for chunk in chunks if len(chunk)] or chunks[:1])
+        frame = frame.reset_index(drop=True)
+    return frame if columns is None else frame[list(read)]
 
 
 def result_stem(method: str, setting: str) -> str:

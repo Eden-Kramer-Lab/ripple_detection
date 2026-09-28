@@ -481,6 +481,21 @@ def test_read_table_keeps_text_as_text(run, written, tmp_path):
         run.read_table(tmp_path / "swept.csv.gz")
 
 
+def test_read_table_reads_some_columns_and_rows(run, written, monkeypatch):
+    path = written / "metrics.csv.gz"
+    whole = run.read_table(path)
+    columns = ["setting", "session_id", "median_iou"]
+    assert list(run.read_table(path, columns=columns).columns) == columns
+    # two rows at a time, so that some chunks keep none
+    monkeypatch.setattr(run, "_CHUNK_ROWS", 2)
+    swept = run.read_table(path, columns=columns, keep=lambda rows: rows.setting == "3.0")
+    expected = whole.loc[whole.setting == "3.0", columns].reset_index(drop=True)
+    pd.testing.assert_frame_equal(swept, expected, check_exact=True)
+    none = run.read_table(path, columns=columns, keep=lambda rows: rows.setting == "")
+    assert none.empty
+    assert list(none.columns) == columns
+
+
 def test_metrics_agree_with_match_events(run, written, session):
     events = run.read_table(written / "events.csv.gz")
     metrics = run.read_table(written / "metrics.csv.gz")

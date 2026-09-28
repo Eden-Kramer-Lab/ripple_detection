@@ -100,7 +100,6 @@ from recipe_configs import RECIPES
 from run import (
     MATCH_IOU_LEVELS,
     OUTPUT,
-    TABLES,
     THRESHOLD_SWEEPS,
     _concat,
     load_truth,
@@ -140,8 +139,6 @@ _EXACT_UP_TO = 16
 MAIN_SETTINGS = ("default", "literature")
 REFERENCE_CONDITION = "reference"
 _KEY = ["session_id", "method", "setting"]
-# Rows of a large table read at once.
-_CHUNK_ROWS = 1_000_000
 
 # The catalog's output of a method whose events are time points, and the two
 # scoring rules.
@@ -577,8 +574,8 @@ class RunTables:
         The ``sessions.csv.gz`` rows read.
     methods : pandas.DataFrame
         One row per method and setting of those sessions' ``methods.csv``,
-        sorted: ``method``, ``setting``, ``primary_expression``, ``role``,
-        ``scoring`` (``scoring_rule``).
+        sorted: ``method``, ``setting``, ``primary_expression``, ``scoring``
+        (``scoring_rule``).
     ran : pandas.DataFrame
         One row per session, method and setting with scores (rows of
         ``metrics.csv.gz``): ``session_id``, ``method``, ``setting``.
@@ -620,32 +617,26 @@ def _selection(
     return keep
 
 
-def _selected(
-    frame: pd.DataFrame, sessions: Collection[str], settings: Collection[str] | None
-) -> pd.DataFrame:
-    """The rows of ``sessions`` and, when given, of ``settings``."""
-    return frame[_selection(frame, sessions, settings)].reset_index(drop=True)
-
-
-def _read_selected(
-    path: Path, sessions: Collection[str], settings: Collection[str] | None
-) -> pd.DataFrame:
-    """A runner table's rows of some sessions and settings, read chunk by
-    chunk with ``read_table``'s conventions (text as text, floats exactly as
-    written), so a whole large table is never held at once."""
-    table = TABLES[path.name]
-    reader = pd.read_csv(
-        path,
-        chunksize=_CHUNK_ROWS,
-        dtype=dict.fromkeys(table.text, str),
-        keep_default_na=False,
-        na_values={column: [""] for column in table.columns if column not in table.text},
-        float_precision="round_trip",
+def _methods_table(listed: pd.DataFrame) -> pd.DataFrame:
+    """One row per method and setting of ``methods.csv`` rows, sorted:
+    ``method``, ``setting``, ``primary_expression``, ``scoring``."""
+    methods = (
+        listed.drop_duplicates(["method", "setting"])[
+            ["method", "setting", "primary_expression"]
+        ]
+        .sort_values(["method", "setting"])
+        .reset_index(drop=True)
     )
-    chunks = [_selected(chunk, sessions, settings) for chunk in reader]
-    # chunks left empty add nothing (and would make pandas warn about dtypes)
-    kept = [chunk for chunk in chunks if len(chunk)] or chunks[:1]
-    return pd.concat(kept, ignore_index=True)
+    return methods.assign(scoring=methods["method"].map(scoring_rule))
+
+
+def _missing(sessions: pd.DataFrame, methods: pd.DataFrame, ran: pd.DataFrame) -> pd.DataFrame:
+    """Every session, method and setting without scores: ``session_id``,
+    ``method``, ``setting``. Every session should hold every method and
+    setting, so one missing failed, never found zero events."""
+    expected = sessions[["session_id"]].merge(methods[["method", "setting"]], how="cross")
+    missing = expected.merge(ran, on=_KEY, how="left", indicator=True)
+    return missing[missing["_merge"] == "left_only"][_KEY].reset_index(drop=True)
 
 
 def load_run(
@@ -684,32 +675,22 @@ def load_run(
             raise ValueError(msg)
         sessions = sessions[sessions["condition_id"].isin(conditions)].reset_index(drop=True)
     ids = set(sessions["session_id"])
-    listed = _selected(read_table(root / "methods.csv"), ids, settings)
-    methods = (
-        listed.drop_duplicates(["method", "setting"])[
-            ["method", "setting", "primary_expression", "role"]
-        ]
-        .sort_values(["method", "setting"])
-        .reset_index(drop=True)
-    )
-    methods["scoring"] = methods["method"].map(scoring_rule)
+
+    def selected(rows: pd.DataFrame) -> pd.Series:
+        return _selection(rows, ids, settings)
+
+    methods = _methods_table(read_table(root / "methods.csv", keep=selected))
     ran = (
-        _read_columns(
-            root / "metrics.csv.gz",
-            _KEY,
-            lambda chunk: _selection(chunk, ids, settings),
-        )
+        read_table(root / "metrics.csv.gz", columns=_KEY, keep=selected)
         .drop_duplicates()
         .reset_index(drop=True)
     )
-    # every session should hold every method and setting: one without scores failed
-    expected = sessions[["session_id"]].merge(methods[["method", "setting"]], how="cross")
-    missing = expected.merge(ran, on=_KEY, how="left", indicator=True)
-    missing = missing[missing["_merge"] == "left_only"][_KEY]
-    recorded = _selected(read_table(root / "failures.csv"), ids, settings)
-    failures = missing.merge(
-        recorded.drop_duplicates(_KEY)[[*_KEY, "error"]], on=_KEY, how="left"
-    ).fillna({"error": ""})
+    recorded = read_table(root / "failures.csv", keep=selected)
+    failures = (
+        _missing(sessions, methods, ran)
+        .merge(recorded.drop_duplicates(_KEY)[[*_KEY, "error"]], on=_KEY, how="left")
+        .fillna({"error": ""})
+    )
     truth = {
         session_id: tables
         for session_id, tables in load_truth(root / "truth.csv.gz").items()
@@ -719,9 +700,11 @@ def load_run(
         sessions=sessions,
         methods=methods,
         ran=ran,
-        failures=failures.reset_index(drop=True),
-        events=_read_selected(root / "events.csv.gz", ids, settings),
-        truth_counts=_selected(read_table(root / "truth_counts.csv.gz"), ids, None),
+        failures=failures,
+        events=read_table(root / "events.csv.gz", keep=selected),
+        truth_counts=read_table(
+            root / "truth_counts.csv.gz", keep=lambda rows: _selection(rows, ids, None)
+        ),
         truth=truth,
         conditions=tuple(dict.fromkeys(sessions["condition_id"])),
         settings=None if settings is None else tuple(settings),
@@ -1601,26 +1584,6 @@ class ConditionScores:
     )
 
 
-def _read_columns(
-    path: Path, columns: Sequence[str], keep: Callable[[pd.DataFrame], pd.Series] | None = None
-) -> pd.DataFrame:
-    """Some columns of a runner table, read chunk by chunk with
-    ``read_table``'s conventions, keeping the rows ``keep`` marks."""
-    table = TABLES[path.name]
-    reader = pd.read_csv(
-        path,
-        chunksize=_CHUNK_ROWS,
-        usecols=list(columns),
-        dtype={column: str for column in columns if column in table.text},
-        keep_default_na=False,
-        na_values={column: [""] for column in columns if column not in table.text},
-        float_precision="round_trip",
-    )
-    chunks = [chunk if keep is None else chunk[keep(chunk)] for chunk in reader]
-    kept = [chunk for chunk in chunks if len(chunk)] or chunks[:1]
-    return pd.concat(kept, ignore_index=True)[list(columns)]
-
-
 def score_primary(
     session_id: str,
     events: pd.DataFrame,
@@ -1719,16 +1682,8 @@ def load_scores(run_directory: str | os.PathLike[str], *, workers: int = 1) -> C
     ]
     sessions = sessions.assign(minutes=_minutes_outside(sessions).to_numpy())
     conditions = read_table(root / "conditions.csv")[["condition_id", "factor", "level"]]
-    methods = (
-        _read_columns(combined / "methods.csv", ["method", "setting", "primary_expression"])
-        .drop_duplicates(["method", "setting"])
-        .sort_values(["method", "setting"])
-        .reset_index(drop=True)
-    )
-    methods["scoring"] = methods["method"].map(scoring_rule)
-    metrics = _read_columns(
-        combined / "metrics.csv.gz", [*COUNT_COLUMNS[:4], "expression", *COUNT_COLUMNS[4:]]
-    )
+    methods = _methods_table(read_table(combined / "methods.csv"))
+    metrics = read_table(combined / "metrics.csv.gz", columns=EXPRESSION_COUNT_COLUMNS)
     primary = methods[["method", "setting", "primary_expression"]].rename(
         columns={"primary_expression": "expression"}
     )
@@ -1740,16 +1695,14 @@ def load_scores(run_directory: str | os.PathLike[str], *, workers: int = 1) -> C
     ].reset_index(drop=True)
     metrics = metrics.merge(primary, on=["method", "setting", "expression"])
     ran = metrics[_KEY].drop_duplicates().reset_index(drop=True)
-    expected = sessions[["session_id"]].merge(methods[["method", "setting"]], how="cross")
-    missing = expected.merge(ran, on=_KEY, how="left", indicator=True)
-    failures = missing[missing["_merge"] == "left_only"][_KEY].reset_index(drop=True)
+    failures = _missing(sessions, methods, ran)
 
     # the reference's sweeps, for the curves, and every condition's main settings
-    events = _read_columns(
+    events = read_table(
         combined / "events.csv.gz",
-        _EVENT_READ,
-        lambda chunk: (
-            chunk["setting"].isin(MAIN_SETTINGS) | chunk["session_id"].isin(reference)
+        columns=_EVENT_READ,
+        keep=lambda rows: (
+            rows["setting"].isin(MAIN_SETTINGS) | rows["session_id"].isin(reference)
         ),
     )
     truth = load_truth(combined / "truth.csv.gz")
