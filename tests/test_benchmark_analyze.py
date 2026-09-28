@@ -1020,6 +1020,68 @@ def test_scores_count_point_inventories_by_containment(analyze, point_run):
     assert DAVIDSON[0] not in set(scores.participation.method)
 
 
+def test_appendix_scores_every_method_against_every_expression(analyze, point_run):
+    tables = analyze.load_run(point_run)
+    matches = analyze.match_run(tables)
+    table = analyze.appendix_expressions(tables, matches, n_resamples=FEW)
+    assert table.expression.drop_duplicates().tolist() == [
+        "network",
+        "ripple",
+        "sharp_wave",
+        "burst",
+    ]
+    kay = _by(table[table.method == KAY[0]], "expression")
+    # per session: four ripple windows, six events, three matched (the
+    # doublet's two ripples by one event); IoUs 1, 0.8 and 7/17
+    ripple = kay.loc["ripple"]
+    assert [ripple.n_reference, ripple.n_detected, ripple.n_matched] == [8, 12, 6]
+    assert [ripple.recall, ripple.precision] == [0.75, 0.5]
+    minutes = ((20.0 - tables.sessions.event_time_s) / 60).sum()
+    assert ripple.false_positives_per_minute == pytest.approx(6 / minutes)
+    assert (ripple.n_pairs, ripple.median_iou) == (6, pytest.approx(0.8, abs=1e-5))
+    assert ripple.recall_low == ripple.recall_high == 0.75
+    assert kay.primary.to_dict() == {
+        "network": False,
+        "ripple": True,
+        "sharp_wave": False,
+        "burst": False,
+    }
+    assert (kay.scoring == "interval").all()
+    # Davidson's points by containment against every expression: of the five
+    # sharp-wave windows, the first ripple's peak and the doublet's second
+    # ripple's hold one each; no bound or overlap measure
+    davidson = _by(table[table.method == DAVIDSON[0]], "expression")
+    assert (davidson.scoring == "peak_containment").all()
+    assert davidson.loc["sharp_wave", ["n_reference", "n_matched", "recall"]].tolist() == [
+        10,
+        4,
+        0.4,
+    ]
+    assert davidson.loc["ripple", "recall"] == 0.75
+    assert davidson[["n_pairs", "median_iou", "median_abs_onset_error"]].isna().all().all()
+
+
+def test_appendix_curves_read_every_expression(analyze, run, tiny_run):
+    scores = analyze.load_scores(tiny_run.parent)
+    metrics = run.read_table(tiny_run / "metrics.csv.gz")
+    for expression in ("network", "sharp_wave"):
+        curves = analyze.expression_curves(scores, expression)
+        assert (curves.expression == expression).all()
+        mine = metrics[(metrics.expression == expression)]
+        expected = mine.groupby(["method", "setting", "minimum_iou"])[
+            ["n_matched", "n_reference"]
+        ].sum()
+        got = curves.set_index(["method", "setting", "minimum_iou"])
+        for key, row in expected.iterrows():
+            assert got.loc[key, "recall"] == pytest.approx(row.n_matched / row.n_reference)
+        assert set(got.index) == set(expected.index)
+        assert curves.set_index("setting").kind.to_dict() == {
+            "3.0": "sweep",
+            "default": "default",
+            "literature": "recipe",
+        }
+
+
 def _design_at_fp_rate(curve, target, floor, columns):
     """``at_fp_rate`` as the benchmark's design writes it, in pandas."""
     x = np.log(np.maximum(curve.fp_rate.to_numpy(float), floor))

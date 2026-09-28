@@ -172,7 +172,15 @@ FALSE_POSITIVE_COLUMNS = (
 SESSION_COMPARISON_COLUMNS = ("session_id", "truth_expression", *COMPARISON_COLUMNS)
 CONSENSUS_COLUMNS = ("session_id", "row", "type", "n_methods", "n_methods_run")
 GROUP_COLUMNS = ("session_id", "n_methods", "n_events", "start_time", "end_time")
-POINT_COLUMNS = ("session_id", "method", "setting", "n_reference", "n_detected", "n_matched")
+POINT_COLUMNS = (
+    "session_id",
+    "method",
+    "setting",
+    "expression",
+    "n_reference",
+    "n_detected",
+    "n_matched",
+)
 QUANTILES = (0.05, 0.25, 0.5, 0.75, 0.95)
 QUANTILE_NAMES = ("q05", "q25", "median", "q75", "q95")
 OVERLAP_MEASURES = ("iou", "coverage", "temporal_precision")
@@ -746,10 +754,11 @@ class Matches:
         groups, one row per group: ``n_methods`` it spans, ``n_events``,
         ``start_time``, ``end_time``.
     points : pandas.DataFrame
-        One row per method and setting in ``point_methods``, scored by peak
-        containment (``match_peaks``) against its primary expression's
-        windows at 10 %: ``n_reference``, ``n_detected``, ``n_matched``. These
-        methods are in no other table: an interval rule cannot credit a point.
+        One row per method and setting in ``point_methods`` and expression
+        (``EXPRESSIONS``), scored by peak containment (``match_peaks``)
+        against that expression's windows at 10 %: ``expression``,
+        ``n_reference``, ``n_detected``, ``n_matched``. These methods are in
+        no other table: an interval rule cannot credit a point.
     """
 
     windows: pd.DataFrame
@@ -879,16 +888,17 @@ def match_session(
         bounds, index = _bounds(rows), rows["event_index"].to_numpy()
         key = {"session_id": session_id, "method": method, "setting": setting}
         if method in points:
-            reference = truth_bounds[primary[method, setting]][0]
-            found = match_peaks(reference, event_times(rows))
-            peaks.append(
-                {
-                    **key,
-                    "n_reference": len(reference),
-                    "n_detected": len(rows),
-                    "n_matched": len(found),
-                }
-            )
+            times = event_times(rows)
+            for expression, references in truth_bounds.items():
+                peaks.append(
+                    {
+                        **key,
+                        "expression": expression,
+                        "n_reference": len(references[0]),
+                        "n_detected": len(rows),
+                        "n_matched": len(match_peaks(references[0], times)),
+                    }
+                )
             continue
         detected[method, setting] = bounds
         for expression, references in truth_bounds.items():
@@ -1342,6 +1352,7 @@ ERROR_ROW_COLUMNS = (
     "onset_error",
     "offset_error",
 )
+EXPRESSION_COUNT_COLUMNS = (*COUNT_COLUMNS[:3], "expression", *COUNT_COLUMNS[3:])
 PARTICIPATION_COLUMNS = ("session_id", "method", "setting", "n_events", "principal_fraction")
 # The conditions whose sweeps are read: the reference and each alternative model.
 CURVE_CONDITIONS = (
@@ -1405,6 +1416,11 @@ class ConditionScores:
     failures : pandas.DataFrame
         One row per session, method and setting without scores:
         ``session_id``, ``method``, ``setting``.
+    expression_counts : pandas.DataFrame
+        ``counts`` against every expression, not only the primary
+        (``EXPRESSION_COUNT_COLUMNS``): the runner's ``metrics.csv`` rows of
+        the reference condition's sessions, every interval method and
+        setting at every level, for the appendix's curves.
     """
 
     sessions: pd.DataFrame
@@ -1414,6 +1430,9 @@ class ConditionScores:
     errors: pd.DataFrame
     participation: pd.DataFrame
     failures: pd.DataFrame
+    expression_counts: pd.DataFrame = dataclasses.field(
+        default_factory=lambda: pd.DataFrame(columns=list(EXPRESSION_COUNT_COLUMNS))
+    )
 
 
 def _read_columns(
@@ -1556,6 +1575,12 @@ def load_scores(
     primary = methods[["method", "setting", "primary_expression"]].rename(
         columns={"primary_expression": "expression"}
     )
+    reference = set(
+        sessions.loc[sessions["condition_id"] == REFERENCE_CONDITION, "session_id"]
+    )
+    expression_counts = _by_intervals(metrics[metrics["session_id"].isin(reference)])[
+        list(EXPRESSION_COUNT_COLUMNS)
+    ].reset_index(drop=True)
     metrics = metrics.merge(primary, on=["method", "setting", "expression"])
     ran = metrics[_KEY].drop_duplicates().reset_index(drop=True)
     expected = sessions[["session_id"]].merge(methods[["method", "setting"]], how="cross")
@@ -1615,6 +1640,7 @@ def load_scores(
         errors=errors,
         participation=_participation(events, ran, read_table(combined / "units.csv.gz")),
         failures=failures,
+        expression_counts=expression_counts,
     )
 
 
@@ -2014,9 +2040,13 @@ def point_inventories(
         ``n_failures``.
     """
     counts = ["n_reference", "n_detected", "n_matched"]
-    frame = matches.points.assign(
-        n_unmatched=matches.points["n_detected"] - matches.points["n_matched"],
-        minutes=matches.points["session_id"].map(_minutes_outside(tables.sessions)),
+    primary = tables.methods[["method", "setting", "primary_expression"]].rename(
+        columns={"primary_expression": "expression"}
+    )
+    own = matches.points.merge(primary, on=["method", "setting", "expression"])
+    frame = own.drop(columns="expression").assign(
+        n_unmatched=own["n_detected"] - own["n_matched"],
+        minutes=own["session_id"].map(_minutes_outside(tables.sessions)).to_numpy(),
     )
     frame = _with_replicate(frame, tables)
     by = ["method", "setting"]
@@ -4877,6 +4907,156 @@ def boundary_effect(
     return _in_order(_with_failures(effect, tables), "selection", tuple(SELECTIONS))
 
 
+# Appendix: every expression
+
+# The appendix's pair medians: (name, the pair column, absolute).
+_APPENDIX_MEDIANS = (
+    ("median_iou", "iou", False),
+    ("median_onset_error", "onset_error_10", False),
+    ("median_abs_onset_error", "onset_error_10", True),
+    ("median_offset_error", "offset_error_10", False),
+    ("median_abs_offset_error", "offset_error_10", True),
+)
+
+
+def appendix_expressions(
+    tables: RunTables, matches: Matches, *, n_resamples: int = N_RESAMPLES
+) -> pd.DataFrame:
+    """Each main method's scores against every expression, not only its primary.
+
+    Matched at IoU 0 against each expression's truth windows at 10 % of the
+    peak, as the headline is against the primary one; a point method by
+    peak containment (``match_peaks``), with no bound or overlap measure.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+    n_resamples : int, optional
+
+    Returns
+    -------
+    appendix : pandas.DataFrame
+        One row per main method, setting and ``expression`` (``network``,
+        ``ripple``, ``sharp_wave``, ``burst``): ``scoring``, ``primary``
+        (whether it is the method's primary expression), ``n_reference``,
+        ``n_detected``, ``n_matched``, ``minutes`` (outside every network
+        window), then ``recall``, ``precision`` and
+        ``false_positives_per_minute``, each pooled over sessions with
+        ``_low`` and ``_high``; ``n_pairs``, and ``median_iou``,
+        ``median_onset_error``, ``median_abs_onset_error``,
+        ``median_offset_error`` and ``median_abs_offset_error`` (signed:
+        detected minus truth, seconds, at 10 %), each pooled over the pairs
+        with ``_low`` and ``_high`` (NaN for a point method); then
+        ``primary_expression``, ``n_sessions``, ``n_failures``.
+    """
+    by = ["method", "setting", "expression"]
+    counts = ["n_reference", "n_detected", "n_matched"]
+    main = main_rows(tables.methods)
+    n_reference = matches.windows.groupby(["session_id", "expression"]).size()
+    n_detected = tables.events.groupby(_KEY).size()
+    found = main_rows(matches.pairs[matches.pairs["minimum_iou"] == 0])
+    n_matched = found.groupby([*by, "session_id"]).size()
+    frame = _by_intervals(main_rows(tables.ran)).merge(
+        pd.DataFrame({"expression": EXPRESSION_ORDER}), how="cross"
+    )
+    frame = frame.join(n_reference.rename("n_reference"), on=["session_id", "expression"])
+    frame = frame.join(n_detected.rename("n_detected"), on=_KEY)
+    frame = frame.join(n_matched.rename("n_matched"), on=[*by, "session_id"])
+    frame = _concat(
+        [frame.fillna(dict.fromkeys(counts, 0)), main_rows(matches.points)],
+        ["session_id", *by, *counts],
+    ).astype(dict.fromkeys(counts, int))
+    frame = _with_replicate(
+        frame.assign(
+            n_unmatched=frame["n_detected"] - frame["n_matched"],
+            minutes=frame["session_id"].map(_minutes_outside(tables.sessions)).to_numpy(),
+        ),
+        tables,
+    )
+    rates = grouped_intervals(
+        frame,
+        by,
+        _ratio_of_sums(
+            ("n_matched", "n_reference"),
+            ("n_matched", "n_detected"),
+            ("n_unmatched", "minutes"),
+        ),
+        ["recall", "precision", "false_positives_per_minute"],
+        [*counts, "n_unmatched", "minutes"],
+        n_resamples=n_resamples,
+    )
+    totals = frame.groupby(by)[[*counts, "minutes"]].sum().reset_index()
+    appendix = totals.merge(rates, on=by)
+    pairs = _with_replicate(
+        found.assign(
+            **{
+                name: np.abs(found[column]) if absolute else found[column]
+                for name, column, absolute in _APPENDIX_MEDIANS
+            }
+        ),
+        tables,
+    )
+    names = [name for name, _, _ in _APPENDIX_MEDIANS]
+    medians = grouped_intervals(
+        pairs, by, _medians(*names), names, names, n_resamples=n_resamples
+    ).join(pairs.groupby(by).size().rename("n_pairs"), on=by)
+    ordered = ["n_pairs", *(f"{n}{part}" for n in names for part in ("", "_low", "_high"))]
+    appendix = appendix.merge(medians[[*by, *ordered]], on=by, how="left")
+    appendix["n_pairs"] = appendix["n_pairs"].fillna(0)
+    appendix = _every_method(appendix, main, {"expression": EXPRESSION_ORDER}, counts).fillna(
+        {"minutes": 0.0}
+    )
+    listed = main.set_index(["method", "setting"])["primary_expression"]
+    own = pd.MultiIndex.from_frame(appendix[["method", "setting"]]).map(listed.get)
+    appendix.insert(3, "scoring", appendix["method"].map(scoring_rule))
+    appendix.insert(4, "primary", np.asarray(own) == appendix["expression"].to_numpy())
+    points = appendix["scoring"] == PEAK_CONTAINMENT
+    appendix.loc[points, "n_pairs"] = np.nan
+    return _with_failures(appendix, tables)
+
+
+def expression_curves(
+    scores: ConditionScores, expression: str, *, condition: str = REFERENCE_CONDITION
+) -> pd.DataFrame:
+    """``operating_curves`` against one expression, whatever each method's primary.
+
+    Parameters
+    ----------
+    scores : ConditionScores
+    expression : str
+        One of ``network``, ``ripple``, ``sharp_wave``, ``burst``.
+    condition : str, optional
+        Default the reference condition, the one ``scores.expression_counts``
+        holds.
+
+    Returns
+    -------
+    curves : pandas.DataFrame
+        ``operating_curves``' rows and columns against ``expression``
+        (``expression`` inserted after ``primary_expression``), without the
+        matched pairs' median errors: every setting of every interval
+        method, its counts, recall, false positives per minute and
+        ``precision``, at every minimum IoU.
+    """
+    counts = scores.expression_counts
+    own = counts[counts["expression"] == expression].drop(columns="expression")
+    view = dataclasses.replace(
+        scores,
+        counts=own.reset_index(drop=True),
+        errors=scores.errors.iloc[:0],
+    )
+    curves = operating_curves(view, condition=condition)
+    if curves.empty:
+        return curves
+    curves = curves.drop(columns=[f"median_{column}" for column in _ERROR_MEASURES])
+    curves.insert(6, "expression", expression)
+    at = curves.columns.get_loc("false_positives_per_minute")
+    precision = curves["n_matched"] / curves["n_detected"].where(curves["n_detected"] > 0)
+    curves.insert(at + 1, "precision", precision.to_numpy(dtype=float))
+    return curves
+
+
 # Figures (matplotlib is imported only inside them)
 
 _FONT = 5
@@ -6172,6 +6352,15 @@ def _robustness_of(measure: str, crossed: bool = False) -> AnalysisTable:
     return table
 
 
+def _expression_curves(expression: str) -> AnalysisTable:
+    """``expression_curves`` against one expression, of the reference."""
+
+    def table(inputs: Inputs) -> pd.DataFrame:
+        return expression_curves(inputs.scores, expression)
+
+    return table
+
+
 def _rates_by_state(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
     return rates_by_state(inputs.tables, n_resamples=n_resamples)
 
@@ -6419,6 +6608,24 @@ ANALYSES: tuple[Analysis, ...] = (
         "event type and at the target rates, and ranks, at minimum IoU 0, 0.2 and 0.5.",
         plot_matching_sensitivity,
         "Recall and precision at each minimum IoU.",
+    ),
+    Analysis(
+        "appendix_expressions",
+        _of_reference(appendix_expressions),
+        "Every main method against every expression (network, ripple, sharp wave, burst) "
+        "at IoU 0, not only its primary one: recall, precision, false positives per "
+        "minute, median IoU and median signed and absolute onset and offset errors, with "
+        "intervals; point methods by peak containment.",
+    ),
+    *(
+        Analysis(
+            f"appendix_curves_{expression}",
+            _expression_curves(expression),
+            f"Every interval method's recall, precision and false positives per minute at "
+            f"every setting and minimum IoU against the {expression.replace('_', ' ')} "
+            "truth, whatever its primary expression.",
+        )
+        for expression in EXPRESSION_ORDER
     ),
     Analysis(
         "model_sensitivity",
