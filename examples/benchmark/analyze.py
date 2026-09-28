@@ -1356,7 +1356,9 @@ class ConditionScores:
         (``COUNT_COLUMNS``): ``n_reference``, ``n_detected``, ``n_matched``
         against the primary expression's windows at 10 %: the runner's
         ``metrics.csv`` for an interval method, peak containment
-        (``match_peaks``) for a point method, whose ``minimum_iou`` is NaN.
+        (``match_peaks``) for a point method, whose ``minimum_iou`` is NaN
+        (no IoU applies): ``methods``' ``scoring`` is the column to tell them
+        apart by.
     errors : pandas.DataFrame
         One row per matched pair of an interval method against its primary
         expression (``ERROR_ROW_COLUMNS``): ``onset_error`` and
@@ -3824,7 +3826,10 @@ def model_sensitivity(
         ``POINT_MEASURES`` only), or per detector ``"recall_at_fp"`` with
         ``fp_target``, whose ``setting`` is ``"sweep"`` (the whole sweep,
         read off at the target); ``status`` (``"compared"``, ``"failed"``,
-        ``"unattainable"``, ``"not run"``); then the reference's and the alternative's values over the
+        ``"unattainable"``, ``"not run"``); ``scoring``, the rule the row's
+        counts come from: filter on it, not on ``setting`` or a missing
+        ``minimum_iou``, to keep point methods (``"peak_containment"``)
+        apart. Then the reference's and the alternative's values over the
         ``n_replicates`` pooled, ``change`` (alternative minus reference)
         with its interval and sign-flip p-value over the replicates where
         both exist (``n_paired``), ``n_dropped`` (shared replicates left out
