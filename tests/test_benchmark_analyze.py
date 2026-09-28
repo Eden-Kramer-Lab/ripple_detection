@@ -605,6 +605,34 @@ def test_agreement_and_differences_on_tiny_run(analyze, tiny_tables, tiny_matche
     assert dendrogram.distance.iloc[-1] == pytest.approx(3 / 7)
 
 
+def test_pair_tables_count_the_sessions_each_value_pools(analyze, tiny_tables, tiny_matches):
+    # both sessions compare Kay and Mallory; the second's correlation and
+    # onset difference are undefined
+    network = tiny_matches.comparisons[tiny_matches.comparisons.truth_expression == "network"]
+    network = pd.concat([network.iloc[:1]] * 2, ignore_index=True).assign(
+        session_id=["reference/0", "reference/1"],
+        onset_error_correlation=[0.5, np.nan],
+        offset_error_correlation=[0.25, -0.25],
+        median_onset_difference=[0.01, np.nan],
+    )
+    matches = dataclasses.replace(tiny_matches, comparisons=network)
+    correlations = analyze.error_correlations(tiny_tables, matches, n_resamples=FEW).iloc[0]
+    assert correlations.n_sessions == 2
+    assert (
+        correlations.onset_error_correlation,
+        correlations.onset_error_correlation_n_sessions,
+    ) == (0.5, 1)
+    assert correlations.offset_error_correlation_n_sessions == 2
+    differences = analyze.method_differences(tiny_tables, matches, n_resamples=FEW).iloc[0]
+    assert differences.median_onset_difference_n_sessions == 1
+    # the test runs on the one finite session and says the other was dropped
+    assert (
+        differences.median_onset_difference_p,
+        differences.median_onset_difference_n_dropped,
+    ) == (1.0, 1)
+    assert differences.median_offset_difference_n_dropped == 0
+
+
 def test_overlap_quality_on_tiny_run(analyze, tiny_tables, tiny_matches):
     quality = _by(
         analyze.overlap_quality(tiny_tables, tiny_matches, n_resamples=FEW),

@@ -200,7 +200,7 @@ PAIRED_TIMING_COLUMNS = (
         f"{boundary}_{measure}_{part}"
         for boundary in ("onset", "offset")
         for measure in ("signed", "absolute")
-        for part in ("pooled", "estimate", "low", "high", "p")
+        for part in ("pooled", "estimate", "low", "high", "p", "n_dropped")
     ),
 )
 
@@ -2060,7 +2060,9 @@ def _session_means(
 ) -> pd.DataFrame:
     """Each pair's per-session ``compare_detectors`` values averaged over the
     sessions both methods have scores on (NaN sessions left out), with
-    intervals; ``n_sessions`` counts those sessions. Every pair of
+    intervals; ``n_sessions`` counts those sessions, and
+    ``<column>_n_sessions`` those with a finite value, the ones each mean
+    pools (a correlation is NaN below 3 shared events). Every pair of
     ``expected`` (``method_a``, ``method_b``, ``truth_expression``) has a
     row, a pair never compared its values missing and ``n_sessions`` 0;
     default every pair of main interval methods against the network truth."""
@@ -2069,13 +2071,26 @@ def _session_means(
     means = grouped_intervals(
         frame, by, _means(*columns), list(columns), list(columns), n_resamples=n_resamples
     )
-    n_sessions = frame.groupby(by).size().rename("n_sessions")
-    means = means.join(n_sessions, on=by)
+    counted = [f"{column}_n_sessions" for column in columns]
+    finite = pd.DataFrame(
+        np.isfinite(frame[list(columns)].to_numpy(dtype=float)), columns=counted
+    )
+    n_finite = finite.groupby([frame[column].to_numpy() for column in by]).sum()
+    n_finite.index.names = by
+    means = means.join(frame.groupby(by).size().rename("n_sessions"), on=by).join(
+        n_finite, on=by
+    )
     if expected is None:
         expected = _expected_pairs(tables).assign(truth_expression="network")
     means = expected[by].merge(means, on=by, how="left")
-    means = means.fillna({"n_sessions": 0}).astype({"n_sessions": int})
-    return _with_pair_failures(means, tables)
+    zero = ["n_sessions", *counted]
+    means[zero] = means[zero].fillna(0).astype(int)
+    order = [
+        f"{column}{part}"
+        for column in columns
+        for part in ("", "_low", "_high", "_n_sessions")
+    ]
+    return _with_pair_failures(means[[*by, *order, "n_sessions"]], tables)
 
 
 def pairwise_agreement(
@@ -2099,8 +2114,9 @@ def pairwise_agreement(
         (among their events that matched a network event, and that matched
         none) and ``jaccard_truth_ids`` (the network events both found over
         those either found): the mean over sessions of ``compare_detectors``'
-        value, ``<name>_low`` and ``<name>_high``; then ``n_sessions`` (both
-        have scores), ``n_failures_a``, ``n_failures_b``.
+        value, ``<name>_low``, ``<name>_high`` and ``<name>_n_sessions`` (the
+        sessions with a finite value, which the mean pools); then
+        ``n_sessions`` (both have scores), ``n_failures_a``, ``n_failures_b``.
     """
     network = matches.comparisons[matches.comparisons["truth_expression"] == "network"]
     return _session_means(tables, network, AGREEMENT, n_resamples=n_resamples)
@@ -2191,15 +2207,19 @@ def _sign_flips(
     frame: pd.DataFrame, by: Sequence[str], columns: Sequence[str]
 ) -> pd.DataFrame:
     """Each group's ``sign_flip_test`` p-value of each column over its
-    sessions with a finite value, as ``<column>_p``."""
+    sessions with a finite value, as ``<column>_p``, and the sessions left
+    out as not finite, ``<column>_n_dropped``."""
     rows = []
     for key, group in frame.groupby(list(by), sort=True):
         row = dict(zip(by, key, strict=True))
         for column in columns:
             values = group[column].to_numpy(dtype=float)
-            row[f"{column}_p"] = sign_flip_test(values[np.isfinite(values)])
+            finite = np.isfinite(values)
+            row[f"{column}_p"] = sign_flip_test(values[finite])
+            row[f"{column}_n_dropped"] = int((~finite).sum())
         rows.append(row)
-    return pd.DataFrame(rows, columns=[*by, *(f"{column}_p" for column in columns)])
+    names = [f"{column}{part}" for column in columns for part in ("_p", "_n_dropped")]
+    return pd.DataFrame(rows, columns=[*by, *names])
 
 
 def method_differences(
@@ -2221,11 +2241,12 @@ def method_differences(
         median over their matched events of A's start, or end, minus B's, in
         seconds: negative, A earlier) and ``fraction_a_earlier_onset`` and
         ``fraction_a_earlier_offset`` (the matched events where A's is
-        strictly earlier): the mean over sessions, ``<name>_low`` and
-        ``<name>_high``; ``median_onset_difference_p`` and
-        ``median_offset_difference_p``, ``sign_flip_test`` on the
-        per-session medians; ``n_sessions``, ``n_failures_a``,
-        ``n_failures_b``.
+        strictly earlier): the mean over sessions, ``<name>_low``,
+        ``<name>_high`` and ``<name>_n_sessions`` (finite sessions);
+        ``median_onset_difference_p`` and ``median_offset_difference_p``,
+        ``sign_flip_test`` on the per-session medians, with ``_n_dropped``,
+        the sessions left out of it as not finite; ``n_sessions``,
+        ``n_failures_a``, ``n_failures_b``.
     """
     network = matches.comparisons[matches.comparisons["truth_expression"] == "network"]
     means = _session_means(tables, network, DIFFERENCES, n_resamples=n_resamples)
@@ -2252,8 +2273,9 @@ def error_correlations(
         ``onset_error_correlation`` and ``offset_error_correlation``
         (Spearman's correlation of their signed errors against the network
         windows over the events both found, NaN below 3) the mean over
-        sessions with one, ``<name>_low`` and ``<name>_high``;
-        ``n_sessions``, ``n_failures_a``, ``n_failures_b``.
+        sessions with one, ``<name>_low``, ``<name>_high`` and
+        ``<name>_n_sessions`` (the sessions with one); ``n_sessions`` (both
+        have scores), ``n_failures_a``, ``n_failures_b``.
     """
     network = matches.comparisons[matches.comparisons["truth_expression"] == "network"]
     return _session_means(tables, network, CORRELATIONS, n_resamples=n_resamples)
@@ -2484,8 +2506,9 @@ def paired_timing(
         ``offset_signed``, ``offset_absolute``), in seconds: ``_pooled``,
         the median difference over the shared events; ``_estimate``, the
         mean over sessions of each session's median difference, with
-        ``_low`` and ``_high``; and ``_p``, ``sign_flip_test`` on those
-        per-session medians; then ``n_failures_a``, ``n_failures_b``.
+        ``_low`` and ``_high``; ``_p``, ``sign_flip_test`` on those
+        per-session medians, and ``_n_dropped``, the sessions left out of it
+        as not finite; then ``n_failures_a``, ``n_failures_b``.
     """
     members = _by_intervals(main_rows(tables.methods))
     members = members[members["primary_expression"] == expression]["method"]
@@ -2555,6 +2578,9 @@ def paired_timing(
                             estimates.loc[(a, b), column] if known else np.nan
                         )
                     row[f"{stem}_p"] = tests.loc[(a, b), f"{name}_p"] if known else np.nan
+                    row[f"{stem}_n_dropped"] = (
+                        tests.loc[(a, b), f"{name}_n_dropped"] if known else 0
+                    )
             rows.append(row)
     return _with_pair_failures(pd.DataFrame(rows, columns=PAIRED_TIMING_COLUMNS), tables)
 
