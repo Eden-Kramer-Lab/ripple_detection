@@ -81,6 +81,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import functools
 import itertools
 import json
 import math
@@ -140,6 +141,8 @@ REPOSITORY = HERE.parent.parent
 RESULTS = HERE / "results"
 
 Params = tuple[tuple[str, Any], ...]
+# A pipeline stage's computation: its events, shape (n_events, 2).
+Stage = Callable[[], FloatArray]
 
 FAMILIES = ("spikes", "lfp")
 # The expression each family's F1 is scored against.
@@ -173,7 +176,7 @@ GAP_WIDTH = 0.02
 UNIX_ORIGIN = 1_700_000_000.0
 # The input policy's inputs a session context's recording holds.
 CONTEXT_INPUTS = ("lfps", "sharp_wave_lfp", "multiunit", "speed", "place_cells", "pyramidal")
-# Pipelines' events kept per session, and traces (large arrays) per session.
+# Pipeline stages' events kept per session, and traces (large arrays) per session.
 EVENT_CACHE_SIZE = 4096
 TRACE_CACHE_SIZE = 8
 
@@ -555,6 +558,9 @@ class _Cache:
     def __len__(self) -> int:
         return len(self._entries)
 
+    def __contains__(self, key: Hashable) -> bool:
+        return key in self._entries
+
     def clear(self) -> None:
         self._entries.clear()
 
@@ -587,9 +593,10 @@ class SessionContext:
     counts and speed, and the place and pyramidal selections), whose arrays it
     makes read-only, so nothing cached from them can go stale. The binned
     population rate is cached by its units, traces by the immutable parameters
-    that make them (at most ``TRACE_CACHE_SIZE``), a pipeline's events by the
-    pipeline (at most ``EVENT_CACHE_SIZE``), a partner's events by its name;
-    ``release`` empties every cache. Nothing is attached to a recording the
+    that make them (at most ``TRACE_CACHE_SIZE``), the events of each stage of
+    a pipeline (its core, then each post step) by the core and the steps so far
+    (at most ``EVENT_CACHE_SIZE``), a partner's events by its name; ``release``
+    empties every cache. Nothing is attached to a recording the
     package or a caller holds.
 
     Parameters
@@ -723,13 +730,18 @@ class SessionContext:
         return self._partners[name]
 
     def events(self, pipeline: Pipeline) -> FloatArray:
-        """``run_pipeline(pipeline, self)``, run once while it stays cached."""
-
-        def run() -> FloatArray:
+        """``run_pipeline(pipeline, self)``, each of its stages run once while it
+        stays cached."""
+        if (pipeline.core, pipeline.steps) not in self._events:
             self.n_runs += 1
-            return _read_only(run_pipeline(pipeline, self))
+        return run_pipeline(pipeline, self)
 
-        return self._events.get(pipeline, run)  # type: ignore[no-any-return]
+    def stage(self, core: ThresholdCore, steps: tuple[Step, ...], run: Stage) -> FloatArray:
+        """The events of ``core`` after the post steps ``steps``, ``run()`` once
+        while they stay cached, read-only."""
+        return self._events.get(  # type: ignore[no-any-return]
+            (core, steps), lambda: _read_only(run())
+        )
 
 
 def _long_swrs(context: SessionContext) -> FloatArray:
@@ -866,6 +878,10 @@ def _post_step(step: Step, events: FloatArray, context: SessionContext) -> Float
 def run_pipeline(pipeline: Pipeline, context: SessionContext) -> FloatArray:
     """The events of a pipeline on one session.
 
+    Its core's events, then those after each post step in turn: stages the
+    context caches (``SessionContext.stage``), so pipelines sharing a core, or
+    a core and their first post steps, run those once.
+
     Parameters
     ----------
     pipeline : Pipeline
@@ -883,17 +899,19 @@ def run_pipeline(pipeline: Pipeline, context: SessionContext) -> FloatArray:
         An operation this module does not define, or what the package's
         functions raise.
     """
-    core = pipeline.core
+    core, steps = pipeline.core, pipeline.steps
     operation = core.signal[0].operation
     if operation == "rate":
-        events = _spike_events(core, context)
+        core_events = _spike_events
     elif operation == "mean_envelope":
-        events = _lfp_events(core, context)
+        core_events = _lfp_events
     else:
         msg = f"Unknown signal operation {operation!r}."
         raise ValueError(msg)
-    for step in pipeline.steps:
-        events = _post_step(step, events, context)
+    events = context.stage(core, (), functools.partial(core_events, core, context))
+    for k, step in enumerate(steps, start=1):
+        run = functools.partial(_post_step, step, events, context)
+        events = context.stage(core, steps[:k], run)
     return events
 
 
@@ -2067,10 +2085,8 @@ def evaluate_config(
 ) -> dict[str, float]:
     """The ``Y``s of a pipeline, each averaged over the sessions.
 
-    A pipeline's events on a session are kept by the session's context, keyed
-    by the pipeline, in a least-recently-used cache of ``EVENT_CACHE_SIZE``
-    pipelines, so a configuration repeated while it stays cached runs no
-    detection again.
+    ``evaluate_session`` on each session, whose context caches the events, so
+    a configuration repeated while they stay cached runs no detection again.
 
     Parameters
     ----------
