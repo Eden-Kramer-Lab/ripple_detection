@@ -221,6 +221,32 @@ def test_compile_orders_the_steps(attribution):
             attribution.compile(dataclasses.replace(squared, **{field: value}))
 
 
+def test_compile_makes_a_hashable_pipeline(attribution):
+    template = attribution.TEMPLATES["pfeiffer_2015"][0]
+    listed = dataclasses.replace(template, band=[150.0, 250.0])
+    assert listed.band == (150.0, 250.0)
+    assert attribution.compile(listed) == attribution.compile(template)
+    unhashable = dataclasses.replace(template, maximum_duration={"seconds": 2.0})
+    with pytest.raises(TypeError, match=r"LfpTemplate\(.*'seconds': 2.0.*is not hashable"):
+        attribution.compile(unhashable)
+
+
+def test_a_spike_core_takes_no_lfp_signal_steps(attribution, long_context):
+    pipeline = attribution.compile(attribution.TEMPLATES["igata_2021"][0])
+    core = pipeline.core
+    for changed, message in (
+        (
+            dataclasses.replace(core, signal=(*core.signal, attribution.Step("square"))),
+            "no further",
+        ),
+        (dataclasses.replace(core, smoothing_sigma=0.01), "smoothing"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            attribution.run_pipeline(
+                attribution.Pipeline(changed, pipeline.steps), long_context
+            )
+
+
 # How many templates stand for their methods on the two 30 s sessions and the
 # edge cases: update deliberately when a configuration or a template changes.
 # davidson_2009 needs running within 30 s, and a session under 35 s has no bout.

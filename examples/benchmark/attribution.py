@@ -280,6 +280,9 @@ class SpikeTemplate:
     state: str
     coincidence: str
 
+    def __post_init__(self) -> None:
+        _lists_to_tuples(self)
+
 
 @dataclasses.dataclass(frozen=True)
 class LfpTemplate:
@@ -313,6 +316,18 @@ maximum_duration, merge_gap, speed, state, coincidence
     speed: str
     state: str
     coincidence: str
+
+    def __post_init__(self) -> None:
+        _lists_to_tuples(self)
+
+
+def _lists_to_tuples(template: SpikeTemplate | LfpTemplate) -> None:
+    """A template's list values (a band read from JSON) as tuples, so its
+    pipeline hashes."""
+    for field in dataclasses.fields(template):
+        value = getattr(template, field.name)
+        if isinstance(value, list):
+            object.__setattr__(template, field.name, tuple(value))
 
 
 Template = SpikeTemplate | LfpTemplate
@@ -419,7 +434,11 @@ def compile(template: Template) -> Pipeline:
     ------
     ValueError
         A level the tables (``SPEED``, ``NORMALIZATION``, ``STATES``,
-        ``COINCIDENCES``) do not define.
+        ``COINCIDENCES``) do not define, or a trace other than ``"amplitude"``
+        and ``"squared"``.
+    TypeError
+        A factor value is not hashable, so the pipeline's events could not be
+        cached; the message names the template.
     """
     for table, value in (
         (SPEED, template.speed),
@@ -474,7 +493,13 @@ def compile(template: Template) -> Pipeline:
         )
     post = (STATES[template.state], COINCIDENCES[template.coincidence])
     steps.extend(step for step in post if step is not None)
-    return Pipeline(core, tuple(steps))
+    pipeline = Pipeline(core, tuple(steps))
+    try:
+        hash(pipeline)
+    except TypeError as error:
+        msg = f"{template} is not hashable, so its events cannot be cached: {error}."
+        raise TypeError(msg) from error
+    return pipeline
 
 
 # Sessions
@@ -704,6 +729,18 @@ PARTNERS: dict[str, Callable[[SessionContext], FloatArray]] = {
 
 
 def _spike_events(core: ThresholdCore, context: SessionContext) -> FloatArray:
+    if len(core.signal) > 1:
+        msg = (
+            "A population-rate core takes no further signal step; got "
+            f"{[step.operation for step in core.signal[1:]]}."
+        )
+        raise ValueError(msg)
+    if core.smoothing_sigma != 0:
+        msg = (
+            "A population-rate core is smoothed by its rate step, not by the core's "
+            f"smoothing; got smoothing_sigma={core.smoothing_sigma}."
+        )
+        raise ValueError(msg)
     parameters = dict(core.signal[0].parameters)
     trace = context.population(parameters["units"], parameters["smoothing_sigma"])
     if core.restrict_to is not None:
