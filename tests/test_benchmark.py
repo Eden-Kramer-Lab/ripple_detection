@@ -1361,6 +1361,30 @@ def test_the_command_line_takes_a_crossed_cell(run, conditions_module, monkeypat
     assert len(chosen) == 3
 
 
+@pytest.mark.parametrize("given", ["all", "every id"])
+def test_every_condition_reaches_the_run(run, conditions_module, monkeypatch, given):
+    """Ids that happen to spell a crossed cell when joined (ripple_snr=high then
+    participation=low, adjacent in the grid) stay two conditions."""
+    everything = [c.condition_id for c in conditions_module.conditions()]
+    checked = []
+
+    class Stop(Exception):
+        pass
+
+    def require_report(path, resolved):
+        checked.append(list(resolved))
+        raise Stop
+
+    monkeypatch.setattr(run, "_require_report", require_report)
+    with pytest.raises(Stop):
+        run.run_benchmark(
+            "x",
+            validation_report="r",
+            condition_ids=None if given == "all" else everything,
+        )
+    assert checked == [everything]
+
+
 def test_smoke_prints_its_measurements(cli, capsys):
     start, _, sessions = cli
     start("smoke", smoke=True, condition_ids=None, replicates=None, workers=4)

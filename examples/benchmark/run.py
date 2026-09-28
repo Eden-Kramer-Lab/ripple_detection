@@ -1624,10 +1624,16 @@ def run_benchmark(
     requested_workers = workers or max(1, (os.cpu_count() or 2) - 1)
     if smoke:
         condition_ids, replicates, workers = ["reference"], 1, 1
-    try:
-        selected = select_conditions(",".join(condition_ids) if condition_ids else "all")
-    except ValueError as error:
-        raise SystemExit(str(error)) from None
+    # Ids are looked up, never joined and parsed again: two adjacent ids can
+    # spell a crossed cell's (ripple_snr=high then participation=low).
+    everything = conditions()
+    unknown = sorted(set(condition_ids or ()) - {c.condition_id for c in everything})
+    if unknown:
+        msg = f"Unknown condition {', '.join(map(repr, unknown))}; see conditions()."
+        raise SystemExit(msg)
+    selected = tuple(
+        c for c in everything if not condition_ids or c.condition_id in condition_ids
+    )
     counts = {
         c.condition_id: replicates or default_replicates(c.condition_id) for c in selected
     }
