@@ -1272,6 +1272,130 @@ def test_matching_sensitivity_levels(analyze, sliver_run):
     ]
 
 
+SWEPT_KARLSSON = "Karlsson_ripple_detector"
+
+
+def _curve(condition, replicate, method, points):
+    """A two-setting sweep of 10 truth windows over 10 minutes per session:
+    ``points`` gives (matched, detected) at settings 2.0 and 3.0."""
+    return [
+        {**_kay(condition, replicate, setting, matched, detected), "method": method}
+        for setting, (matched, detected) in zip(("2.0", "3.0"), points, strict=True)
+    ]
+
+
+def _model_run(analyze, *, skip=()):
+    """Kay and Karlsson in the reference and every alternative model but
+    ``skip``, four replicates each. Kay's recall at 1 per minute is 0.7,
+    Karlsson's 0.6, everywhere but under refractory spiking, where Kay's
+    falls to 0.4; no curve reaches 5 per minute."""
+    kay, karlsson = ((8, 28), (6, 11)), ((7, 27), (5, 10))
+    counts = []
+    for condition in ["reference", *(c for _, _, c in analyze.MODEL_ALTERNATIVES)]:
+        if condition in skip:
+            continue
+        own = ((5, 25), (3, 8)) if condition == "spike_model=refractory" else kay
+        for replicate in range(4):
+            counts += _curve(condition, replicate, KAY[0], own)
+            counts += _curve(condition, replicate, SWEPT_KARLSSON, karlsson)
+            counts += [
+                {**_kay(condition, replicate, "default", 6, 11)},
+                {**_kay(condition, replicate, "default", 5, 10), "method": SWEPT_KARLSSON},
+            ]
+    return _hand_scores(analyze, counts)
+
+
+def test_model_sensitivity_includes_all_variants(analyze):
+    alternatives = [c for _, _, c in analyze.MODEL_ALTERNATIVES]
+    assert len(alternatives) == 6
+    scores = _model_run(analyze, skip=("envelope_power=quartic",))
+    changes, orders = analyze.model_sensitivity(scores, n_resamples=FEW)
+    assert list(dict.fromkeys(changes.alternative)) == alternatives
+    # an alternative the run lacks is reported, every value missing: the
+    # reference's own results cannot stand in for it
+    missing = changes[changes.alternative == "envelope_power=quartic"]
+    assert (missing.status == "not run").all()
+    assert missing[["value", "change", "change_low"]].isna().all().all()
+    assert "envelope_power=quartic" not in set(orders.alternative)
+    at_fp = changes[changes.measure == "recall_at_fp"].set_index(
+        ["alternative", "method", "fp_target"]
+    )
+    refractory = at_fp.loc[("spike_model=refractory", KAY[0], 1.0)]
+    assert [refractory.reference_value, refractory.value] == pytest.approx([0.7, 0.4])
+    assert [refractory.change, refractory.change_low, refractory.change_high] == pytest.approx(
+        [-0.3, -0.3, -0.3]
+    )
+    assert (refractory.change_p, refractory.n_paired) == (2 / 16, 4)
+    assert at_fp.loc[("noise_modulation=varying", KAY[0], 1.0), "change"] == 0
+    # 5 per minute is past every curve: missing, not the end of the curve
+    unreachable = at_fp.xs(5.0, level="fp_target")
+    assert (unreachable.status == "unattainable").all()
+    assert unreachable[["change", "change_low", "change_p"]].isna().all().all()
+    # Kay ahead of Karlsson in the reference, behind under refractory spiking
+    order = orders.set_index(["alternative", "fp_target"])
+    flipped = order.loc[("spike_model=refractory", 1.0)]
+    assert (flipped.method_a, flipped.method_b) == (SWEPT_KARLSSON, KAY[0])
+    assert [flipped.reference_difference, flipped.alternative_difference] == pytest.approx(
+        [-0.1, 0.2]
+    )
+    assert flipped.supported
+    assert flipped.reversed
+    assert flipped.p_reversed == 1.0
+    kept = order.loc[("noise_modulation=varying", 1.0)]
+    assert kept.supported
+    assert not kept.reversed
+    assert np.isnan(order.loc[("noise_modulation=varying", 5.0), "reference_difference"])
+    # the main settings' measures, paired the same way
+    recall = changes[(changes.measure == "recall") & (changes.method == KAY[0])]
+    assert recall.change.dropna().tolist() == [0.0] * 5
+    lines = analyze.model_sensitivity_statements(changes, orders)
+    assert lines[0].startswith("- `strength_correlation=coupled` (validation: no target")
+    assert "not in this run" in lines[-1]
+    refractory_lines = [
+        line for line in lines if "refractory" in line or "reversed at" in line
+    ]
+    # reversed at 0.5, 1 and 2 per minute; 5 is out of reach for both detectors
+    assert "of 3 reference orders" in refractory_lines[0]
+    assert "0 keep that support, 0 lose it and 3 reverse" in refractory_lines[0]
+    assert "2 detector targets are out of reach" in refractory_lines[0]
+    assert refractory_lines[2].startswith("  - reversed at 1/min: `Karlsson_ripple_detector`")
+    kept = next(line for line in lines if line.startswith("- `noise_modulation=varying`"))
+    assert "3 keep that support, 0 lose it and 0 reverse" in kept
+
+
+def test_validation_changes_list_moved_statistics(analyze):
+    checks = pd.DataFrame(
+        {
+            "check": ["rate", "rate", "rate", "width", "width", "noise"],
+            "kind": ["target"] * 5 + ["rendering"],
+            "condition_id": [
+                "reference",
+                "spike_model=refractory",
+                "noise_modulation=varying",
+                "reference",
+                "spike_model=refractory",
+                "spike_model=refractory",
+            ],
+            "statistic": ["mean_hz"] * 3 + ["median_ms"] * 2 + ["z"],
+            "observed": [11.81, 11.57, 11.81, 44.0, 44.2, 3.0],
+        }
+    )
+    changed = analyze.validation_changes(checks)
+    assert changed.to_dict("records") == [
+        {
+            "alternative": "spike_model=refractory",
+            "check": "rate",
+            "statistic": "mean_hz",
+            "reference": 11.81,
+            "observed": 11.57,
+        }
+    ]
+    scores = _model_run(analyze)
+    changes, orders = analyze.model_sensitivity(scores, n_resamples=FEW)
+    lines = analyze.model_sensitivity_statements(changes, orders, changed)
+    assert any("(validation: rate 11.81 to 11.57)" in line for line in lines)
+
+
 def test_the_command_writes_every_table_and_the_summary(analyze, tiny_run, tmp_path):
     results = tmp_path / "results" / "tiny"
     analyses = [_quick(analysis) for analysis in analyze.ANALYSES]

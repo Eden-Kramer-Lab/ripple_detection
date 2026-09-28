@@ -3466,6 +3466,384 @@ def recall_changes(table: pd.DataFrame, threshold: float = RECALL_CHANGE) -> pd.
     )
 
 
+# Model sensitivity
+
+# The simulator's alternative models: (factor, level, condition id).
+MODEL_ALTERNATIVES = tuple(
+    (factor, level, f"{factor}={level}")
+    for factor, levels in ALTERNATIVES.items()
+    for level in levels
+    if level != REFERENCE_LEVEL
+)
+SENSITIVITY_COLUMNS = (
+    "alternative",
+    "status",
+    "method",
+    "setting",
+    "primary_expression",
+    "scoring",
+    "measure",
+    "fp_target",
+    "n_replicates",
+    "reference_value",
+    "value",
+    "change",
+    "change_low",
+    "change_high",
+    "change_p",
+    "n_paired",
+)
+ORDER_COLUMNS = (
+    "alternative",
+    "fp_target",
+    "primary_expression",
+    "method_a",
+    "method_b",
+    "reference_difference",
+    "reference_low",
+    "reference_high",
+    "alternative_difference",
+    "alternative_low",
+    "alternative_high",
+    "supported",
+    "reversed",
+    "p_reversed",
+)
+# Relative and absolute room within which a validation statistic is unchanged.
+_UNCHANGED = {"rtol": 0.01, "atol": 0.001}
+
+
+def _recall_at(
+    pool: Pool, weights: np.ndarray[Any, Any], targets: Sequence[float]
+) -> np.ndarray[Any, Any]:
+    """A sweep pool's recall at each target, shape (n_targets,)."""
+    pooled = pool(weights)
+    held = pooled["ran"] > 0
+    if not held.any():
+        return np.full(len(targets), np.nan)
+    rates = _rates(pooled)
+    return _at_fp_rates(
+        rates["fp_rate"][held],
+        rates["recall"][held],
+        rates["recall"][held],
+        targets,
+        0.5 / pooled["minutes"][held].max(),
+    )[:, 0]
+
+
+def _sweep_recalls(
+    scores: ConditionScores,
+    conditions: Sequence[str],
+    replicates: Sequence[int],
+    detectors: Sequence[str],
+    targets: Sequence[float],
+    n_resamples: int,
+) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+    """Each detector's recall at each target in each condition, over shared
+    replicates: the estimate, shape (n_conditions, n_detectors, n_targets),
+    the resamples (a leading axis of n_resamples) and each replicate alone
+    (a leading axis of n_replicates)."""
+    sessions = scores.sessions[
+        scores.sessions["condition_id"].isin(conditions)
+        & scores.sessions["replicate"].isin(replicates)
+    ]
+    counts = _by_method(_session_counts(scores, 0.0, sessions["session_id"]))
+    pools = []
+    for condition in conditions:
+        row = []
+        for detector in detectors:
+            own = counts.get(detector, _NO_COUNTS)
+            own = own[own["condition_id"] == condition]
+            settings = _sweep_settings(detector)
+            row.append(_curve_pool(own, _NO_ERRORS, "replicate", replicates, settings, ()))
+        pools.append(row)
+
+    def statistic(weights: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
+        return np.array(
+            [[_recall_at(pool, weights, targets) for pool in row] for row in pools]
+        )
+
+    estimate = statistic(np.ones(len(replicates)))
+    weights = resample_weights(len(replicates), n_resamples=n_resamples)
+    draws = np.array([statistic(w) for w in weights])
+    alone = np.array([statistic(w) for w in np.eye(len(replicates))])
+    return estimate, draws, alone
+
+
+def _shared_replicates(scores: ConditionScores, conditions: Sequence[str]) -> list[int]:
+    listed = scores.sessions[scores.sessions["condition_id"].isin(conditions)]
+    found = [set(rows["replicate"]) for _, rows in listed.groupby("condition_id")]
+    return sorted(set.intersection(*found)) if len(found) == len(conditions) else []
+
+
+def model_sensitivity(
+    scores: ConditionScores,
+    *,
+    targets: Sequence[float] = FP_TARGETS,
+    n_resamples: int = N_RESAMPLES,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """How each result moves under each of the simulator's alternative models.
+
+    Each alternative is paired with the reference by replicate (the
+    replicates both hold; a replicate's sessions share its seed): each main
+    setting's ``MEASURES`` (``paired_changes``), and each detector's recall
+    at the target false-positive rates, read off its sweep in each condition
+    (``at_fp_rate``) and compared only where both curves reach the target: a
+    target either cannot reach stays missing (``status`` ``"unattainable"``).
+    An alternative the run lacks has rows too, every value missing
+    (``"not run"``): the reference alone says nothing about it.
+
+    The orders are those of detectors sharing a primary expression, by
+    recall at a common target, in the reference and in the alternative, from
+    the same resamples of replicates.
+
+    Parameters
+    ----------
+    scores : ConditionScores
+    targets : sequence of float, optional
+    n_resamples : int, optional
+
+    Returns
+    -------
+    changes : pandas.DataFrame
+        ``SENSITIVITY_COLUMNS``: per alternative (its condition id), main
+        setting and ``measure`` (``MEASURES``, or ``"recall_at_fp"`` with
+        ``fp_target``), the reference's and the alternative's values over the
+        shared replicates, ``change`` (alternative minus reference) with its
+        interval and sign-flip p-value over the replicates where both exist
+        (``n_paired``).
+    orders : pandas.DataFrame
+        ``ORDER_COLUMNS``: per alternative, target and pair of detectors
+        with the same primary expression (A first by name), their recall
+        differences (A minus B) in the reference and in the alternative with
+        intervals; ``supported``, the reference interval excludes 0;
+        ``reversed``, the two estimates have opposite signs; ``p_reversed``,
+        the fraction of resamples (where both are defined) in which they do.
+    """
+    main = _main_methods(scores)
+    detectors = sorted(set(THRESHOLD_SWEEPS) & set(scores.methods["method"]))
+    primary = main.drop_duplicates("method").set_index("method")["primary_expression"]
+    present = set(scores.sessions["condition_id"])
+    changes, orders = [], []
+    for _, _, alternative in MODEL_ALTERNATIVES:
+        if alternative not in present or REFERENCE_CONDITION not in present:
+            skipped = [
+                {
+                    "alternative": alternative,
+                    "status": "not run",
+                    "method": row.method,
+                    "setting": row.setting,
+                    "primary_expression": row.primary_expression,
+                    "scoring": row.scoring,
+                    "measure": measure,
+                    "fp_target": np.nan,
+                }
+                for row in main.itertuples(index=False)
+                for measure in (MEASURES if row.scoring == INTERVAL else POINT_MEASURES)
+            ]
+            changes.append(pd.DataFrame(skipped, columns=list(SENSITIVITY_COLUMNS)))
+            continue
+        pair = [REFERENCE_CONDITION, alternative]
+        found = paired_changes(scores, pair, REFERENCE_CONDITION, n_resamples=n_resamples)
+        reference = found[found["condition_id"] == REFERENCE_CONDITION]
+        found = found[found["condition_id"] == alternative].merge(
+            reference[["method", "setting", "measure", "value"]].rename(
+                columns={"value": "reference_value"}
+            ),
+            on=["method", "setting", "measure"],
+        )
+        changes.append(
+            found.rename(columns={"condition_id": "alternative"}).assign(
+                status="compared", fp_target=np.nan
+            )[list(SENSITIVITY_COLUMNS)]
+        )
+        replicates = _shared_replicates(scores, pair)
+        estimate, draws, alone = _sweep_recalls(
+            scores, pair, replicates, detectors, targets, n_resamples
+        )
+        difference = estimate[1] - estimate[0]
+        low, high = _conditional_intervals(difference, draws[:, 1] - draws[:, 0])
+        per_replicate = alone[:, 1] - alone[:, 0]
+        rows = []
+        for d, detector in enumerate(detectors):
+            for t, target in enumerate(targets):
+                finite = per_replicate[:, d, t][np.isfinite(per_replicate[:, d, t])]
+                attained = np.isfinite(difference[d, t])
+                rows.append(
+                    {
+                        "alternative": alternative,
+                        "status": "compared" if attained else "unattainable",
+                        "method": detector,
+                        "setting": "sweep",
+                        "primary_expression": primary[detector],
+                        "scoring": INTERVAL,
+                        "measure": "recall_at_fp",
+                        "fp_target": target,
+                        "n_replicates": len(replicates),
+                        "reference_value": estimate[0, d, t],
+                        "value": estimate[1, d, t],
+                        "change": difference[d, t],
+                        "change_low": low[d, t],
+                        "change_high": high[d, t],
+                        "change_p": sign_flip_test(finite) if attained else np.nan,
+                        "n_paired": len(finite) if attained else 0,
+                    }
+                )
+        changes.append(pd.DataFrame(rows, columns=list(SENSITIVITY_COLUMNS)))
+        orders.append(_orders(alternative, detectors, primary, targets, estimate, draws))
+    return (
+        _concat(changes, SENSITIVITY_COLUMNS),
+        _concat(orders, ORDER_COLUMNS),
+    )
+
+
+def _orders(
+    alternative: str,
+    detectors: Sequence[str],
+    primary: pd.Series,
+    targets: Sequence[float],
+    estimate: np.ndarray[Any, Any],
+    draws: np.ndarray[Any, Any],
+) -> pd.DataFrame:
+    """The pairs of detectors sharing a primary expression, ordered by recall
+    at each target in the reference (index 0) and the alternative (1)."""
+    rows = []
+    for a, b in itertools.combinations(range(len(detectors)), 2):
+        if primary[detectors[a]] != primary[detectors[b]]:
+            continue
+        observed = estimate[:, a] - estimate[:, b]
+        resampled = draws[:, :, a] - draws[:, :, b]
+        low, high = _conditional_intervals(observed, resampled)
+        for t, target in enumerate(targets):
+            both = np.isfinite(resampled[:, 0, t]) & np.isfinite(resampled[:, 1, t])
+            flips = np.sign(resampled[both, 0, t]) * np.sign(resampled[both, 1, t]) < 0
+            rows.append(
+                {
+                    "alternative": alternative,
+                    "fp_target": target,
+                    "primary_expression": primary[detectors[a]],
+                    "method_a": detectors[a],
+                    "method_b": detectors[b],
+                    "reference_difference": observed[0, t],
+                    "reference_low": low[0, t],
+                    "reference_high": high[0, t],
+                    "alternative_difference": observed[1, t],
+                    "alternative_low": low[1, t],
+                    "alternative_high": high[1, t],
+                    "supported": bool(low[0, t] > 0 or high[0, t] < 0),
+                    "reversed": bool(observed[0, t] * observed[1, t] < 0),
+                    "p_reversed": flips.mean() if both.any() else np.nan,
+                }
+            )
+    return pd.DataFrame(rows, columns=list(ORDER_COLUMNS))
+
+
+def validation_changes(checks: pd.DataFrame) -> pd.DataFrame:
+    """The validation report's target statistics each alternative model moves.
+
+    Parameters
+    ----------
+    checks : pandas.DataFrame
+        The report's ``checks.csv``: ``check``, ``kind``, ``condition_id``,
+        ``statistic``, ``observed``.
+
+    Returns
+    -------
+    changed : pandas.DataFrame
+        One row per alternative and target check whose pooled statistic is
+        not within 1 % (and 0.001) of the reference's: ``alternative``,
+        ``check``, ``statistic``, ``reference``, ``observed``.
+    """
+    columns = ["alternative", "check", "statistic", "reference", "observed"]
+    targets = checks[checks["kind"] == "target"]
+    reference = targets[targets["condition_id"] == REFERENCE_CONDITION].set_index("check")
+    rows = []
+    for _, _, alternative in MODEL_ALTERNATIVES:
+        own = targets[targets["condition_id"] == alternative]
+        for row in own.itertuples(index=False):
+            if row.check not in reference.index:
+                continue
+            before = float(reference.loc[row.check, "observed"])
+            after = float(row.observed)
+            if (
+                np.isfinite(before)
+                and np.isfinite(after)
+                and np.isclose(after, before, **_UNCHANGED)
+            ):
+                continue
+            rows.append([alternative, row.check, row.statistic, before, after])
+    return pd.DataFrame(rows, columns=columns)
+
+
+def model_sensitivity_statements(
+    changes: pd.DataFrame, orders: pd.DataFrame, validation: pd.DataFrame | None = None
+) -> list[str]:
+    """What survives each alternative model and what depends on it, as Markdown.
+
+    A reference order counts as a statement when its interval excludes 0
+    (``supported``): it survives an alternative when the alternative's
+    interval excludes 0 on the same side, loses its support when it
+    includes 0, and reverses when the estimates' signs differ. Nothing is
+    pooled across alternatives.
+
+    Parameters
+    ----------
+    changes, orders : pandas.DataFrame
+        ``model_sensitivity``'s tables.
+    validation : pandas.DataFrame, optional
+        ``validation_changes``' table.
+
+    Returns
+    -------
+    lines : list of str
+        One bullet per alternative, then its reversed orders.
+    """
+    lines = []
+    for _, _, alternative in MODEL_ALTERNATIVES:
+        own = changes[changes["alternative"] == alternative]
+        if own.empty or (own["status"] == "not run").all():
+            lines.append(
+                f"- `{alternative}`: not in this run, so no statement is tested against it; "
+                "the reference's results say nothing about it."
+            )
+            continue
+        observed = "no target statistic moved by more than 1 %"
+        if validation is not None:
+            moved = validation[validation["alternative"] == alternative]
+            if len(moved):
+                observed = "; ".join(
+                    f"{row.check} {row.reference:.4g} to {row.observed:.4g}"
+                    for row in moved.itertuples(index=False)
+                )
+        mine = orders[(orders["alternative"] == alternative) & orders["supported"]]
+        same = np.sign(mine["reference_difference"])
+        survive = ((same > 0) & (mine["alternative_low"] > 0)) | (
+            (same < 0) & (mine["alternative_high"] < 0)
+        )
+        reversed_ = mine[mine["reversed"]]
+        recall = own[(own["measure"] == "recall") & own["change"].notna()]
+        moved_recall = recall[(recall["change_low"] > 0) | (recall["change_high"] < 0)]
+        unattainable = own[own["status"] == "unattainable"]
+        lines.append(
+            f"- `{alternative}` (validation: {observed}): of {len(mine)} reference orders "
+            f"of detectors by recall at a common false-positive rate that their intervals "
+            f"support, {int(survive.sum())} keep that support, "
+            f"{len(mine) - int(survive.sum()) - len(reversed_)} lose it and "
+            f"{len(reversed_)} reverse; {len(moved_recall)} of {len(recall)} main settings' "
+            f"recall moves with an interval excluding 0; {len(unattainable)} detector "
+            "targets are out of reach in one condition and stay missing."
+        )
+        lines += [
+            f"  - reversed at {row.fp_target:g}/min: `{row.method_a}` minus "
+            f"`{row.method_b}` {row.reference_difference:+.3f} "
+            f"({row.reference_low:+.3f}, {row.reference_high:+.3f}) in the reference, "
+            f"{row.alternative_difference:+.3f} ({row.alternative_low:+.3f}, "
+            f"{row.alternative_high:+.3f}) here; reversed in {row.p_reversed:.0%} of resamples"
+            for row in reversed_.itertuples(index=False)
+        ]
+    return lines
+
+
 # Matching sensitivity
 
 
