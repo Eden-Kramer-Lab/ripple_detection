@@ -839,69 +839,21 @@ def evaluate_session(
     records = method_records(methods)
     selected = {(record["method"], record["setting"]) for record in records}
     calls = [call for call in method_calls(session) if methods is None or call[:2] in selected]
-    events, metrics, failures, results, runtimes = [], [], [], {}, {}
-    warned: list[dict[str, str]] = []
+    events, metrics, failures, warned, results, runtimes = [], [], [], [], {}, {}
     for method, setting, prepare in calls:
         call_started = wall_clock.perf_counter()
         key = {"session_id": session_id, "method": method, "setting": setting}
-        result: pd.DataFrame | None = None
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            # the inputs are the benchmark's own: an error building them raises
-            call = prepare()
-            try:
-                result = call()
-            except Exception as error:  # a method's failure is data, never the run's
-                failures.append(
-                    {**key, "error": f"{type(error).__name__}: {error}"[:_ERROR_LENGTH]}
-                )
-            del call  # a recipe's recording, freed before the next one is built
-        warned.extend(
-            {
-                **key,
-                "category": warning.category.__name__,
-                "message": str(warning.message)[:_ERROR_LENGTH],
-            }
-            for warning in caught
-        )
+        result, failed, caught = _make_call(prepare, key)
+        failures += failed
+        warned += caught
         if result is not None:
-            n_units, n_principal = active_counts(_bounds(result), session)
+            events.append(_event_rows(result, key, session))
             scores = score_events(windows, result, minutes_outside)
-            peak = result.get("peak_time", pd.Series(np.nan, index=result.index))
-            events.append(
-                pd.DataFrame(
-                    {
-                        **key,
-                        "event_index": np.arange(len(result)),
-                        "start_time": result["start_time"].to_numpy(dtype=float),
-                        "end_time": result["end_time"].to_numpy(dtype=float),
-                        "peak_time": peak.to_numpy(dtype=float),
-                        "n_active_units": n_units,
-                        "n_active_principal": n_principal,
-                    },
-                    columns=list(EVENT_COLUMNS),
-                )
-            )
             metrics.append(scores.assign(**key)[list(METRIC_COLUMNS)])
             results[method, setting] = result
         runtimes[method, setting] = wall_clock.perf_counter() - call_started
 
-    truth_counts = []
-    for expression in EXPRESSIONS:
-        truth = windows[expression][0]
-        n_units, n_principal = active_counts(truth, session)
-        truth_counts.append(
-            pd.DataFrame(
-                {
-                    "session_id": session_id,
-                    "expression": expression,
-                    "row": np.arange(len(truth)),
-                    "n_active_units": n_units,
-                    "n_active_principal": n_principal,
-                },
-                columns=list(TRUTH_COUNT_COLUMNS),
-            )
-        )
+    truth_counts = _truth_counts(windows, session, session_id)
     event_types = session.events.drop_duplicates("event_id")["event_type"]
     non_event_types = session.non_events["non_event_type"]
     sessions = {
@@ -920,7 +872,7 @@ def evaluate_session(
     return SessionOutput(
         sessions=pd.DataFrame([sessions]),
         truth=_truth(session, session_id),
-        truth_counts=_concat(truth_counts, TRUTH_COUNT_COLUMNS),
+        truth_counts=truth_counts,
         ripple_channels=session.ripple_channels.assign(session_id=session_id)[
             list(RIPPLE_CHANNEL_COLUMNS)
         ],
@@ -948,6 +900,83 @@ def evaluate_session(
         results=results,
         runtimes=runtimes,
     )
+
+
+def _make_call(
+    prepare: Callable[[], Callable[[], pd.DataFrame]], key: Mapping[str, str]
+) -> tuple[pd.DataFrame | None, list[dict[str, str]], list[dict[str, str]]]:
+    """Build one call's inputs and make it, recording its warnings.
+
+    Returns its result, None if the method raised; its ``failures`` row, if
+    it did; and a ``warnings`` row per warning, each with ``key``'s
+    ``session_id``, ``method`` and ``setting``. An error building the inputs
+    is raised.
+    """
+    result, failed = None, []
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        # the inputs are the benchmark's own: an error building them raises
+        call = prepare()
+        try:
+            result = call()
+        except Exception as error:  # a method's failure is data, never the run's
+            failed.append({**key, "error": f"{type(error).__name__}: {error}"[:_ERROR_LENGTH]})
+        del call  # a recipe's recording, freed before the next one is built
+    warned = [
+        {
+            **key,
+            "category": warning.category.__name__,
+            "message": str(warning.message)[:_ERROR_LENGTH],
+        }
+        for warning in caught
+    ]
+    return result, failed, warned
+
+
+def _event_rows(
+    result: pd.DataFrame, key: Mapping[str, str], session: rd.SimulatedSession
+) -> pd.DataFrame:
+    """A result's ``events.csv`` rows, with the units active in each event."""
+    n_units, n_principal = active_counts(_bounds(result), session)
+    peak = result.get("peak_time", pd.Series(np.nan, index=result.index))
+    return pd.DataFrame(
+        {
+            **key,
+            "event_index": np.arange(len(result)),
+            "start_time": result["start_time"].to_numpy(dtype=float),
+            "end_time": result["end_time"].to_numpy(dtype=float),
+            "peak_time": peak.to_numpy(dtype=float),
+            "n_active_units": n_units,
+            "n_active_principal": n_principal,
+        },
+        columns=list(EVENT_COLUMNS),
+    )
+
+
+def _truth_counts(
+    windows: Mapping[str, Sequence[np.ndarray[Any, Any]]],
+    session: rd.SimulatedSession,
+    session_id: str,
+) -> pd.DataFrame:
+    """The units active in each truth window at fraction 0.1, the
+    ``truth_counts.csv`` rows of every expression."""
+    frames = []
+    for expression in EXPRESSIONS:
+        truth = windows[expression][0]
+        n_units, n_principal = active_counts(truth, session)
+        frames.append(
+            pd.DataFrame(
+                {
+                    "session_id": session_id,
+                    "expression": expression,
+                    "row": np.arange(len(truth)),
+                    "n_active_units": n_units,
+                    "n_active_principal": n_principal,
+                },
+                columns=list(TRUTH_COUNT_COLUMNS),
+            )
+        )
+    return _concat(frames, TRUTH_COUNT_COLUMNS)
 
 
 def _concat(frames: list[pd.DataFrame], columns: Sequence[str]) -> pd.DataFrame:
@@ -1609,13 +1638,43 @@ def run_benchmark(
     except ReportNotReady as error:  # its message names the report and why
         raise SystemExit(str(error)) from None
     spec = run_specification(resolved, counts, report, methods)
-    if spec["git_commit"] == "unknown":
+    _require_known_commit(spec["git_commit"], resume=resume)
+
+    root = OUTPUT / run_name
+    conditions_directory = root / "conditions"
+    manifest = _start_or_resume(
+        root, spec, selected, overrides, resume=resume, run_name=run_name, command=command
+    )
+    pending = [c for c in selected if not (conditions_directory / c.condition_id).exists()]
+    tasks = [(c, replicate) for c in pending for replicate in range(counts[c.condition_id])]
+    n_workers = min(workers or requested_workers, max(1, len(tasks)))
+    (root / "manifest.json").write_text(
+        json.dumps({**manifest, "n_workers": n_workers}, indent=2)
+    )
+    last = _execute(conditions_directory, tasks, counts, methods, overrides, n_workers)
+
+    combine(root)
+    manifest = json.loads((root / "manifest.json").read_text())
+    manifest["finished"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
+    if smoke and last is not None:
+        print(
+            _smoke_report(
+                last, conditions_directory / "reference", requested_workers, report["sessions"]
+            )
+        )
+    return root
+
+
+def _require_known_commit(commit: str, *, resume: bool) -> None:
+    """Refuse an unknown commit, and a resumption from a dirty tree."""
+    if commit == "unknown":
         msg = (
             "The git commit is unknown (not a git checkout, or no git): a run records "
             "the commit of the code it ran, so it cannot start or resume."
         )
         raise SystemExit(msg)
-    if resume and spec["git_commit"].endswith("-dirty"):
+    if resume and commit.endswith("-dirty"):
         msg = (
             "Resume accepts only committed, clean code: src/ or examples/benchmark/ has "
             "changes, which the commit does not identify. Commit them and start a new "
@@ -1623,8 +1682,24 @@ def run_benchmark(
         )
         raise SystemExit(msg)
 
-    root = OUTPUT / run_name
-    conditions_directory = root / "conditions"
+
+def _start_or_resume(
+    root: Path,
+    spec: Mapping[str, Any],
+    selected: Sequence[Condition],
+    overrides: Mapping[str, Any],
+    *,
+    resume: bool,
+    run_name: str,
+    command: str,
+) -> dict[str, Any]:
+    """Resume the run at ``root``, or start it, and return its manifest.
+
+    Resuming, the saved specification must equal ``spec``, and interrupted
+    or unverifiable conditions are deleted; starting, the run files are
+    written. Raises SystemExit when there is no run to resume, the saved
+    specification differs, or a run to start exists.
+    """
     if resume:
         try:
             saved = json.loads((root / "run_spec.json").read_text())
@@ -1635,93 +1710,87 @@ def run_benchmark(
         if differences:
             msg = f"The saved run specification differs at: {', '.join(differences)}."
             raise SystemExit(msg)
-        _clear_unfinished(conditions_directory)
-    else:
-        if root.exists():
-            msg = f"{root} exists; pass --resume to continue it, or another --run-name."
-            raise SystemExit(msg)
-        conditions_directory.mkdir(parents=True)
-        found = versions()
-        manifest = {
-            "run_name": run_name,
-            "git_commit": spec["git_commit"],
-            "package_version": found["ripple_detection"],
-            "numpy_version": found["numpy"],
-            "scipy_version": found["scipy"],
-            "command": command,
-            "started": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "finished": None,
-        }
-        (root / "run_spec.json").write_text(json.dumps(spec, indent=2, sort_keys=True))
-        _write_table(
-            pd.DataFrame(
-                [
-                    {
-                        "condition_id": c.condition_id,
-                        "factor": c.factor,
-                        "level": c.level,
-                        "params": resolved_json(c, overrides),
-                    }
-                    for c in selected
-                ],
-                columns=list(CONDITIONS_TABLE.columns),
-            ),
-            root / "conditions.csv",
-        )
+        _clear_unfinished(root / "conditions")
+        manifest: dict[str, Any] = json.loads((root / "manifest.json").read_text())
+        return manifest
+    if root.exists():
+        msg = f"{root} exists; pass --resume to continue it, or another --run-name."
+        raise SystemExit(msg)
+    (root / "conditions").mkdir(parents=True)
+    found = versions()
+    manifest = {
+        "run_name": run_name,
+        "git_commit": spec["git_commit"],
+        "package_version": found["ripple_detection"],
+        "numpy_version": found["numpy"],
+        "scipy_version": found["scipy"],
+        "command": command,
+        "started": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "finished": None,
+    }
+    (root / "run_spec.json").write_text(json.dumps(spec, indent=2, sort_keys=True))
+    _write_table(
+        pd.DataFrame(
+            [
+                {
+                    "condition_id": c.condition_id,
+                    "factor": c.factor,
+                    "level": c.level,
+                    "params": resolved_json(c, overrides),
+                }
+                for c in selected
+            ],
+            columns=list(CONDITIONS_TABLE.columns),
+        ),
+        root / "conditions.csv",
+    )
+    return manifest
 
-    pending = [c for c in selected if not (conditions_directory / c.condition_id).exists()]
-    tasks = [(c, replicate) for c in pending for replicate in range(counts[c.condition_id])]
-    collected: dict[str, dict[int, SessionOutput]] = {c.condition_id: {} for c in pending}
-    last: list[SessionOutput] = []
+
+def _execute(
+    conditions_directory: Path,
+    tasks: Sequence[tuple[Condition, int]],
+    counts: Mapping[str, int],
+    methods: Collection[tuple[str, str]] | None,
+    overrides: Mapping[str, Any],
+    n_workers: int,
+) -> SessionOutput | None:
+    """Run every (condition, replicate) of ``tasks``, in this process or on
+    ``n_workers`` processes, writing each condition once its ``counts``
+    sessions are in; return the last session finished, None if none ran.
+    The first error stops the run: no queued session starts."""
+    collected: dict[str, dict[int, SessionOutput]] = {c.condition_id: {} for c, _ in tasks}
+    last: SessionOutput | None = None
 
     def finish(condition_id: str, replicate: int, output: SessionOutput) -> None:
+        nonlocal last
         collected[condition_id][replicate] = output
-        last[:] = [output]
+        last = output
         if len(collected[condition_id]) == counts[condition_id]:
             outputs = collected.pop(condition_id)
             _finish_condition(
                 conditions_directory, condition_id, [outputs[r] for r in sorted(outputs)]
             )
 
-    n_workers = min(workers or requested_workers, max(1, len(tasks)))
-    if resume:
-        manifest = json.loads((root / "manifest.json").read_text())
-    (root / "manifest.json").write_text(
-        json.dumps({**manifest, "n_workers": n_workers}, indent=2)
-    )
     if n_workers == 1:
         for condition, replicate in tasks:
             finish(*_run_one(condition, replicate, methods, overrides))
-    else:
-        pool = ProcessPoolExecutor(max_workers=n_workers)
-        try:
-            futures = [
-                pool.submit(_run_one, condition, replicate, methods, overrides)
-                for condition, replicate in tasks
-            ]
-            for future in as_completed(futures):
-                finish(*future.result())
-        except BaseException:
-            # stop at the first failure: no queued session starts, and the
-            # error is raised without waiting for the running ones
-            pool.shutdown(wait=False, cancel_futures=True)
-            raise
-        pool.shutdown()
-
-    combine(root)
-    manifest = json.loads((root / "manifest.json").read_text())
-    manifest["finished"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    (root / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    if smoke and last:
-        print(
-            _smoke_report(
-                last[0],
-                conditions_directory / "reference",
-                requested_workers,
-                report["sessions"],
-            )
-        )
-    return root
+        return last
+    pool = ProcessPoolExecutor(max_workers=n_workers)
+    try:
+        futures = [
+            pool.submit(_run_one, condition, replicate, methods, overrides)
+            for condition, replicate in tasks
+        ]
+        for future in as_completed(futures):
+            finish(*future.result())
+    except BaseException:
+        # stop at the first failure: no queued session starts, and the
+        # error is raised without waiting for the running ones
+        pool.shutdown(wait=False, cancel_futures=True)
+        raise
+    pool.shutdown()
+    return last
 
 
 def main(argv: Sequence[str] | None = None) -> None:
