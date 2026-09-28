@@ -387,18 +387,23 @@ SPEED: dict[str, tuple[str, float]] = {
     "all<=5": ("all", 5.0),
     "restrict<5": ("restrict", float(np.nextafter(5.0, -np.inf))),
 }
-# The samples each normalization period takes its statistics from; the
-# statistics are always over valid (finite) samples of the trace.
-NORMALIZATION = ("session", "speed<5", "speed<4", "rest")
-# State levels: a trace restriction (RESTRICTIONS) or a post step.
-STATES: dict[str, Step | None] = {
-    "none": None,
-    "restrict:rest": None,
-    "inside:rest": Step("inside", (("intervals", "rest"),)),
-    "overlap:running_30s": Step("overlap", (("partner", "running_30s"),)),
+# Normalization levels: the input samples a period takes its statistics from
+# (None, every one); the statistics are always over valid (finite) samples of
+# the trace.
+NORMALIZATION: dict[str, Callable[[SessionContext], np.ndarray[Any, Any] | None]] = {
+    "session": lambda _context: None,
+    "speed<5": lambda context: np.asarray(context.recording.speed < 5.0, dtype=bool),
+    "speed<4": lambda context: np.asarray(context.recording.speed < 4.0, dtype=bool),
+    "rest": lambda context: context.recording.intervals_to_mask(context.rest),
 }
-# The state levels that restrict the trace, to the intervals of the partner named.
-RESTRICTIONS: dict[str, str] = {"restrict:rest": "rest"}
+# State levels: (restrict_to, post step), the partner whose intervals the trace
+# is restricted to, or a post step, or neither.
+STATES: dict[str, tuple[str | None, Step | None]] = {
+    "none": (None, None),
+    "restrict:rest": ("rest", None),
+    "inside:rest": (None, Step("inside", (("intervals", "rest"),))),
+    "overlap:running_30s": (None, Step("overlap", (("partner", "running_30s"),))),
+}
 # Coincidence levels: a whole post step with its partner.
 COINCIDENCES: dict[str, Step | None] = {
     "none": None,
@@ -494,9 +499,10 @@ def compile(template: Template) -> Pipeline:
             raise ValueError(msg)
         smoothing = template.smoothing_sigma
     speed_rule, speed_threshold = SPEED[template.speed]
+    restrict_to, state_step = STATES[template.state]
     core = ThresholdCore(
         signal=signal,
-        restrict_to=RESTRICTIONS.get(template.state),
+        restrict_to=restrict_to,
         normalization_period=template.normalization_period,
         smoothing_sigma=smoothing,
         threshold=template.threshold,
@@ -515,7 +521,7 @@ def compile(template: Template) -> Pipeline:
                 (("units", template.units), ("minimum", template.minimum_active_units)),
             )
         )
-    post = (STATES[template.state], COINCIDENCES[template.coincidence])
+    post = (state_step, COINCIDENCES[template.coincidence])
     steps.extend(step for step in post if step is not None)
     pipeline = Pipeline(core, tuple(steps))
     try:
@@ -604,7 +610,7 @@ class SessionContext:
     def __init__(self, session: rd.SimulatedSession, label: str) -> None:
         self.session = _counted(session)
         self.label = label
-        self.recording = Recording.from_arrays(
+        self.recording: Recording = Recording.from_arrays(
             session.time,
             session.sampling_frequency,
             lfps=session.lfps,
@@ -627,7 +633,7 @@ class SessionContext:
             _read_only(values)
         if signals.speed is not None:
             _read_only(signals.speed)
-        self.rest = _read_only(rest_intervals(session))
+        self.rest: FloatArray = _read_only(rest_intervals(session))
         self.minutes = len(session.time) / session.sampling_frequency / 60
         self.windows = {
             expression: {
@@ -694,16 +700,14 @@ class SessionContext:
         )
 
     def normalization_mask(self, period: str) -> np.ndarray[Any, Any] | None:
-        """The input samples ``period`` takes statistics from; None, every one."""
-        if period == "session":
-            return None
-        if period == "rest":
-            return self.recording.intervals_to_mask(self.rest)
-        limits = {"speed<5": 5.0, "speed<4": 4.0}
-        if period in limits:
-            return np.asarray(self.recording.speed < limits[period], dtype=bool)
-        msg = f"normalization_period must be one of {NORMALIZATION}; got {period!r}."
-        raise ValueError(msg)
+        """The input samples ``period`` takes statistics from (``NORMALIZATION``);
+        None, every one."""
+        if period not in NORMALIZATION:
+            msg = (
+                f"normalization_period must be one of {tuple(NORMALIZATION)}; got {period!r}."
+            )
+            raise ValueError(msg)
+        return NORMALIZATION[period](self)
 
     def partner(self, name: str) -> FloatArray:
         """A post step's partner: intervals, shape (n_intervals, 2), or times,

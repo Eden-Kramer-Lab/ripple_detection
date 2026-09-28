@@ -279,8 +279,7 @@ def test_compile_orders_the_steps(attribution):
     restricted = attribution.compile(attribution.TEMPLATES["drieu_2018"][0])
     assert restricted.core.restrict_to == "rest"
     # a restriction is a level of the state with no post step
-    assert attribution.RESTRICTIONS == {"restrict:rest": "rest"}
-    assert all(attribution.STATES[level] is None for level in attribution.RESTRICTIONS)
+    assert attribution.STATES["restrict:rest"] == ("rest", None)
     assert restricted.steps == ()
     squared = dataclasses.replace(attribution.TEMPLATES["pfeiffer_2015"][0], trace="squared")
     compiled = attribution.compile(squared)
