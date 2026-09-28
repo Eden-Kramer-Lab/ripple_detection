@@ -444,3 +444,178 @@ def test_matching_in_parallel_matches_in_order(analyze, tiny_tables, tiny_matche
     parallel = analyze.match_run(tiny_tables, workers=2)
     for name in analyze._MATCH_COLUMNS:
         pd.testing.assert_frame_equal(getattr(parallel, name), getattr(tiny_matches, name))
+
+
+# Few resamples: two sessions have at most three distinct draws.
+FEW = 50
+
+
+def _by(table, *columns):
+    return table.set_index(list(columns))
+
+
+def test_profile_and_consensus_on_tiny_run(analyze, tiny_tables, tiny_matches):
+    profile = _by(
+        analyze.detection_profile(tiny_tables, tiny_matches, n_resamples=FEW),
+        "method",
+        "event_type",
+    )
+    kinds = list(rd.EVENT_TYPES)
+    # Kay, both sessions: every type but the sharp wave alone, the burst-only
+    # event by an event over its burst
+    kay = profile.loc[KAY[0]].loc[kinds]
+    assert kay.n_true.tolist() == [2, 2, 2, 2, 2]
+    assert kay.n_found.tolist() == [2, 2, 2, 2, 0]
+    assert kay.recall.tolist() == [1.0, 1.0, 1.0, 1.0, 0.0]
+    assert (kay.recall_low == kay.recall).all()
+    assert (kay.recall_high == kay.recall).all()
+    # Mallory, the first session only: it failed on the second
+    mallory = profile.loc[MALLORY[0]].loc[kinds]
+    assert mallory.n_true.tolist() == [1, 1, 1, 1, 1]
+    assert mallory.recall.tolist() == [1.0, 0.0, 1.0, 1.0, 0.0]
+    assert mallory[["n_sessions", "n_failures"]].drop_duplicates().to_numpy().tolist() == [
+        [1, 1]
+    ]
+    assert (kay[["n_sessions", "n_failures"]].to_numpy() == [2, 0]).all()
+
+    table = analyze.consensus(tiny_tables, tiny_matches)
+    counts = {
+        (row.kind, row.event_type, row.n_methods): row.count for row in table.itertuples()
+    }
+    assert counts == {
+        ("true_event", "swr", 1): 1,
+        ("true_event", "swr", 2): 1,
+        ("true_event", "weak_ripple", 1): 2,
+        ("true_event", "burst_only", 1): 1,
+        ("true_event", "burst_only", 2): 1,
+        ("true_event", "ripple_doublet", 1): 1,
+        ("true_event", "ripple_doublet", 2): 1,
+        ("true_event", "sharp_wave_only", 0): 2,
+        # Kay's three false positives in each session, Mallory's over the EMG,
+        # and the two overlapping ones as one group
+        ("false_positive_group", "all", 1): 6,
+        ("false_positive_group", "all", 2): 1,
+    }
+    assert list(table.event_type.drop_duplicates()) == [*kinds, "all"]
+    assert table.fraction.tolist()[-2:] == [6 / 7, 1 / 7]
+    assert table[
+        ["n_methods_compared", "n_failed_calls"]
+    ].drop_duplicates().to_numpy().tolist() == [[2, 1]]
+
+
+def test_false_positive_classes_on_tiny_run(analyze, tiny_tables, tiny_matches):
+    classes = analyze.false_positive_classes(tiny_tables, tiny_matches, n_resamples=FEW)
+    # every label for every method, zeros included
+    assert len(classes) == 2 * classes.label.nunique()
+    assert classes.label.iloc[-1] == "background"
+    shown = _by(classes[classes.n_events > 0], "method", "label")
+    assert shown.fraction.to_dict() == {
+        (KAY[0], "burst_only:burst"): 1 / 3,
+        (KAY[0], "spike_leakage"): 1 / 3,
+        (KAY[0], "background"): 1 / 3,
+        (MALLORY[0], "emg"): 1 / 2,
+        (MALLORY[0], "background"): 1 / 2,
+    }
+    assert shown.n_unmatched.to_dict()[KAY[0], "background"] == 6
+
+
+def test_splits_and_merges_on_tiny_run(analyze, tiny_tables, tiny_matches):
+    rates = _by(
+        analyze.splits_and_merges(tiny_tables, tiny_matches, n_resamples=FEW),
+        "method",
+        "subset",
+    )
+    assert rates.loc[(KAY[0], "all"), ["split_rate", "merge_rate"]].tolist() == [0.0, 1 / 6]
+    assert rates.loc[(KAY[0], "ripple_doublet"), ["n_detected", "merge_rate"]].tolist() == [
+        2,
+        1,
+    ]
+    assert rates.loc[
+        (MALLORY[0], "all"), ["n_truth", "n_detected", "n_failures"]
+    ].tolist() == [
+        4,
+        5,
+        1,
+    ]
+
+
+def test_agreement_and_differences_on_tiny_run(analyze, tiny_tables, tiny_matches):
+    agreement = analyze.pairwise_agreement(tiny_tables, tiny_matches, n_resamples=FEW)
+    row = agreement.iloc[0]
+    assert (row.method_a, row.method_b, row.truth_expression) == (
+        KAY[0],
+        MALLORY[0],
+        "network",
+    )
+    # the one session both ran: 4 of 6 and 5 events matched; 3 of the 4 network
+    # events either found were found by both
+    assert row.jaccard == pytest.approx(4 / 7)
+    assert row.jaccard_truth_ids == pytest.approx(3 / 4)
+    assert [row.n_sessions, row.n_failures_a, row.n_failures_b] == [1, 0, 1]
+    differences = analyze.method_differences(tiny_tables, tiny_matches, n_resamples=FEW)
+    # Kay's starts minus Mallory's over the matched events: 0.01, 0.05, 0.02, -0.05
+    assert differences.median_onset_difference.iloc[0] == pytest.approx(0.015)
+    assert differences.median_onset_difference_p.iloc[0] == 1.0  # one session
+    dendrogram = analyze.agreement_dendrogram(tiny_tables, tiny_matches)
+    assert dendrogram.method.tolist() == [KAY[0], MALLORY[0], ""]
+    assert dendrogram.distance.iloc[-1] == pytest.approx(3 / 7)
+
+
+def test_overlap_quality_on_tiny_run(analyze, tiny_tables, tiny_matches):
+    quality = _by(
+        analyze.overlap_quality(tiny_tables, tiny_matches, n_resamples=FEW),
+        "method",
+        "measure",
+    )
+    # Kay's IoUs, in each session: 1, 0.8 and 7/17 (the doublet's ripple)
+    assert quality.loc[(KAY[0], "iou"), "n_pairs"] == 6
+    assert quality.loc[(KAY[0], "iou"), "median"] == pytest.approx(0.8, abs=1e-5)
+    assert quality.loc[(KAY[0], "iou"), "q05"] == pytest.approx(7 / 17, abs=1e-5)
+    assert quality.loc[(KAY[0], "iou"), "recall"] == 3 / 4
+    assert quality.loc[(MALLORY[0], "coverage"), ["n_pairs", "median"]].tolist() == [3, 1.0]
+
+
+@pytest.fixture(scope="module")
+def timing_run(run, tmp_path_factory):
+    """One session of six ripples: Kay finds the first three at their bounds;
+    Karlsson finds all six, the last three 20 ms late at both ends."""
+    events = _event_table(run, [(k, "swr", "ripple", 0, 1.0 + k, 0.05) for k in range(6)])
+    windows = rd.truth_windows(events, 0.1, "ripple")[["start_time", "end_time"]].to_numpy()
+    late = windows + np.array([[0.0], [0.0], [0.0], [0.02], [0.02], [0.02]])
+    session = {
+        "events": events,
+        "non_events": _non_event_tables(_one_non_event_table("emg", center_time=9.0)),
+        "duration": 10.0,
+        "detected": {KAY: windows[:3], KARLSSON: late},
+    }
+    return _write_run(run, tmp_path_factory.mktemp("timing"), [session])
+
+
+def test_paired_timing_uses_shared_truth_only(analyze, timing_run):
+    tables = analyze.load_run(timing_run)
+    matches = analyze.match_run(tables)
+    errors = analyze.boundary_errors(tables, matches, n_resamples=FEW)
+    onset = _by(
+        errors[
+            (errors.fraction == 0.1)
+            & (errors.boundary == "onset")
+            & (errors.measure == "signed")
+        ],
+        "method",
+    )
+    assert onset.loc[KAY[0], ["n_pairs", "median", "recall"]].tolist() == [3, 0.0, 0.5]
+    assert onset.loc[KARLSSON[0], ["n_pairs", "recall"]].tolist() == [6, 1.0]
+    assert onset.loc[KARLSSON[0], "median"] == pytest.approx(0.01, abs=1e-12)
+
+    timing = analyze.paired_timing(tables, matches, "ripple", n_resamples=FEW)
+    assert timing.fraction.tolist() == [0.1, 0.25, 0.5]
+    row = timing.iloc[0]
+    assert (row.method_a, row.method_b) == (KAY[0], KARLSSON[0])
+    assert [row.n_shared, row.n_sessions, row.n_sessions_without] == [3, 1, 0]
+    assert row.jaccard_truth_ids == 0.5
+    for stem in ("onset_signed", "onset_absolute", "offset_signed", "offset_absolute"):
+        assert row[f"{stem}_pooled"] == 0.0
+        assert row[f"{stem}_estimate"] == 0.0
+        assert row[f"{stem}_p"] == 1.0
+    # no pair shares a burst primary expression here
+    assert analyze.paired_timing(tables, matches, "burst", n_resamples=FEW).empty

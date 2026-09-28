@@ -96,6 +96,36 @@ FALSE_POSITIVE_COLUMNS = (
 SESSION_COMPARISON_COLUMNS = ("session_id", "truth_expression", *COMPARISON_COLUMNS)
 CONSENSUS_COLUMNS = ("session_id", "row", "type", "n_methods", "n_methods_run")
 GROUP_COLUMNS = ("session_id", "n_methods", "n_events", "start_time", "end_time")
+QUANTILES = (0.05, 0.25, 0.5, 0.75, 0.95)
+QUANTILE_NAMES = ("q05", "q25", "median", "q75", "q95")
+OVERLAP_MEASURES = ("iou", "coverage", "temporal_precision")
+# The order of expressions in a table: the joint event first.
+EXPRESSION_ORDER = ("network", *rd.EXPRESSIONS)
+# compare_detectors' columns the pair tables average over sessions.
+AGREEMENT = ("jaccard", "jaccard_true", "jaccard_false", "jaccard_truth_ids")
+DIFFERENCES = (
+    "median_onset_difference",
+    "median_offset_difference",
+    "fraction_a_earlier_onset",
+    "fraction_a_earlier_offset",
+)
+CORRELATIONS = ("onset_error_correlation", "offset_error_correlation")
+PAIRED_TIMING_COLUMNS = (
+    "expression",
+    "method_a",
+    "method_b",
+    "fraction",
+    "n_shared",
+    "n_sessions",
+    "n_sessions_without",
+    "jaccard_truth_ids",
+    *(
+        f"{boundary}_{measure}_{part}"
+        for boundary in ("onset", "offset")
+        for measure in ("signed", "absolute")
+        for part in ("pooled", "estimate", "low", "high", "p")
+    ),
+)
 
 
 def paired_bootstrap(
@@ -826,3 +856,901 @@ def match_run(
             for name, columns in _MATCH_COLUMNS.items()
         }
     )
+
+
+# Intervals over groups
+
+# A statistic of every group at once: (group codes, rows, number of groups)
+# to an array of shape (n_statistics, n_groups).
+GroupStatistic = Callable[[np.ndarray[Any, Any], pd.DataFrame, int], np.ndarray[Any, Any]]
+
+
+def _ratio_of_sums(*ratios: tuple[str, str]) -> GroupStatistic:
+    """Each (numerator, denominator) column pair's pooled ratio per group,
+    NaN where the denominator sums to 0."""
+
+    def statistic(
+        codes: np.ndarray[Any, Any], frame: pd.DataFrame, n_groups: int
+    ) -> np.ndarray[Any, Any]:
+        sums = {
+            column: np.bincount(
+                codes, weights=frame[column].to_numpy(dtype=float), minlength=n_groups
+            )
+            for column in dict.fromkeys(itertools.chain.from_iterable(ratios))
+        }
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return np.array([sums[top] / sums[bottom] for top, bottom in ratios])
+
+    return statistic
+
+
+def _means(*columns: str) -> GroupStatistic:
+    """Each column's mean per group over its finite values, NaN for none."""
+
+    def statistic(
+        codes: np.ndarray[Any, Any], frame: pd.DataFrame, n_groups: int
+    ) -> np.ndarray[Any, Any]:
+        means = []
+        for column in columns:
+            values = frame[column].to_numpy(dtype=float)
+            finite = np.isfinite(values)
+            total = np.bincount(codes[finite], weights=values[finite], minlength=n_groups)
+            count = np.bincount(codes[finite], minlength=n_groups)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                means.append(total / count)
+        return np.array(means)
+
+    return statistic
+
+
+def _medians(*columns: str) -> GroupStatistic:
+    """Each column's median per group over its values, NaN for none."""
+
+    def statistic(
+        codes: np.ndarray[Any, Any], frame: pd.DataFrame, n_groups: int
+    ) -> np.ndarray[Any, Any]:
+        medians = frame[list(columns)].groupby(codes).median().reindex(range(n_groups))
+        return np.asarray(medians, dtype=float).T
+
+    return statistic
+
+
+def grouped_intervals(
+    frame: pd.DataFrame,
+    by: Sequence[str],
+    statistic: GroupStatistic,
+    names: Sequence[str],
+    columns: Sequence[str],
+    *,
+    n_resamples: int = N_RESAMPLES,
+) -> pd.DataFrame:
+    """A statistic of each group, with its paired-bootstrap interval over sessions.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        With ``session_id``, ``replicate``, the ``by`` columns and ``columns``.
+    by : sequence of str
+        The columns whose values name a group.
+    statistic : callable
+        ``statistic(codes, rows, n_groups)``: an array of shape
+        ``(len(names), n_groups)``, the statistics of each group, ``codes``
+        numbering the groups of ``rows`` from 0.
+    names : sequence of str
+        The statistics' names.
+    columns : sequence of str
+        The columns ``statistic`` reads.
+    n_resamples : int, optional
+
+    Returns
+    -------
+    intervals : pandas.DataFrame
+        One row per group, sorted by ``by``: the ``by`` columns, then each
+        name's estimate, ``<name>_low`` and ``<name>_high`` (95 %,
+        ``paired_bootstrap`` with ``key="session_id"``, every group of a
+        resample from the same sessions).
+    """
+    grouped = frame.groupby(list(by), sort=True)
+    keys = grouped.size().reset_index()[list(by)]
+    n_groups = len(keys)
+    for name in names:
+        keys[name] = keys[f"{name}_low"] = keys[f"{name}_high"] = np.nan
+    if not n_groups:
+        return keys
+    rows = frame[["session_id", "replicate", *columns]].assign(
+        _group=grouped.ngroup().to_numpy()
+    )
+
+    def flat(resampled: pd.DataFrame) -> pd.Series:
+        codes = resampled["_group"].to_numpy()
+        return pd.Series(statistic(codes, resampled, n_groups).ravel())
+
+    found = paired_bootstrap(rows, flat, key="session_id", n_resamples=n_resamples)
+    for position, name in enumerate(names):
+        block = found.iloc[position * n_groups : (position + 1) * n_groups]
+        keys[name] = block["estimate"].to_numpy()
+        keys[f"{name}_low"] = block["low"].to_numpy()
+        keys[f"{name}_high"] = block["high"].to_numpy()
+    return keys
+
+
+def _with_replicate(frame: pd.DataFrame, tables: RunTables) -> pd.DataFrame:
+    """``frame`` with each session's ``replicate``."""
+    replicates = tables.sessions.set_index("session_id")["replicate"]
+    return frame.assign(replicate=frame["session_id"].map(replicates).to_numpy())
+
+
+def _with_failures(frame: pd.DataFrame, tables: RunTables) -> pd.DataFrame:
+    """A per-method table with each method's ``primary_expression``,
+    ``n_sessions`` and ``n_failures`` (``failure_counts``) added."""
+    counts = failure_counts(tables)[
+        ["method", "setting", "primary_expression", "n_sessions", "n_failures"]
+    ]
+    return frame.merge(counts, on=["method", "setting"], how="left")
+
+
+def _in_order(frame: pd.DataFrame, column: str, order: Sequence[str]) -> pd.DataFrame:
+    """``frame`` sorted by method, setting and then ``column`` in ``order``."""
+    rank = {value: position for position, value in enumerate(order)}
+    return (
+        frame.assign(_rank=frame[column].map(rank))
+        .sort_values(["method", "setting", "_rank"], kind="stable")
+        .drop(columns="_rank")
+        .reset_index(drop=True)
+    )
+
+
+def _primary_pairs(tables: RunTables, matches: Matches) -> pd.DataFrame:
+    """The pairs of each method against its primary expression, at IoU 0."""
+    pairs = matches.pairs[matches.pairs["minimum_iou"] == 0]
+    primary = tables.methods[["method", "setting", "primary_expression"]].rename(
+        columns={"primary_expression": "expression"}
+    )
+    return pairs.merge(primary, on=["method", "setting", "expression"])
+
+
+def recall(
+    tables: RunTables,
+    matches: Matches,
+    scored: pd.DataFrame,
+    *,
+    n_resamples: int = N_RESAMPLES,
+) -> pd.DataFrame:
+    """Each method's pooled recall against some expressions, with intervals.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+    scored : pandas.DataFrame
+        ``method``, ``setting`` and ``expression``: which recalls.
+    n_resamples : int, optional
+
+    Returns
+    -------
+    recall : pandas.DataFrame
+        One row per row of ``scored`` with scores: those columns, ``n_truth``
+        and ``n_found`` (truth windows at 10 % and those matched, at IoU 0,
+        over the sessions the method has scores on), ``recall`` (their ratio),
+        ``recall_low`` and ``recall_high``.
+    """
+    n_truth = matches.windows.groupby(["session_id", "expression"]).size().rename("n_truth")
+    found = matches.pairs[matches.pairs["minimum_iou"] == 0]
+    n_found = found.groupby([*_KEY, "expression"]).size().rename("n_found")
+    frame = tables.ran.merge(scored, on=["method", "setting"])
+    frame = frame.join(n_truth, on=["session_id", "expression"]).join(
+        n_found, on=[*_KEY, "expression"]
+    )
+    frame = _with_replicate(frame.fillna({"n_truth": 0, "n_found": 0}), tables)
+    by = ["method", "setting", "expression"]
+    intervals = grouped_intervals(
+        frame,
+        by,
+        _ratio_of_sums(("n_found", "n_truth")),
+        ["recall"],
+        ["n_found", "n_truth"],
+        n_resamples=n_resamples,
+    )
+    totals = frame.groupby(by)[["n_truth", "n_found"]].sum().astype(int).reset_index()
+    return totals.merge(intervals, on=by)
+
+
+# The analyses
+
+
+def detection_profile(
+    tables: RunTables, matches: Matches, *, n_resamples: int = N_RESAMPLES
+) -> pd.DataFrame:
+    """Recall per event type against the network truth, per method.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+    n_resamples : int, optional
+
+    Returns
+    -------
+    profile : pandas.DataFrame
+        One row per method, setting and event type (``EVENT_TYPES`` order):
+        ``method``, ``setting``, ``event_type``, ``n_true`` (network events
+        of that type in the sessions the method has scores on), ``n_found``
+        (those it matched, IoU 0), ``recall``, ``recall_low``,
+        ``recall_high``, ``primary_expression``, ``n_sessions``,
+        ``n_failures``.
+    """
+    network = matches.windows[matches.windows["expression"] == "network"]
+    n_true = network.groupby(["session_id", "type"]).size().rename("n_true")
+    found = matches.pairs[
+        (matches.pairs["expression"] == "network") & (matches.pairs["minimum_iou"] == 0)
+    ].merge(
+        network[["session_id", "row", "type"]],
+        left_on=["session_id", "truth_row"],
+        right_on=["session_id", "row"],
+    )
+    n_found = found.groupby([*_KEY, "type"]).size().rename("n_found")
+    frame = tables.ran.merge(pd.DataFrame({"type": rd.EVENT_TYPES}), how="cross")
+    frame = frame.join(n_true, on=["session_id", "type"]).join(n_found, on=[*_KEY, "type"])
+    frame = _with_replicate(frame.fillna({"n_true": 0, "n_found": 0}), tables)
+    by = ["method", "setting", "type"]
+    intervals = grouped_intervals(
+        frame,
+        by,
+        _ratio_of_sums(("n_found", "n_true")),
+        ["recall"],
+        ["n_found", "n_true"],
+        n_resamples=n_resamples,
+    )
+    totals = frame.groupby(by)[["n_true", "n_found"]].sum().astype(int).reset_index()
+    profile = totals.merge(intervals, on=by).rename(columns={"type": "event_type"})
+    return _in_order(_with_failures(profile, tables), "event_type", rd.EVENT_TYPES)
+
+
+def _false_positive_labels(matches: Matches) -> list[str]:
+    """Every label a false positive can have: each event type's components
+    that occur, in ``EVENT_TYPES`` and ``EXPRESSIONS`` order, each non-event
+    type, and ``"background"``."""
+    windows = matches.windows[matches.windows["expression"] != "network"]
+    present = set(windows["type"].astype(str) + ":" + windows["expression"].astype(str))
+    components = [
+        f"{kind}:{expression}"
+        for kind in rd.EVENT_TYPES
+        for expression in rd.EXPRESSIONS
+        if f"{kind}:{expression}" in present
+    ]
+    return [*components, *rd.NON_EVENT_TYPES, BACKGROUND]
+
+
+def false_positive_classes(
+    tables: RunTables, matches: Matches, *, n_resamples: int = N_RESAMPLES
+) -> pd.DataFrame:
+    """What each method's false positives overlap.
+
+    A false positive is an event matching no truth window of the method's
+    primary expression (IoU 0). It is labelled by the window it overlaps
+    longest among every event component's (``"<event_type>:<expression>"``)
+    and every non-event's (its type), ``"background"`` for none.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+    n_resamples : int, optional
+
+    Returns
+    -------
+    classes : pandas.DataFrame
+        One row per method, setting and label, every label included:
+        ``method``, ``setting``, ``label``, ``n_events`` (its false
+        positives with that label), ``n_unmatched`` (all its false
+        positives), ``fraction`` (their pooled ratio), ``fraction_low``,
+        ``fraction_high``, ``primary_expression``, ``n_sessions``,
+        ``n_failures``.
+    """
+    labels = _false_positive_labels(matches)
+    counted = matches.false_positives.groupby([*_KEY, "label"]).size()
+    frame = tables.ran.merge(pd.DataFrame({"label": labels}), how="cross")
+    frame = frame.join(counted.rename("n_events"), on=[*_KEY, "label"]).fillna({"n_events": 0})
+    frame["n_unmatched"] = frame.groupby(_KEY)["n_events"].transform("sum")
+    frame = _with_replicate(frame, tables)
+    by = ["method", "setting", "label"]
+    intervals = grouped_intervals(
+        frame,
+        by,
+        _ratio_of_sums(("n_events", "n_unmatched")),
+        ["fraction"],
+        ["n_events", "n_unmatched"],
+        n_resamples=n_resamples,
+    )
+    totals = frame.groupby(by)[["n_events", "n_unmatched"]].sum().astype(int).reset_index()
+    classes = totals.merge(intervals, on=by)
+    return _in_order(_with_failures(classes, tables), "label", labels)
+
+
+def consensus(tables: RunTables, matches: Matches) -> pd.DataFrame:
+    """How many methods found each true event, and how many each group of
+    overlapping false positives spans.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+
+    Returns
+    -------
+    consensus : pandas.DataFrame
+        One row per ``kind``, ``event_type`` and ``n_methods`` that occurs:
+        for ``kind`` ``"true_event"``, network events of each type
+        (``EVENT_TYPES`` order) that ``n_methods`` of the main methods
+        matched (IoU 0); for ``"false_positive_group"`` (``event_type``
+        ``"all"``), connected groups of overlapping false positives, each
+        unmatched against its method's primary expression, spanning
+        ``n_methods`` methods. ``count``, ``fraction`` (of the kind and
+        type's), ``n_methods_compared`` (the main methods) and
+        ``n_failed_calls`` (sessions and methods without scores, which
+        found nothing here).
+    """
+    true = (
+        matches.consensus.groupby(["type", "n_methods"])
+        .size()
+        .rename("count")
+        .reset_index()
+        .rename(columns={"type": "event_type"})
+        .assign(kind="true_event")
+    )
+    groups = (
+        matches.false_positive_groups.groupby("n_methods")
+        .size()
+        .rename("count")
+        .reset_index()
+        .assign(kind="false_positive_group", event_type="all")
+    )
+    table = _concat([true, groups], ["kind", "event_type", "n_methods", "count"])
+    table["fraction"] = table["count"] / table.groupby(["kind", "event_type"])[
+        "count"
+    ].transform("sum")
+    rank = {kind: position for position, kind in enumerate((*rd.EVENT_TYPES, "all"))}
+    table = (
+        table.assign(_rank=table["event_type"].map(rank))
+        .sort_values(["_rank", "n_methods"], kind="stable")
+        .drop(columns="_rank")
+        .reset_index(drop=True)
+    )
+    main = main_rows(tables.methods)
+    table["n_methods_compared"] = len(main)
+    table["n_failed_calls"] = len(main_rows(tables.failures))
+    return table
+
+
+def splits_and_merges(
+    tables: RunTables, matches: Matches, *, n_resamples: int = N_RESAMPLES
+) -> pd.DataFrame:
+    """How often each method splits a true event or merges several.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+    n_resamples : int, optional
+
+    Returns
+    -------
+    rates : pandas.DataFrame
+        One row per method, setting and ``subset`` (``"all"``, then
+        ``"ripple_doublet"``), against the method's primary expression, any
+        overlap counting: ``n_truth``, ``n_split`` (windows overlapped by two
+        or more events), ``split_rate`` (pooled ratio) with ``_low`` and
+        ``_high``; ``n_detected`` (for the doublets, events overlapping a
+        doublet's window), ``n_merged`` (events overlapping two or more
+        windows), ``merge_rate`` with ``_low`` and ``_high``;
+        ``primary_expression``, ``n_sessions``, ``n_failures``.
+    """
+    frame = _with_replicate(matches.overlaps, tables)
+    by = ["method", "setting", "subset"]
+    counts = ["n_truth", "n_split", "n_detected", "n_merged"]
+    intervals = grouped_intervals(
+        frame,
+        by,
+        _ratio_of_sums(("n_split", "n_truth"), ("n_merged", "n_detected")),
+        ["split_rate", "merge_rate"],
+        counts,
+        n_resamples=n_resamples,
+    )
+    totals = frame.groupby(by)[counts].sum().astype(int).reset_index()
+    rates = totals.merge(intervals, on=by)
+    columns = [
+        *by,
+        "n_truth",
+        "n_split",
+        "split_rate",
+        "split_rate_low",
+        "split_rate_high",
+        "n_detected",
+        "n_merged",
+        "merge_rate",
+        "merge_rate_low",
+        "merge_rate_high",
+    ]
+    return _in_order(_with_failures(rates[columns], tables), "subset", ("all", DOUBLET))
+
+
+def _with_pair_failures(frame: pd.DataFrame, tables: RunTables) -> pd.DataFrame:
+    """A table of method pairs with each method's ``n_failures_a`` and
+    ``n_failures_b`` added (main methods, one setting each)."""
+    failed = main_rows(failure_counts(tables)).set_index("method")["n_failures"]
+    return frame.assign(
+        n_failures_a=frame["method_a"].map(failed).to_numpy(),
+        n_failures_b=frame["method_b"].map(failed).to_numpy(),
+    )
+
+
+def _session_means(
+    tables: RunTables,
+    comparisons: pd.DataFrame,
+    columns: Sequence[str],
+    *,
+    n_resamples: int,
+) -> pd.DataFrame:
+    """Each pair's per-session ``compare_detectors`` values averaged over the
+    sessions both methods have scores on (NaN sessions left out), with
+    intervals; ``n_sessions`` counts those sessions."""
+    frame = _with_replicate(comparisons, tables)
+    by = ["method_a", "method_b", "truth_expression"]
+    means = grouped_intervals(
+        frame, by, _means(*columns), list(columns), list(columns), n_resamples=n_resamples
+    )
+    n_sessions = frame.groupby(by).size().rename("n_sessions")
+    means = means.join(n_sessions, on=by)
+    return _with_pair_failures(means, tables)
+
+
+def pairwise_agreement(
+    tables: RunTables, matches: Matches, *, n_resamples: int = N_RESAMPLES
+) -> pd.DataFrame:
+    """How much each pair of main methods agrees, against the network truth.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+    n_resamples : int, optional
+
+    Returns
+    -------
+    agreement : pandas.DataFrame
+        One row per pair, the first method first by name:
+        ``method_a``, ``method_b``, ``truth_expression`` (``"network"``,
+        the truth every method is scored on), then for ``jaccard`` (their
+        events matched one-to-one), ``jaccard_true`` and ``jaccard_false``
+        (among their events that matched a network event, and that matched
+        none) and ``jaccard_truth_ids`` (the network events both found over
+        those either found): the mean over sessions of ``compare_detectors``'
+        value, ``<name>_low`` and ``<name>_high``; then ``n_sessions`` (both
+        have scores), ``n_failures_a``, ``n_failures_b``.
+    """
+    network = matches.comparisons[matches.comparisons["truth_expression"] == "network"]
+    return _session_means(tables, network, AGREEMENT, n_resamples=n_resamples)
+
+
+def agreement_dendrogram(tables: RunTables, matches: Matches) -> pd.DataFrame:
+    """Main methods clustered by agreement: average linkage on ``1 - jaccard``.
+
+    ``jaccard`` is each pair's mean over sessions, as in
+    ``pairwise_agreement``; a pair never compared, or never with an event,
+    is at distance 1.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+
+    Returns
+    -------
+    dendrogram : pandas.DataFrame
+        ``scipy.cluster.hierarchy.linkage``'s tree as rows: first each
+        method as a leaf (``node`` 0 .. n - 1 in name order, ``method``,
+        ``left`` and ``right`` -1, ``distance`` 0, ``size`` 1), then each
+        merge (``node`` n, n + 1, ..., ``method`` ``""``, the two nodes it
+        joins, their distance and the leaves under it).
+    """
+    from scipy.cluster.hierarchy import linkage
+    from scipy.spatial.distance import squareform
+
+    methods = sorted(main_rows(tables.methods)["method"])
+    network = matches.comparisons[matches.comparisons["truth_expression"] == "network"]
+    mean = network.groupby(["method_a", "method_b"])["jaccard"].mean()
+    position = {method: index for index, method in enumerate(methods)}
+    distance = np.ones((len(methods), len(methods)))
+    np.fill_diagonal(distance, 0.0)
+    for (a, b), jaccard in mean.items():
+        distance[position[a], position[b]] = distance[position[b], position[a]] = (
+            1.0 - jaccard if np.isfinite(jaccard) else 1.0
+        )
+    leaves = pd.DataFrame(
+        {
+            "node": np.arange(len(methods)),
+            "method": methods,
+            "left": -1,
+            "right": -1,
+            "distance": 0.0,
+            "size": 1,
+        }
+    )
+    if len(methods) < 2:
+        return leaves
+    tree = linkage(squareform(distance, checks=False), method="average")
+    merges = pd.DataFrame(
+        {
+            "node": len(methods) + np.arange(len(tree)),
+            "method": "",
+            "left": tree[:, 0].astype(int),
+            "right": tree[:, 1].astype(int),
+            "distance": tree[:, 2],
+            "size": tree[:, 3].astype(int),
+        }
+    )
+    return pd.concat([leaves, merges], ignore_index=True)
+
+
+def _sign_flips(
+    frame: pd.DataFrame, by: Sequence[str], columns: Sequence[str]
+) -> pd.DataFrame:
+    """Each group's ``sign_flip_test`` p-value of each column over its
+    sessions with a finite value, as ``<column>_p``."""
+    rows = []
+    for key, group in frame.groupby(list(by), sort=True):
+        row = dict(zip(by, key, strict=True))
+        for column in columns:
+            values = group[column].to_numpy(dtype=float)
+            row[f"{column}_p"] = sign_flip_test(values[np.isfinite(values)])
+        rows.append(row)
+    return pd.DataFrame(rows, columns=[*by, *(f"{column}_p" for column in columns)])
+
+
+def method_differences(
+    tables: RunTables, matches: Matches, *, n_resamples: int = N_RESAMPLES
+) -> pd.DataFrame:
+    """How each pair of main methods' matched events differ in timing.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+    n_resamples : int, optional
+
+    Returns
+    -------
+    differences : pandas.DataFrame
+        One row per pair, as ``pairwise_agreement``'s: for
+        ``median_onset_difference`` and ``median_offset_difference`` (the
+        median over their matched events of A's start, or end, minus B's, in
+        seconds: negative, A earlier) and ``fraction_a_earlier_onset`` and
+        ``fraction_a_earlier_offset`` (the matched events where A's is
+        strictly earlier): the mean over sessions, ``<name>_low`` and
+        ``<name>_high``; ``median_onset_difference_p`` and
+        ``median_offset_difference_p``, ``sign_flip_test`` on the
+        per-session medians; ``n_sessions``, ``n_failures_a``,
+        ``n_failures_b``.
+    """
+    network = matches.comparisons[matches.comparisons["truth_expression"] == "network"]
+    means = _session_means(tables, network, DIFFERENCES, n_resamples=n_resamples)
+    by = ["method_a", "method_b", "truth_expression"]
+    tests = _sign_flips(network, by, DIFFERENCES[:2])
+    return means.merge(tests, on=by, how="left")
+
+
+def error_correlations(
+    tables: RunTables, matches: Matches, *, n_resamples: int = N_RESAMPLES
+) -> pd.DataFrame:
+    """Whether two main methods err together on the network events both found.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+    n_resamples : int, optional
+
+    Returns
+    -------
+    correlations : pandas.DataFrame
+        One row per pair, as ``pairwise_agreement``'s: for
+        ``onset_error_correlation`` and ``offset_error_correlation``
+        (Spearman's correlation of their signed errors against the network
+        windows over the events both found, NaN below 3) the mean over
+        sessions with one, ``<name>_low`` and ``<name>_high``;
+        ``n_sessions``, ``n_failures_a``, ``n_failures_b``.
+    """
+    network = matches.comparisons[matches.comparisons["truth_expression"] == "network"]
+    return _session_means(tables, network, CORRELATIONS, n_resamples=n_resamples)
+
+
+def _quantiles(frame: pd.DataFrame, by: Sequence[str], columns: Sequence[str]) -> pd.DataFrame:
+    """Each column's pooled 5, 25, 50, 75 and 95 % quantiles and count per
+    group, one row per group and column (``measure``)."""
+    parts = []
+    for column in columns:
+        grouped = frame.groupby(list(by))[column]
+        found = pd.DataFrame(
+            {
+                name: grouped.quantile(q)
+                for q, name in zip(QUANTILES, QUANTILE_NAMES, strict=True)
+            }
+        )
+        parts.append(found.assign(measure=column, n_pairs=grouped.size()).reset_index())
+    return _concat(parts, [*by, "measure", "n_pairs", *QUANTILE_NAMES])
+
+
+def overlap_quality(
+    tables: RunTables, matches: Matches, *, n_resamples: int = N_RESAMPLES
+) -> pd.DataFrame:
+    """How much each method's matched events overlap their truth.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+    n_resamples : int, optional
+
+    Returns
+    -------
+    quality : pandas.DataFrame
+        One row per method, setting and ``measure`` (``iou``, ``coverage``:
+        the fraction of the true event found, ``temporal_precision``: the
+        fraction of the event that is true), over the pairs matched against
+        the method's primary expression (IoU 0), pooled over sessions:
+        ``n_pairs``, ``q05``, ``q25``, ``median``, ``q75``, ``q95``,
+        ``median_low`` and ``median_high`` (the pooled median's interval),
+        the method's ``recall`` against that expression with ``recall_low``
+        and ``recall_high``, ``primary_expression``, ``n_sessions``,
+        ``n_failures``.
+    """
+    pairs = _with_replicate(_primary_pairs(tables, matches), tables)
+    by = ["method", "setting"]
+    quality = _quantiles(pairs, by, OVERLAP_MEASURES)
+    medians = grouped_intervals(
+        pairs,
+        by,
+        _medians(*OVERLAP_MEASURES),
+        OVERLAP_MEASURES,
+        OVERLAP_MEASURES,
+        n_resamples=n_resamples,
+    )
+    quality = quality.merge(
+        _long_intervals(medians, by, OVERLAP_MEASURES), on=[*by, "measure"]
+    )
+    primary = tables.methods[["method", "setting", "primary_expression"]].rename(
+        columns={"primary_expression": "expression"}
+    )
+    found = recall(tables, matches, primary, n_resamples=n_resamples)
+    quality = quality.merge(
+        found[[*by, "recall", "recall_low", "recall_high"]], on=by, how="left"
+    )
+    return _in_order(_with_failures(quality, tables), "measure", OVERLAP_MEASURES)
+
+
+def _long_intervals(
+    wide: pd.DataFrame, by: Sequence[str], names: Sequence[str]
+) -> pd.DataFrame:
+    """``grouped_intervals``' medians, one row per group and name
+    (``measure``): ``median_low`` and ``median_high``."""
+    return _concat(
+        [
+            wide[[*by, f"{name}_low", f"{name}_high"]]
+            .rename(columns={f"{name}_low": "median_low", f"{name}_high": "median_high"})
+            .assign(measure=name)
+            for name in names
+        ],
+        [*by, "measure", "median_low", "median_high"],
+    )
+
+
+def _errors(pairs: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Each pair's signed and absolute onset and offset errors at every
+    truth fraction, as ``<boundary>_<measure>_<percent>`` columns."""
+    columns = {}
+    for percent in PERCENTS:
+        for boundary in ("onset", "offset"):
+            signed = pairs[f"{boundary}_error_{percent}"].to_numpy(dtype=float)
+            columns[f"{boundary}_signed_{percent}"] = signed
+            columns[f"{boundary}_absolute_{percent}"] = np.abs(signed)
+    return pairs.assign(**columns), list(columns)
+
+
+def _split_error_names(frame: pd.DataFrame) -> pd.DataFrame:
+    """``measure`` ``<boundary>_<measure>_<percent>`` as ``fraction``,
+    ``boundary`` and ``measure`` columns."""
+    parts = frame["measure"].str.split("_", expand=True)
+    return frame.assign(
+        fraction=parts[2].astype(int) / 100, boundary=parts[0], measure=parts[1]
+    )
+
+
+def boundary_errors(
+    tables: RunTables, matches: Matches, *, n_resamples: int = N_RESAMPLES
+) -> pd.DataFrame:
+    """Each method's onset and offset errors against the truth.
+
+    Against the method's primary expression, and for a method whose primary
+    expression is the network event (ripple and burst joined) against the
+    ripple and the burst windows as well. Pairs are matched at 10 % of the
+    peak (IoU 0) and their errors measured against the windows at 10, 25
+    and 50 %.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+    n_resamples : int, optional
+
+    Returns
+    -------
+    errors : pandas.DataFrame
+        One row per method, setting, ``expression``, ``fraction`` (0.1,
+        0.25, 0.5), ``boundary`` (``onset``, ``offset``) and ``measure``
+        (``signed``: detected minus truth, negative early; ``absolute``), in
+        seconds, pooled over sessions: ``n_pairs``, ``q05``, ``q25``,
+        ``median``, ``q75``, ``q95``, ``iqr``, ``median_low`` and
+        ``median_high``, and beside every median the method's ``recall``
+        against the expression, with ``recall_low`` and ``recall_high``, since
+        a method that finds only easy events can time them better;
+        ``primary_expression``, ``n_sessions``, ``n_failures``.
+    """
+    scored = tables.methods[["method", "setting", "primary_expression"]].rename(
+        columns={"primary_expression": "expression"}
+    )
+    joint = scored[scored["expression"] == "network"]
+    scored = pd.concat(
+        [scored, *(joint.assign(expression=expression) for expression in ("ripple", "burst"))],
+        ignore_index=True,
+    )
+    pairs = matches.pairs[matches.pairs["minimum_iou"] == 0].merge(
+        scored, on=["method", "setting", "expression"]
+    )
+    pairs, names = _errors(_with_replicate(pairs, tables))
+    by = ["method", "setting", "expression"]
+    errors = _quantiles(pairs, by, names)
+    medians = grouped_intervals(
+        pairs, by, _medians(*names), names, names, n_resamples=n_resamples
+    )
+    errors = errors.merge(_long_intervals(medians, by, names), on=[*by, "measure"])
+    errors["iqr"] = errors["q75"] - errors["q25"]
+    found = recall(tables, matches, scored, n_resamples=n_resamples)
+    errors = errors.merge(
+        found[[*by, "recall", "recall_low", "recall_high"]], on=by, how="left"
+    )
+    errors = _split_error_names(errors)
+    columns = [
+        *by,
+        "fraction",
+        "boundary",
+        "measure",
+        "n_pairs",
+        "recall",
+        "recall_low",
+        "recall_high",
+        *QUANTILE_NAMES,
+        "iqr",
+        "median_low",
+        "median_high",
+    ]
+    errors = _with_failures(errors[columns], tables)
+    rank = {expression: position for position, expression in enumerate(EXPRESSION_ORDER)}
+    return (
+        errors.assign(_rank=errors["expression"].map(rank))
+        .sort_values(
+            ["method", "setting", "_rank", "fraction", "boundary", "measure"],
+            ascending=[True, True, True, True, False, False],
+            kind="stable",
+        )
+        .drop(columns="_rank")
+        .reset_index(drop=True)
+    )
+
+
+def paired_timing(
+    tables: RunTables,
+    matches: Matches,
+    expression: str,
+    *,
+    n_resamples: int = N_RESAMPLES,
+) -> pd.DataFrame:
+    """Two methods' errors on the true events both found, paired.
+
+    For each pair of main methods whose primary expression is
+    ``expression``, on the truth windows of that expression both matched
+    (IoU 0) in a session: A's error minus B's, signed (``signed``) and in
+    absolute value (``absolute``: negative, A closer to the truth), at each
+    truth fraction.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+    expression : str
+        A primary expression.
+    n_resamples : int, optional
+
+    Returns
+    -------
+    timing : pandas.DataFrame
+        One row per pair (A first by name) and ``fraction``: ``expression``,
+        ``method_a``, ``method_b``, ``fraction``, ``n_shared`` (the true
+        events both found, over the sessions), ``n_sessions`` (sessions with
+        one), ``n_sessions_without`` (sessions both have scores on without
+        one: left out), ``jaccard_truth_ids`` (mean over sessions: the true
+        events both found over those either found); then for each
+        ``<boundary>_<measure>`` (``onset_signed``, ``onset_absolute``,
+        ``offset_signed``, ``offset_absolute``), in seconds: ``_pooled``,
+        the median difference over the shared events; ``_estimate``, the
+        mean over sessions of each session's median difference, with
+        ``_low`` and ``_high``; and ``_p``, ``sign_flip_test`` on those
+        per-session medians; then ``n_failures_a``, ``n_failures_b``.
+    """
+    members = main_rows(tables.methods)
+    members = members[members["primary_expression"] == expression]["method"]
+    comparisons = matches.comparisons[
+        (matches.comparisons["truth_expression"] == expression)
+        & matches.comparisons["method_a"].isin(members)
+        & matches.comparisons["method_b"].isin(members)
+    ]
+    pairs = matches.pairs[
+        (matches.pairs["minimum_iou"] == 0)
+        & (matches.pairs["expression"] == expression)
+        & matches.pairs["method"].isin(members)
+        & matches.pairs["setting"].isin(MAIN_SETTINGS)
+    ][["session_id", "method", "truth_row", *ERROR_COLUMNS]]
+    shared = pairs.merge(pairs, on=["session_id", "truth_row"], suffixes=("_a", "_b"))
+    shared = shared[shared["method_a"] < shared["method_b"]]
+    differences = {}
+    for percent in PERCENTS:
+        for boundary in ("onset", "offset"):
+            a = shared[f"{boundary}_error_{percent}_a"].to_numpy(dtype=float)
+            b = shared[f"{boundary}_error_{percent}_b"].to_numpy(dtype=float)
+            differences[f"{boundary}_signed_{percent}"] = a - b
+            differences[f"{boundary}_absolute_{percent}"] = np.abs(a) - np.abs(b)
+    names = list(differences)
+    shared = shared[["session_id", "method_a", "method_b"]].assign(**differences)
+    pair = ["method_a", "method_b"]
+    pooled = shared.groupby(pair)[names].median()
+    n_shared = shared.groupby(pair).size().rename("n_shared")
+    per_session = _with_replicate(
+        shared.groupby([*pair, "session_id"])[names].median().reset_index(), tables
+    )
+    estimates = grouped_intervals(
+        per_session, pair, _means(*names), names, names, n_resamples=n_resamples
+    ).set_index(pair)
+    tests = _sign_flips(per_session, pair, names).set_index(pair)
+    summary = (
+        comparisons.groupby(pair)
+        .agg(n_run=("session_id", "size"), jaccard_truth_ids=("jaccard_truth_ids", "mean"))
+        .join(n_shared)
+        .join(per_session.groupby(pair).size().rename("n_sessions"))
+        .fillna({"n_shared": 0, "n_sessions": 0})
+    )
+    rows = []
+    for (a, b), found in summary.iterrows():
+        for percent in PERCENTS:
+            row: dict[str, Any] = {
+                "expression": expression,
+                "method_a": a,
+                "method_b": b,
+                "fraction": percent / 100,
+                "n_shared": int(found["n_shared"]),
+                "n_sessions": int(found["n_sessions"]),
+                "n_sessions_without": int(found["n_run"] - found["n_sessions"]),
+                "jaccard_truth_ids": found["jaccard_truth_ids"],
+            }
+            for boundary in ("onset", "offset"):
+                for measure in ("signed", "absolute"):
+                    name = f"{boundary}_{measure}_{percent}"
+                    stem = f"{boundary}_{measure}"
+                    known = (a, b) in estimates.index
+                    row[f"{stem}_pooled"] = pooled.loc[(a, b), name] if known else np.nan
+                    for part in ("estimate", "low", "high"):
+                        column = name if part == "estimate" else f"{name}_{part}"
+                        row[f"{stem}_{part}"] = (
+                            estimates.loc[(a, b), column] if known else np.nan
+                        )
+                    row[f"{stem}_p"] = tests.loc[(a, b), f"{name}_p"] if known else np.nan
+            rows.append(row)
+    return _with_pair_failures(pd.DataFrame(rows, columns=PAIRED_TIMING_COLUMNS), tables)
