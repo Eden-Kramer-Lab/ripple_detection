@@ -693,6 +693,52 @@ def test_paired_timing_uses_shared_truth_only(analyze, timing_run):
     assert analyze.paired_timing(tables, matches, "burst", n_resamples=FEW).empty
 
 
+@pytest.fixture(scope="module")
+def correlated_run(run, tmp_path_factory):
+    """Four swr events whose bursts start 30 to 55 ms before their ripples
+    and end 30 to 5 ms after them. Against the ripple windows Kay's onset
+    errors rise (0 to 3 ms) where Karlsson's fall, and both methods' offset
+    errors rise alike; against the network windows the bursts' lead, the
+    same for both, makes their onset errors rise together."""
+    lead = [0.0, 0.01, 0.02, 0.025]
+    components = []
+    for k, shift in enumerate(lead):
+        components += [
+            (k, "swr", "ripple", 0, 1.0 + k, 0.05),
+            (k, "swr", "burst", 0, 1.0 + k - shift, 0.08),
+        ]
+    events = _event_table(run, components)
+    windows = rd.truth_windows(events, 0.1, "ripple")[["start_time", "end_time"]].to_numpy()
+    rising = np.array([0.0, 0.001, 0.002, 0.003])
+    kay = windows + np.column_stack([rising, rising])
+    karlsson = windows + np.column_stack([rising[::-1], rising])
+    session = {
+        "events": events,
+        "non_events": _non_event_tables(_one_non_event_table("emg", center_time=9.0)),
+        "duration": 10.0,
+        "detected": {KAY: kay, KARLSSON: karlsson},
+    }
+    return _write_run(run, tmp_path_factory.mktemp("correlated"), [session])
+
+
+def test_error_correlations_use_the_shared_primary_expression(analyze, correlated_run):
+    tables = analyze.load_run(correlated_run)
+    matches = analyze.match_run(tables)
+    row = analyze.error_correlations(tables, matches, n_resamples=FEW).iloc[0]
+    assert (row.method_a, row.method_b, row.truth_expression) == (
+        KAY[0],
+        KARLSSON[0],
+        "ripple",
+    )
+    # onset and offset each read from their own errors
+    assert (row.onset_error_correlation, row.offset_error_correlation) == (-1.0, 1.0)
+    # beside them, the same against the network truth
+    assert (row.network_onset_error_correlation, row.network_offset_error_correlation) == (
+        1.0,
+        1.0,
+    )
+
+
 def _quick(analysis):
     """``analysis`` with few resamples, where its table takes any."""
     if "n_resamples" not in inspect.signature(analysis.table).parameters:

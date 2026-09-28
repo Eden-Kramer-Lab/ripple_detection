@@ -2258,7 +2258,12 @@ def method_differences(
 def error_correlations(
     tables: RunTables, matches: Matches, *, n_resamples: int = N_RESAMPLES
 ) -> pd.DataFrame:
-    """Whether two main methods err together on the network events both found.
+    """Whether two main methods err together on the true events both found.
+
+    Two methods sharing a primary expression are timed against that
+    expression's truth, as ``paired_timing`` times them; any other pair
+    against the network truth, the one every method is scored on. The
+    network truth's correlations are beside every pair's as well.
 
     Parameters
     ----------
@@ -2269,16 +2274,38 @@ def error_correlations(
     Returns
     -------
     correlations : pandas.DataFrame
-        One row per pair, as ``pairwise_agreement``'s: for
-        ``onset_error_correlation`` and ``offset_error_correlation``
-        (Spearman's correlation of their signed errors against the network
-        windows over the events both found, NaN below 3) the mean over
-        sessions with one, ``<name>_low``, ``<name>_high`` and
-        ``<name>_n_sessions`` (the sessions with one); ``n_sessions`` (both
-        have scores), ``n_failures_a``, ``n_failures_b``.
+        One row per pair, the first method first by name: ``method_a``,
+        ``method_b``, ``truth_expression`` (the pair's shared primary
+        expression, else ``"network"``); for ``onset_error_correlation`` and
+        ``offset_error_correlation`` (Spearman's correlation of their signed
+        errors against that truth's windows over the events both found, NaN
+        below 3) the mean over sessions with one, ``<name>_low``,
+        ``<name>_high`` and ``<name>_n_sessions`` (the sessions with one);
+        the same against the network truth, each column prefixed
+        ``network_``; ``n_sessions`` (both have scores), ``n_failures_a``,
+        ``n_failures_b``.
     """
+    by = ["method_a", "method_b", "truth_expression"]
+    primary = _by_intervals(main_rows(tables.methods)).set_index("method")[
+        "primary_expression"
+    ]
+    expected = _expected_pairs(tables)
+    first = expected["method_a"].map(primary).to_numpy()
+    shared = first == expected["method_b"].map(primary).to_numpy()
+    expected["truth_expression"] = np.where(shared, first, "network")
+    chosen = matches.comparisons.merge(expected, on=by)
+    own = _session_means(
+        tables, chosen, CORRELATIONS, n_resamples=n_resamples, expected=expected
+    )
     network = matches.comparisons[matches.comparisons["truth_expression"] == "network"]
-    return _session_means(tables, network, CORRELATIONS, n_resamples=n_resamples)
+    against = _session_means(tables, network, CORRELATIONS, n_resamples=n_resamples)
+    columns = [c for c in against.columns if c.startswith(CORRELATIONS)]
+    beside = against[["method_a", "method_b", *columns]].rename(
+        columns={column: f"network_{column}" for column in columns}
+    )
+    last = ["n_sessions", "n_failures_a", "n_failures_b"]
+    kept = [column for column in own.columns if column not in last]
+    return own[kept].merge(beside, on=["method_a", "method_b"], how="left").join(own[last])
 
 
 def _quantiles(frame: pd.DataFrame, by: Sequence[str], columns: Sequence[str]) -> pd.DataFrame:
@@ -6164,8 +6191,9 @@ ANALYSES: tuple[Analysis, ...] = (
     Analysis(
         "error_correlations",
         _of_reference(error_correlations),
-        "Spearman correlation of every pair of methods' signed errors on the network "
-        "events both found.",
+        "Spearman correlation of every pair of methods' signed errors on the true events "
+        "both found, against their shared primary expression's truth (else the network "
+        "truth), with the network truth's beside it.",
         plot_error_correlations,
         "The correlations as heatmaps.",
     ),
