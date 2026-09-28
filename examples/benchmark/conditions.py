@@ -276,8 +276,9 @@ _GRID: dict[str, dict[str, dict[str, Any]]] = {
     },
 }
 
-# The simulator's alternative models, one at a time, as _GRID: the reference first.
-_ALTERNATIVES: dict[str, dict[str, dict[str, Any]]] = {
+# The simulator's alternative models, one at a time, as _GRID: the reference first;
+# the simulator validation's target table names them by level.
+ALTERNATIVES: dict[str, dict[str, dict[str, Any]]] = {
     "strength_correlation": {
         REFERENCE_LEVEL: {},
         "coupled": {"events.strength_correlation": 0.6},
@@ -377,7 +378,7 @@ def conditions() -> tuple[Condition, ...]:
         ``non_events.rates``, the others keeping their reference values.
     """
     found = [Condition("reference", "reference", "reference")]
-    for factor, levels in (*_GRID.items(), *_ALTERNATIVES.items()):
+    for factor, levels in (*_GRID.items(), *ALTERNATIVES.items()):
         found.extend(
             Condition(f"{factor}={label}", factor, label, tuple(overrides.items()))
             for label, overrides in levels.items()
@@ -423,7 +424,7 @@ def factor_levels(factor: str) -> tuple[str, ...]:
         ``factor`` is not a one-factor factor (``"reference"`` and a crossed
         pair are not).
     """
-    levels = {**_GRID, **_ALTERNATIVES}
+    levels = {**_GRID, **ALTERNATIVES}
     if factor not in levels:
         msg = f"Unknown factor {factor!r}; use one of {', '.join(levels)}."
         raise ValueError(msg)

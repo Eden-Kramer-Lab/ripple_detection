@@ -389,9 +389,15 @@ class TestTargets:
         with pytest.raises(ValueError, match="Unknown condition labels"):
             validate.target_conditions("reference; sleep")
 
-    def test_the_labels_name_conditions(self, validate, conditions):
-        ids = {c.condition_id for c in conditions.conditions()}
-        assert set(validate.MODEL_LABELS.values()) <= ids
+    def test_the_labels_name_the_alternative_models(self, validate):
+        assert validate.MODEL_LABELS == {
+            "coupled": "strength_correlation=coupled",
+            "local": "spatial_profile=local",
+            "varying": "noise_modulation=varying",
+            "nearby": "fast_gamma_band=nearby",
+            "refractory": "spike_model=refractory",
+            "quartic": "envelope_power=quartic",
+        }
 
     @pytest.mark.parametrize(
         ("statistic", "expected"),
@@ -558,6 +564,12 @@ class TestRenderingChecks:
             "one channel" in checks.loc[("n_channels=1", "channel_profile_rendering"), "note"]
         )
         assert "no gamma" in checks.loc[("fast_gamma_rate=0", "gamma_sizing"), "note"]
+
+    def test_an_unknown_scope_raises(self, validate, conditions):
+        parameters = conditions.resolve(conditions.conditions()[0])
+        assert validate.rendering_check_applies("all", parameters) == (True, "")
+        with pytest.raises(ValueError, match="Unknown scope 'everywhere'"):
+            validate.rendering_check_applies("everywhere", parameters)
 
     def test_nothing_measured_or_a_nan_fails(self, validate, checks):
         gated = checks[checks.applies]

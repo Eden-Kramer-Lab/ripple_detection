@@ -76,6 +76,8 @@ import numpy as np
 import pandas as pd
 import scipy
 from conditions import (
+    ALTERNATIVES,
+    REFERENCE_LEVEL,
     REFERENCE_REVISIONS,
     TRUTH_FRACTIONS,
     Condition,
@@ -146,14 +148,13 @@ ROUNDING = 1e-9  # relative: a statistic on a bound, to rounding, lies within it
 # hashes are recorded, a copy that is present must match, but none is required.
 UNCOMMITTED_ARTIFACTS = ("measurements.csv",)
 
-# The target table's labels of the six alternative models, and their condition ids.
+# The target table's labels of the six alternative models, their levels, and
+# their condition ids.
 MODEL_LABELS = {
-    "coupled": "strength_correlation=coupled",
-    "local": "spatial_profile=local",
-    "varying": "noise_modulation=varying",
-    "nearby": "fast_gamma_band=nearby",
-    "refractory": "spike_model=refractory",
-    "quartic": "envelope_power=quartic",
+    level: f"{factor}={level}"
+    for factor, levels in ALTERNATIVES.items()
+    for level in levels
+    if level != REFERENCE_LEVEL
 }
 
 # Each target quantity: the sampled quantity it pools and the groups (event
@@ -1498,9 +1499,6 @@ def _gamma_measures(
             snr = _padded_filtered_peak(difference[window], rate, band) / band_sd[band]
             ratios.append(snr / (row.amplitude * gain))
             out.sample("gamma_snr_ratio", "fast_gamma", [ratios[-1]])
-    if gain == 0:
-        out.check("gamma_sizing", 0.0, 0, "channel 0 carries no gamma")
-        return
     out.check("gamma_sizing", abs(float(np.median(ratios)) - 1), len(ratios))
 
 
@@ -1757,77 +1755,164 @@ def _model_metadata(
 # ---------------------------------------------------------------------------
 # Targets and checks
 
-# Rendering checks: statistic, bounds, and where they apply (a scope of
-# rendering_check_applies: "all", "multichannel", "fast_gamma" or "refractory").
-RENDERING_CHECKS: dict[str, tuple[str, float, float, str]] = {
-    "noise_only_matched": ("max_abs_difference", 0.0, 0.0, "all"),
-    "sharp_wave_truth_crossings": ("max_error_samples", 0.0, 1.0, "all"),
-    "ripple_sizing": ("relative_spread", 0.0, SIZING_SPREAD, "all"),
-    "ripple_nominal_snr": ("relative_error", 0.0, SNR_TOLERANCE, "all"),
-    "spatial_profile_draws": ("violations", 0.0, 0.0, "all"),
-    "channel_profile_rendering": (
-        "max_relative_residual",
-        0.0,
-        PROFILE_TOLERANCE,
-        "multichannel",
-    ),
-    "gamma_sizing": ("relative_error", 0.0, SNR_TOLERANCE, "fast_gamma"),
-    "noise_modulation_amplitude": ("absolute_error", 0.0, MODULATION_TOLERANCE, "all"),
-    "model_metadata": ("violations", 0.0, 0.0, "all"),
-    "interneuron_rate_realization": ("z", -RATE_Z, RATE_Z, "all"),
-    "refractory_spiking": ("violations", 0.0, 0.0, "refractory"),
-}
 
-# What each rendering check establishes; the report lists these.
-RENDERING_DESCRIPTIONS = {
-    "noise_only_matched": (
-        "The session equals its noise-only rendering outside every component's eight "
-        "side scales (plus the local delay and 4 samples): the matched noise is identical."
+@dataclass(frozen=True)
+class RenderingCheck:
+    """A check that the simulator renders what its contract says.
+
+    Attributes
+    ----------
+    statistic : str
+        What the observed value is, as ``checks.csv`` names it.
+    lower, upper : float
+        Its bounds.
+    scope : str
+        Where it applies: a scope of ``rendering_check_applies``.
+    pooling : str
+        How the replicates combine: ``"worst"``, the largest of the sessions'
+        own values (``SessionResult.checks``), NaN if any is NaN;
+        ``"pooled_z"``, the z of the observed count against the expected,
+        each summed over the sessions' samples of the check's name (``x`` and
+        ``y`` of ``SessionResult.samples``).
+    description : str
+        What it establishes; the report lists it.
+    """
+
+    statistic: str
+    lower: float
+    upper: float
+    scope: str
+    pooling: str
+    description: str
+
+
+# Every rendering check, in the report's order.
+RENDERING_CHECKS: dict[str, RenderingCheck] = {
+    "noise_only_matched": RenderingCheck(
+        statistic="max_abs_difference",
+        lower=0.0,
+        upper=0.0,
+        scope="all",
+        pooling="worst",
+        description=(
+            "The session equals its noise-only rendering outside every component's eight "
+            "side scales (plus the local delay and 4 samples): the matched noise is identical."
+        ),
     ),
-    "sharp_wave_truth_crossings": (
-        "Each isolated sharp wave crosses 10%, 25% and 50% of its latent amplitude within "
-        "a sample of its truth_windows bounds."
+    "sharp_wave_truth_crossings": RenderingCheck(
+        statistic="max_error_samples",
+        lower=0.0,
+        upper=1.0,
+        scope="all",
+        pooling="worst",
+        description=(
+            "Each isolated sharp wave crosses 10%, 25% and 50% of its latent amplitude within "
+            "a sample of its truth_windows bounds."
+        ),
     ),
-    "ripple_sizing": (
-        "Every ripple's filtered peak on its anchor channel over its SNR and anchor gain "
-        "is one constant (the band noise SD it was sized against)."
+    "ripple_sizing": RenderingCheck(
+        statistic="relative_spread",
+        lower=0.0,
+        upper=SIZING_SPREAD,
+        scope="all",
+        pooling="worst",
+        description=(
+            "Every ripple's filtered peak on its anchor channel over its SNR and anchor gain "
+            "is one constant (the band noise SD it was sized against)."
+        ),
     ),
-    "ripple_nominal_snr": (
-        "The median anchor SNR against noise-only channel 0's ripple-band SD over the "
-        "nominal SNR times the anchor gain is 1."
+    "ripple_nominal_snr": RenderingCheck(
+        statistic="relative_error",
+        lower=0.0,
+        upper=SNR_TOLERANCE,
+        scope="all",
+        pooling="worst",
+        description=(
+            "The median anchor SNR against noise-only channel 0's ripple-band SD over the "
+            "nominal SNR times the anchor gain is 1."
+        ),
     ),
-    "spatial_profile_draws": (
-        "Every ripple's stored gains and delays follow its profile: global, every channel "
-        "at gain 1 and no delay; local, the configured channel count, the anchor at gain "
-        "1 and no delay, the others within the gain range and delay limit, zero gain "
-        "with zero delay."
+    "spatial_profile_draws": RenderingCheck(
+        statistic="violations",
+        lower=0.0,
+        upper=0.0,
+        scope="all",
+        pooling="worst",
+        description=(
+            "Every ripple's stored gains and delays follow its profile: global, every channel "
+            "at gain 1 and no delay; local, the configured channel count, the anchor at gain "
+            "1 and no delay, the others within the gain range and delay limit, zero gain "
+            "with zero delay."
+        ),
     ),
-    "channel_profile_rendering": (
-        "Every channel that carries a ripple holds the anchor waveform shifted by the "
-        "stored delay and scaled by the stored gain ratio; zero-gain channels hold none."
+    "channel_profile_rendering": RenderingCheck(
+        statistic="max_relative_residual",
+        lower=0.0,
+        upper=PROFILE_TOLERANCE,
+        scope="multichannel",
+        pooling="worst",
+        description=(
+            "Every channel that carries a ripple holds the anchor waveform shifted by the "
+            "stored delay and scaled by the stored gain ratio; zero-gain channels hold none."
+        ),
     ),
-    "gamma_sizing": (
-        "The median gamma-burst SNR, in its stored band against noise-only channel 0's "
-        "SD in that band, over the drawn SNR is 1."
+    "gamma_sizing": RenderingCheck(
+        statistic="relative_error",
+        lower=0.0,
+        upper=SNR_TOLERANCE,
+        scope="fast_gamma",
+        pooling="worst",
+        description=(
+            "The median gamma-burst SNR, in its stored band against noise-only channel 0's "
+            "SD in that band, over the drawn SNR is 1."
+        ),
     ),
-    "noise_modulation_amplitude": (
-        "The log amplitude of the background's slow gain, fitted to the noise-only "
-        "ripple-band power, equals noise_log_amplitude (0 when stationary)."
+    "noise_modulation_amplitude": RenderingCheck(
+        statistic="absolute_error",
+        lower=0.0,
+        upper=MODULATION_TOLERANCE,
+        scope="all",
+        pooling="worst",
+        description=(
+            "The log amplitude of the background's slow gain, fitted to the noise-only "
+            "ripple-band power, equals noise_log_amplitude (0 when stationary)."
+        ),
     ),
-    "model_metadata": (
-        "Every event row stores the configured envelope power, every non-event power 2, "
-        "gamma rows the configured sizing band and other rows none."
+    "model_metadata": RenderingCheck(
+        statistic="violations",
+        lower=0.0,
+        upper=0.0,
+        scope="all",
+        pooling="worst",
+        description=(
+            "Every event row stores the configured envelope power, every non-event power 2, "
+            "gamma rows the configured sizing band and other rows none."
+        ),
     ),
-    "interneuron_rate_realization": (
-        "Interneuron spikes at rest outside every ripple's eight side scales, pooled over "
-        "replicates, against the count their baseline rates give under the spike model "
-        "(for 'refractory', p / (step (1 + m p)) with m blocked samples): z of the "
-        "difference."
+    "interneuron_rate_realization": RenderingCheck(
+        statistic="z",
+        lower=-RATE_Z,
+        upper=RATE_Z,
+        scope="all",
+        pooling="pooled_z",
+        description=(
+            "Interneuron spikes at rest outside every ripple's eight side scales, pooled over "
+            "replicates, against the count their baseline rates give under the spike model "
+            "(for 'refractory', p / (step (1 + m p)) with m blocked samples): z of the "
+            "difference."
+        ),
     ),
-    "refractory_spiking": (
-        "No two drawn spikes of a unit closer than the refractory period, nor two in a "
-        "sample (spikes near a leakage burst left out: leaked spikes are added after "
-        "the draw)."
+    "refractory_spiking": RenderingCheck(
+        statistic="violations",
+        lower=0.0,
+        upper=0.0,
+        scope="refractory",
+        pooling="worst",
+        description=(
+            "No two drawn spikes of a unit closer than the refractory period, nor two in a "
+            "sample (spikes near a leakage burst left out: leaked spikes are added after "
+            "the draw)."
+        ),
     ),
 }
 
@@ -1842,8 +1927,7 @@ def rendering_check_applies(
     scope : str
         ``"all"``; ``"multichannel"`` (more than one channel, so a channel
         besides a ripple's anchor to compare with it); ``"fast_gamma"`` (gamma
-        bursts are drawn and channel 0 carries them); ``"refractory"`` (the
-        refractory spike model).
+        bursts are drawn); ``"refractory"`` (the refractory spike model).
     parameters : mapping
         The condition's resolved parameters (``conditions.resolve``).
 
@@ -1852,19 +1936,35 @@ def rendering_check_applies(
     applies : bool
     why_not : str
         Empty when it applies.
+
+    Raises
+    ------
+    ValueError
+        An unknown scope.
     """
     render = parameters["render"]
-    if scope == "multichannel" and int(render["n_channels"]) < 2:
-        return False, "not applicable: one channel, so none besides a ripple's anchor"
-    if scope == "fast_gamma":
-        gains = render["channel_gains"]
-        if float(parameters["non_events"]["rates"]["fast_gamma"]) == 0:
-            return False, "not applicable: no gamma bursts are drawn"
-        if gains is not None and float(gains[0]) == 0:
-            return False, "not applicable: channel 0 carries no gamma"
-    if scope == "refractory" and render["spike_model"] != "refractory":
-        return False, "not applicable: the spike model has no refractory period"
-    return True, ""
+    why_not = {
+        "all": "",
+        "multichannel": (
+            "not applicable: one channel, so none besides a ripple's anchor"
+            if int(render["n_channels"]) < 2
+            else ""
+        ),
+        "fast_gamma": (
+            "not applicable: no gamma bursts are drawn"
+            if float(parameters["non_events"]["rates"]["fast_gamma"]) == 0
+            else ""
+        ),
+        "refractory": (
+            "not applicable: the spike model has no refractory period"
+            if render["spike_model"] != "refractory"
+            else ""
+        ),
+    }
+    if scope not in why_not:
+        msg = f"Unknown scope {scope!r}; use {', '.join(why_not)}."
+        raise ValueError(msg)
+    return not why_not[scope], why_not[scope]
 
 
 def load_targets(path: Path = TARGETS) -> pd.DataFrame:
@@ -1954,7 +2054,7 @@ def pooled_target(targets_row: Any, samples: pd.DataFrame) -> tuple[float, int]:
     """A target's statistic over one condition's samples, pooled over replicates."""
     quantity, groups = TARGET_SAMPLES[targets_row.quantity]
     chosen = samples[samples.quantity == quantity]
-    if groups is not None and targets_row.target_statistic != "ratio":
+    if groups is not None:
         chosen = chosen[chosen.group.isin(groups)]
     value, n = _pooling(str(targets_row.target_statistic))(chosen)
     return float(value), int(n)
@@ -1999,9 +2099,9 @@ def build_checks(
                 }
             )
         session_checks = pd.concat([r.checks for r in mine], ignore_index=True)
-        for name, (statistic, lower, upper, scope) in RENDERING_CHECKS.items():
-            applies, why_not = rendering_check_applies(scope, parameters[cid])
-            if name == "interneuron_rate_realization":
+        for name, check in RENDERING_CHECKS.items():
+            applies, why_not = rendering_check_applies(check.scope, parameters[cid])
+            if check.pooling == "pooled_z":
                 pooled = samples[samples.quantity == name]
                 expected = float(pooled.y.sum())
                 observed = (
@@ -2010,7 +2110,7 @@ def build_checks(
                     else np.nan
                 )
                 n, note = int(pooled.x.sum()), ""
-            else:
+            elif check.pooling == "worst":
                 these = session_checks[session_checks.check == name]
                 # a NaN in any replicate is the check's value, never skipped
                 observed = (
@@ -2020,6 +2120,9 @@ def build_checks(
                 )
                 n = int(these.n.sum())
                 note = "; ".join(sorted(set(these.note) - {""}))
+            else:
+                msg = f"Unknown pooling {check.pooling!r} of rendering check {name}."
+                raise ValueError(msg)
             if not applies:
                 note = why_not
             elif n == 0:
@@ -2031,10 +2134,10 @@ def build_checks(
                     "condition_id": cid,
                     "applies": applies,
                     "evidence_status": "mathematical",
-                    "statistic": statistic,
+                    "statistic": check.statistic,
                     "observed": observed,
-                    "lower": lower,
-                    "upper": upper,
+                    "lower": check.lower,
+                    "upper": check.upper,
                     "n": n,
                     "note": note,
                 }
@@ -2449,7 +2552,10 @@ def _report_text(
             f"{rows.upper.iloc[0]:g}] | {int(applicable.passed.sum())}/{len(applicable)} | "
             f"{_format(worst)} |"
         )
-    lines += ["", *(f"- `{name}`: {text}" for name, text in RENDERING_DESCRIPTIONS.items())]
+    lines += [
+        "",
+        *(f"- `{name}`: {check.description}" for name, check in RENDERING_CHECKS.items()),
+    ]
     others = [c.condition_id for c in selected if c.condition_id not in shown]
     if others:
         lines += [
