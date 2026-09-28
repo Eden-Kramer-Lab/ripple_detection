@@ -760,9 +760,16 @@ configuration order stands for both), though both are verified and listed:
 
 `<family>_factor_space.csv` and `<family>_reference.csv` hold both.
 
-Represented on run `v1`: **TBD (measured when the analyses run): the in-space count per
-family and its methods**. A family with fewer than eight represented methods (identical
-templates once) runs no Sobol or Shapley analysis: the command refuses it and says so
+Represented on run `v1`: in `spikes`, 15 configurations, 14 distinct templates
+(`grosmark_2016`'s equals `yang_2024`'s): `yang_2024`, `liu_2023`, `igata_2021`,
+`farooq_2019_neuron`, `chenani_2019`, `muessig_2019`, `drieu_2018`, `olafsdottir_2017`,
+`grosmark_2016`, `silva_2015`, `bendor_2012`, `davidson_2009`, `widloski_2025_bursts`,
+`krause_2022_hse` and `gillespie_2021_mua`; in `lfp`, 4; the other 58 are fixed points.
+`<family>_sensitivity.csv` shows which template values the verification sessions pin: 17
+of 116 are not exercised (their perturbations leave every event unchanged), mostly
+duration limits the simulated events never reach, and `liu_2023`'s threshold, which its
+coincidence with Long's sharp-wave ripples decides. A family with fewer than eight
+represented methods (identical templates once) runs no Sobol or Shapley analysis: the command refuses it and says so
 unless `--below-minimum` is given. The `lfp` family has four, `pfeiffer_2015`,
 `berners_lee_2021`, `ambrose_2016` and `pfeiffer_2013_ripples`, and the maintainer chose
 to run every analysis on it regardless: each of its outputs says it "rests on 4 methods,
@@ -815,5 +822,20 @@ state `restrict:rest` the trace is missing outside rest, so `session` and `rest`
 the spikes family, up to a bin at the edge of a rest interval). The
 normalization period's indices then carry those interactions, not an effect of its own.
 
-Measured: **TBD: the smoke test's seconds per configuration and memory, the chosen
-Sobol `N`, and each analysis's command and wall time on run `v1`**.
+Measured on run `v1` (2026-09-28, an 18-core machine shared with other work, about ten
+cores free): the smoke test put a configuration at 0.077 s (`spikes`) and 0.12 s (`lfp`)
+per session, 2.2 GB per worker, so Sobol runs at `N = 256` (a few minutes, well under the
+four-hour limit that would call for 128). The full analyses:
+
+```bash
+uv run python examples/benchmark/attribution.py --run-name v1 --family spikes \
+    --analysis all --workers 8
+uv run python examples/benchmark/attribution.py --run-name v1 --family lfp \
+    --analysis all --workers 8 --below-minimum
+```
+
+took 9 min 52 s (`spikes`) and 6 min 42 s (`lfp`) wall, at most 4.2 GB in the main
+process. Sobol's first-order indices are estimated with more noise than the totals at
+`N = 256`: on `spikes` a factor's first-order estimate can exceed its total and the
+first-order estimates sum past 1, which the exact values cannot; read each index with its
+interval.
