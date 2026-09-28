@@ -1729,8 +1729,30 @@ def in_space_ids(family: str) -> tuple[str, ...]:
     )
 
 
+def distinct_ids(family: str) -> tuple[str, ...]:
+    """``in_space_ids`` with each template once: of identical ones, the first.
+
+    Two methods with one template (``grosmark_2016`` is ``yang_2024``'s rule)
+    are one point of the space: they count once for the stop rule, the
+    reference configuration and the Shapley pairs, though both are verified
+    and listed.
+
+    Parameters
+    ----------
+    family : {"spikes", "lfp"}
+
+    Returns
+    -------
+    config_ids : tuple of str
+    """
+    first: dict[Template, str] = {}
+    for config_id in in_space_ids(family):
+        first.setdefault(TEMPLATES[config_id][0], config_id)
+    return tuple(first.values())
+
+
 def family_templates(recipes: Sequence[RecipeConfig], family: str) -> list[Template]:
-    """The templates of ``recipes`` in a family, in their order.
+    """The distinct templates of ``recipes`` in a family, in their order.
 
     Parameters
     ----------
@@ -1740,12 +1762,13 @@ def family_templates(recipes: Sequence[RecipeConfig], family: str) -> list[Templ
     Returns
     -------
     templates : list
+        Each once: of identical templates, the first.
     """
     if family not in FAMILIES:
         msg = f"family must be one of {FAMILIES}; got {family!r}."
         raise ValueError(msg)
     found = [TEMPLATES[c.config_id][0] for c in recipes if c.config_id in TEMPLATES]
-    return [template for template in found if family_of(template) == family]
+    return list(dict.fromkeys(template for template in found if family_of(template) == family))
 
 
 def factor_space(recipes: Sequence[RecipeConfig], family: str) -> tuple[Factor, ...]:
@@ -1791,6 +1814,7 @@ def reference_template(family: str, templates: Sequence[TemplateT] | None = None
     family : {"spikes", "lfp"}
     templates : sequence of templates, optional
         Default the family's templates of ``RECIPES``, in configuration order.
+        Identical templates count once.
 
     Returns
     -------
@@ -1799,7 +1823,11 @@ def reference_template(family: str, templates: Sequence[TemplateT] | None = None
         down, a categorical one at its most frequent value, ties going to the
         value that comes first.
     """
-    chosen = list(templates) if templates is not None else family_templates(RECIPES, family)
+    chosen = (
+        list(dict.fromkeys(templates))
+        if templates is not None
+        else family_templates(RECIPES, family)
+    )
     if not chosen:
         msg = f"The {family} family has no template to take a reference from."
         raise ValueError(msg)
@@ -2449,9 +2477,9 @@ def _differing(first: Template, second: Template) -> tuple[str, ...]:
 def shapley_pair_list(
     family: str, run_directory: str | os.PathLike[str], *, workers: int = 1
 ) -> list[tuple[str, str]]:
-    """The pairs decomposed: each represented configuration against the
-    family's reference, then the ``N_LOWEST_PAIRS`` pairs of represented
-    configurations with the lowest mean Jaccard on the reference sessions.
+    """The pairs decomposed: each represented template (``distinct_ids``)
+    against the family's reference, then the ``N_LOWEST_PAIRS`` pairs of them
+    with the lowest mean Jaccard on the reference sessions.
 
     Parameters
     ----------
@@ -2464,7 +2492,7 @@ def shapley_pair_list(
     pairs : list of (str, str)
         ``(a, b)`` by configuration id, ``"reference"`` for the reference.
     """
-    ids = in_space_ids(family)
+    ids = distinct_ids(family)
     pipelines = [compile(TEMPLATES[config_id][0]) for config_id in ids]
     combinations = list(itertools.combinations(range(len(ids)), 2))
     outputs = evaluate_many(
@@ -2746,7 +2774,7 @@ def smoke(
         timings.append(wall_clock.perf_counter() - begun)
     seconds = float(np.mean(timings))
     d = len(factors)
-    ids = in_space_ids(family)
+    ids = distinct_ids(family)
     oat = 1 + sum(len(factor.points()) for factor in factors)
     shapley_configurations = 0
     for config_id in ids:
@@ -2848,11 +2876,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(json.dumps(smoke(args.family, run_directory, workers=args.workers), indent=2))
         return
     expected = set(in_space_ids(args.family))
+    n_distinct = len(distinct_ids(args.family))
     refusal = (
-        f"The {args.family} family has {len(expected)} represented methods, fewer than "
+        f"The {args.family} family has {n_distinct} represented methods, fewer than "
         f"{MINIMUM_IN_SPACE}: no Sobol or Shapley analysis is run."
     )
-    if args.analysis in ("sobol", "shapley") and len(expected) < MINIMUM_IN_SPACE:
+    if args.analysis in ("sobol", "shapley") and n_distinct < MINIMUM_IN_SPACE:
         raise SystemExit(refusal)
     verification = verify_family(args.family, run_directory)
     found = set(
@@ -2890,7 +2919,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     analyses = ("oat", "sobol", "shapley") if args.analysis == "all" else (args.analysis,)
     for analysis in analyses:
-        if analysis != "oat" and len(expected) < MINIMUM_IN_SPACE:
+        if analysis != "oat" and n_distinct < MINIMUM_IN_SPACE:
             raise SystemExit(refusal)
         started = wall_clock.perf_counter()
         if analysis == "oat":

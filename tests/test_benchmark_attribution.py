@@ -480,6 +480,60 @@ def test_reference_template(attribution):
         attribution.reference_template("lfp", [])
 
 
+def test_identical_templates_count_once(attribution, recipes, monkeypatch):
+    templates = attribution.TEMPLATES
+    assert templates["grosmark_2016"][0] == templates["yang_2024"][0]
+    written = attribution.in_space_ids("spikes")
+    assert "grosmark_2016" in written
+    distinct = attribution.distinct_ids("spikes")
+    assert distinct == tuple(i for i in written if i != "grosmark_2016")
+    # the reference takes each template once: counted twice, the second
+    # template would win the mode and move the median
+    first = _spike_template(attribution)
+    second = _spike_template(attribution, units="place", threshold=3.0)
+    reference = attribution.reference_template("spikes", [first, second, second])
+    assert (reference.units, reference.threshold) == ("all", 2.5)
+    assert attribution.reference_template("spikes") == attribution.reference_template(
+        "spikes", [templates[i][0] for i in distinct]
+    )
+    # the stop rule counts templates, not configurations: eight written, seven distinct
+    kept = [c for c in recipes if c.config_id in written[:7] or c.config_id == "grosmark_2016"]
+    monkeypatch.setattr(attribution, "RECIPES", tuple(kept))
+    assert len(attribution.in_space_ids("spikes")) == 8
+    with pytest.raises(SystemExit, match="7 represented methods"):
+        attribution.main(["--run-name", "x", "--family", "spikes", "--analysis", "sobol"])
+
+
+def test_the_lowest_agreement_pairs_are_decomposed(attribution, monkeypatch):
+    ids = attribution.distinct_ids("spikes")
+    names = {attribution.compile(attribution.TEMPLATES[i][0]): i for i in ids}
+    assert len(names) == len(ids)
+    agreement = {
+        ("liu_2023", "chenani_2019"): 0.1,
+        ("igata_2021", "bendor_2012"): 0.2,
+        ("farooq_2019_neuron", "silva_2015"): 0.3,
+    }
+
+    def evaluate_many(pipelines, references, run_directory, *, workers=1):
+        return [
+            {
+                name: [agreement.get((names[p], names[r]), 0.5)] * attribution.K
+                for name in attribution.Y_NAMES
+            }
+            for p, r in zip(pipelines, references, strict=True)
+        ]
+
+    monkeypatch.setattr(attribution, "evaluate_many", evaluate_many)
+    monkeypatch.setattr(attribution, "N_LOWEST_PAIRS", 2)
+    pairs = attribution.shapley_pair_list("spikes", "unused")
+    # each distinct template against the reference, then the two lowest pairs
+    assert pairs == [
+        *((config_id, "reference") for config_id in ids),
+        ("liu_2023", "chenani_2019"),
+        ("igata_2021", "bendor_2012"),
+    ]
+
+
 def test_sobol_design(attribution):
     factors = (
         attribution.Factor("threshold", "continuous", (2.0, 4.0)),

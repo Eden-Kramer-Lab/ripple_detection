@@ -718,11 +718,13 @@ the mean, 1 for a bound at the threshold), so a configuration's bound is
 analyses sample then bounds at or below its threshold, and each template still gives its
 method's bound exactly. The reference configuration takes each
 factor's median (integers rounded down) or mode (ties to the first in configuration
-order):
+order). Identical templates count once, here, in the eight-method rule below and in the
+Shapley pairs (`grosmark_2016`'s detection stage is `yang_2024`'s rule; the first in
+configuration order stands for both), though both are verified and listed:
 
 | Factor | `spikes` reference | `lfp` reference |
 | --- | --- | --- |
-| signal | pyramidal cells, 15 ms Gaussian | 150-250 Hz, every channel, envelope |
+| signal | every unit, 15 ms Gaussian | 150-250 Hz, every channel, envelope |
 | smoothing (LFP) | | 12.5 ms |
 | normalization period | the whole session | speed below 5 cm/s |
 | threshold, bound | 3 SD, the mean | 3 SD, the mean |
