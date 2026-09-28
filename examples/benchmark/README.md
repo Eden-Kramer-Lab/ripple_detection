@@ -770,12 +770,12 @@ of 116 are not exercised (their perturbations leave every event unchanged), most
 duration limits the simulated events never reach, and `liu_2023`'s threshold, which its
 coincidence with Long's sharp-wave ripples decides. A family with fewer than eight
 represented methods (identical templates once) runs no Sobol or Shapley analysis: the
-command refuses it and says so unless `--below-minimum` is given. The `lfp` family has four, `pfeiffer_2015`,
-`berners_lee_2021`, `ambrose_2016` and `pfeiffer_2013_ripples`, and the maintainer chose
-to run every analysis on it regardless: each of its outputs says it "rests on 4 methods,
-below the design's 8; the maintainer chose to run it" (a `caveat` column in every table,
-and the figures' titles), and its Sobol indices and Shapley values span only the
-differences among those four.
+command refuses it and says so unless `--below-minimum` is given. The `lfp` family has
+four, `pfeiffer_2015`, `berners_lee_2021`, `ambrose_2016` and `pfeiffer_2013_ripples`,
+and the maintainer chose to run every analysis on it regardless: each of its outputs
+says it "rests on 4 methods, below the design's 8; the maintainer chose to run it" (a
+`caveat` column in every table, and the figures' titles), and its Sobol indices and
+Shapley values span only the differences among those four.
 
 ### Outputs and how to read them
 
