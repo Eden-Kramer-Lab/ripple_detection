@@ -766,13 +766,19 @@ error of the matched pairs against the windows at 25 % of the peak) and
 `jaccard_reference` (events matched to the reference configuration's over their union).
 
 - `<family>_oat.csv`: each factor at each of its values (five evenly spaced over a
-  continuous range), every other at the reference; `change` is the value minus the
-  reference's, with a 95 % paired bootstrap interval over the five sessions.
+  continuous range), every other at the reference; `change` is the mean over the
+  sessions of the level's value minus the reference's on the same session (the sessions
+  where both are finite, `n_sessions`; not the difference of the two means when one
+  misses a session), with a 95 % paired bootstrap interval over those sessions, none
+  from a single session.
 - `<family>_sobol.csv` and `.png`: first-order and total Sobol indices of each `Y`, with
   95 % bootstrap intervals over the sample rows. A first-order index is the share of the
   output's variance a factor explains alone; the total index adds every interaction it
   takes part in, so total much above first-order means the factor matters through other
-  factors' settings.
+  factors' settings. An index is missing (NaN, and so is its interval; the figure marks
+  it) when a configuration's `Y` is, such as `onset_error_25` for one that matched no
+  true event on any session; `finite_rows`, `first_finite_draws` and
+  `total_finite_draws` count the rows and resamples behind each.
 - `<family>_shapley.csv` and one waterfall per pair: for two configurations `a` and `b`,
   how much of the change from `a` to `b` each differing factor carries, in `Y`, with the
   Jaccard against `b` (from `J(a, b)` to 1) and with `f1`. The values sum to the whole

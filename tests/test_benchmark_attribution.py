@@ -130,6 +130,37 @@ def test_sobol_on_ishigami(attribution):
     assert (table["first_low"] <= table["first"]).all()
     assert (table["total"] <= table["total_high"]).all()
     assert (table["total_high"] - table["total_low"] > 0).all()
+    assert (table["finite_rows"] == n).all()
+    assert (table[["first_finite_draws", "total_finite_draws"]] == 200).all().all()
+
+
+def test_sobol_intervals_with_missing_outputs(attribution):
+    """An index with a missing output has no estimate and so no interval; the
+    finite rows and draws behind each are counted."""
+    rng = np.random.default_rng(1)
+    n = 64
+    y_a, y_b, y_ab = rng.normal(size=n), rng.normal(size=n), rng.normal(size=(3, n))
+    y_ab[1, 5] = np.nan
+    table = attribution.sobol_intervals(y_a, y_b, y_ab, n_resamples=300)
+    assert table.loc[1, ["first", "first_low", "first_high", "total"]].isna().all()
+    assert table.loc[1, ["total_low", "total_high"]].isna().all()
+    assert (
+        table.loc[[0, 2], ["first_low", "first_high", "total_low", "total_high"]]
+        .notna()
+        .all()
+        .all()
+    )
+    assert table["finite_rows"].tolist() == [n, n - 1, n]
+    draws = table["first_finite_draws"].tolist()
+    assert draws[0] == draws[2] == 300
+    # the draws leaving row 5 out: about (1 - 1/n)^n of them
+    assert 0 < draws[1] < 300
+    assert draws == table["total_finite_draws"].tolist()
+    # a missing output of A: every index is missing
+    y_a[0] = np.nan
+    table = attribution.sobol_intervals(y_a, y_b, y_ab, n_resamples=300)
+    assert table[["first", "first_low", "total", "total_high"]].isna().all().all()
+    assert table["finite_rows"].tolist() == [n - 1, n - 2, n - 1]
 
 
 def _toy(subset):
@@ -884,8 +915,19 @@ def test_one_at_a_time(attribution, analyze, recipes, short_run):
     ).loc["change"]
     found = attribution.session_interval(values)
     assert found == pytest.approx(
-        {"change": expected["estimate"], "low": expected["low"], "high": expected["high"]}
+        {
+            "change": expected["estimate"],
+            "low": expected["low"],
+            "high": expected["high"],
+            "n_sessions": 4,
+        }
     )
+    # one session gives a change but no interval
+    alone = attribution.session_interval([np.nan, 0.1, np.nan, np.nan, np.nan])
+    assert alone["change"] == 0.1
+    assert alone["n_sessions"] == 1
+    assert np.isnan([alone["low"], alone["high"]]).all()
+    assert "n_sessions" in changes.columns
     jaccard = changes[(changes["y"] == "jaccard_reference")]
     assert (jaccard["value"] <= 1).all()
     both = rows[rows["y"] == "f1"].set_index(["factor", "level"])["value"]

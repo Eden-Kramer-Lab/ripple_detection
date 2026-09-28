@@ -2254,7 +2254,12 @@ def sobol_intervals(
     -------
     table : pandas.DataFrame
         One row per factor position: ``first``, ``first_low``,
-        ``first_high``, ``total``, ``total_low``, ``total_high``.
+        ``first_high``, ``total``, ``total_low``, ``total_high``, then
+        ``finite_rows`` (the rows whose three outputs are all finite),
+        ``first_finite_draws`` and ``total_finite_draws`` (the resamples
+        giving a finite index, those the interval is taken over). An index
+        is NaN when an output is missing or none varies, and then so is its
+        interval.
     """
     rng = np.random.default_rng(seed)
     draws_first, draws_total = [], []
@@ -2269,6 +2274,9 @@ def sobol_intervals(
     alpha = (1 - level) / 2
     first_bounds = _percentiles(np.array(draws_first), alpha)
     total_bounds = _percentiles(np.array(draws_total), alpha)
+    first_bounds[:, np.isnan(first)] = np.nan
+    total_bounds[:, np.isnan(total)] = np.nan
+    finite_rows = (np.isfinite(y_a) & np.isfinite(y_b) & np.isfinite(y_ab)).sum(axis=1)
     return pd.DataFrame(
         {
             "first": first,
@@ -2277,6 +2285,9 @@ def sobol_intervals(
             "total": total,
             "total_low": total_bounds[0],
             "total_high": total_bounds[1],
+            "finite_rows": finite_rows,
+            "first_finite_draws": np.isfinite(draws_first).sum(axis=0),
+            "total_finite_draws": np.isfinite(draws_total).sum(axis=0),
         }
     )
 
@@ -2444,9 +2455,13 @@ def one_at_a_time(
         have ``factor`` ``"reference"``.
     changes : pandas.DataFrame
         One row per factor, level and ``Y``: ``factor``, ``level``, ``y``,
-        ``reference`` (its mean), ``value`` (the mean at the level) and
-        ``change`` (value minus reference, sessions paired) with ``low`` and
-        ``high``, a 95 % ``paired_bootstrap`` interval over the sessions.
+        ``reference`` (its mean), ``value`` (the mean at the level),
+        ``change`` (the mean over the sessions of the level's value minus the
+        reference's on the same session, where both are finite; not
+        ``value`` minus ``reference`` when a session is missing from one)
+        with ``low`` and ``high``, a 95 % ``paired_bootstrap`` interval over
+        the sessions, and ``n_sessions``, the sessions it rests on (no
+        interval from one).
     """
     reference = reference_template(family)
     configurations: list[tuple[dict[str, Any], Template]] = [
@@ -2500,17 +2515,27 @@ def session_interval(values: ArrayLike, level: float = 0.95) -> dict[str, float]
     Returns
     -------
     interval : dict of str to float
-        ``change`` (the mean of the finite values), ``low`` and ``high``;
-        NaN where no draw holds a finite value.
+        ``change`` (the mean of the finite values), ``low`` and ``high``,
+        and ``n_sessions``, the sessions with a finite value; the interval
+        is NaN with fewer than two, since one session has no spread to
+        resample.
     """
     values = np.asarray(values, dtype=float)
     finite = np.isfinite(values)
-    weights = resample_weights(len(values)) * finite
-    totals = weights.sum(axis=1)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        draws = (weights @ np.where(finite, values, 0.0)) / totals
-    low, high = _percentiles(draws[:, np.newaxis], (1 - level) / 2)[:, 0]
-    return {"change": _mean(values.tolist()), "low": float(low), "high": float(high)}
+    n_sessions = int(finite.sum())
+    low = high = float("nan")
+    if n_sessions > 1:
+        weights = resample_weights(len(values)) * finite
+        totals = weights.sum(axis=1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            draws = (weights @ np.where(finite, values, 0.0)) / totals
+        low, high = _percentiles(draws[:, np.newaxis], (1 - level) / 2)[:, 0]
+    return {
+        "change": _mean(values.tolist()),
+        "low": float(low),
+        "high": float(high),
+        "n_sessions": n_sessions,
+    }
 
 
 def sobol_design(
@@ -2801,7 +2826,8 @@ def fixed_point_outputs(
 
 
 def plot_sobol(indices: pd.DataFrame, family: str, *, caveat: str = "") -> Any:
-    """Bars of first-order and total indices with their intervals, a panel per ``Y``.
+    """Bars of first-order and total indices with their intervals, a panel per ``Y``;
+    a missing index is marked "NaN" where its bar would be.
 
     Parameters
     ----------
@@ -2828,6 +2854,8 @@ def plot_sobol(indices: pd.DataFrame, family: str, *, caveat: str = "") -> Any:
             values = table[kind].to_numpy(dtype=float)
             errors = np.abs(table[[f"{kind}_low", f"{kind}_high"]].to_numpy(float).T - values)
             axis.bar(x + offset, values, 0.4, yerr=errors, color=color, label=kind)
+            for missing in x[np.isnan(values)]:
+                axis.text(missing + offset, 0, "NaN", rotation=90, ha="center", va="bottom")
         axis.set_ylabel(name)
         axis.axhline(0, color="black", linewidth=0.5)
     axes[-1, 0].set_xticks(np.arange(len(table)), table["factor"], rotation=45, ha="right")
