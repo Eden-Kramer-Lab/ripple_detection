@@ -6,7 +6,6 @@ No test draws a figure."""
 
 import dataclasses
 import functools
-import itertools
 from types import SimpleNamespace
 
 import numpy as np
@@ -386,59 +385,6 @@ def test_sign_flip_needs_finite_pairs(analyze):
         with pytest.raises(ValueError, match="finite paired differences"):
             analyze.sign_flip_test(differences)
     assert np.isnan(analyze.sign_flip_test([]))
-
-
-def _swapped_mean(differences):
-    """A statistic of paired units for ``swap_test``: the mean of each unit's
-    difference, its sign turned where the unit's sides are swapped."""
-    differences = np.asarray(differences, dtype=float)
-    return lambda swapped: np.array([np.where(swapped, -differences, differences).mean()])
-
-
-@pytest.mark.parametrize(
-    ("differences", "p_value"),
-    [
-        ([1, 1, 1, 1], 2 / 16),
-        ([1, -1], 1.0),
-        # 16 units: every pattern, the two with one sign as large as observed
-        (np.ones(16), 2 / 2**16),
-        # 17 and more: random patterns, (k + 1) / (n + 1), never 0 nor the
-        # exact 2 / 2 ** 17
-        (np.ones(17), 1 / 1000),
-        (np.ones(20), 1 / 1000),
-    ],
-)
-def test_swap_test_p_values(analyze, differences, p_value):
-    p = analyze.swap_test(_swapped_mean(differences), len(differences), n_resamples=999)
-    assert p.tolist() == [p_value]
-
-
-def test_swap_test_enumerates_every_pattern(analyze):
-    """Four units: the 16 patterns, each seen once, the unswapped one first
-    (the observed statistic)."""
-    seen = []
-
-    def statistic(swapped):
-        seen.append(tuple(swapped.tolist()))
-        return np.array([float(swapped.sum())])
-
-    analyze.swap_test(statistic, 4)
-    assert seen[0] == (False,) * 4
-    assert sorted(seen[1:]) == sorted(itertools.product((False, True), repeat=4))
-
-
-def test_swap_test_leaves_out_undefined_patterns(analyze):
-    """A pattern whose statistic is undefined is left out; an undefined
-    observed statistic has no p-value."""
-
-    def statistic(swapped):
-        # defined only when unit 0 is not swapped: 8 patterns, |sum| >= 3 in 2
-        value = np.where(swapped[1:], -1.0, 1.0).sum()
-        return np.array([np.nan if swapped[0] else value, np.nan])
-
-    p = analyze.swap_test(statistic, 4)
-    assert p[0] == 2 / 8
-    assert np.isnan(p[1])
 
 
 def test_bootstrap_p_by_hand(analyze):
@@ -1737,7 +1683,12 @@ def test_robustness_pairs_conditions_by_replicate(analyze):
     for level, change in (("low", -0.2), ("high", 0.2)):
         row = recall.loc[level]
         assert [row.change_low, row.change_high] == pytest.approx([change, change])
-        assert (row.change_p, row.n_paired) == (2 / 16, 4)
+        assert (row.change_p, row.n_draws, row.n_defined, row.n_defined_reference) == (
+            0.0,
+            FEW,
+            4,
+            4,
+        )
     # while the values themselves vary with the replicates drawn
     assert recall.loc["low", "value_low"] < 0.35 < recall.loc["low", "value_high"]
     onset = table[table.measure == "median_onset_error"].set_index("level")
@@ -1821,7 +1772,11 @@ def test_paired_changes_use_only_replicates_run_in_every_condition(analyze):
     assert kay.value == pytest.approx(0.9)
     assert changes.loc[(KAY[0], "reference"), "value"] == pytest.approx(0.9)
     assert [kay.change, kay.change_low, kay.change_high] == pytest.approx([0.0, 0.0, 0.0])
-    assert (kay.n_replicates, kay.n_dropped, kay.n_paired, kay.n_failures) == (2, 2, 2, 2)
+    assert (kay.n_replicates, kay.n_dropped, kay.n_failures) == (2, 2, 2)
+    # replicates 2 and 3, each with a recall of its own on both sides, 9 true
+    # events found on each
+    assert (kay.n_defined, kay.n_defined_reference) == (2, 2)
+    assert (kay.n_events, kay.n_events_reference) == (18, 18)
     roumis = changes.loc[("Roumis", "ripple_snr=low")]
     assert (roumis.n_replicates, roumis.n_dropped, roumis.n_failures) == (4, 0, 0)
 
@@ -1861,76 +1816,114 @@ def test_sweep_recalls_use_only_replicates_with_the_whole_sweep(analyze):
     assert (at_one.status, at_one.n_replicates, at_one.n_dropped) == ("compared", 2, 2)
 
 
-def test_a_change_is_tested_on_the_pooled_statistic_it_reports(analyze):
+def test_a_change_is_tested_on_the_resamples_of_its_interval(analyze):
     """Replicate 0 has 2 truth windows, both found in the reference and
     neither under low SNR (its own change -1); replicates 1 to 3 have 20, 10
-    found in the reference and 12 under low SNR (+0.1 each). The mean of the
-    per-replicate changes is -0.175; the pooled change, the one reported, is
-    (36 - 32) / 62."""
+    found in the reference and 12 under low SNR (+0.1 each). The pooled
+    change of a resample with counts w is sum(w d) / sum(w n), d the found
+    windows' change and n the windows: its p-value is from those resamples,
+    the ones its interval comes from."""
     counts = []
     for replicate, (windows, found, low) in enumerate([(2, 2, 0)] + [(20, 10, 12)] * 3):
         counts.append(_kay("reference", replicate, "default", found, 30, reference=windows))
         counts.append(_kay("ripple_snr=low", replicate, "default", low, 30, reference=windows))
     scores = _hand_scores(analyze, counts)
-    conditions = ["reference", "ripple_snr=low"]
     changes = analyze.paired_changes(
-        scores, conditions, "reference", measures=("recall",), n_resamples=FEW
+        scores,
+        ["reference", "ripple_snr=low"],
+        "reference",
+        measures=("recall",),
+        n_resamples=FEW,
     ).set_index("condition_id")
     row = changes.loc["ripple_snr=low"]
     assert row.change == pytest.approx(4 / 62)
-    # a swap keeps each side's 62 windows and moves each replicate's found
-    # windows, -2, +2, +2, +2, to the other side: of the 16 patterns, the
-    # signed sums of four 2s at least 4 in size are the 2 of 8 and the 8 of 4
-    assert (row.change_p, row.n_paired) == (10 / 16, 4)
-    # a sign flip of the per-replicate changes tests another statistic
-    assert analyze.sign_flip_test([-1.0, 0.1, 0.1, 0.1]) == 1.0
-    assert (changes.loc["reference", "change_p"], changes.loc["reference", "n_paired"]) == (
-        1.0,
-        4,
-    )
-    # the test's statistic, no replicate swapped, is the change reported
-    statistic = analyze._change_swaps(
-        scores, conditions, "reference", "ripple_snr=low", [0, 1, 2, 3], ("recall",)
-    )
-    np.testing.assert_allclose(statistic(np.zeros(4, dtype=bool)), [[row.change]], rtol=1e-12)
-    # and swapping every replicate turns its sign
-    np.testing.assert_allclose(statistic(np.ones(4, dtype=bool)), [[-row.change]], rtol=1e-12)
+    weights = analyze.resample_weights(4, n_resamples=FEW)
+    draws = weights @ np.array([-2.0, 2.0, 2.0, 2.0]) / (weights @ np.array([2.0, 20, 20, 20]))
+    p, n_draws = analyze.bootstrap_p(draws[:, np.newaxis])
+    low, high = analyze.percentile_intervals(draws[:, np.newaxis])
+    assert [row.change_low, row.change_high] == pytest.approx([low[0], high[0]])
+    assert row.change_p == pytest.approx(p[0])
+    assert row.n_draws == n_draws[0] == FEW
+    assert (row.change_p < 0.05) == (row.change_low > 0 or row.change_high < 0)
+    # what the change rests on: every replicate defined on both sides, 36
+    # true events found here and 32 in the reference
+    assert (row.n_defined, row.n_defined_reference) == (4, 4)
+    assert (row.n_events, row.n_events_reference) == (36, 32)
+    # the reference's own change is 0 in every resample
+    assert changes.loc["reference", "change_p"] == 1.0
 
 
-def test_the_recall_change_at_a_target_is_tested_on_the_pooled_curves(analyze):
-    """Kay's recall at 1 false positive a minute under refractory spiking,
-    its per-replicate curves unequal: the swap test's statistic with no
-    replicate swapped is the change reported, and every swap moves it."""
+def test_the_recall_change_at_a_target_is_tested_on_the_resamples_of_its_interval(analyze):
+    """Kay's recall at 1 false positive a minute is 0.7 in every reference
+    session and 0.8, 0.6, 0.7 and 0.5 under refractory spiking, at the same
+    false-positive rates, so a resample's change is its weighted mean of
+    +0.1, -0.1, 0 and -0.2."""
     counts = []
-    for condition in ("reference", "spike_model=refractory"):
-        for replicate in range(4):
-            shift = replicate if condition == "reference" else 2 * replicate
-            counts += _curve(
-                condition, replicate, KAY[0], ((8 - shift // 2, 28), (6 - shift // 2, 11))
-            )
-            counts.append(_kay(condition, replicate, "default", 6, 11))
-    scores = _hand_scores(analyze, counts)
-    changes, _ = analyze.model_sensitivity(scores, n_resamples=FEW)
     alternative = "spike_model=refractory"
-    at_fp = changes[
-        (changes.alternative == alternative) & (changes.measure == "recall_at_fp")
-    ].set_index("fp_target")
-    statistic = analyze._sweep_change_swaps(
-        scores, ["reference", alternative], [0, 1, 2, 3], KAY[0], analyze.FP_TARGETS
+    for replicate, (first, second) in enumerate([(9, 7), (7, 5), (8, 6), (6, 4)]):
+        counts += _curve("reference", replicate, KAY[0], ((8, 28), (6, 11)))
+        counts += _curve(
+            alternative, replicate, KAY[0], ((first, first + 20), (second, second + 5))
+        )
+        for condition in ("reference", alternative):
+            counts.append(_kay(condition, replicate, "default", 6, 11))
+    changes, _ = analyze.model_sensitivity(_hand_scores(analyze, counts), n_resamples=FEW)
+    row = changes[
+        (changes.alternative == alternative)
+        & (changes.measure == "recall_at_fp")
+        & (changes.fp_target == 1.0)
+    ].iloc[0]
+    assert row.change == pytest.approx(-0.05)
+    draws = analyze.resample_weights(4, n_resamples=FEW) @ np.array([0.1, -0.1, 0.0, -0.2]) / 4
+    p, n_draws = analyze.bootstrap_p(draws[:, np.newaxis])
+    assert row.change_p == pytest.approx(p[0])
+    assert row.n_draws == n_draws[0] == FEW
+    # every replicate's own curve reaches the target on both sides; the
+    # events at the setting nearest it (2.0: 2 and 0.5 per minute are as
+    # near) are 30 true events found there and 32 in the reference
+    assert (row.n_defined, row.n_defined_reference) == (4, 4)
+    assert (row.n_events, row.n_events_reference) == (30, 32)
+
+
+def _unreached_curve(condition, replicate, method):
+    """A sweep whose pooled curve stops at 1.125 false positives a minute (0
+    and 1.5 per minute per session at setting 3.0), while a resample drawing
+    replicate 0 twice or more comes down to 1 per minute."""
+    low = (6, 6) if replicate == 0 else (6, 21)
+    return _curve(condition, replicate, method, ((8, 58), low))
+
+
+def test_a_target_the_pooled_curve_misses_has_no_test(analyze):
+    """Some resamples reach 1 false positive a minute where the pooled curve
+    does not: the missing estimate has no p-value and no draws counted."""
+    counts = []
+    for replicate in range(4):
+        counts += _curve("reference", replicate, KAY[0], ((8, 28), (6, 11)))
+        counts += _unreached_curve("reference", replicate, ROUMIS)
+    scores = _hand_scores(analyze, counts)
+    found = analyze._sweep_recalls(
+        scores, ["reference"], [0, 1, 2, 3], [KAY[0], ROUMIS], [1.0], FEW
     )
-    unswapped = statistic(np.zeros(4, dtype=bool))
-    np.testing.assert_allclose(unswapped, at_fp.change.to_numpy(), rtol=1e-12)
-    assert at_fp.loc[1.0, "change"] < 0
-    assert at_fp.loc[1.0, "n_paired"] == 4
-    # swapping every replicate exchanges the two pooled curves
-    np.testing.assert_allclose(statistic(np.ones(4, dtype=bool)), -unswapped, rtol=1e-12)
-    # the p-value is the share of the 16 patterns at least as large
-    null = np.array(
-        [statistic(np.array(s)) for s in itertools.product((False, True), repeat=4)]
-    )[:, 1]
-    expected = np.mean(np.abs(null) >= abs(unswapped[1]) - 1e-12)
-    assert at_fp.loc[1.0, "change_p"] == pytest.approx(expected)
-    assert 2 / 16 <= expected < 1
+    assert np.isnan(found.estimate[0, 1, 0])
+    assert np.isfinite(found.draws[:, 0, 1, 0]).any()
+    table = analyze.operating_differences(scores, targets=(1.0,), n_resamples=FEW)
+    row = table.iloc[0]
+    assert np.isnan(row.difference)
+    assert np.isnan(row.difference_p)
+    assert row.n_draws == 0
+    # nor under an alternative model
+    for replicate in range(4):
+        counts += _curve("spike_model=refractory", replicate, KAY[0], ((8, 28), (6, 11)))
+        counts += _unreached_curve("spike_model=refractory", replicate, ROUMIS)
+    changes, _ = analyze.model_sensitivity(_hand_scores(analyze, counts), n_resamples=FEW)
+    missed = changes[
+        (changes.alternative == "spike_model=refractory")
+        & (changes.method == ROUMIS)
+        & (changes.fp_target == 1.0)
+    ].iloc[0]
+    assert np.isnan(missed.change)
+    assert np.isnan(missed.change_p)
+    assert missed.n_draws == 0
 
 
 def test_operating_points_pool_the_sessions_with_the_whole_sweep(analyze):
@@ -2333,7 +2326,7 @@ def test_model_sensitivity_includes_all_variants(analyze):
     assert [refractory.change, refractory.change_low, refractory.change_high] == pytest.approx(
         [-0.3, -0.3, -0.3]
     )
-    assert (refractory.change_p, refractory.n_paired) == (2 / 16, 4)
+    assert (refractory.change_p, refractory.n_draws) == (0.0, FEW)
     assert at_fp.loc[("noise_modulation=varying", KAY[0], 1.0), "change"] == 0
     # 5 per minute is past every curve: missing, not the end of the curve
     unreachable = at_fp.xs(5.0, level="fp_target")
@@ -2468,6 +2461,8 @@ def _hand_orders(analyze, alternative="spike_model=refractory"):
     found = analyze.SweepRecalls(
         estimate=estimate,
         draws=draws,
+        defined=np.full((2, 2, len(_HAND_TARGETS)), 4),
+        events=np.full((2, 2, len(_HAND_TARGETS)), 20.0),
         replicates=[{0, 1, 2, 3}, {0, 1, 2, 3}],
         nearest=np.full((2, 2, len(_HAND_TARGETS)), "2.0", dtype=object),
     )

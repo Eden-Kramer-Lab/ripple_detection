@@ -484,20 +484,24 @@ replicates across conditions, a replicate's sessions sharing its seed in every
 condition. A difference between methods is summarized per session, its estimate the
 mean of those values and its two-sided sign-flip p-value over them where both exist. A
 change between conditions is the value pooled over the replicates minus the reference's
-pooled value, over the replicates on which the method ran in both, and its p-value tests
-that same pooled change (`swap_test`): under the null a replicate's two sessions are
-exchangeable, so the change is pooled again under every exchange of them (every one up
-to 16 replicates, else 10,000 at random), and the p-value is the share at least as large
-in size. A mean of per-replicate changes can differ in sign from the pooled change when
-replicates hold different numbers of events, so a test of it would not test the estimate
-shown. `operating_differences` cannot be tested so: two detectors' sweeps have different
-settings, so a session's two curves cannot be exchanged. Its p-value (`bootstrap_p`) is
-twice the smaller share of the resampled pooled differences at or below 0 and at or
-above 0 (capped at 1, over the resamples in which both curves reach the target,
-`n_draws`), from the resamples its interval comes from: estimate, interval and p-value
-are one statistic, and p < 0.05 when the 95 % interval excludes 0 (to within one
-resample). It inverts the interval, an approximation, not an exact randomization test;
-a p-value of 0 means no resample on one side, below 1 / `n_draws`.
+pooled value, over the replicates on which the method ran in both. Its p-value, and that
+of `operating_differences`' difference in recall read off pooled curves, comes from the
+resamples its interval comes from (`bootstrap_p`): twice the smaller share of the
+resampled values at or below 0 and at or above 0, capped at 1, over the resamples in
+which the value is defined (`n_draws`). Estimate, interval and p-value are one statistic,
+and p < 0.05 when the 95 % interval excludes 0 (within one resample). It inverts the
+interval, an approximation, not an exact test; p takes the values 2k / `n_draws`, so a
+p-value of 0 means no resample on one side, p < 2 / `n_draws`. A mean of per-replicate
+changes can differ in sign from the pooled change when replicates hold different numbers
+of events, so a sign flip of those would not test the estimate shown; and a test that
+exchanges a replicate's two sessions exchanges their event counts too, so with few events
+on one side it rejects far more often than its level when nothing changed. Beside each
+p-value, what the estimate rests on: `n_draws`, the replicates (or sessions) whose own
+value is defined on each side (`n_defined`, `n_defined_reference`; `_a`, `_b`) and the
+events on each side (`n_events`, ...: true events found for recall, the errors and a
+recall at a target, at the setting nearest it; events detected for precision and false
+positives; events with participation for participation), so a change resting on a
+handful of events shows. Without an estimate there is no p-value and `n_draws` is 0.
 
 What each column means is in the docstring of the function that builds the table: the
 function of the table's name, except `failures` (`failure_counts`),
@@ -511,10 +515,9 @@ after the factor and levels are `paired_changes`' `CHANGE_COLUMNS`), the orders 
 On run `v1` (the shared 18-core machine), with `--workers 6`, the command took 5.3
 minutes wall and at most 4.8 GB resident: loading the reference 10 s, matching it again
 at the three minimum IoUs 37 s, every condition's scores 20 s, the tables 4.0 minutes
-(`robustness` 82 s and `robustness_crossed` 65 s, most of each the paired-swap tests'
-1,024 exchanges per condition, `model_sensitivity` 33 s, `appendix_expressions` 19 s,
-`boundary_errors` 13 s, the others under 7 s each) and the figures 12 s. It wrote 66
-files (37 CSV, 28 PNG and `summary.md`), the largest 780 kB.
+(`robustness` 82 s, `robustness_crossed` 65 s, `model_sensitivity` 33 s,
+`appendix_expressions` 19 s, `boundary_errors` 13 s, the others under 7 s each) and the
+figures 12 s. It wrote 66 files (37 CSV, 28 PNG and `summary.md`), the largest 780 kB.
 
 ## Results
 
@@ -597,8 +600,8 @@ primary expression. `robustness_crossed_<measure>.png` shows, per crossed pair, 
 change from the reference in every cell, a row per method. Changes are the level minus
 the reference, over the replicates every level holds on which the method ran in every
 level (`n_dropped` counts those a failure left out), with paired intervals and
-paired-swap tests of the pooled change. One factor moves at a time (except the two
-crossed pairs), so the panels do not show how factors combine.
+p-values from the same resamples. One factor moves at a time (except the two crossed
+pairs), so the panels do not show how factors combine.
 
 `noise_type=brown` is confounded and supports no statement about detectors. Ripples are
 sized against the ripple-band noise, which brown noise makes about 25 times smaller,
