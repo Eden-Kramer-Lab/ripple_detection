@@ -580,14 +580,14 @@ class RunTables:
         sorted: ``method``, ``setting``, ``primary_expression``, ``role``,
         ``scoring`` (``scoring_rule``).
     ran : pandas.DataFrame
-        One row per session, method and setting with scores: ``session_id``,
-        ``method``, ``setting``.
+        One row per session, method and setting with scores (rows of
+        ``metrics.csv.gz``): ``session_id``, ``method``, ``setting``.
     failures : pandas.DataFrame
         One row per session and (``methods``) method and setting without
         scores: those columns and ``error``, the runner's ``failures.csv``
         message, ``""`` where it recorded none. A missing result is a
         failure, never zero events.
-    metrics, events, truth_counts : pandas.DataFrame
+    events, truth_counts : pandas.DataFrame
         Those tables' rows of the sessions, methods and settings read
         (``truth_counts`` has no method).
     truth : dict of str to (pandas.DataFrame, pandas.DataFrame)
@@ -603,7 +603,6 @@ class RunTables:
     methods: pd.DataFrame
     ran: pd.DataFrame
     failures: pd.DataFrame
-    metrics: pd.DataFrame
     events: pd.DataFrame
     truth_counts: pd.DataFrame
     truth: dict[str, tuple[pd.DataFrame, pd.DataFrame]]
@@ -611,14 +610,21 @@ class RunTables:
     settings: tuple[str, ...] | None
 
 
+def _selection(
+    frame: pd.DataFrame, sessions: Collection[str], settings: Collection[str] | None
+) -> pd.Series:
+    """Whether each row is of ``sessions`` and, when given, of ``settings``."""
+    keep = frame["session_id"].isin(sessions)
+    if settings is not None and "setting" in frame.columns:
+        keep &= frame["setting"].isin(settings)
+    return keep
+
+
 def _selected(
     frame: pd.DataFrame, sessions: Collection[str], settings: Collection[str] | None
 ) -> pd.DataFrame:
     """The rows of ``sessions`` and, when given, of ``settings``."""
-    keep = frame["session_id"].isin(sessions)
-    if settings is not None and "setting" in frame.columns:
-        keep &= frame["setting"].isin(settings)
-    return frame[keep].reset_index(drop=True)
+    return frame[_selection(frame, sessions, settings)].reset_index(drop=True)
 
 
 def _read_selected(
@@ -687,8 +693,15 @@ def load_run(
         .reset_index(drop=True)
     )
     methods["scoring"] = methods["method"].map(scoring_rule)
-    metrics = _read_selected(root / "metrics.csv.gz", ids, settings)
-    ran = metrics[_KEY].drop_duplicates().reset_index(drop=True)
+    ran = (
+        _read_columns(
+            root / "metrics.csv.gz",
+            _KEY,
+            lambda chunk: _selection(chunk, ids, settings),
+        )
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )
     # every session should hold every method and setting: one without scores failed
     expected = sessions[["session_id"]].merge(methods[["method", "setting"]], how="cross")
     missing = expected.merge(ran, on=_KEY, how="left", indicator=True)
@@ -707,7 +720,6 @@ def load_run(
         methods=methods,
         ran=ran,
         failures=failures.reset_index(drop=True),
-        metrics=metrics,
         events=_read_selected(root / "events.csv.gz", ids, settings),
         truth_counts=_selected(read_table(root / "truth_counts.csv.gz"), ids, None),
         truth=truth,
@@ -1517,19 +1529,6 @@ ERROR_ROW_COLUMNS = (
 )
 EXPRESSION_COUNT_COLUMNS = (*COUNT_COLUMNS[:3], "expression", *COUNT_COLUMNS[3:])
 PARTICIPATION_COLUMNS = ("session_id", "method", "setting", "n_events", "principal_fraction")
-# The conditions whose every setting is matched again at every minimum IoU: the
-# reference and each alternative model. The operating curves, points and held-out
-# thresholds read the reference's pairs alone; model sensitivity reads the
-# alternatives' sweeps from the runner's counts, not from these pairs.
-CURVE_CONDITIONS = (
-    REFERENCE_CONDITION,
-    *(
-        f"{factor}={level}"
-        for factor, levels in ALTERNATIVES.items()
-        for level in levels
-        if level != REFERENCE_LEVEL
-    ),
-)
 _EVENT_READ = (
     "session_id",
     "method",
@@ -1573,8 +1572,9 @@ class ConditionScores:
         ``offset_error`` against the windows at 10 %, detected minus truth,
         in seconds; ``session_id``, ``method`` and ``setting`` categorical.
         The main settings at ``minimum_iou`` 0 in every session; in the
-        sessions of ``CURVE_CONDITIONS`` every setting at every level of
-        ``MATCH_IOU_LEVELS``.
+        reference condition's sessions, which the operating curves read,
+        every setting at every level of ``MATCH_IOU_LEVELS`` (model
+        sensitivity reads the other conditions' sweeps from ``counts``).
     participation : pandas.DataFrame
         One row per session and main setting of an interval method with
         scores: ``n_events`` and ``principal_fraction``, the sum over its
@@ -1697,12 +1697,7 @@ def score_primary(
     return found[list(ERROR_ROW_COLUMNS)], pd.DataFrame(points, columns=list(COUNT_COLUMNS))
 
 
-def load_scores(
-    run_directory: str | os.PathLike[str],
-    *,
-    curve_conditions: Collection[str] = CURVE_CONDITIONS,
-    workers: int = 1,
-) -> ConditionScores:
+def load_scores(run_directory: str | os.PathLike[str], *, workers: int = 1) -> ConditionScores:
     """Read every condition's scores against the primary expressions.
 
     Parameters
@@ -1710,11 +1705,6 @@ def load_scores(
     run_directory : str or path-like
         ``examples/benchmark/output/<run_name>``: its ``conditions.csv`` and
         ``combined/`` are read.
-    curve_conditions : collection of str, optional
-        The conditions whose every setting is matched at every level of
-        ``MATCH_IOU_LEVELS`` (the operating curves read the reference's);
-        the others' main settings are matched at IoU 0. Those the run lacks
-        are skipped.
     workers : int, optional
         Processes matching sessions again; 1 matches in this one.
 
@@ -1754,20 +1744,18 @@ def load_scores(
     missing = expected.merge(ran, on=_KEY, how="left", indicator=True)
     failures = missing[missing["_merge"] == "left_only"][_KEY].reset_index(drop=True)
 
-    curve_sessions = set(
-        sessions.loc[sessions["condition_id"].isin(curve_conditions), "session_id"]
-    )
+    # the reference's sweeps, for the curves, and every condition's main settings
     events = _read_columns(
         combined / "events.csv.gz",
         _EVENT_READ,
         lambda chunk: (
-            chunk["setting"].isin(MAIN_SETTINGS) | chunk["session_id"].isin(curve_sessions)
+            chunk["setting"].isin(MAIN_SETTINGS) | chunk["session_id"].isin(reference)
         ),
     )
     truth = load_truth(combined / "truth.csv.gz")
     scored = ran.merge(primary, on=["method", "setting"])
     scored = scored[
-        scored["setting"].isin(MAIN_SETTINGS) | scored["session_id"].isin(curve_sessions)
+        scored["setting"].isin(MAIN_SETTINGS) | scored["session_id"].isin(reference)
     ]
     to_score = {
         session_id: list(rows[["method", "setting", "expression"]].itertuples(False, None))
@@ -1785,7 +1773,7 @@ def load_scores(
         [by_session.get(s, events.iloc[:0]) for s in session_ids],
         [truth[s][0] for s in session_ids],
         [to_score[s] for s in session_ids],
-        [MATCH_IOU_LEVELS if s in curve_sessions else (0.0,) for s in session_ids],
+        [MATCH_IOU_LEVELS if s in reference else (0.0,) for s in session_ids],
     )
     score = functools.partial(score_primary, categories=categories)
     if workers == 1:

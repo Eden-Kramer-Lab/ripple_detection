@@ -403,7 +403,7 @@ def _pairs(frame, columns=("method", "setting")):
 def test_main_analyses_include_recipes(analyze, run, tiny_run, tiny_tables):
     main = {KAY, MALLORY}
     assert _pairs(tiny_tables.methods) == main
-    for table in (tiny_tables.metrics, tiny_tables.events, tiny_tables.ran):
+    for table in (tiny_tables.events, tiny_tables.ran):
         assert _pairs(table) == main
     # the selection itself, on every row the run wrote
     written = run.read_table(tiny_run / "methods.csv")
@@ -444,13 +444,13 @@ def test_loading_reads_back_what_the_run_wrote(analyze, run, tiny_run, tiny_tabl
     for session_id, (events, non_events) in tiny_tables.truth.items():
         pd.testing.assert_frame_equal(events, expected[session_id][0])
         pd.testing.assert_frame_equal(non_events, expected[session_id][1])
-    # read in chunks, events and scores equal the whole tables' main rows
-    for name, loaded in (
-        ("events.csv.gz", tiny_tables.events),
-        ("metrics.csv.gz", tiny_tables.metrics),
-    ):
-        whole = analyze.main_rows(run.read_table(tiny_run / name)).reset_index(drop=True)
-        pd.testing.assert_frame_equal(loaded, whole)
+    # read in chunks, the events equal the whole table's main rows, and what
+    # ran the scores' main rows
+    events = analyze.main_rows(run.read_table(tiny_run / "events.csv.gz"))
+    pd.testing.assert_frame_equal(tiny_tables.events, events.reset_index(drop=True))
+    metrics = analyze.main_rows(run.read_table(tiny_run / "metrics.csv.gz"))
+    ran = metrics[["session_id", "method", "setting"]].drop_duplicates()
+    pd.testing.assert_frame_equal(tiny_tables.ran, ran.reset_index(drop=True))
     assert tiny_tables.events.end_time.max() > UNIX_ORIGIN
 
 
@@ -485,10 +485,11 @@ def tiny_matches(analyze, tiny_tables):
     return analyze.match_run(tiny_tables)
 
 
-def test_matching_again_gives_the_runner_scores(analyze, tiny_tables, tiny_matches):
+def test_matching_again_gives_the_runner_scores(analyze, run, tiny_run, tiny_matches):
     pairs = tiny_matches.pairs
     reference = tiny_matches.windows.groupby(["session_id", "expression"]).size()
-    metrics = tiny_tables.metrics[tiny_tables.metrics.minimum_iou == 0]
+    metrics = analyze.main_rows(run.read_table(tiny_run / "metrics.csv.gz"))
+    metrics = metrics[metrics.minimum_iou == 0]
     for row in metrics.itertuples():
         found = pairs[
             (pairs.session_id == row.session_id)
