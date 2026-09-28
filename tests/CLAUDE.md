@@ -22,18 +22,29 @@ The suite, with its shared fixtures:
 18. **[tests/test_benchmark_analyze.py](test_benchmark_analyze.py)** - The benchmark's analyses (examples/benchmark/analyze.py) on runs written by the test in the runner's schema through its own writer, scorer and spike counters (hand-built sessions, one at a Unix clock origin), and on condition scores built by hand: `paired_bootstrap` against the plain concatenating algorithm draw for draw, methods paired within a draw, replicates paired across conditions (an interval of exactly [1, 1]), a session drawn twice counted twice, and an unknown key or a draw-indexed statistic refused; `resample_weights` giving its draws as counts, `WeightedMedians` against the repeated values and `grouped_intervals` equal to `paired_bootstrap` bit for bit for every statistic; `sign_flip_test` exact and Monte Carlo (at 16 and 17 units), and its finite-pairs rule; the held-out split by replicate; the 1 MB limit, in `write_result` and stopping the command with the previous results kept; the main-analysis selection (defaults and recipes, not sweeps); a missing result counted as a failure, recorded or not; loading read back against the runner's own readers, and every condition's scores against its metrics; matching again equal to the runner's scores, in parallel as in one process, and past IoU 0 against the primary expression and the network alone; point inventories found from the catalog, `match_peaks` by hand (closed bounds at a Unix origin) and against a brute-force largest matching, and point methods kept out of every interval table; false-positive labels, doublet splits and merges; every analysis against hand values (the profile, consensus and its false-positive groups with touching intervals apart, false-positive classes, agreement, differences on mixed-sign sessions and a dendrogram whose average and single linkage differ, overlap, boundary errors with recall, absolute errors and a network method's ripple and burst rows, a doublet ripple overlapped alone not merged, paired timing on the shared true events only and on non-zero differences, error correlations against the shared primary expression with the network's beside them, the sessions each pair mean pools and each test drops, `at_fp_rate` interpolating in log rate, keeping one setting and equal to the design's pandas code, operating curves (their kinds) and points with unreachable targets missing and no interval, operating differences paired by session, a held-out threshold judged on the odd replicates only and `choose_setting`'s boundary and ties, robustness and crossed cells paired by replicate, conditions found by the factor and level `conditions.csv` lists, a ratio over nothing missing, comparisons and curves pooling only the units a method ran on everywhere, rates by state with events on a bout's start and end running, participation bias, the boundary effect zero for equal bounds, matching sensitivity with a sliver, F1, absolute errors and recall at the targets, model sensitivity with every alternative, a known reversal, an alternative not run, failures kept apart from unreachable targets, participation and error changes, and the validation's changed statistics read through the run's spec, or said not to be read (a spec not listing its checks included), the appendix against every expression, every table keeping a method that never ran, candidate trends of every kind with their spot settings, and the event selection for a spot check and its failed methods); the analysis registry's checks, the tables' recorded selection, the command's files, `summary.md` and the hand-written trends and spot checks it keeps. No test draws a figure
 19. **[tests/test_benchmark_attribution.py](test_benchmark_attribution.py)** - The
    attribution (examples/benchmark/attribution.py) on runs of five 30 s and one 60 s
-   reference sessions written by the runner's own functions: the Sobol estimator on the
-   Ishigami function, Shapley values (additive, efficiency, the Monte Carlo path on the
-   10-factor toy, the subsets asked); every configuration a template or a fixed point
-   with its reason, compiled step order; the in-space count per family pinned on two
-   30 s sessions, a gap and a Unix clock origin, a session with running for the one
-   method needing it, wrong templates and equal empty results refused; the factor
-   spaces pinned, reference templates by hand, the Sobol design; memoized evaluation
-   (call counts) on a read-only, bounded, releasable context, the outputs against
-   `match_events`; halved sessions regenerated and every mismatch with the saved
-   tables raising, the report check stubbed; one factor at a time (its interval equal
-   to `paired_bootstrap`'s), Sobol, Shapley pairs, fixed points, two workers, the
-   smoke report and the command line (files written, the eight-method stop). No test
-   draws a figure
+   reference sessions written by the runner's own functions (with the two methods whose
+   saved events regenerated sessions are checked against): the Sobol estimator on the
+   Ishigami function and by hand, its intervals' level, missing outputs (no interval
+   without an estimate, finite rows and draws counted); Shapley values (additive,
+   efficiency, the Monte Carlo path and its standard errors on the 10-factor toy, the
+   subsets asked); every configuration a template or a fixed point with its reason,
+   compiled step order, hashable pipelines, a rate core refusing LFP steps, bounds as
+   fractions of the threshold (each template's bound bit for bit, no sampled bound above
+   its threshold); the in-space count per family pinned on two 30 s sessions, a gap cutting
+   a sharp-wave ripple (events of both families cut there) and a Unix clock origin, a
+   session with running for the one method needing it, wrong templates (counts kept,
+   bounds changed) and equal empty results refused, the edge sessions part of
+   verification; the perturbations and the sensitivity table; the factor spaces pinned,
+   reference templates by hand (integer medians rounded down, identical templates once),
+   the Sobol design; memoized evaluation (call counts) on a read-only, bounded, releasable
+   context, means skipping missing values, the outputs against `match_events`; halved
+   sessions and a non-default rendering parameter regenerated, and every mismatch with
+   the saved tables and events raising, the report check stubbed and its every field;
+   one factor at a time (its interval equal to `paired_bootstrap`'s, none from one
+   session), Sobol, Shapley pairs and the lowest-agreement selection, fixed points
+   (failures the run recorded kept, others and input errors raised), a failing
+   configuration named and cancelling the queued chunks, two workers, the smoke report
+   and the command line (files per family, the report checked once, the eight-method stop
+   and the labelled override). No test draws a figure
 
 The whole suite runs in seconds; `pytest` reports coverage of `src/ripple_detection` with the missing lines. The package also validates that example notebooks run without errors in CI.
