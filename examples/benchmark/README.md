@@ -483,8 +483,15 @@ replicates across conditions, a replicate's sessions sharing its seed in every
 condition. A difference between methods is summarized per session, its estimate the
 mean of those values and its two-sided sign-flip p-value over them where both exist. A
 change between conditions is the value pooled over the replicates minus the reference's
-pooled value, over the replicates on which the method ran in both, and its p-value is
-over each replicate's own change.
+pooled value, over the replicates on which the method ran in both, and its p-value tests
+that same pooled change (`swap_test`): under the null a replicate's two sessions are
+exchangeable, so the change is pooled again under every exchange of them (every one up
+to 16 replicates, else 10,000 at random), and the p-value is the share at least as large
+in size. A mean of per-replicate changes can differ in sign from the pooled change when
+replicates hold different numbers of events, so a test of it would not test the estimate
+shown. `operating_differences` is the exception: its difference in recall is read off
+the pooled curves, while its sign-flip p-value is over the differences read off each
+session's own curves, a statistic other than the one shown.
 
 What each column means is in the docstring of the function that builds the table: the
 function of the table's name, except `failures` (`failure_counts`),
@@ -582,9 +589,9 @@ levels with the reference level in place, one line per main setting coloured by
 primary expression. `robustness_crossed_<measure>.png` shows, per crossed pair, the
 change from the reference in every cell, a row per method. Changes are the level minus
 the reference, over the replicates every level holds on which the method ran in every
-level (`n_dropped` counts those a failure left out), with paired intervals and sign-flip
-tests. One factor moves at a time (except the two crossed pairs), so the panels do not
-show how factors combine.
+level (`n_dropped` counts those a failure left out), with paired intervals and
+paired-swap tests of the pooled change. One factor moves at a time (except the two
+crossed pairs), so the panels do not show how factors combine.
 
 `noise_type=brown` is confounded and supports no statement about detectors. Ripples are
 sized against the ripple-band noise, which brown noise makes about 25 times smaller,

@@ -49,8 +49,11 @@ seed in every condition. A pooled ratio or median is resampled whole; a differen
 between two methods is summarized per session (the sessions are the independent
 units), its estimate and interval the mean of those per-session values and its
 p-value ``sign_flip_test``'s, two-sided, over them. A change between conditions is
-the value pooled over the replicates minus the reference's pooled value, while its
-p-value is over each replicate's own change.
+the value pooled over the replicates minus the reference's pooled value, and its
+p-value ``swap_test``'s of that same pooled change, each replicate's two sessions
+exchanged between the conditions. ``operating_differences``' pooled difference in
+recall is the exception: its p-value is a sign flip over each session's own
+difference, its curves read off alone.
 
 Signs and units. Times and errors are seconds (the figures show milliseconds). A
 signed error is detected minus truth: negative, early. A difference between two
@@ -138,7 +141,7 @@ LEVEL = 0.95
 # Differences within this of the observed statistic count as at least as
 # large, so an exact tie is not lost to rounding.
 _TIE = 1e-12
-# Up to this many sessions the sign-flip null is enumerated.
+# Up to this many units the sign-flip and swap nulls are enumerated.
 _EXACT_UP_TO = 16
 
 # The settings of the main analyses: detectors at their defaults, and recipes.
@@ -384,6 +387,59 @@ def _sign_vectors(n_units: int, n_resamples: int, seed: int) -> np.ndarray[Any, 
         signs = np.random.default_rng(seed).choice((-1.0, 1.0), size=(n_resamples, n_units))
     signs.flags.writeable = False
     return signs
+
+
+def swap_test(
+    statistic: Callable[[np.ndarray[Any, Any]], np.ndarray[Any, Any]],
+    n_units: int,
+    *,
+    n_resamples: int = 10_000,
+    seed: int = SEED,
+) -> np.ndarray[Any, Any]:
+    """Two-sided paired-swap randomization test of a statistic of paired units.
+
+    Each unit (a replicate, holding a session in each of two conditions)
+    has two sides; under the null they are exchangeable within the unit,
+    so exchanging them leaves the statistic's distribution unchanged. The
+    statistic is computed exactly as the estimate it tests, from every
+    unit's data with some units' sides exchanged, so a pooled statistic is
+    tested as pooled, not through a mean of per-unit values.
+
+    Parameters
+    ----------
+    statistic : callable
+        ``statistic(swapped)``, ``swapped`` a boolean array of shape
+        (n_units,) marking the units whose sides are exchanged, gives an
+        array of any shape, the same for every pattern; with no unit
+        swapped, the observed statistic.
+    n_units : int
+    n_resamples : int, optional
+        Random swap patterns when there are more than 16 units.
+    seed : int, optional
+
+    Returns
+    -------
+    p : ndarray, shaped as the statistic
+        The fraction of swap patterns whose statistic is at least the
+        observed one in absolute value (to ``1e-12``): every pattern,
+        exactly, for up to 16 units; else ``(k + 1) / (n + 1)`` over the
+        random patterns (``sign_flip_test``'s, a negative sign a swap), never
+        0. A pattern whose statistic is undefined (NaN) is left out, and
+        ``n`` counts the others; NaN where the observed statistic is not
+        finite.
+    """
+    observed = np.asarray(statistic(np.zeros(n_units, dtype=bool)), dtype=float)
+    exact = n_units <= _EXACT_UP_TO
+    patterns = (
+        _sign_vectors(n_units, 0, 0) if exact else _sign_vectors(n_units, n_resamples, seed)
+    )
+    null = np.array([statistic(pattern < 0) for pattern in patterns], dtype=float)
+    defined = np.isfinite(null)
+    extreme = (defined & (np.abs(null) >= np.abs(observed) - _TIE)).sum(axis=0)
+    n_defined = defined.sum(axis=0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        p = extreme / n_defined if exact else (extreme + 1) / (n_defined + 1)
+    return np.where(np.isfinite(observed), p, np.nan)
 
 
 def is_held_out(replicate: int) -> bool:
@@ -2921,6 +2977,82 @@ class Pool:
         return found
 
 
+def _swap_pool(
+    counts: pd.DataFrame,
+    errors: pd.DataFrame,
+    unit: str,
+    units: pd.Index,
+    keys: Sequence[str],
+    groups: pd.Index,
+    partner: np.ndarray[Any, Any],
+    sums: Sequence[str],
+    medians: Sequence[str] = (),
+) -> Pool:
+    """A ``Pool`` of ``groups`` for ``swap_test``, over twice the units.
+
+    Unit ``i`` holds unit ``i``'s rows as they are, and unit
+    ``len(units) + i`` the same rows each moved to its group's partner (a
+    group without one, -1, leaves its rows out there), so the weights
+    ``_swap_weights(swapped)`` pool every group with the units ``swapped``
+    marks exchanged between each pair of partner groups, and no unit
+    swapped pools it as ``Pool`` does.
+
+    Parameters
+    ----------
+    counts, errors : pandas.DataFrame
+        As ``Pool``'s, with the ``unit`` and ``keys`` columns.
+    unit : str
+    units : pandas.Index
+        The units, by the ``unit`` column.
+    keys : sequence of str
+        The columns naming a group.
+    groups : pandas.Index
+    partner : ndarray of int, shape (n_groups,)
+        Each group's partner, -1 for none.
+    sums, medians : sequence of str
+        As ``Pool``'s.
+
+    Returns
+    -------
+    pool : Pool
+    """
+    n_units = len(units)
+
+    def codes(frame: pd.DataFrame) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+        own_units = _codes(frame, [unit], units)
+        own_groups = _codes(frame, keys, groups)
+        moved = np.where(own_groups >= 0, partner[np.maximum(own_groups, 0)], -1)
+        return (
+            np.concatenate([own_units, np.where(own_units >= 0, own_units + n_units, -1)]),
+            np.concatenate([own_groups, moved]),
+        )
+
+    def twice(frame: pd.DataFrame) -> pd.DataFrame:
+        return frame.iloc[np.tile(np.arange(len(frame)), 2)]
+
+    count_units, count_groups = codes(counts)
+    error_units, error_groups = codes(errors)
+    return Pool(
+        twice(counts),
+        count_units,
+        count_groups,
+        twice(errors),
+        error_units,
+        error_groups,
+        2 * n_units,
+        len(groups),
+        sums,
+        medians,
+    )
+
+
+def _swap_weights(swapped: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
+    """A ``_swap_pool``'s weights: each unit as it is unless ``swapped``,
+    else moved to the partner groups."""
+    swapped = np.asarray(swapped, dtype=bool)
+    return np.concatenate([~swapped, swapped]).astype(float)
+
+
 def _ratio(top: np.ndarray[Any, Any], bottom: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
     """``top / bottom``, NaN where ``bottom`` is 0 (or NaN)."""
     with np.errstate(invalid="ignore", divide="ignore"):
@@ -3559,6 +3691,8 @@ def condition_pool(
     condition_ids: Sequence[str],
     replicates: Sequence[int],
     medians: Sequence[str] = ("onset_error", "offset_error"),
+    *,
+    swap: tuple[str, str] | None = None,
 ) -> tuple[Pool, pd.MultiIndex, pd.Series]:
     """The main settings in some conditions, pooled over shared replicates.
 
@@ -3576,6 +3710,10 @@ def condition_pool(
     medians : sequence of str, optional
         The errors whose medians the pool takes, of ``onset_error`` and
         ``offset_error`` (signed, at IoU 0).
+    swap : tuple of str, optional
+        Two of ``condition_ids`` whose groups are partners: the pool is then
+        a ``_swap_pool`` exchanging each replicate's rows between them, for
+        ``swap_test``, over the same replicates.
 
     Returns
     -------
@@ -3626,6 +3764,23 @@ def condition_pool(
     errors = _only_complete(errors, "replicate", ["method", "setting"], kept)
     units = pd.Index(replicates)
     keys = ["condition_id", "method", "setting"]
+    sums = (*_COUNTED, "n_events", "principal_fraction")
+    if swap is not None:
+        conditions = groups.get_level_values("condition_id")
+        exchanged = dict(zip(swap, swap[::-1], strict=True))
+        partner = groups.get_indexer(
+            pd.MultiIndex.from_arrays(
+                [
+                    [exchanged.get(condition, "") for condition in conditions],
+                    groups.get_level_values("method"),
+                    groups.get_level_values("setting"),
+                ]
+            )
+        )
+        pool = _swap_pool(
+            counts, errors, "replicate", units, keys, groups, partner, sums, medians
+        )
+        return pool, groups, paired
     pool = Pool(
         counts,
         _codes(counts, ["replicate"], units),
@@ -3635,7 +3790,7 @@ def condition_pool(
         _codes(errors, keys, groups),
         len(units),
         len(groups),
-        (*_COUNTED, "n_events", "principal_fraction"),
+        sums,
         medians,
     )
     return pool, groups, paired
@@ -3657,9 +3812,9 @@ def paired_changes(
     (``condition_pool``): each value is pooled over them, and each change is
     the pooled value minus the reference condition's pooled value, both from
     the same resamples of replicates (``paired_bootstrap`` with
-    ``key="replicate"``); its p-value is ``sign_flip_test``'s over the
-    per-replicate changes (each replicate's value alone minus its reference
-    value alone) where both are defined.
+    ``key="replicate"``); its p-value is ``swap_test``'s of that same pooled
+    change, each replicate's two sessions exchanged between the condition
+    and the reference (``_change_swaps``).
 
     Parameters
     ----------
@@ -3677,7 +3832,9 @@ def paired_changes(
         One row per condition, main setting and measure (``CHANGE_COLUMNS``):
         ``n_replicates`` (pooled), ``value`` with ``_low`` and ``_high``;
         ``change`` (value minus the reference's) with ``_low``, ``_high``
-        and ``_p``, ``n_paired`` (replicates in the test); ``n_dropped``
+        and ``_p`` (1 for the reference itself, which no swap changes),
+        ``n_paired`` (replicates in the test: those pooled, 0 without a
+        change); ``n_dropped``
         (replicates the conditions share left out because the method failed
         on one of them); ``n_failures`` (the condition's sessions without the
         method's scores, of the shared replicates). Errors are seconds,
@@ -3708,7 +3865,17 @@ def paired_changes(
         [statistic(w) for w in resample_weights(len(replicates), n_resamples=n_resamples)]
     )
     low, high = _conditional_intervals(estimate, draws)
-    alone = np.array([statistic(w) for w in np.eye(len(replicates))])[:, 1]
+    # the reference's own change is 0 under every swap
+    p = np.where(np.isfinite(estimate[1]), 1.0, np.nan)
+    conditions = groups.get_level_values("condition_id")
+    for condition in dict.fromkeys(conditions):
+        if condition != reference:
+            p[:, conditions == condition] = swap_test(
+                _change_swaps(
+                    scores, condition_ids, reference, condition, replicates, measures
+                ),
+                len(replicates),
+            )
     main = _main_methods(scores).set_index(["method", "setting"])
     kept = listed[listed["replicate"].isin(replicates)]["session_id"]
     n_failed = _failure_counts(scores, kept, ["condition_id", "method", "setting"])
@@ -3718,8 +3885,7 @@ def paired_changes(
         for index, measure in enumerate(measures):
             if scoring == PEAK_CONTAINMENT and measure not in POINT_MEASURES:
                 continue
-            per_replicate = alone[:, index, position]
-            finite = per_replicate[np.isfinite(per_replicate)]
+            tested = bool(np.isfinite(estimate[1, index, position]))
             rows.append(
                 {
                     "condition_id": condition,
@@ -3735,13 +3901,66 @@ def paired_changes(
                     "change": estimate[1, index, position],
                     "change_low": low[1, index, position],
                     "change_high": high[1, index, position],
-                    "change_p": sign_flip_test(finite),
-                    "n_paired": len(finite),
+                    "change_p": p[index, position],
+                    "n_paired": int(paired[method, setting]) if tested else 0,
                     "n_dropped": len(replicates) - int(paired[method, setting]),
                     "n_failures": int(n_failed.get((condition, method, setting), 0)),
                 }
             )
     return pd.DataFrame(rows, columns=list(CHANGE_COLUMNS))
+
+
+def _change_swaps(
+    scores: ConditionScores,
+    condition_ids: Sequence[str],
+    reference: str,
+    condition: str,
+    replicates: Sequence[int],
+    measures: Sequence[str],
+) -> Callable[[np.ndarray[Any, Any]], np.ndarray[Any, Any]]:
+    """``paired_changes``' change from ``reference`` to ``condition`` as
+    ``swap_test``'s statistic.
+
+    Parameters
+    ----------
+    scores : ConditionScores
+    condition_ids : sequence of str
+        Every condition ``paired_changes`` compares, so the replicates each
+        main setting is pooled over are its own.
+    reference, condition : str
+    replicates : sequence of int
+    measures : sequence of str
+
+    Returns
+    -------
+    statistic : callable
+        ``statistic(swapped)``, ``swapped`` of shape (n_replicates,): each
+        measure of each main setting pooled in ``condition`` minus pooled in
+        ``reference``, shape (n_measures, n_main), with the replicates
+        ``swapped`` marks exchanging their two sessions; none swapped, the
+        change ``paired_changes`` reports.
+    """
+    medians = [_MEDIAN_OF[name] for name in measures if name in _MEDIAN_OF]
+    pool, groups, _ = condition_pool(
+        scores, condition_ids, replicates, medians, swap=(condition, reference)
+    )
+    own = np.flatnonzero(groups.get_level_values("condition_id") == condition)
+    base = groups.get_indexer(
+        pd.MultiIndex.from_arrays(
+            [
+                [reference] * len(own),
+                groups.get_level_values("method")[own],
+                groups.get_level_values("setting")[own],
+            ]
+        )
+    )
+
+    def statistic(swapped: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
+        values = _measured(pool(_swap_weights(swapped)), measures)
+        changed: np.ndarray[Any, Any] = values[:, own] - values[:, base]
+        return changed
+
+    return statistic
 
 
 def _condition_ids(scores: ConditionScores) -> dict[tuple[str, str], str]:
@@ -4063,21 +4282,13 @@ def _sweep_recalls(
 ) -> SweepRecalls:
     """Each detector's recall at each target in each condition, over the
     shared ``replicates`` on which its whole sweep ran in every condition."""
-    sessions = scores.sessions[
-        scores.sessions["condition_id"].isin(conditions)
-        & scores.sessions["replicate"].isin(replicates)
-    ]
-    counts = _by_method(_session_counts(scores, 0.0, sessions["session_id"]))
+    counts = _sweep_counts(scores, conditions, replicates)
     pools: list[list[Pool]] = [[] for _ in conditions]
     paired = []
     nearest = np.full((len(conditions), len(detectors), len(targets)), "", dtype=object)
     for d, detector in enumerate(detectors):
-        settings = _sweep_settings(detector, scores.methods)
-        own = counts.get(detector, _NO_COUNTS)
-        cells = [(condition, setting) for condition in conditions for setting in settings]
-        complete = _complete_units(own, "replicate", ["condition_id", "setting"], cells)
+        settings, complete, own = _sweep_rows(scores, counts, conditions, detector)
         paired.append(complete)
-        own = own[own["replicate"].isin(list(complete)).to_numpy()]
         for c, (row, condition) in enumerate(zip(pools, conditions, strict=True)):
             mine = own[(own["condition_id"] == condition).to_numpy()]
             row.append(_curve_pool(mine, _NO_ERRORS, "replicate", replicates, settings, ()))
@@ -4099,6 +4310,99 @@ def _sweep_recalls(
         replicates=paired,
         nearest=nearest,
     )
+
+
+def _sweep_counts(
+    scores: ConditionScores, conditions: Sequence[str], replicates: Sequence[int]
+) -> dict[str, pd.DataFrame]:
+    """The counts at IoU 0 of the sessions of ``replicates`` in
+    ``conditions``, by method."""
+    sessions = scores.sessions[
+        scores.sessions["condition_id"].isin(conditions)
+        & scores.sessions["replicate"].isin(replicates)
+    ]
+    return _by_method(_session_counts(scores, 0.0, sessions["session_id"]))
+
+
+def _sweep_rows(
+    scores: ConditionScores,
+    counts: Mapping[str, pd.DataFrame],
+    conditions: Sequence[str],
+    detector: str,
+) -> tuple[list[str], set[Any], pd.DataFrame]:
+    """A detector's swept settings, the replicates on which every one ran in
+    every condition, and its rows (``counts``, ``_sweep_counts``') of those
+    replicates alone."""
+    settings = _sweep_settings(detector, scores.methods)
+    own = counts.get(detector, _NO_COUNTS)
+    cells = [(condition, setting) for condition in conditions for setting in settings]
+    complete = _complete_units(own, "replicate", ["condition_id", "setting"], cells)
+    return settings, complete, own[own["replicate"].isin(list(complete)).to_numpy()]
+
+
+def _sweep_change_swaps(
+    scores: ConditionScores,
+    conditions: Sequence[str],
+    replicates: Sequence[int],
+    detector: str,
+    targets: Sequence[float],
+) -> Callable[[np.ndarray[Any, Any]], np.ndarray[Any, Any]]:
+    """``model_sensitivity``'s change in a detector's recall at the targets
+    as ``swap_test``'s statistic.
+
+    Parameters
+    ----------
+    scores : ConditionScores
+    conditions : sequence of str
+        The reference and the alternative, in that order.
+    replicates : sequence of int
+        The replicates the two conditions share.
+    detector : str
+    targets : sequence of float
+
+    Returns
+    -------
+    statistic : callable
+        ``statistic(swapped)``, ``swapped`` of shape (n_replicates,): the
+        recall at each target read off the detector's sweep pooled in the
+        alternative minus that in the reference, shape (n_targets,), with
+        the replicates ``swapped`` marks exchanging their two sessions; none
+        swapped, the change ``model_sensitivity`` reports (``_sweep_recalls``'
+        estimates, the same replicates pooled).
+    """
+    counts = _sweep_counts(scores, conditions, replicates)
+    settings, _, own = _sweep_rows(scores, counts, conditions, detector)
+    n_settings = len(settings)
+    groups = pd.MultiIndex.from_product([list(conditions), settings])
+    partner = np.roll(np.arange(len(groups)), n_settings)
+    pool = _swap_pool(
+        own,
+        _NO_ERRORS,
+        "replicate",
+        pd.Index(replicates),
+        ["condition_id", "setting"],
+        groups,
+        partner,
+        _COUNTED,
+    )
+
+    def statistic(swapped: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
+        pooled = pool(_swap_weights(swapped))
+        reference, alternative = (
+            _read_off(
+                {
+                    name: values[c * n_settings : (c + 1) * n_settings]
+                    for name, values in pooled.items()
+                },
+                targets,
+                ["recall"],
+            )[:, 0]
+            for c in (0, 1)
+        )
+        changed: np.ndarray[Any, Any] = alternative - reference
+        return changed
+
+    return statistic
 
 
 def _same_primary_pairs(
@@ -4221,8 +4525,10 @@ def model_sensitivity(
         ``minimum_iou``, to keep point methods (``"peak_containment"``)
         apart. Then the reference's and the alternative's values over the
         ``n_replicates`` pooled, ``change`` (alternative minus reference)
-        with its interval and sign-flip p-value over the replicates where
-        both exist (``n_paired``), ``n_dropped`` (shared replicates left out
+        with its interval and ``swap_test`` p-value of the same pooled
+        change (``paired_changes``', and for ``"recall_at_fp"``
+        ``_sweep_change_swaps``'), ``n_paired`` (the replicates pooled, 0
+        without a change), ``n_dropped`` (shared replicates left out
         for the method's failures) and ``n_failures`` (the method's failed
         calls, every setting of a sweep, in both conditions, on the shared
         replicates).
@@ -4297,14 +4603,16 @@ def model_sensitivity(
             for detector in detectors
         }
         found = _sweep_recalls(scores, pair, replicates, detectors, targets, n_resamples)
-        estimate, draws, alone = found.estimate, found.draws, found.alone
+        estimate, draws = found.estimate, found.draws
         complete = found.replicates
         difference = estimate[1] - estimate[0]
-        low, high, p, n_paired = _paired_test(
-            difference, draws[:, 1] - draws[:, 0], alone[:, 1] - alone[:, 0]
-        )
+        low, high = _conditional_intervals(difference, draws[:, 1] - draws[:, 0])
         rows = []
         for d, detector in enumerate(detectors):
+            p = swap_test(
+                _sweep_change_swaps(scores, pair, replicates, detector, targets),
+                len(replicates),
+            )
             for t, target in enumerate(targets):
                 rows.append(
                     {
@@ -4324,8 +4632,8 @@ def model_sensitivity(
                         "change": difference[d, t],
                         "change_low": low[d, t],
                         "change_high": high[d, t],
-                        "change_p": p[d, t],
-                        "n_paired": n_paired[d, t],
+                        "change_p": p[t],
+                        "n_paired": len(complete[d]) if np.isfinite(difference[d, t]) else 0,
                         "n_dropped": len(replicates) - len(complete[d]),
                         "n_failures": sweep_failures[detector],
                     }
@@ -7172,8 +7480,11 @@ def _summary(
             "difference between methods A minus B, A named first, a change between "
             "conditions the other condition minus the reference. Intervals are 95 % "
             "paired-bootstrap intervals over sessions within a condition and over "
-            "replicates across conditions; p-values are two-sided sign-flip tests over the "
-            "same units."
+            "replicates across conditions. p-values are two-sided: of a difference between "
+            "methods summarized per session, a sign-flip test over those per-session values "
+            "(of an operating difference, over each session's own); of a change between "
+            "conditions, a paired-swap test of the pooled change itself, each replicate's "
+            "two sessions exchanged."
         ),
         "",
         *_point_lines(tables),

@@ -6,6 +6,7 @@ No test draws a figure."""
 
 import dataclasses
 import functools
+import itertools
 from types import SimpleNamespace
 
 import numpy as np
@@ -385,6 +386,59 @@ def test_sign_flip_needs_finite_pairs(analyze):
         with pytest.raises(ValueError, match="finite paired differences"):
             analyze.sign_flip_test(differences)
     assert np.isnan(analyze.sign_flip_test([]))
+
+
+def _swapped_mean(differences):
+    """A statistic of paired units for ``swap_test``: the mean of each unit's
+    difference, its sign turned where the unit's sides are swapped."""
+    differences = np.asarray(differences, dtype=float)
+    return lambda swapped: np.array([np.where(swapped, -differences, differences).mean()])
+
+
+@pytest.mark.parametrize(
+    ("differences", "p_value"),
+    [
+        ([1, 1, 1, 1], 2 / 16),
+        ([1, -1], 1.0),
+        # 16 units: every pattern, the two with one sign as large as observed
+        (np.ones(16), 2 / 2**16),
+        # 17 and more: random patterns, (k + 1) / (n + 1), never 0 nor the
+        # exact 2 / 2 ** 17
+        (np.ones(17), 1 / 1000),
+        (np.ones(20), 1 / 1000),
+    ],
+)
+def test_swap_test_p_values(analyze, differences, p_value):
+    p = analyze.swap_test(_swapped_mean(differences), len(differences), n_resamples=999)
+    assert p.tolist() == [p_value]
+
+
+def test_swap_test_enumerates_every_pattern(analyze):
+    """Four units: the 16 patterns, each seen once, the unswapped one first
+    (the observed statistic)."""
+    seen = []
+
+    def statistic(swapped):
+        seen.append(tuple(swapped.tolist()))
+        return np.array([float(swapped.sum())])
+
+    analyze.swap_test(statistic, 4)
+    assert seen[0] == (False,) * 4
+    assert sorted(seen[1:]) == sorted(itertools.product((False, True), repeat=4))
+
+
+def test_swap_test_leaves_out_undefined_patterns(analyze):
+    """A pattern whose statistic is undefined is left out; an undefined
+    observed statistic has no p-value."""
+
+    def statistic(swapped):
+        # defined only when unit 0 is not swapped: 8 patterns, |sum| >= 3 in 2
+        value = np.where(swapped[1:], -1.0, 1.0).sum()
+        return np.array([np.nan if swapped[0] else value, np.nan])
+
+    p = analyze.swap_test(statistic, 4)
+    assert p[0] == 2 / 8
+    assert np.isnan(p[1])
 
 
 def test_choose_setting_boundary_and_ties(analyze):
@@ -1763,6 +1817,78 @@ def test_sweep_recalls_use_only_replicates_with_the_whole_sweep(analyze):
         [0.3, 0.3, 0.0]
     )
     assert (at_one.status, at_one.n_replicates, at_one.n_dropped) == ("compared", 2, 2)
+
+
+def test_a_change_is_tested_on_the_pooled_statistic_it_reports(analyze):
+    """Replicate 0 has 2 truth windows, both found in the reference and
+    neither under low SNR (its own change -1); replicates 1 to 3 have 20, 10
+    found in the reference and 12 under low SNR (+0.1 each). The mean of the
+    per-replicate changes is -0.175; the pooled change, the one reported, is
+    (36 - 32) / 62."""
+    counts = []
+    for replicate, (windows, found, low) in enumerate([(2, 2, 0)] + [(20, 10, 12)] * 3):
+        counts.append(_kay("reference", replicate, "default", found, 30, reference=windows))
+        counts.append(_kay("ripple_snr=low", replicate, "default", low, 30, reference=windows))
+    scores = _hand_scores(analyze, counts)
+    conditions = ["reference", "ripple_snr=low"]
+    changes = analyze.paired_changes(
+        scores, conditions, "reference", measures=("recall",), n_resamples=FEW
+    ).set_index("condition_id")
+    row = changes.loc["ripple_snr=low"]
+    assert row.change == pytest.approx(4 / 62)
+    # a swap keeps each side's 62 windows and moves each replicate's found
+    # windows, -2, +2, +2, +2, to the other side: of the 16 patterns, the
+    # signed sums of four 2s at least 4 in size are the 2 of 8 and the 8 of 4
+    assert (row.change_p, row.n_paired) == (10 / 16, 4)
+    # a sign flip of the per-replicate changes tests another statistic
+    assert analyze.sign_flip_test([-1.0, 0.1, 0.1, 0.1]) == 1.0
+    assert (changes.loc["reference", "change_p"], changes.loc["reference", "n_paired"]) == (
+        1.0,
+        4,
+    )
+    # the test's statistic, no replicate swapped, is the change reported
+    statistic = analyze._change_swaps(
+        scores, conditions, "reference", "ripple_snr=low", [0, 1, 2, 3], ("recall",)
+    )
+    np.testing.assert_allclose(statistic(np.zeros(4, dtype=bool)), [[row.change]], rtol=1e-12)
+    # and swapping every replicate turns its sign
+    np.testing.assert_allclose(statistic(np.ones(4, dtype=bool)), [[-row.change]], rtol=1e-12)
+
+
+def test_the_recall_change_at_a_target_is_tested_on_the_pooled_curves(analyze):
+    """Kay's recall at 1 false positive a minute under refractory spiking,
+    its per-replicate curves unequal: the swap test's statistic with no
+    replicate swapped is the change reported, and every swap moves it."""
+    counts = []
+    for condition in ("reference", "spike_model=refractory"):
+        for replicate in range(4):
+            shift = replicate if condition == "reference" else 2 * replicate
+            counts += _curve(
+                condition, replicate, KAY[0], ((8 - shift // 2, 28), (6 - shift // 2, 11))
+            )
+            counts.append(_kay(condition, replicate, "default", 6, 11))
+    scores = _hand_scores(analyze, counts)
+    changes, _ = analyze.model_sensitivity(scores, n_resamples=FEW)
+    alternative = "spike_model=refractory"
+    at_fp = changes[
+        (changes.alternative == alternative) & (changes.measure == "recall_at_fp")
+    ].set_index("fp_target")
+    statistic = analyze._sweep_change_swaps(
+        scores, ["reference", alternative], [0, 1, 2, 3], KAY[0], analyze.FP_TARGETS
+    )
+    unswapped = statistic(np.zeros(4, dtype=bool))
+    np.testing.assert_allclose(unswapped, at_fp.change.to_numpy(), rtol=1e-12)
+    assert at_fp.loc[1.0, "change"] < 0
+    assert at_fp.loc[1.0, "n_paired"] == 4
+    # swapping every replicate exchanges the two pooled curves
+    np.testing.assert_allclose(statistic(np.ones(4, dtype=bool)), -unswapped, rtol=1e-12)
+    # the p-value is the share of the 16 patterns at least as large
+    null = np.array(
+        [statistic(np.array(s)) for s in itertools.product((False, True), repeat=4)]
+    )[:, 1]
+    expected = np.mean(np.abs(null) >= abs(unswapped[1]) - 1e-12)
+    assert at_fp.loc[1.0, "change_p"] == pytest.approx(expected)
+    assert 2 / 16 <= expected < 1
 
 
 def test_operating_points_pool_the_sessions_with_the_whole_sweep(analyze):
