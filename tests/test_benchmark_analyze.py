@@ -55,6 +55,21 @@ def _event_table(run, components, origin=0.0):
     return pd.DataFrame(rows).astype(run._TABLE_DTYPES["events"])
 
 
+def _windows(events, expression="ripple"):
+    """The truth windows of ``events`` at 10 % of the peak, shape (n, 2)."""
+    return rd.truth_windows(events, 0.1, expression)[["start_time", "end_time"]].to_numpy()
+
+
+def _one_session(events, detected):
+    """A 10 s session of ``events``, an EMG burst at 9 s and ``detected``."""
+    return {
+        "events": events,
+        "non_events": _non_event_tables(_one_non_event_table("emg", center_time=9.0)),
+        "duration": 10.0,
+        "detected": detected,
+    }
+
+
 def _session_row(session_id, condition_id, replicate, spec, event_time):
     """A ``sessions.csv`` row for a hand-built session."""
     types = spec["events"].drop_duplicates("event_id")["event_type"]
@@ -348,11 +363,21 @@ def test_paired_bootstrap_refuses_a_statistic_indexed_by_its_draws(analyze):
         analyze.paired_bootstrap(frame, _mean_by_method, key="method", n_resamples=5)
 
 
-def test_sign_flip_exact(analyze):
-    assert analyze.sign_flip_test([1, 1, 1, 1]) == 2 / 16
-    assert analyze.sign_flip_test([1, -1]) == 1.0
-    # 17 sessions and more: random flips, never 0 (no flip of 999 matches all 20)
-    assert analyze.sign_flip_test(np.ones(20), n_resamples=999) == 1 / 1000
+@pytest.mark.parametrize(
+    ("differences", "p_value"),
+    [
+        ([1, 1, 1, 1], 2 / 16),
+        ([1, -1], 1.0),
+        # 16 sessions: every flip, the two of one sign as large as observed
+        (np.ones(16), 2 / 2**16),
+        # 17 and more: random flips, (k + 1) / (n + 1), never 0 nor the exact
+        # 2 / 2 ** 17 (no flip of 999 matches all the signs)
+        (np.ones(17), 1 / 1000),
+        (np.ones(20), 1 / 1000),
+    ],
+)
+def test_sign_flip_p_values(analyze, differences, p_value):
+    assert analyze.sign_flip_test(differences, n_resamples=999) == p_value
 
 
 def test_sign_flip_needs_finite_pairs(analyze):
@@ -360,13 +385,6 @@ def test_sign_flip_needs_finite_pairs(analyze):
         with pytest.raises(ValueError, match="finite paired differences"):
             analyze.sign_flip_test(differences)
     assert np.isnan(analyze.sign_flip_test([]))
-
-
-def test_sign_flip_enumerates_up_to_sixteen_sessions(analyze):
-    # 16 sessions: every flip, the two of one sign as large as observed
-    assert analyze.sign_flip_test(np.ones(16)) == 2 / 2**16
-    # 17: random flips, (k + 1) / (n + 1), never the exact 2 / 2 ** 17
-    assert analyze.sign_flip_test(np.ones(17), n_resamples=999) == 1 / 1000
 
 
 def test_choose_setting_boundary_and_ties(analyze):
@@ -378,12 +396,10 @@ def test_choose_setting_boundary_and_ties(analyze):
 
 
 def test_held_out_membership_is_the_same_in_every_condition(analyze):
-    reference, other = range(20), range(10)
-    held_out = {k for k in reference if analyze.is_held_out(k)}
-    assert {k for k in other if analyze.is_held_out(k)} == {1, 3, 5, 7, 9}
-    assert all(analyze.is_held_out(k) == (k in held_out) for k in other)
-    assert len(held_out) == 10
-    assert sum(analyze.is_held_out(k) for k in other) == 5
+    # by replicate id alone: the odd ones, of the reference's 20 replicates
+    # and of another condition's 10
+    assert {k for k in range(20) if analyze.is_held_out(k)} == set(range(1, 20, 2))
+    assert {k for k in range(10) if analyze.is_held_out(k)} == {1, 3, 5, 7, 9}
 
 
 def test_results_size_limit(analyze, tmp_path):
@@ -718,14 +734,9 @@ def timing_run(run, tmp_path_factory):
     """One session of six ripples: Kay finds the first three at their bounds;
     Karlsson finds all six, the last three 20 ms late at both ends."""
     events = _event_table(run, [(k, "swr", "ripple", 0, 1.0 + k, 0.05) for k in range(6)])
-    windows = rd.truth_windows(events, 0.1, "ripple")[["start_time", "end_time"]].to_numpy()
+    windows = _windows(events)
     late = windows + np.array([[0.0], [0.0], [0.0], [0.02], [0.02], [0.02]])
-    session = {
-        "events": events,
-        "non_events": _non_event_tables(_one_non_event_table("emg", center_time=9.0)),
-        "duration": 10.0,
-        "detected": {KAY: windows[:3], KARLSSON: late},
-    }
+    session = _one_session(events, {KAY: windows[:3], KARLSSON: late})
     return _write_run(run, tmp_path_factory.mktemp("timing"), [session])
 
 
@@ -743,14 +754,9 @@ def network_run(run, tmp_path_factory):
             (k, "swr", "burst", 0, 1.0 + k, 0.06),
         ]
     events = _event_table(run, components)
-    network = rd.truth_windows(events, 0.1, "network")[["start_time", "end_time"]].to_numpy()
+    network = _windows(events, "network")
     onsets = np.array([-0.03, 0.01, 0.02])
-    session = {
-        "events": events,
-        "non_events": _non_event_tables(_one_non_event_table("emg", center_time=9.0)),
-        "duration": 10.0,
-        "detected": {CAREY: network + np.column_stack([onsets, np.zeros(3)])},
-    }
+    session = _one_session(events, {CAREY: network + np.column_stack([onsets, np.zeros(3)])})
     return _write_run(run, tmp_path_factory.mktemp("network"), [session]), events
 
 
@@ -824,16 +830,11 @@ def correlated_run(run, tmp_path_factory):
             (k, "swr", "burst", 0, 1.0 + k - shift, 0.08),
         ]
     events = _event_table(run, components)
-    windows = rd.truth_windows(events, 0.1, "ripple")[["start_time", "end_time"]].to_numpy()
+    windows = _windows(events)
     rising = np.array([0.0, 0.001, 0.002, 0.003])
     kay = windows + np.column_stack([rising, rising])
     karlsson = windows + np.column_stack([rising[::-1], rising])
-    session = {
-        "events": events,
-        "non_events": _non_event_tables(_one_non_event_table("emg", center_time=9.0)),
-        "duration": 10.0,
-        "detected": {KAY: kay, KARLSSON: karlsson},
-    }
+    session = _one_session(events, {KAY: kay, KARLSSON: karlsson})
     return _write_run(run, tmp_path_factory.mktemp("correlated"), [session])
 
 
@@ -862,20 +863,18 @@ def _shifted_session(run, onsets, *, found=None):
     events = _event_table(
         run, [(k, "swr", "ripple", 0, 1.0 + k, 0.05) for k in range(len(onsets))]
     )
-    windows = rd.truth_windows(events, 0.1, "ripple")[["start_time", "end_time"]].to_numpy()
+    windows = _windows(events)
     shifts = np.array(onsets, dtype=float).reshape(-1, 2)
     kay, karlsson = found or (range(len(onsets)), range(len(onsets)))
-    return {
-        "events": events,
-        "non_events": _non_event_tables(_one_non_event_table("emg", center_time=9.0)),
-        "duration": 10.0,
-        "detected": {
+    return _one_session(
+        events,
+        {
             KAY: (windows + np.column_stack([shifts[:, 0], np.zeros(len(shifts))]))[list(kay)],
             KARLSSON: (windows + np.column_stack([shifts[:, 1], np.zeros(len(shifts))]))[
                 list(karlsson)
             ],
         },
-    }
+    )
 
 
 @pytest.fixture(scope="module")
@@ -1029,9 +1028,15 @@ def point_run(run, tmp_path_factory):
     return _write_run(run, tmp_path_factory.mktemp("points"), sessions)
 
 
-def test_point_inventories_are_scored_apart(analyze, point_run):
+@pytest.fixture(scope="module")
+def point_matched(analyze, point_run):
+    """The point run's tables and their matches."""
     tables = analyze.load_run(point_run)
-    matches = analyze.match_run(tables)
+    return tables, analyze.match_run(tables)
+
+
+def test_point_inventories_are_scored_apart(analyze, point_matched):
+    tables, matches = point_matched
     assert tables.methods.set_index("method")["scoring"].to_dict() == {
         DAVIDSON[0]: "peak_containment",
         KAY[0]: "interval",
@@ -1303,9 +1308,8 @@ def test_scores_count_point_inventories_by_containment(analyze, point_run):
     assert DAVIDSON[0] not in set(scores.participation.method)
 
 
-def test_appendix_scores_every_method_against_every_expression(analyze, point_run):
-    tables = analyze.load_run(point_run)
-    matches = analyze.match_run(tables)
+def test_appendix_scores_every_method_against_every_expression(analyze, point_matched):
+    tables, matches = point_matched
     table = analyze.appendix_expressions(tables, matches, n_resamples=FEW)
     assert table.expression.drop_duplicates().tolist() == [
         "network",
@@ -1474,11 +1478,11 @@ def _hand_scores(analyze, counts, errors=(), minutes=10.0):
     )
 
 
-def _kay(condition, replicate, setting, matched, detected, reference=10, **extra):
+def _kay(condition, replicate, setting, matched, detected, reference=10, method=KAY[0]):
     return {
-        "condition_id": condition, "replicate": replicate, "method": KAY[0],
+        "condition_id": condition, "replicate": replicate, "method": method,
         "setting": setting, "n_reference": reference, "n_detected": detected,
-        "n_matched": matched, **extra,
+        "n_matched": matched,
     }  # fmt: skip
 
 
@@ -1532,7 +1536,7 @@ def test_operating_curves_label_defaults_and_recipes(analyze):
         counts += _curve("reference", replicate, KAY[0], ((8, 28), (6, 11)))
         counts += [
             _kay("reference", replicate, "default", 6, 11),
-            {**_kay("reference", replicate, KARLSSON[1], 5, 9), "method": KARLSSON[0]},
+            _kay("reference", replicate, KARLSSON[1], 5, 9, method=KARLSSON[0]),
         ]
     curves = analyze.operating_curves(_hand_scores(analyze, counts))
     at_zero = curves[curves.minimum_iou == 0]
@@ -1701,7 +1705,7 @@ def test_paired_changes_use_only_replicates_run_in_every_condition(analyze):
     for condition in ("reference", "ripple_snr=low"):
         for replicate, found in enumerate((2, 2, 9, 9)):
             counts.append(_kay(condition, replicate, "default", found, 12))
-            counts.append({**_kay(condition, replicate, "default", 5, 12), "method": "Roumis"})
+            counts.append(_kay(condition, replicate, "default", 5, 12, method="Roumis"))
     scores = _failed(
         _hand_scores(analyze, counts),
         ["ripple_snr=low/0", "ripple_snr=low/1"],
@@ -1912,7 +1916,7 @@ def _spiking_session(run, origin):
     multiunit = np.zeros((len(time), 3))
     multiunit[np.searchsorted(time, origin + 2.0), 1] = 1
     multiunit[np.searchsorted(time, origin + 2.055), 2] = 1
-    ripples = rd.truth_windows(events, 0.1, "ripple")[["start_time", "end_time"]].to_numpy()
+    ripples = _windows(events)
     session["spikes"] = SimpleNamespace(
         time=time,
         multiunit=multiunit,
@@ -1926,14 +1930,16 @@ def _spiking_session(run, origin):
 
 
 @pytest.fixture(scope="module")
-def spiking_run(run, tmp_path_factory):
+def spiking_matched(analyze, run, tmp_path_factory):
+    """The spiking sessions' tables, one at a Unix clock origin, and their
+    matches."""
     sessions = [_spiking_session(run, 0.0), _spiking_session(run, UNIX_ORIGIN)]
-    return _write_run(run, tmp_path_factory.mktemp("spiking"), sessions)
+    tables = analyze.load_run(_write_run(run, tmp_path_factory.mktemp("spiking"), sessions))
+    return tables, analyze.match_run(tables)
 
 
-def test_boundary_effect_is_zero_for_equal_bounds(analyze, spiking_run):
-    tables = analyze.load_run(spiking_run)
-    matches = analyze.match_run(tables)
+def test_boundary_effect_is_zero_for_equal_bounds(analyze, spiking_matched):
+    tables, matches = spiking_matched
     effect = _by(
         analyze.boundary_effect(tables, matches, n_resamples=FEW), "method", "selection"
     )
@@ -1951,9 +1957,8 @@ def test_boundary_effect_is_zero_for_equal_bounds(analyze, spiking_run):
         assert row.mean_difference_low == row.mean_difference_high == 1.0
 
 
-def test_participation_bias_by_hand(analyze, spiking_run):
-    tables = analyze.load_run(spiking_run)
-    matches = analyze.match_run(tables)
+def test_participation_bias_by_hand(analyze, spiking_matched):
+    tables, matches = spiking_matched
     bias = _by(analyze.participation_bias(tables, matches, n_resamples=FEW), "method")
     # every session: bursts of 10, 2, 6 and 4 recruited cells, mean 5.5; Kay
     # finds the swr (10) and the doublet (4), Karlsson the swr
@@ -2018,14 +2023,11 @@ def sliver_run(run, tmp_path_factory):
     """Two ripples; Kay finds the first at its bounds and the second by a
     sliver, Karlsson the first alone."""
     events = _event_table(run, [(k, "swr", "ripple", 0, 2.0 + 2 * k, 0.05) for k in range(2)])
-    windows = rd.truth_windows(events, 0.1, "ripple")[["start_time", "end_time"]].to_numpy()
+    windows = _windows(events)
     sliver = [windows[1, 1] - 0.005, windows[1, 1] + 0.1]
-    session = {
-        "events": events,
-        "non_events": _non_event_tables(_one_non_event_table("emg", center_time=9.0)),
-        "duration": 10.0,
-        "detected": {KAY: np.array([windows[0], sliver]), KARLSSON: windows[:1]},
-    }
+    session = _one_session(
+        events, {KAY: np.array([windows[0], sliver]), KARLSSON: windows[:1]}
+    )
     return _write_run(run, tmp_path_factory.mktemp("sliver"), [session])
 
 
@@ -2034,15 +2036,10 @@ def mixed_error_run(run, tmp_path_factory):
     """Three ripples Kay finds starting 20 ms early and 5 and 10 ms late, and
     one false positive."""
     events = _event_table(run, [(k, "swr", "ripple", 0, 1.0 + k, 0.05) for k in range(3)])
-    windows = rd.truth_windows(events, 0.1, "ripple")[["start_time", "end_time"]].to_numpy()
+    windows = _windows(events)
     onsets = np.array([-0.02, 0.005, 0.01])
     kay = np.vstack([windows + np.column_stack([onsets, np.zeros(3)]), [[6.0, 6.1]]])
-    session = {
-        "events": events,
-        "non_events": _non_event_tables(_one_non_event_table("emg", center_time=9.0)),
-        "duration": 10.0,
-        "detected": {KAY: kay},
-    }
+    session = _one_session(events, {KAY: kay})
     return _write_run(run, tmp_path_factory.mktemp("mixed"), [session])
 
 
@@ -2122,7 +2119,7 @@ def _curve(condition, replicate, method, points):
     """A two-setting sweep of 10 truth windows over 10 minutes per session:
     ``points`` gives (matched, detected) at settings 2.0 and 3.0."""
     return [
-        {**_kay(condition, replicate, setting, matched, detected), "method": method}
+        _kay(condition, replicate, setting, matched, detected, method=method)
         for setting, (matched, detected) in zip(("2.0", "3.0"), points, strict=True)
     ]
 
@@ -2142,8 +2139,8 @@ def _model_run(analyze, *, skip=()):
             counts += _curve(condition, replicate, KAY[0], own)
             counts += _curve(condition, replicate, SWEPT_KARLSSON, karlsson)
             counts += [
-                {**_kay(condition, replicate, "default", 6, 11)},
-                {**_kay(condition, replicate, "default", 5, 10), "method": SWEPT_KARLSSON},
+                _kay(condition, replicate, "default", 6, 11),
+                _kay(condition, replicate, "default", 5, 10, method=SWEPT_KARLSSON),
             ]
     return _hand_scores(analyze, counts)
 
@@ -2600,8 +2597,8 @@ def test_every_kind_of_candidate_trend(analyze):
     assert "participation=low" in set(robustness.condition_id)
 
 
-def test_summary_accounts_for_point_and_single_sample_methods(analyze, point_run):
-    summary = analyze._summary("points", analyze.load_run(point_run), [], {}, None)
+def test_summary_accounts_for_point_and_single_sample_methods(analyze, point_matched):
+    summary = analyze._summary("points", point_matched[0], [], {}, None)
     listed = f"Point inventories (`{DAVIDSON[0]}`; the catalog's output " + '"ripple peaks")'
     assert listed in summary
     assert (
@@ -2610,7 +2607,7 @@ def test_summary_accounts_for_point_and_single_sample_methods(analyze, point_run
     )
 
 
-def test_select_events_for_a_spot_check(analyze, tiny_tables, point_run):
+def test_select_events_for_a_spot_check(analyze, tiny_tables, point_matched):
     select = functools.partial(analyze.select_from, tiny_tables)
     # Kay's one event over the doublet matches one of its two ripples
     missed = select(*KAY, "missed")
@@ -2630,8 +2627,7 @@ def test_select_events_for_a_spot_check(analyze, tiny_tables, point_run):
         ["reference/0", "weak_ripple"]
     ]
     # a point method by containment
-    points = analyze.load_run(point_run)
-    assert len(analyze.select_from(points, *DAVIDSON, "false_positive")) == 4
+    assert len(analyze.select_from(point_matched[0], *DAVIDSON, "false_positive")) == 4
     with pytest.raises(ValueError, match="selection must be one of"):
         select(*KAY, "early")
     with pytest.raises(ValueError, match=r"no Kay_ripple_detector \(8\.0\)"):
