@@ -1490,11 +1490,70 @@ def test_model_sensitivity_includes_all_variants(analyze):
     ]
     # reversed at 0.5, 1 and 2 per minute; 5 is out of reach for both detectors
     assert "of 3 reference orders" in refractory_lines[0]
-    assert "0 keep that support, 0 lose it and 3 reverse" in refractory_lines[0]
+    assert (
+        "0 keep that support, 0 lose it, 3 reverse and 0 cannot be compared here"
+        in refractory_lines[0]
+    )
     assert "2 detector targets are out of reach" in refractory_lines[0]
     assert refractory_lines[2].startswith("  - reversed at 1/min: `Karlsson_ripple_detector`")
     kept = next(line for line in lines if line.startswith("- `noise_modulation=varying`"))
-    assert "3 keep that support, 0 lose it and 0 reverse" in kept
+    assert "3 keep that support, 0 lose it, 0 reverse and 0 cannot" in kept
+
+
+def test_model_sensitivity_keeps_failures_apart_from_unreachable_targets(analyze):
+    scores = _model_run(analyze)
+    counts = scores.counts
+    # under coupled strengths both sweeps' second setting has 1 false positive
+    # a minute, so 0.5 per minute is out of reach there alone
+    shifted = (counts.session_id.str.startswith("strength_correlation=coupled")) & (
+        counts.setting == "3.0"
+    )
+    counts = counts.assign(
+        n_detected=np.where(shifted, counts.n_matched + 10, counts.n_detected)
+    )
+    scores = dataclasses.replace(scores, counts=counts)
+    # under refractory spiking Kay's whole sweep fails, and Karlsson's default
+    refractory = [f"spike_model=refractory/{replicate}" for replicate in range(4)]
+    scores = _failed(scores, refractory, KAY[0], ["2.0", "3.0"])
+    scores = _failed(scores, refractory, SWEPT_KARLSSON, ["default"])
+    changes, orders = analyze.model_sensitivity(scores, n_resamples=FEW)
+    mine = changes[changes.alternative == "spike_model=refractory"].set_index(
+        ["method", "measure", "fp_target"]
+    )
+    kay = mine.loc[KAY[0]].loc["recall_at_fp"]
+    # missing because Kay failed, never "unattainable", at every target
+    assert kay.status.unique().tolist() == ["failed"]
+    assert kay[
+        ["n_failures", "n_replicates", "n_dropped"]
+    ].drop_duplicates().to_numpy().tolist() == [[8, 0, 4]]
+    karlsson = mine.loc[SWEPT_KARLSSON]
+    assert karlsson.loc[("recall_at_fp", 5.0), ["status", "n_failures"]].tolist() == [
+        "unattainable",
+        0,
+    ]
+    recall = karlsson.xs("recall", level=0)
+    assert recall[["status", "n_failures"]].to_numpy().tolist() == [["failed", 4]]
+    assert (mine.loc[KAY[0]].xs("recall", level=0).n_failures == 0).all()
+    order = orders.set_index(["alternative", "fp_target"])
+    failed = order.loc[("spike_model=refractory", 1.0)]
+    assert (failed.status, failed.n_failures_a, failed.n_failures_b) == ("failed", 0, 8)
+    assert order.loc[("strength_correlation=coupled", 0.5), "status"] == "unattainable"
+    assert order.loc[("strength_correlation=coupled", 1.0), "status"] == "compared"
+    lines = analyze.model_sensitivity_statements(changes, orders)
+    coupled = next(line for line in lines if "`strength_correlation=coupled`" in line)
+    assert (
+        "of 3 reference orders of detectors by recall at a common false-positive rate that "
+        "their intervals support, 2 keep that support, 0 lose it, 0 reverse and 1 cannot be "
+        "compared here (0 for a failure, 1 out of reach) and 0 more are untested" in coupled
+    )
+    # Kay failed on every replicate there, so no order has a reference
+    # difference over replicates both ran on: untested, at every target
+    spiking = next(line for line in lines if "`spike_model=refractory`" in line)
+    assert "of 0 reference orders" in spiking
+    assert "and 4 more are untested because a detector failed" in spiking
+    assert "0 of 1 main settings' recall compared moves" in spiking
+    assert "(1 failed)" in spiking
+    assert "1 detector targets are out of reach in one condition and 4 missing" in spiking
 
 
 def test_validation_changes_list_moved_statistics(analyze):

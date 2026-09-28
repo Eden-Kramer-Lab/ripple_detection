@@ -3640,15 +3640,19 @@ SENSITIVITY_COLUMNS = (
     "change_p",
     "n_paired",
     "n_dropped",
+    "n_failures",
 )
 ORDER_COLUMNS = (
     "alternative",
+    "status",
     "fp_target",
     "primary_expression",
     "method_a",
     "method_b",
     "n_replicates",
     "n_dropped",
+    "n_failures_a",
+    "n_failures_b",
     "reference_difference",
     "reference_low",
     "reference_high",
@@ -3765,6 +3769,15 @@ def _pair_recalls(
     return again[0], again[1], again[2], shared
 
 
+def _status(value: ArrayLike, n_failures: ArrayLike, otherwise: str) -> Any:
+    """A comparison's status: ``"compared"`` where ``value`` is finite, else
+    ``"failed"`` where the methods have failed calls, else ``otherwise``."""
+    value = np.asarray(value, dtype=float)
+    failed = np.asarray(n_failures, dtype=float) > 0
+    status = np.where(np.isfinite(value), "compared", np.where(failed, "failed", otherwise))
+    return status.item() if status.ndim == 0 else status
+
+
 def _shared_replicates(scores: ConditionScores, conditions: Sequence[str]) -> list[int]:
     listed = scores.sessions[scores.sessions["condition_id"].isin(conditions)]
     found = [set(rows["replicate"]) for _, rows in listed.groupby("condition_id")]
@@ -3783,13 +3796,15 @@ def model_sensitivity(
     replicates both hold; a replicate's sessions share its seed): each main
     setting's ``MEASURES`` (``paired_changes``), and each detector's recall
     at the target false-positive rates, read off its sweep in each condition
-    (``at_fp_rate``) and compared only where both curves reach the target: a
-    target either cannot reach stays missing (``status`` ``"unattainable"``).
+    (``at_fp_rate``) and compared only where both curves reach the target.
     Each is pooled only over the replicates on which the method ran in both
     conditions (a detector: every setting of its sweep), a pair of detectors
-    over the replicates both ran on.
-    An alternative the run lacks has rows too, every value missing
-    (``"not run"``): the reference alone says nothing about it.
+    over the replicates both ran on. A comparison left without a value has
+    ``status`` ``"failed"`` when the method (either detector of an order)
+    failed on some session of the two conditions, else ``"unattainable"``
+    for a target a curve does not reach; failures are never read as an
+    unreachable target. An alternative the run lacks has rows too, every
+    value missing (``"not run"``): the reference alone says nothing about it.
 
     The orders are those of detectors sharing a primary expression, by
     recall at a common target, in the reference and in the alternative, from
@@ -3805,20 +3820,27 @@ def model_sensitivity(
     -------
     changes : pandas.DataFrame
         ``SENSITIVITY_COLUMNS``: per alternative (its condition id), main
-        setting and ``measure`` (``MEASURES``, or ``"recall_at_fp"`` with
-        ``fp_target``), the reference's and the alternative's values over the
-        ``n_replicates`` pooled (``n_dropped`` of the shared replicates left
-        out for the method's failures), ``change`` (alternative minus
-        reference) with its interval and sign-flip p-value over the
-        replicates where both exist (``n_paired``).
+        setting and ``measure`` (``MEASURES``; a point method's
+        ``POINT_MEASURES`` only), or per detector ``"recall_at_fp"`` with
+        ``fp_target``, whose ``setting`` is ``"sweep"`` (the whole sweep,
+        read off at the target); ``status`` (``"compared"``, ``"failed"``,
+        ``"unattainable"``, ``"not run"``); then the reference's and the alternative's values over the
+        ``n_replicates`` pooled, ``change`` (alternative minus reference)
+        with its interval and sign-flip p-value over the replicates where
+        both exist (``n_paired``), ``n_dropped`` (shared replicates left out
+        for the method's failures) and ``n_failures`` (the method's failed
+        calls, every setting of a sweep, in both conditions, on the shared
+        replicates).
     orders : pandas.DataFrame
         ``ORDER_COLUMNS``: per alternative, target and pair of detectors
-        with the same primary expression (A first by name), the
-        ``n_replicates`` both were pooled over (``n_dropped`` left out), their
-        recall differences (A minus B) in the reference and in the
-        alternative with intervals; ``supported``, the reference interval excludes 0;
-        ``reversed``, the two estimates have opposite signs; ``p_reversed``,
-        the fraction of resamples (where both are defined) in which they do.
+        with the same primary expression (A first by name), ``status`` as
+        above, the ``n_replicates`` both were pooled over (``n_dropped`` left
+        out), each detector's failed calls in both conditions
+        (``n_failures_a``, ``n_failures_b``), their recall differences (A
+        minus B) in the reference and in the alternative with intervals;
+        ``supported``, the reference interval excludes 0; ``reversed``, the
+        two estimates have opposite signs; ``p_reversed``, the fraction of
+        resamples (where both are defined) in which they do.
     """
     main = _main_methods(scores)
     detectors = sorted(set(THRESHOLD_SWEEPS) & set(scores.methods["method"]))
@@ -3847,17 +3869,34 @@ def model_sensitivity(
         found = paired_changes(scores, pair, REFERENCE_CONDITION, n_resamples=n_resamples)
         reference = found[found["condition_id"] == REFERENCE_CONDITION]
         found = found[found["condition_id"] == alternative].merge(
-            reference[["method", "setting", "measure", "value"]].rename(
-                columns={"value": "reference_value"}
+            reference[["method", "setting", "measure", "value", "n_failures"]].rename(
+                columns={"value": "reference_value", "n_failures": "reference_failures"}
             ),
             on=["method", "setting", "measure"],
         )
+        # failures in either condition, of the replicates both hold
+        found["n_failures"] += found.pop("reference_failures")
+        found["status"] = _status(found["change"], found["n_failures"], "compared")
         changes.append(
-            found.rename(columns={"condition_id": "alternative"}).assign(
-                status="compared", fp_target=np.nan
-            )[list(SENSITIVITY_COLUMNS)]
+            found.rename(columns={"condition_id": "alternative"}).assign(fp_target=np.nan)[
+                list(SENSITIVITY_COLUMNS)
+            ]
         )
         replicates = _shared_replicates(scores, pair)
+        listed = scores.sessions[
+            scores.sessions["condition_id"].isin(pair)
+            & scores.sessions["replicate"].isin(replicates)
+        ]
+        failed = _failures_by_method(scores, listed["session_id"])
+        sweep_failures = {
+            detector: int(
+                sum(
+                    failed.get((detector, s), 0)
+                    for s in _sweep_settings(detector, scores.methods)
+                )
+            )
+            for detector in detectors
+        }
         found = _sweep_recalls(scores, pair, replicates, detectors, targets, n_resamples)
         estimate, draws, alone, complete = found
         difference = estimate[1] - estimate[0]
@@ -3871,7 +3910,9 @@ def model_sensitivity(
                 rows.append(
                     {
                         "alternative": alternative,
-                        "status": "compared" if attained else "unattainable",
+                        "status": _status(
+                            difference[d, t], sweep_failures[detector], "unattainable"
+                        ),
                         "method": detector,
                         "setting": "sweep",
                         "primary_expression": primary[detector],
@@ -3887,6 +3928,7 @@ def model_sensitivity(
                         "change_p": sign_flip_test(finite) if attained else np.nan,
                         "n_paired": len(finite) if attained else 0,
                         "n_dropped": len(replicates) - len(complete[d]),
+                        "n_failures": sweep_failures[detector],
                     }
                 )
         changes.append(pd.DataFrame(rows, columns=list(SENSITIVITY_COLUMNS)))
@@ -3896,7 +3938,15 @@ def model_sensitivity(
             if primary[detectors[a]] == primary[detectors[b]]
         }
         orders.append(
-            _orders(alternative, detectors, primary, targets, pairs, len(replicates))
+            _orders(
+                alternative,
+                detectors,
+                primary,
+                targets,
+                pairs,
+                len(replicates),
+                sweep_failures,
+            )
         )
     return (
         _concat(changes, SENSITIVITY_COLUMNS),
@@ -3911,11 +3961,13 @@ def _orders(
     targets: Sequence[float],
     pairs: Mapping[tuple[int, int], PairRecalls],
     n_shared: int,
+    failures: Mapping[str, int],
 ) -> pd.DataFrame:
     """The pairs of detectors sharing a primary expression, ordered by recall
     at each target in the reference (index 0) and the alternative (1), each
     pair over the replicates both were pooled over (``_pair_recalls``), of
-    ``n_shared`` the conditions share."""
+    ``n_shared`` the conditions share; ``failures``, each detector's failed
+    calls in the two conditions."""
     rows = []
     for (a, b), (estimate, draws, _, paired) in pairs.items():
         observed = estimate[:, 0] - estimate[:, 1]
@@ -3924,15 +3976,21 @@ def _orders(
         for t, target in enumerate(targets):
             both = np.isfinite(resampled[:, 0, t]) & np.isfinite(resampled[:, 1, t])
             flips = np.sign(resampled[both, 0, t]) * np.sign(resampled[both, 1, t]) < 0
+            n_failures = failures[detectors[a]] + failures[detectors[b]]
             rows.append(
                 {
                     "alternative": alternative,
+                    "status": _status(
+                        observed[0, t] + observed[1, t], n_failures, "unattainable"
+                    ),
                     "fp_target": target,
                     "primary_expression": primary[detectors[a]],
                     "method_a": detectors[a],
                     "method_b": detectors[b],
                     "n_replicates": len(paired),
                     "n_dropped": n_shared - len(paired),
+                    "n_failures_a": failures[detectors[a]],
+                    "n_failures_b": failures[detectors[b]],
                     "reference_difference": observed[0, t],
                     "reference_low": low[0, t],
                     "reference_high": high[0, t],
@@ -3992,8 +4050,11 @@ def model_sensitivity_statements(
     A reference order counts as a statement when its interval excludes 0
     (``supported``): it survives an alternative when the alternative's
     interval excludes 0 on the same side, loses its support when it
-    includes 0, and reverses when the estimates' signs differ. Nothing is
-    pooled across alternatives.
+    includes 0, and reverses when the estimates' signs differ; it cannot be
+    compared when the alternative's difference is missing, counted apart by
+    why (a detector failed, or its curve does not reach the target there).
+    Orders a detector's failures leave without a reference difference are
+    counted too, as untested. Nothing is pooled across alternatives.
 
     Parameters
     ----------
@@ -4026,21 +4087,39 @@ def model_sensitivity_statements(
                 )
         mine = orders[(orders["alternative"] == alternative) & orders["supported"]]
         same = np.sign(mine["reference_difference"])
-        survive = ((same > 0) & (mine["alternative_low"] > 0)) | (
-            (same < 0) & (mine["alternative_high"] < 0)
+        survive = int(
+            (
+                ((same > 0) & (mine["alternative_low"] > 0))
+                | ((same < 0) & (mine["alternative_high"] < 0))
+            ).sum()
         )
         reversed_ = mine[mine["reversed"]]
-        recall = own[(own["measure"] == "recall") & own["change"].notna()]
-        moved_recall = recall[(recall["change_low"] > 0) | (recall["change_high"] < 0)]
-        unattainable = own[own["status"] == "unattainable"]
+        missing = mine["alternative_difference"].isna()
+        failed_orders = int((missing & (mine["status"] == "failed")).sum())
+        lost = len(mine) - survive - len(reversed_) - int(missing.sum())
+        # orders without a reference difference at all, for a detector's failures
+        untested = orders[
+            (orders["alternative"] == alternative)
+            & ~orders["supported"]
+            & (orders["status"] == "failed")
+        ]
+        recall = own[own["measure"] == "recall"]
+        compared = recall[recall["change"].notna()]
+        moved_recall = compared[(compared["change_low"] > 0) | (compared["change_high"] < 0)]
+        targets = own[own["measure"] == "recall_at_fp"]
         lines.append(
             f"- `{alternative}` (validation: {observed}): of {len(mine)} reference orders "
             f"of detectors by recall at a common false-positive rate that their intervals "
-            f"support, {int(survive.sum())} keep that support, "
-            f"{len(mine) - int(survive.sum()) - len(reversed_)} lose it and "
-            f"{len(reversed_)} reverse; {len(moved_recall)} of {len(recall)} main settings' "
-            f"recall moves with an interval excluding 0; {len(unattainable)} detector "
-            "targets are out of reach in one condition and stay missing."
+            f"support, {survive} keep that support, {lost} lose it, {len(reversed_)} "
+            f"reverse and {int(missing.sum())} cannot be compared here ({failed_orders} for "
+            f"a failure, {int(missing.sum()) - failed_orders} out of reach) and "
+            f"{len(untested)} more are untested because a detector failed; "
+            f"{len(moved_recall)} of {len(compared)} main settings' recall compared moves "
+            "with an interval excluding 0 "
+            f"({int((recall['status'] == 'failed').sum())} failed); "
+            f"{int((targets['status'] == 'unattainable').sum())} detector targets are out of "
+            f"reach in one condition and {int((targets['status'] == 'failed').sum())} "
+            "missing for failures, all left missing."
         )
         lines += [
             f"  - reversed at {row.fp_target:g}/min: `{row.method_a}` minus "
