@@ -155,8 +155,14 @@ def _write_run(run, root, sessions, condition_id="reference"):
             )
         )
     run.write_condition(root / "conditions" / condition_id, outputs)
-    listed = {"condition_id": condition_id, "factor": "reference", "level": "reference"}
-    pd.DataFrame([{**listed, "params": "{}"}]).to_csv(root / "conditions.csv", index=False)
+    factor, level = condition_id.split("=") if "=" in condition_id else ("reference",) * 2
+    listed = pd.DataFrame(
+        [{"condition_id": condition_id, "factor": factor, "level": level, "params": "{}"}]
+    )
+    path = root / "conditions.csv"
+    if path.exists():
+        listed = pd.concat([run.read_table(path), listed], ignore_index=True)
+    listed.to_csv(path, index=False)
     return run.combine(root)
 
 
@@ -1259,6 +1265,10 @@ def test_matching_sensitivity_levels(analyze, sliver_run):
         (KAY[0], 0.2): 1,
         (KAY[0], 0.5): 1,
     }
+    summary = analyze._summary(
+        "sliver", tables, [], {"matching_sensitivity": table}, pd.DataFrame()
+    )
+    assert f"- `{KARLSSON[0]}` (ripple): 2, 1, 1\n" in summary
     changes = analyze.order_changes(table)
     assert changes.to_dict("records") == [
         {
@@ -1396,19 +1406,131 @@ def test_validation_changes_list_moved_statistics(analyze):
     assert any("(validation: rate 11.81 to 11.57)" in line for line in lines)
 
 
-def test_the_command_writes_every_table_and_the_summary(analyze, tiny_run, tmp_path):
+def test_candidate_trends_carry_their_evidence(analyze):
+    robustness = analyze.robustness(_snr_run(analyze), n_resamples=FEW)
+    changes, orders = analyze.model_sensitivity(
+        _model_run(analyze, skip=("envelope_power=quartic",)), n_resamples=FEW
+    )
+    ranks = pd.DataFrame(
+        {
+            "method": [KAY[0]] * 3,
+            "setting": ["default"] * 3,
+            "primary_expression": ["ripple"] * 3,
+            "minimum_iou": [0.0, 0.2, 0.5],
+            "rank": [1, 2, 5],
+        }
+    )
+    trends = analyze.candidate_trends(
+        {
+            "robustness_recall": robustness[robustness.measure == "recall"],
+            "model_sensitivity": changes,
+            "model_sensitivity_orders": orders,
+            "matching_sensitivity": ranks,
+        }
+    )
+    assert trends[trends.kind == "matching_rank"].statement.tolist() == [
+        f"{KAY[0]}'s rank by recall among ripple methods moves from 1 at IoU 0 to 5 at 0.5."
+    ]
+    robust = trends[trends.kind == "robustness"]
+    # the two levels whose change excludes 0, the reference level never
+    assert robust.condition_id.tolist() == ["ripple_snr=low", "ripple_snr=high"]
+    assert robust.value.tolist() == pytest.approx([-0.2, 0.2])
+    assert robust.spot_selection.tolist() == ["missed", "found"]
+    assert robust.statement.iloc[0] == (
+        f"{KAY[0]}'s recall against ripple changes by -0.200 (-0.200, -0.200) from the "
+        "reference to ripple_snr=low."
+    )
+    reversals = trends[trends.kind == "model_order_reversal"]
+    assert set(reversals.condition_id) == {"spike_model=refractory"}
+    assert set(reversals.spot_methods) == {f"{SWEPT_KARLSSON} {KAY[0]}"}
+    assert list(trends.columns) == list(analyze.TREND_COLUMNS)
+
+
+def test_select_events_for_a_spot_check(analyze, tiny_tables, point_run):
+    select = functools.partial(analyze.select_from, tiny_tables)
+    # Kay's one event over the doublet matches one of its two ripples
+    missed = select(*KAY, "missed")
+    assert missed.label.tolist() == ["ripple_doublet", "ripple_doublet"]
+    assert missed.session_id.tolist() == ["reference/0", "reference/1"]
+    assert missed.start_time.iloc[1] > UNIX_ORIGIN
+    assert len(select(*KAY, "found")) == 6
+    assert len(select(*KAY, "found", event_type="ripple_doublet")) == 2
+    false = select(*KAY, "false_positive")
+    assert false.label.tolist() == ["burst_only:burst", "spike_leakage", "background"] * 2
+    assert (
+        select(*KAY, "false_positive", event_type="burst_only").label.tolist()
+        == ["burst_only:burst"] * 2
+    )
+    # Mallory, on the session it ran: the weak ripple's burst
+    assert select(*MALLORY, "missed")[["session_id", "label"]].to_numpy().tolist() == [
+        ["reference/0", "weak_ripple"]
+    ]
+    # a point method by containment
+    points = analyze.load_run(point_run)
+    assert len(analyze.select_from(points, *DAVIDSON, "false_positive")) == 4
+    with pytest.raises(ValueError, match="selection must be one of"):
+        select(*KAY, "early")
+    with pytest.raises(ValueError, match=r"no Kay_ripple_detector \(8\.0\)"):
+        select(KAY[0], "8.0", "missed")
+
+
+@pytest.fixture(scope="module")
+def two_condition_run(run, tmp_path_factory):
+    """The tiny run's sessions in the reference (Mallory failing on the
+    second) and, with Kay's sweep point finding nothing, under refractory
+    spiking."""
+    root = tmp_path_factory.mktemp("two")
+    _write_run(
+        run,
+        root,
+        [_tiny_session(run, 0.0), _tiny_session(run, UNIX_ORIGIN, mallory_fails=True)],
+    )
+    sessions = [_tiny_session(run, 0.0), _tiny_session(run, UNIX_ORIGIN)]
+    for session in sessions:
+        session["detected"][KAY_SWEEP] = np.empty((0, 2))
+    return _write_run(run, root, sessions, condition_id="spike_model=refractory")
+
+
+def test_the_command_writes_every_table_and_the_summary(analyze, two_condition_run, tmp_path):
     results = tmp_path / "results" / "tiny"
     analyses = [_quick(analysis) for analysis in analyze.ANALYSES]
-    seconds = analyze.analyze_run(tiny_run.parent, results, figures=False, analyses=analyses)
+    seconds = analyze.analyze_run(
+        two_condition_run.parent, results, figures=False, analyses=analyses
+    )
     names = [analysis.name for analysis in analyze.ANALYSES]
-    assert list(seconds) == ["load", "match", *names]
+    assert list(seconds) == ["load", "match", "scores", *names]
     assert sorted(path.name for path in results.iterdir()) == sorted(
-        [*(f"{name}.csv" for name in names), "summary.md"]
+        [*(f"{name}.csv" for name in names), "candidate_trends.csv", "summary.md"]
     )
     summary = (results / "summary.md").read_text()
     for analysis in analyze.ANALYSES:
         assert f"- `{analysis.name}.csv`: {analysis.description}" in summary
     assert "2 sessions of reference, 2 methods" in summary
+    for heading in (
+        "## Recall changing by more than 0.1 across a factor",
+        "## Order changes with the minimum IoU",
+        "## Model sensitivity",
+        "## Held-out thresholds",
+        "## Trends and spot checks",
+    ):
+        assert heading in summary
+    assert "Point inventories (none in this run;" in summary
+    assert (
+        "Across every condition, 1 calls failed (sweeps included), by method, setting and "
+        f"condition:\n\n- `{MALLORY[0]}` (literature), `reference`: 1 sessions" in summary
+    )
+    assert "- `spike_model=refractory` (validation: no target statistic" in summary
+    assert "- `envelope_power=quartic`: not in this run" in summary
+    # the tables across conditions hold the second condition
+    robust = pd.read_csv(results / "robustness_recall.csv")
+    assert robust[["factor", "level"]].drop_duplicates().to_numpy().tolist() == [
+        ["spike_model", "reference"],
+        ["spike_model", "refractory"],
+    ]
+    model = pd.read_csv(results / "model_sensitivity.csv", keep_default_na=False)
+    assert set(model.status) == {"compared", "not run", "unattainable"}
+    trends = pd.read_csv(results / "candidate_trends.csv")
+    assert list(trends.columns) == list(analyze.TREND_COLUMNS)
     assert (
         f"- `{MALLORY[0]}` (literature): 1 of 2 sessions; ValueError: made to fail" in summary
     )
@@ -1427,7 +1549,7 @@ def test_a_file_over_the_limit_stops_the_command(analyze, tiny_run, tmp_path):
     results.mkdir()
     (results / "earlier.csv").write_text("kept\n")
     huge = analyze.Analysis(
-        "huge", lambda tables, matches: pd.DataFrame({"x": np.arange(300_000)}), "Too big."
+        "huge", lambda inputs: pd.DataFrame({"x": np.arange(300_000)}), "Too big."
     )
     with pytest.raises(ValueError, match=r"huge\.csv would be .* over the 1,000,000-byte"):
         analyze.analyze_run(tiny_run.parent, results, figures=False, analyses=[huge])

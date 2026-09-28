@@ -125,7 +125,48 @@ def _draw_event(
 ) -> None:
     """One event: signals, spikes, then the truth and each method's events."""
     network = windows["network"][0].set_index("id").loc[event_id]
-    start, end = network.start_time - _MARGIN, network.end_time + _MARGIN
+    draw_window(
+        figure,
+        session,
+        filtered,
+        windows,
+        found,
+        network.start_time - _MARGIN,
+        network.end_time + _MARGIN,
+        f"event {event_id}, network peak {network.peak_time:.3f} s",
+    )
+
+
+def draw_window(
+    figure: SubFigure,
+    session: rd.SimulatedSession,
+    filtered: np.ndarray[Any, Any],
+    windows: Mapping[str, Sequence[pd.DataFrame]],
+    found: pd.DataFrame,
+    start: float,
+    end: float,
+    title: str,
+    methods: Sequence[tuple[str, str]] = METHODS,
+) -> None:
+    """A stretch of a session: signals, spikes, the truth windows of every
+    expression at every fraction, and each method's events.
+
+    Parameters
+    ----------
+    figure : matplotlib SubFigure
+    session : SimulatedSession
+    filtered : ndarray, shape (n_time, n_channels)
+        The session's ripple-band LFP.
+    windows : mapping of str to sequence of pandas.DataFrame
+        ``truth_window_sets(session.events)``.
+    found : pandas.DataFrame
+        The session's ``events.csv`` rows.
+    start, end : float
+        Seconds shown.
+    title : str
+    methods : sequence of (method, setting), optional
+        The methods whose events are drawn, a lane each.
+    """
     shown = (session.time >= start) & (session.time <= end)
     time = session.time[shown]
     signal, spikes, lanes = figure.subplots(
@@ -136,7 +177,7 @@ def _draw_event(
     signal.plot(time, ripple + 4, color=_COLORS["ripple"], linewidth=0.6)
     signal.plot(time, radiatum, color=_COLORS["sharp_wave"], linewidth=0.6)
     signal.set_yticks([0, 4], ["radiatum (SD)", "ripple band (SD)"])
-    signal.set_title(f"event {event_id}, network peak {network.peak_time:.3f} s", fontsize=8)
+    signal.set_title(title, fontsize=8)
     order = np.argsort(session.unit_types, kind="stable")
     rows, units = np.nonzero(session.multiunit[shown][:, order])
     spikes.scatter(time[rows], units, s=1, color="black", marker="|")
@@ -146,7 +187,8 @@ def _draw_event(
     labels = []
     for lane, expression in enumerate(EXPRESSIONS):
         for rank, truth in enumerate(windows[expression]):
-            for row in truth[truth.id == event_id].itertuples():
+            near = truth[(truth.end_time >= start) & (truth.start_time <= end)]
+            for row in near.itertuples():
                 lanes.plot(
                     [row.start_time, row.end_time],
                     [lane, lane],
@@ -156,7 +198,7 @@ def _draw_event(
                     solid_capstyle="butt",
                 )
         labels.append(f"truth {expression}")
-    for lane, (method, setting) in enumerate(METHODS, start=len(EXPRESSIONS)):
+    for lane, (method, setting) in enumerate(methods, start=len(EXPRESSIONS)):
         rows_found = found[(found.method == method) & (found.setting == setting)]
         near = rows_found[(rows_found.end_time >= start) & (rows_found.start_time <= end)]
         for row in near.itertuples():

@@ -56,6 +56,7 @@ import dataclasses
 import functools
 import io
 import itertools
+import json
 import os
 import time as wall_clock
 from collections.abc import Callable, Collection, Mapping, Sequence
@@ -100,6 +101,7 @@ if TYPE_CHECKING:
     from matplotlib.image import AxesImage
 
 HERE = Path(__file__).resolve().parent
+REPOSITORY = HERE.parent.parent
 RESULTS = HERE / "results"
 
 # Bytes a results file may hold.
@@ -480,7 +482,8 @@ def event_times(events: pd.DataFrame) -> np.ndarray[Any, Any]:
     middle = (
         events["start_time"].to_numpy(dtype=float) + events["end_time"].to_numpy(float)
     ) / 2
-    return np.where(np.isfinite(peak), peak, middle)
+    times: np.ndarray[Any, Any] = np.where(np.isfinite(peak), peak, middle)
+    return times
 
 
 # Loading a run
@@ -3170,7 +3173,8 @@ def condition_pool(
     counts = main_rows(_session_counts(scores, 0.0, sessions)).merge(
         scores.participation, on=_KEY, how="left"
     )
-    counts = counts.fillna({"n_events": 0, "principal_fraction": 0.0})
+    participation = ["n_events", "principal_fraction"]
+    counts[participation] = counts[participation].astype(float).fillna(0.0)
     errors = main_rows(_session_errors(scores, 0.0, sessions))
     units = pd.Index(replicates)
     keys = ["condition_id", "method", "setting"]
@@ -3439,7 +3443,7 @@ def recall_changes(table: pd.DataFrame, threshold: float = RECALL_CHANGE) -> pd.
         "recall_highest",
         "span",
     ]
-    recall_rows = table[(table["measure"] == "recall") & np.isfinite(table["value"])]
+    recall_rows = table[(table["measure"] == "recall") & table["value"].astype(float).notna()]
     rows = []
     for (factor, method, setting), group in recall_rows.groupby(
         ["factor", "method", "setting"], sort=False
@@ -3510,7 +3514,7 @@ ORDER_COLUMNS = (
     "p_reversed",
 )
 # Relative and absolute room within which a validation statistic is unchanged.
-_UNCHANGED = {"rtol": 0.01, "atol": 0.001}
+_RELATIVE_ROOM, _ABSOLUTE_ROOM = 0.01, 0.001
 
 
 def _recall_at(
@@ -3768,7 +3772,7 @@ def validation_changes(checks: pd.DataFrame) -> pd.DataFrame:
             if (
                 np.isfinite(before)
                 and np.isfinite(after)
-                and np.isclose(after, before, **_UNCHANGED)
+                and np.isclose(after, before, rtol=_RELATIVE_ROOM, atol=_ABSOLUTE_ROOM)
             ):
                 continue
             rows.append([alternative, row.check, row.statistic, before, after])
@@ -4691,7 +4695,937 @@ def plot_splits_and_merges(rates: pd.DataFrame) -> Figure:
     return figure
 
 
+def _dots(
+    axis: Axes,
+    rows: pd.DataFrame,
+    column: str,
+    y: np.ndarray[Any, Any],
+    *,
+    scale: float = 1.0,
+    **style: Any,
+) -> None:
+    """``column`` of each row at height ``y``, with its ``_low``-``_high``
+    interval as a horizontal bar."""
+    value = rows[column].to_numpy(dtype=float) * scale
+    bounds = rows[[f"{column}_low", f"{column}_high"]].to_numpy(dtype=float).T * scale
+    error = np.abs(np.nan_to_num(bounds - value, nan=0.0))
+    axis.errorbar(value, y, xerr=error, fmt=".", markersize=3, elinewidth=0.6, **style)
+    axis.tick_params(labelsize=_FONT)
+
+
+def plot_point_inventories(points: pd.DataFrame) -> Figure:
+    """``point_inventories``' recall, precision and false positives per minute."""
+    import matplotlib.pyplot as plt
+
+    columns = ("recall", "precision", "false_positives_per_minute")
+    figure, axes = plt.subplots(1, 3, figsize=(9, _tall(len(points))), sharey=True)
+    y = np.arange(len(points))[::-1]
+    for axis, column in zip(axes, columns, strict=True):
+        _dots(axis, points, column, y, color="C0")
+        axis.set_title(f"{column.replace('_', ' ')} (peak containment)", fontsize=8)
+    axes[0].set_yticks(y, list(points["method"]), fontsize=_FONT)
+    return figure
+
+
+_EXPRESSION_COLORS = {"ripple": "C0", "sharp_wave": "C3", "burst": "C2", "network": "C7"}
+
+
+def plot_operating_curves(curves: pd.DataFrame) -> Figure:
+    """``operating_curves`` at IoU 0: one panel per primary expression, each
+    detector's sweep a line (its default an open circle), each recipe a grey
+    dot, the target rates dotted."""
+    import matplotlib.pyplot as plt
+
+    shown = curves[curves["minimum_iou"] == 0]
+    expressions = [e for e in EXPRESSION_ORDER if e in set(shown["primary_expression"])]
+    figure, axes = plt.subplots(
+        1, len(expressions), figsize=(4 * len(expressions), 4), squeeze=False
+    )
+    for axis, expression in zip(axes[0], expressions, strict=True):
+        own = shown[shown["primary_expression"] == expression]
+        floor = 0.5 / own["minutes"].max()
+        fp = np.maximum(own["false_positives_per_minute"], floor)
+        recipes = own["kind"] == "recipe"
+        axis.scatter(
+            fp[recipes], own.loc[recipes, "recall"], s=6, color="0.6", label="recipes"
+        )
+        for position, (method, rows) in enumerate(
+            own[own["kind"] != "recipe"].groupby("method", sort=True)
+        ):
+            color = f"C{position % 10}"
+            sweep = rows[rows["kind"] == "sweep"].sort_values("threshold")
+            axis.plot(
+                np.maximum(sweep["false_positives_per_minute"], floor),
+                sweep["recall"],
+                ".-",
+                color=color,
+                markersize=3,
+                linewidth=0.8,
+                label=method,
+            )
+            default = rows[rows["kind"] == "default"]
+            axis.scatter(
+                np.maximum(default["false_positives_per_minute"], floor),
+                default["recall"],
+                s=18,
+                facecolors="none",
+                edgecolors=color,
+            )
+        for target in FP_TARGETS:
+            axis.axvline(target, color="0.8", linestyle=":", linewidth=0.8)
+        axis.set_xscale("log")
+        axis.set_ylim(0, 1)
+        axis.set_xlabel("false positives per minute (0 drawn at the resolution)", fontsize=7)
+        axis.set_ylabel(f"recall against {expression}", fontsize=7)
+        axis.set_title(f"primary expression {expression}", fontsize=8)
+        axis.tick_params(labelsize=_FONT)
+        axis.legend(fontsize=_FONT, loc="lower right")
+    return figure
+
+
+def plot_operating_points(points: pd.DataFrame) -> Figure:
+    """``operating_points``: each detector's recall at the targets, one panel
+    per minimum IoU."""
+    import matplotlib.pyplot as plt
+
+    levels = list(dict.fromkeys(points["minimum_iou"]))
+    methods = sorted(set(points["method"]))
+    figure, axes = plt.subplots(1, len(levels), figsize=(4 * len(levels), 3.5), sharey=True)
+    for axis, level in zip(np.atleast_1d(axes), levels, strict=True):
+        own = points[points["minimum_iou"] == level]
+        for position, method in enumerate(methods):
+            rows = own[own["method"] == method]
+            x = np.log2(rows["fp_target"].to_numpy(float)) + 0.04 * (
+                position - len(methods) / 2
+            )
+            error = np.abs(
+                np.nan_to_num(
+                    rows[["recall_low", "recall_high"]].to_numpy(float).T
+                    - rows["recall"].to_numpy(float),
+                    nan=0.0,
+                )
+            )
+            axis.errorbar(
+                x,
+                rows["recall"],
+                yerr=error,
+                fmt=".-",
+                markersize=3,
+                linewidth=0.6,
+                label=method,
+            )
+        axis.set_xticks(np.log2(FP_TARGETS), [f"{t:g}" for t in FP_TARGETS], fontsize=_FONT)
+        axis.set_xlabel("false positives per minute", fontsize=7)
+        axis.set_title(f"recall at the target, minimum IoU {level:g}", fontsize=8)
+        axis.set_ylim(0, 1)
+        axis.tick_params(labelsize=_FONT)
+    np.atleast_1d(axes)[-1].legend(fontsize=_FONT, loc="lower right")
+    return figure
+
+
+def plot_held_out_thresholds(thresholds: pd.DataFrame) -> Figure:
+    """``held_out_thresholds``: held-out recall (with its interval) against
+    the calibration recall of the chosen setting, per target."""
+    import matplotlib.pyplot as plt
+
+    targets = list(dict.fromkeys(thresholds["fp_target"]))
+    methods = sorted(set(thresholds["method"]))
+    figure, axes = plt.subplots(
+        1, len(targets), figsize=(3 * len(targets), _tall(len(methods))), sharey=True
+    )
+    y = np.arange(len(methods))[::-1]
+    for axis, target in zip(np.atleast_1d(axes), targets, strict=True):
+        rows = thresholds[thresholds["fp_target"] == target].set_index("method").loc[methods]
+        _dots(axis, rows, "recall", y, color="C0", label="held out")
+        axis.scatter(
+            rows["calibration_recall"],
+            y,
+            s=12,
+            facecolors="none",
+            edgecolors="C1",
+            label="calibration",
+        )
+        axis.set_title(f"{target:g} per minute", fontsize=8)
+        axis.set_xlim(0, 1)
+    np.atleast_1d(axes)[0].set_yticks(y, methods, fontsize=_FONT)
+    np.atleast_1d(axes)[-1].legend(fontsize=_FONT)
+    return figure
+
+
+def plot_robustness(table: pd.DataFrame) -> Figure:
+    """One measure of ``robustness``: a panel per factor, the measure against
+    the factor's levels, one line per main setting (coloured by primary
+    expression), the reference level in place."""
+    import matplotlib.pyplot as plt
+
+    factors = list(dict.fromkeys(table["factor"]))
+    columns = 6
+    rows_of_panels = int(np.ceil(len(factors) / columns))
+    figure, axes = plt.subplots(
+        rows_of_panels, columns, figsize=(2.4 * columns, 2.2 * rows_of_panels), squeeze=False
+    )
+    measure = str(table["measure"].iloc[0])
+    scale = _MS if "error" in measure else 1.0
+    for axis, factor in zip(axes.flat, factors, strict=False):
+        own = table[table["factor"] == factor]
+        levels = list(dict.fromkeys(own["level"]))
+        for (_, _), rows in own.groupby(["method", "setting"], sort=False):
+            x = [levels.index(level) for level in rows["level"]]
+            axis.plot(
+                x,
+                rows["value"] * scale,
+                "-",
+                color=_EXPRESSION_COLORS.get(str(rows["primary_expression"].iloc[0]), "0.5"),
+                linewidth=0.5,
+                alpha=0.6,
+            )
+        axis.set_xticks(range(len(levels)), levels, fontsize=_FONT)
+        axis.set_title(factor, fontsize=7)
+        axis.tick_params(labelsize=_FONT)
+    for axis in list(axes.flat)[len(factors) :]:
+        axis.set_visible(False)
+    unit = " (ms, detected - truth)" if scale != 1.0 else ""
+    figure.suptitle(
+        f"{measure}{unit} by factor level; "
+        "blue ripple, grey network, green burst, red sharp wave",
+        fontsize=8,
+    )
+    figure.tight_layout()
+    return figure
+
+
+def plot_robustness_crossed(table: pd.DataFrame) -> Figure:
+    """One measure of ``robustness_crossed``: per crossed pair, the change
+    from the reference in every cell, a row per main setting."""
+    import matplotlib.pyplot as plt
+
+    pairs = list(dict.fromkeys(table["factors"]))
+    measure = str(table["measure"].iloc[0])
+    scale = _MS if "error" in measure else 1.0
+    methods = list(dict.fromkeys(table["method"] + " (" + table["setting"] + ")"))
+    figure, axes = plt.subplots(
+        1, len(pairs), figsize=(5 * len(pairs), _tall(len(methods))), squeeze=False
+    )
+    for axis, pair in zip(axes[0], pairs, strict=True):
+        own = table[table["factors"] == pair].assign(
+            row=lambda f: f["method"] + " (" + f["setting"] + ")",
+            cell=lambda f: f["level_1"] + " / " + f["level_2"],
+        )
+        cells = list(dict.fromkeys(own["cell"]))
+        values = _grid(
+            own.assign(change=own["change"] * scale), "row", "cell", "change", methods, cells
+        )
+        limit = np.nanmax(np.abs(values)) if np.isfinite(values).any() else 1.0
+        image = _heatmap(
+            axis,
+            values,
+            methods,
+            cells,
+            f"{pair}: {measure} change from reference",
+            cmap="RdBu_r",
+            vmin=-limit,
+            vmax=limit,
+        )
+        figure.colorbar(image, ax=axis, shrink=0.3)
+    return figure
+
+
+def plot_rates_by_state(rates: pd.DataFrame) -> Figure:
+    """``rates_by_state``: each method's rate at rest and while running, the
+    true rates as vertical lines."""
+    import matplotlib.pyplot as plt
+
+    methods = list(dict.fromkeys(rates["method"]))
+    figure, axes = plt.subplots(1, 2, figsize=(9, _tall(len(methods))), sharey=True)
+    y = np.arange(len(methods))[::-1]
+    for axis, state in zip(axes, STATES, strict=True):
+        rows = rates[rates["state"] == state].set_index("method").loc[methods]
+        _dots(axis, rows, "rate", y, color="C0")
+        axis.axvline(rows["true_rate"].median(), color="C3", linewidth=0.8)
+        axis.set_title(f"events per minute, {state} (red: true)", fontsize=8)
+    axes[0].set_yticks(y, methods, fontsize=_FONT)
+    return figure
+
+
+def plot_participation_bias(bias: pd.DataFrame) -> Figure:
+    """``participation_bias``' ratio of means, per method, 1 marked."""
+    import matplotlib.pyplot as plt
+
+    figure, axis = plt.subplots(figsize=(5, _tall(len(bias))))
+    y = np.arange(len(bias))[::-1]
+    _dots(axis, bias, "ratio_of_means", y, color="C0")
+    axis.axvline(1.0, color="0.6", linewidth=0.8)
+    axis.set_yticks(y, list(bias["method"]), fontsize=_FONT)
+    axis.set_title("Recruited cells of matched events over all events' (mean)", fontsize=8)
+    return figure
+
+
+def plot_boundary_effect(effect: pd.DataFrame) -> Figure:
+    """``boundary_effect``' mean differences, per method and unit selection."""
+    import matplotlib.pyplot as plt
+
+    methods = list(dict.fromkeys(effect["method"]))
+    figure, axes = plt.subplots(1, 2, figsize=(9, _tall(len(methods))), sharey=True)
+    y = np.arange(len(methods))[::-1]
+    for axis, selection in zip(axes, SELECTIONS, strict=True):
+        rows = effect[effect["selection"] == selection].set_index("method").loc[methods]
+        _dots(axis, rows, "mean_difference", y, color="C0")
+        axis.axvline(0.0, color="0.6", linewidth=0.8)
+        axis.set_title(f"{selection} units active: detected bounds - truth window", fontsize=8)
+    axes[0].set_yticks(y, methods, fontsize=_FONT)
+    return figure
+
+
+def plot_matching_sensitivity(sensitivity: pd.DataFrame) -> Figure:
+    """``matching_sensitivity``: recall and precision at each minimum IoU."""
+    import matplotlib.pyplot as plt
+
+    methods = list(dict.fromkeys(sensitivity["method"]))
+    figure, axes = plt.subplots(1, 2, figsize=(9, _tall(len(methods))), sharey=True)
+    y = np.arange(len(methods))[::-1]
+    for axis, column in zip(axes, ("recall", "precision"), strict=True):
+        for position, level in enumerate(dict.fromkeys(sensitivity["minimum_iou"])):
+            rows = (
+                sensitivity[sensitivity["minimum_iou"] == level]
+                .set_index("method")
+                .loc[methods]
+            )
+            _dots(
+                axis,
+                rows,
+                column,
+                y + 0.2 * position,
+                color=f"C{position}",
+                label=f"IoU {level:g}",
+            )
+        axis.set_title(column, fontsize=8)
+        axis.set_xlim(0, 1)
+    axes[0].set_yticks(y, methods, fontsize=_FONT)
+    axes[1].legend(fontsize=_FONT)
+    return figure
+
+
+def plot_model_sensitivity(changes: pd.DataFrame) -> Figure:
+    """``model_sensitivity``: per alternative model, each main setting's
+    change in recall and each detector's at 1 per minute (triangles), with
+    intervals."""
+    import matplotlib.pyplot as plt
+
+    alternatives = list(dict.fromkeys(changes["alternative"]))
+    recall = changes[changes["measure"] == "recall"]
+    methods = list(dict.fromkeys(recall["method"] + " (" + recall["setting"] + ")"))
+    figure, axes = plt.subplots(
+        1,
+        len(alternatives),
+        figsize=(2.6 * len(alternatives), _tall(len(methods))),
+        sharey=True,
+        squeeze=False,
+    )
+    y = np.arange(len(methods))[::-1]
+    for axis, alternative in zip(axes[0], alternatives, strict=True):
+        own = recall[recall["alternative"] == alternative]
+        own = own.set_index(own["method"] + " (" + own["setting"] + ")").reindex(methods)
+        _dots(axis, own, "change", y, color="C0")
+        at_one = changes[
+            (changes["alternative"] == alternative)
+            & (changes["measure"] == "recall_at_fp")
+            & (changes["fp_target"] == 1.0)
+        ].set_index("method")
+        rows = [
+            methods.index(f"{m} (default)")
+            for m in at_one.index
+            if f"{m} (default)" in methods
+        ]
+        shown = at_one.loc[[m for m in at_one.index if f"{m} (default)" in methods]]
+        axis.scatter(shown["change"], y[rows] + 0.3, marker="^", s=8, color="C1")
+        axis.axvline(0.0, color="0.6", linewidth=0.8)
+        axis.set_title(f"{alternative}\nrecall change", fontsize=7)
+    axes[0][0].set_yticks(y, methods, fontsize=_FONT)
+    return figure
+
+
+# Candidate trends
+
+TREND_COLUMNS = (
+    "kind",
+    "statement",
+    "source",
+    "method",
+    "condition_id",
+    "value",
+    "low",
+    "high",
+    "p",
+    "spot_condition",
+    "spot_methods",
+    "spot_selection",
+    "spot_event_type",
+)
+# Candidates of each kind kept, largest first.
+_TRENDS_PER_KIND = 12
+
+
+def _excludes(frame: pd.DataFrame, low: str, high: str, value: float = 0.0) -> pd.Series:
+    """Rows whose interval lies wholly on one side of ``value``."""
+    return (frame[low] > value) | (frame[high] < value)
+
+
+def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
+    """Candidate trend statements, each with the rows that support it.
+
+    Not conclusions: each is a pattern in the tables worth stating only after
+    its underlying events have been looked at (``spot_check``), and after
+    checking that it does not come from failures, empty sweeps or a unit
+    error. Each names where to look: a condition, methods and which events
+    (``"missed"`` or ``"found"`` truth events of the first method's primary
+    expression, or its ``"false_positive"`` events), for ``select_events``.
+
+    Parameters
+    ----------
+    results : mapping of str to pandas.DataFrame
+        The analyses' tables by name, as ``analyze_run`` writes them.
+
+    Returns
+    -------
+    trends : pandas.DataFrame
+        ``TREND_COLUMNS``: ``kind``, a templated ``statement``, its
+        ``source`` table, the ``method`` and ``condition_id`` it is about,
+        the ``value`` with its interval and p-value where the table has them,
+        and the spot check to draw. Largest effects first within a kind.
+    """
+    rows: list[dict[str, Any]] = []
+
+    def add(
+        frame: pd.DataFrame,
+        order: pd.Series,
+        make: Callable[[Any], dict[str, Any]],
+        per: str | None = None,
+    ) -> None:
+        """The largest of ``order`` first; with ``per``, the largest of each
+        value of that column first, so one condition cannot fill the list."""
+        ranked = frame.assign(_order=order.to_numpy()).sort_values(
+            "_order", ascending=False, kind="stable"
+        )
+        if per is not None:
+            rank = ranked.groupby(per, sort=False).cumcount()
+            ranked = ranked.assign(_rank=rank.to_numpy()).sort_values(
+                ["_rank", "_order"], ascending=[True, False], kind="stable"
+            )
+        rows.extend(make(row) for row in ranked.head(_TRENDS_PER_KIND).itertuples(index=False))
+
+    robust = results.get("robustness_recall", pd.DataFrame())
+    if len(robust):
+        moved = robust[
+            (robust["level"] != REFERENCE_LEVEL)
+            & _excludes(robust, "change_low", "change_high")
+        ]
+        add(
+            moved,
+            moved["change"].abs(),
+            lambda r: {
+                "kind": "robustness",
+                "statement": (
+                    f"{r.method}'s recall against {r.primary_expression} changes by "
+                    f"{r.change:+.3f} ({r.change_low:+.3f}, {r.change_high:+.3f}) from the "
+                    f"reference to {r.condition_id}."
+                ),
+                "source": "robustness_recall",
+                "method": r.method,
+                "condition_id": r.condition_id,
+                "value": r.change,
+                "low": r.change_low,
+                "high": r.change_high,
+                "p": r.change_p,
+                "spot_condition": r.condition_id,
+                "spot_methods": r.method,
+                "spot_selection": "missed" if r.change < 0 else "found",
+            },
+            per="condition_id",
+        )
+    orders = results.get("model_sensitivity_orders", pd.DataFrame())
+    if len(orders):
+        flipped = orders[orders["supported"] & orders["reversed"]]
+        add(
+            flipped,
+            flipped["p_reversed"]
+            + (flipped["alternative_difference"] - flipped["reference_difference"]).abs(),
+            lambda r: {
+                "kind": "model_order_reversal",
+                "statement": (
+                    f"At {r.fp_target:g} false positives a minute, {r.method_a} minus "
+                    f"{r.method_b} in recall is {r.reference_difference:+.3f} in the "
+                    f"reference and {r.alternative_difference:+.3f} under {r.alternative} "
+                    f"(reversed in {r.p_reversed:.0%} of resamples)."
+                ),
+                "source": "model_sensitivity_orders",
+                "method": f"{r.method_a} {r.method_b}",
+                "condition_id": r.alternative,
+                "value": r.alternative_difference,
+                "low": r.alternative_low,
+                "high": r.alternative_high,
+                "p": np.nan,
+                "spot_condition": r.alternative,
+                "spot_methods": f"{r.method_a} {r.method_b}",
+                "spot_selection": "missed",
+            },
+        )
+    model = results.get("model_sensitivity", pd.DataFrame())
+    if len(model):
+        moved = model[
+            (model["measure"] == "recall")
+            & (model["status"] == "compared")
+            & _excludes(model, "change_low", "change_high")
+        ]
+        add(
+            moved,
+            moved["change"].abs(),
+            lambda r: {
+                "kind": "model_change",
+                "statement": (
+                    f"{r.method}'s recall changes by {r.change:+.3f} ({r.change_low:+.3f}, "
+                    f"{r.change_high:+.3f}) under {r.alternative}."
+                ),
+                "source": "model_sensitivity",
+                "method": r.method,
+                "condition_id": r.alternative,
+                "value": r.change,
+                "low": r.change_low,
+                "high": r.change_high,
+                "p": r.change_p,
+                "spot_condition": r.alternative,
+                "spot_methods": r.method,
+                "spot_selection": "missed" if r.change < 0 else "found",
+            },
+            per="alternative",
+        )
+    sensitivity = results.get("matching_sensitivity", pd.DataFrame())
+    if len(sensitivity):
+        ranks = order_changes(sensitivity)
+        last = [column for column in ranks.columns if column.startswith("rank_")][-1:]
+        if last:
+            level = last[0].removeprefix("rank_")
+            ranks = ranks.rename(columns={last[0]: "rank_last"})
+            move = (ranks["rank_last"] - ranks["rank_0"]).abs()
+            moved = ranks[move >= 3]
+            add(
+                moved,
+                move[move >= 3],
+                lambda r: {
+                    "kind": "matching_rank",
+                    "statement": (
+                        f"{r.method}'s rank by recall among {r.primary_expression} methods "
+                        f"moves from {r.rank_0} at IoU 0 to {r.rank_last} at {level}."
+                    ),
+                    "source": "matching_sensitivity",
+                    "method": r.method,
+                    "condition_id": REFERENCE_CONDITION,
+                    "value": float(r.rank_last - r.rank_0),
+                    "low": np.nan,
+                    "high": np.nan,
+                    "p": np.nan,
+                    "spot_condition": REFERENCE_CONDITION,
+                    "spot_methods": r.method,
+                    "spot_selection": "found",
+                },
+            )
+    bias = results.get("participation_bias", pd.DataFrame())
+    if len(bias):
+        biased = bias[_excludes(bias, "ratio_of_means_low", "ratio_of_means_high", 1.0)]
+        add(
+            biased,
+            np.log(biased["ratio_of_means"]).abs(),
+            lambda r: {
+                "kind": "participation_bias",
+                "statement": (
+                    f"The true events {r.method} finds recruit {r.ratio_of_means:.2f} "
+                    f"({r.ratio_of_means_low:.2f}, {r.ratio_of_means_high:.2f}) times as "
+                    "many cells on average as all true events."
+                ),
+                "source": "participation_bias",
+                "method": r.method,
+                "condition_id": REFERENCE_CONDITION,
+                "value": r.ratio_of_means,
+                "low": r.ratio_of_means_low,
+                "high": r.ratio_of_means_high,
+                "p": np.nan,
+                "spot_condition": REFERENCE_CONDITION,
+                "spot_methods": r.method,
+                "spot_selection": "missed",
+            },
+        )
+    effect = results.get("boundary_effect", pd.DataFrame())
+    if len(effect):
+        shifted = effect[
+            (effect["selection"] == "principal")
+            & _excludes(effect, "mean_difference_low", "mean_difference_high")
+        ]
+        add(
+            shifted,
+            shifted["mean_difference"].abs(),
+            lambda r: {
+                "kind": "boundary_effect",
+                "statement": (
+                    f"{r.method}'s bounds change the principal units counted active in a "
+                    f"true event by {r.mean_difference:+.2f} ({r.mean_difference_low:+.2f}, "
+                    f"{r.mean_difference_high:+.2f}) on average."
+                ),
+                "source": "boundary_effect",
+                "method": r.method,
+                "condition_id": REFERENCE_CONDITION,
+                "value": r.mean_difference,
+                "low": r.mean_difference_low,
+                "high": r.mean_difference_high,
+                "p": np.nan,
+                "spot_condition": REFERENCE_CONDITION,
+                "spot_methods": r.method,
+                "spot_selection": "found",
+            },
+        )
+    points = results.get("operating_points", pd.DataFrame())
+    if len(points):
+        at_one = points[(points["minimum_iou"] == 0) & (points["fp_target"] == 1.0)].dropna(
+            subset=["recall"]
+        )
+        leaders = []
+        for expression, own in at_one.groupby("primary_expression", sort=True):
+            if len(own) < 2:
+                continue
+            first, second = own.sort_values("recall", ascending=False).iloc[:2].itertuples()
+            leaders.append(
+                {
+                    "kind": "operating_order",
+                    "statement": (
+                        f"At 1 false positive a minute against {expression}, {first.method} "
+                        f"has the highest recall, {first.recall:.3f} ({first.recall_low:.3f}, "
+                        f"{first.recall_high:.3f}); next {second.method}, {second.recall:.3f} "
+                        f"({second.recall_low:.3f}, {second.recall_high:.3f})."
+                    ),
+                    "source": "operating_points",
+                    "method": first.method,
+                    "condition_id": REFERENCE_CONDITION,
+                    "value": first.recall - second.recall,
+                    "low": np.nan,
+                    "high": np.nan,
+                    "p": np.nan,
+                    "spot_condition": REFERENCE_CONDITION,
+                    "spot_methods": f"{first.method} {second.method}",
+                    "spot_selection": "missed",
+                }
+            )
+        rows.extend(leaders)
+    return pd.DataFrame(rows, columns=list(TREND_COLUMNS)).fillna({"spot_event_type": ""})
+
+
+# Spot checks
+
+SPOT_SELECTIONS = ("missed", "found", "false_positive")
+SPOT_COLUMNS = ("session_id", "start_time", "end_time", "label")
+# Events drawn per spot check, and seconds shown on each side of one.
+SPOT_EVENTS = 6
+_SPOT_MARGIN = 0.15
+
+
+def select_from(
+    tables: RunTables,
+    method: str,
+    setting: str,
+    selection: str,
+    *,
+    event_type: str | None = None,
+) -> pd.DataFrame:
+    """The events of one kind a method's result holds, in some sessions.
+
+    Parameters
+    ----------
+    tables : RunTables
+        Holding the method and setting.
+    method, setting : str
+    selection : {"missed", "found", "false_positive"}
+        Truth windows of the method's primary expression at 10 % it matched
+        no event of (IoU 0; peak containment for a point method), those it
+        matched, or its events matching no window.
+    event_type : str, optional
+        Keep only truth windows of this event type, or false positives
+        labelled with it (``label_by_overlap`` against every component and
+        non-event; ``"background"`` for none).
+
+    Returns
+    -------
+    selected : pandas.DataFrame
+        ``session_id``, ``start_time``, ``end_time`` and ``label`` (the
+        window's event type, or the false positive's label), by session and
+        time.
+
+    Raises
+    ------
+    ValueError
+        An unknown selection, or a method and setting the tables lack.
+    """
+    if selection not in SPOT_SELECTIONS:
+        msg = f"selection must be one of {SPOT_SELECTIONS}, got {selection!r}."
+        raise ValueError(msg)
+    listed = tables.methods[
+        (tables.methods["method"] == method) & (tables.methods["setting"] == setting)
+    ]
+    if listed.empty:
+        msg = f"The tables hold no {method} ({setting})."
+        raise ValueError(msg)
+    expression = listed["primary_expression"].iloc[0]
+    ran = tables.ran[(tables.ran["method"] == method) & (tables.ran["setting"] == setting)]
+    events = tables.events[
+        (tables.events["method"] == method) & (tables.events["setting"] == setting)
+    ]
+    by_session = dict(tuple(events.groupby("session_id", sort=False)))
+    parts = []
+    for session_id in ran["session_id"]:
+        event_table, non_event_table = tables.truth[session_id]
+        truth = rd.truth_windows(event_table, TRUTH_FRACTIONS[0], expression)
+        rows = by_session.get(session_id, events.iloc[:0]).sort_values("event_index")
+        if method in point_methods():
+            pairs = match_peaks(_bounds(truth), event_times(rows))
+            matched_truth, matched_events = pairs[:, 0], pairs[:, 1]
+        else:
+            found = rd.match_events(_bounds(truth), _bounds(rows)).pairs
+            matched_truth = found["reference_index"].to_numpy()
+            matched_events = found["detected_index"].to_numpy()
+        if selection == "false_positive":
+            unmatched = np.setdiff1d(np.arange(len(rows)), matched_events)
+            bounds = _bounds(rows)[unmatched]
+            labels = rd.label_by_overlap(bounds, label_windows(event_table, non_event_table))
+            chosen = pd.DataFrame(bounds, columns=["start_time", "end_time"]).assign(
+                label=labels.to_numpy()
+            )
+        else:
+            matched = np.isin(np.arange(len(truth)), matched_truth)
+            keep = matched if selection == "found" else ~matched
+            chosen = truth.loc[keep, ["start_time", "end_time"]].assign(
+                label=truth.loc[keep, "type"].astype(str).to_numpy()
+            )
+        parts.append(chosen.assign(session_id=session_id))
+    selected = _concat(parts, SPOT_COLUMNS)
+    if event_type is not None:
+        kept = selected["label"].str.split(":").str[0] == event_type
+        selected = selected[kept]
+    return selected.reset_index(drop=True)
+
+
+def select_events(
+    run_directory: str | os.PathLike[str],
+    condition_id: str,
+    method: str,
+    setting: str,
+    selection: str,
+    *,
+    event_type: str | None = None,
+) -> pd.DataFrame:
+    """``select_from`` on one condition of a run, read from its ``combined/``.
+
+    Parameters
+    ----------
+    run_directory : str or path-like
+    condition_id, method, setting, selection : str
+    event_type : str, optional
+
+    Returns
+    -------
+    selected : pandas.DataFrame
+    """
+    tables = load_run(
+        Path(run_directory) / "combined", conditions=[condition_id], settings=[setting]
+    )
+    return select_from(tables, method, setting, selection, event_type=event_type)
+
+
+def spot_check(
+    run_directory: str | os.PathLike[str],
+    results_directory: str | os.PathLike[str],
+    name: str,
+    selected: pd.DataFrame,
+    methods: Sequence[tuple[str, str]],
+    *,
+    n_events: int = SPOT_EVENTS,
+    seed: int = SEED,
+) -> Path:
+    """Draw some of the events behind a trend, from their sessions simulated again.
+
+    Each session is simulated again from the run's saved parameters and seed
+    (``spot_check.load_session``, which refuses a seed that is not the
+    replicate's), and each event drawn with the ripple-band and radiatum
+    signals, the spikes, the truth windows of every expression at every
+    fraction and the methods' events (``spot_check.draw_window``).
+
+    Parameters
+    ----------
+    run_directory : str or path-like
+        ``examples/benchmark/output/<run_name>``.
+    results_directory : str or path-like
+        ``examples/benchmark/results/<run_name>``; the figure goes to its
+        ``spot_checks/<name>.png``, at most ``SIZE_LIMIT`` bytes.
+    name : str
+        The figure's stem.
+    selected : pandas.DataFrame
+        ``select_events``' rows.
+    methods : sequence of (method, setting)
+        Whose events are drawn.
+    n_events : int, optional
+        Events drawn, chosen at random (``seed``) when there are more.
+    seed : int, optional
+
+    Returns
+    -------
+    path : pathlib.Path
+
+    Raises
+    ------
+    ValueError
+        No event is selected, or the figure would be over ``SIZE_LIMIT``.
+    """
+    import matplotlib.pyplot as plt
+    from spot_check import draw_window, load_session
+
+    if selected.empty:
+        msg = f"{name}: no event is selected."
+        raise ValueError(msg)
+    rng = np.random.default_rng(seed)
+    picks = np.sort(
+        rng.choice(len(selected), size=min(n_events, len(selected)), replace=False)
+    )
+    chosen = selected.iloc[picks]
+    n_rows = (len(chosen) + 1) // 2
+    figure = plt.figure(figsize=(12, 4.5 * n_rows), layout="constrained")
+    figure.suptitle(f"{name}: {len(chosen)} of {len(selected)} selected events", fontsize=10)
+    blocks = figure.subfigures(n_rows, 2, squeeze=False).ravel()
+    for block in blocks[len(chosen) :]:
+        block.set_visible(False)
+    position = 0
+    for session_id, rows in chosen.groupby("session_id", sort=False):
+        session, found = load_session(Path(run_directory), str(session_id))
+        filtered = rd.filter_ripple_band(session.lfps, session.sampling_frequency)
+        windows = truth_window_sets(session.events)
+        for row in rows.itertuples(index=False):
+            draw_window(
+                blocks[position],
+                session,
+                filtered,
+                windows,
+                found,
+                row.start_time - _SPOT_MARGIN,
+                row.end_time + _SPOT_MARGIN,
+                f"{session_id}, {row.label}, {row.start_time:.3f}-{row.end_time:.3f} s",
+                methods,
+            )
+            position += 1
+    directory = Path(results_directory) / "spot_checks"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{name}.png"
+    write_result(path, _png(figure))
+    return path
+
+
 # The command line
+
+
+@dataclasses.dataclass(frozen=True)
+class Inputs:
+    """What the analyses read.
+
+    Attributes
+    ----------
+    tables : RunTables
+        The reference condition's main settings.
+    matches : Matches
+        Its sessions matched again at every level of ``MATCH_IOU_LEVELS``.
+    scores : ConditionScores
+        Every condition, against the primary expressions.
+    validation : pandas.DataFrame
+        ``validation_changes`` of the run's simulator validation report
+        (empty when the report is not found).
+    cache : dict
+        Tables several analyses share, computed once.
+    """
+
+    tables: RunTables
+    matches: Matches
+    scores: ConditionScores
+    validation: pd.DataFrame
+    cache: dict[Any, Any] = dataclasses.field(default_factory=dict)
+
+
+def _cached(inputs: Inputs, key: Any, compute: Callable[[], Any]) -> Any:
+    if key not in inputs.cache:
+        inputs.cache[key] = compute()
+    return inputs.cache[key]
+
+
+AnalysisTable = Callable[..., pd.DataFrame]
+
+
+def _of_reference(
+    function: Callable[..., pd.DataFrame], *, resampled: bool = True
+) -> AnalysisTable:
+    """An analysis of the reference condition's tables and matches."""
+    if not resampled:
+
+        def plain(inputs: Inputs) -> pd.DataFrame:
+            return function(inputs.tables, inputs.matches)
+
+        return plain
+
+    def table(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
+        return function(inputs.tables, inputs.matches, n_resamples=n_resamples)
+
+    return table
+
+
+def _operating_points(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
+    return _cached(
+        inputs,
+        ("operating_points", n_resamples),
+        lambda: operating_points(inputs.scores, n_resamples=n_resamples),
+    )
+
+
+def _held_out_thresholds(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
+    return held_out_thresholds(inputs.scores, n_resamples=n_resamples)
+
+
+def _robustness_of(measure: str, crossed: bool = False) -> AnalysisTable:
+    """One measure's rows of ``robustness`` (or ``robustness_crossed``),
+    computed once for all three."""
+    compute = robustness_crossed if crossed else robustness
+
+    def table(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
+        found = _cached(
+            inputs,
+            (compute.__name__, n_resamples),
+            lambda: compute(inputs.scores, n_resamples=n_resamples),
+        )
+        return found[found["measure"] == measure].reset_index(drop=True)
+
+    return table
+
+
+def _rates_by_state(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
+    return rates_by_state(inputs.tables, n_resamples=n_resamples)
+
+
+def _matching(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
+    points = _operating_points(inputs, n_resamples=n_resamples)
+    return matching_sensitivity(inputs.tables, inputs.matches, points, n_resamples=n_resamples)
+
+
+def _model(part: int) -> AnalysisTable:
+    """``model_sensitivity``'s changes (0) or orders (1), computed once."""
+
+    def table(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
+        found = _cached(
+            inputs,
+            ("model_sensitivity", n_resamples),
+            lambda: model_sensitivity(inputs.scores, n_resamples=n_resamples),
+        )
+        return found[part]
+
+    return table
 
 
 @dataclasses.dataclass(frozen=True)
@@ -4703,7 +5637,8 @@ class Analysis:
     name : str
         The files' stem: ``<name>.csv`` and ``<name>.png``.
     table : callable
-        ``table(tables, matches)``: the analysis's table.
+        ``table(inputs)``: the analysis's table from an ``Inputs``; one that
+        resamples takes ``n_resamples`` by keyword.
     description : str
         One sentence on what the table shows, for ``summary.md``.
     figure : callable or None
@@ -4713,35 +5648,43 @@ class Analysis:
     """
 
     name: str
-    table: Callable[[RunTables, Matches], pd.DataFrame]
+    table: AnalysisTable
     description: str
     figure: Callable[[pd.DataFrame], Figure] | None = None
     figure_description: str = ""
 
 
+_ROBUSTNESS_NAMES = {
+    "recall": "recall",
+    "precision": "precision",
+    "median_onset_error": "onset",
+}
+
 ANALYSES: tuple[Analysis, ...] = (
     Analysis(
         "failures",
-        lambda tables, _matches: failure_counts(tables),
+        lambda inputs: failure_counts(inputs.tables),
         "Each method's sessions with scores and failures (a missing result, never zero "
-        "events), with the first error.",
+        "events), with the first error and its scoring rule.",
     ),
     Analysis(
         "point_inventories",
-        point_inventories,
+        _of_reference(point_inventories),
         "Recall, precision and false positives per minute of the methods that return "
         "time points, scored by peak containment and never pooled with interval scores.",
+        plot_point_inventories,
+        "Those three with their intervals.",
     ),
     Analysis(
         "detection_profile",
-        detection_profile,
+        _of_reference(detection_profile),
         "Recall per event type against the network truth, per method, pooled over sessions.",
         plot_detection_profile,
         "Recall as a heatmap, method by event type.",
     ),
     Analysis(
         "false_positive_classes",
-        false_positive_classes,
+        _of_reference(false_positive_classes),
         "What each method's false positives (unmatched against its primary expression) "
         "overlap longest: an event type's component, a non-event or nothing.",
         plot_false_positive_classes,
@@ -4749,7 +5692,7 @@ ANALYSES: tuple[Analysis, ...] = (
     ),
     Analysis(
         "pairwise_agreement",
-        pairwise_agreement,
+        _of_reference(pairwise_agreement),
         "Agreement of every pair of methods against the network truth: Jaccard of their "
         "events, of their true and of their false events, and of the true events found.",
         plot_pairwise_agreement,
@@ -4757,14 +5700,14 @@ ANALYSES: tuple[Analysis, ...] = (
     ),
     Analysis(
         "agreement_dendrogram",
-        agreement_dendrogram,
+        _of_reference(agreement_dendrogram, resampled=False),
         "Methods clustered by average linkage on 1 - Jaccard.",
         plot_agreement_dendrogram,
         "The dendrogram.",
     ),
     Analysis(
         "consensus",
-        consensus,
+        _of_reference(consensus, resampled=False),
         "How many methods found each true event, by type, and how many methods each "
         "group of overlapping false positives spans.",
         plot_consensus,
@@ -4772,7 +5715,7 @@ ANALYSES: tuple[Analysis, ...] = (
     ),
     Analysis(
         "overlap_quality",
-        overlap_quality,
+        _of_reference(overlap_quality),
         "IoU, coverage and temporal precision of each method's matched pairs against its "
         "primary expression, with its recall.",
         plot_overlap_quality,
@@ -4780,7 +5723,7 @@ ANALYSES: tuple[Analysis, ...] = (
     ),
     Analysis(
         "boundary_errors",
-        boundary_errors,
+        _of_reference(boundary_errors),
         "Signed and absolute onset and offset errors (detected minus truth) against the "
         "truth at 10, 25 and 50 % of the peak, each median with its pair count and the "
         "method's recall.",
@@ -4790,7 +5733,7 @@ ANALYSES: tuple[Analysis, ...] = (
     *(
         Analysis(
             f"paired_timing_{expression}",
-            functools.partial(paired_timing, expression=expression),
+            _of_reference(functools.partial(paired_timing, expression=expression)),
             f"For methods whose primary expression is {expression}, each pair's error "
             "differences (A minus B) on the true events both found, with a sign-flip test.",
             plot_paired_timing,
@@ -4800,7 +5743,7 @@ ANALYSES: tuple[Analysis, ...] = (
     ),
     Analysis(
         "method_differences",
-        method_differences,
+        _of_reference(method_differences),
         "How every pair of methods' matched events differ in start and end (A minus B), "
         "and how often A's comes first.",
         plot_method_differences,
@@ -4808,7 +5751,7 @@ ANALYSES: tuple[Analysis, ...] = (
     ),
     Analysis(
         "error_correlations",
-        error_correlations,
+        _of_reference(error_correlations),
         "Spearman correlation of every pair of methods' signed errors on the network "
         "events both found.",
         plot_error_correlations,
@@ -4816,16 +5759,111 @@ ANALYSES: tuple[Analysis, ...] = (
     ),
     Analysis(
         "splits_and_merges",
-        splits_and_merges,
+        _of_reference(splits_and_merges),
         "How often each method splits a true event or merges several, overall and on "
         "ripple doublets.",
         plot_splits_and_merges,
         "Both rates with their intervals.",
     ),
+    Analysis(
+        "operating_curves",
+        lambda inputs: operating_curves(inputs.scores),
+        "Recall against false positives per minute at every setting of each detector's "
+        "sweep, its default and each recipe, against the primary expression, at every "
+        "minimum IoU, with the matched pairs' median errors.",
+        plot_operating_curves,
+        "The curves at IoU 0 by primary expression, recipes as grey points on them.",
+    ),
+    Analysis(
+        "operating_points",
+        _operating_points,
+        "Each detector's recall and median onset and offset errors read off its sweep at "
+        "0.5, 1, 2 and 5 false positives per minute, with intervals; missing where the "
+        "curve does not reach the target.",
+        plot_operating_points,
+        "Recall at each target, per minimum IoU.",
+    ),
+    Analysis(
+        "held_out_thresholds",
+        _held_out_thresholds,
+        "Per detector and target, the setting chosen on the even replicates and its "
+        "recall, false positives and errors on the odd (held-out) replicates alone.",
+        plot_held_out_thresholds,
+        "Held-out recall beside the calibration recall of the chosen setting.",
+    ),
+    *(
+        Analysis(
+            f"robustness_{name}",
+            _robustness_of(measure),
+            f"Each method's {measure.replace('_', ' ')} at every level of each factor, "
+            "and its change from the reference level, paired by replicate.",
+            plot_robustness,
+            "One panel per factor, one line per method.",
+        )
+        for measure, name in _ROBUSTNESS_NAMES.items()
+    ),
+    *(
+        Analysis(
+            f"robustness_crossed_{name}",
+            _robustness_of(measure, crossed=True),
+            f"Each method's {measure.replace('_', ' ')} in every cell of the two crossed "
+            "pairs of factors, and its change from the reference, paired by replicate.",
+            plot_robustness_crossed,
+            "The changes as a heatmap per pair, a row per method.",
+        )
+        for measure, name in _ROBUSTNESS_NAMES.items()
+    ),
+    Analysis(
+        "rates_by_state",
+        _rates_by_state,
+        "Each method's events per minute at rest and while running, beside the true "
+        "rates (network events at rest, theta bursts while running).",
+        plot_rates_by_state,
+        "Both rates per method, the true rates marked.",
+    ),
+    Analysis(
+        "participation_bias",
+        _of_reference(participation_bias),
+        "The recruited cells of the true events each method finds against those of all "
+        "true events with a burst: ratio of means and KS statistic.",
+        plot_participation_bias,
+        "The ratios with their intervals.",
+    ),
+    Analysis(
+        "boundary_effect",
+        _of_reference(boundary_effect),
+        "Units active within the detected bounds minus within the matched truth window, "
+        "for all units and principal ones.",
+        plot_boundary_effect,
+        "The mean differences with their intervals.",
+    ),
+    Analysis(
+        "matching_sensitivity",
+        _matching,
+        "Recall, precision, F1, the IoU distribution, median absolute errors, recall by "
+        "event type and at the target rates, and ranks, at minimum IoU 0, 0.2 and 0.5.",
+        plot_matching_sensitivity,
+        "Recall and precision at each minimum IoU.",
+    ),
+    Analysis(
+        "model_sensitivity",
+        _model(0),
+        "Each result's change under each of the simulator's six alternative models, "
+        "paired with the reference by replicate; unreachable targets stay missing.",
+        plot_model_sensitivity,
+        "Recall changes per alternative, detectors at 1 per minute as triangles.",
+    ),
+    Analysis(
+        "model_sensitivity_orders",
+        _model(1),
+        "Orders of detectors by recall at common false-positive rates in the reference and "
+        "under each alternative model, with intervals and the share of resamples reversed.",
+    ),
 )
 # Figures are saved at this resolution.
 _DPI = 100
 FLOAT_FORMAT = "%.6g"
+CANDIDATES = "candidate_trends"
 
 
 def _png(figure: Figure) -> bytes:
@@ -4837,9 +5875,50 @@ def _png(figure: Figure) -> bytes:
     return buffer.getvalue()
 
 
-def _summary(run_name: str, tables: RunTables, files: Sequence[tuple[str, str]]) -> str:
+def _point_lines(tables: RunTables) -> list[str]:
+    """``summary.md``'s account of the point methods and of interval methods
+    with events of one sample."""
+    points = sorted(
+        set(tables.methods.loc[tables.methods["scoring"] == PEAK_CONTAINMENT, "method"])
+    )
+    lengths = tables.events["end_time"] - tables.events["start_time"]
+    single = sorted(set(_by_intervals(tables.events.loc[lengths <= 0]).loc[:, "method"]))
+    lines = [
+        (
+            "Point inventories ("
+            + (", ".join(f"`{method}`" for method in points) or "none in this run")
+            + f'; the catalog\'s output "{POINT_OUTPUT}") return one time point per event, '
+            "which no interval rule can credit. They are scored by peak containment: a "
+            "point matches a truth window of the method's primary expression that contains "
+            "it, one to one, the most pairs. Only recall, precision and false positives per "
+            "minute are reported for them (`point_inventories.csv`, and rows marked "
+            "`peak_containment` in the robustness and model sensitivity tables), never "
+            "pooled with interval scores; they are left out of the detection profile, false "
+            "positive classes, agreement, consensus, overlap, boundary errors, paired timing, "
+            "splits and merges, operating curves, participation and matching sensitivity."
+        )
+    ]
+    if single:
+        lines.append("")
+        lines.append(
+            "Interval methods whose events can be one sample long ("
+            + ", ".join(f"`{method}`" for method in single)
+            + ") keep the interval rule: the catalog, not the events' lengths, decides."
+        )
+    return lines
+
+
+def _summary(
+    run_name: str,
+    tables: RunTables,
+    files: Sequence[tuple[str, str]],
+    results: Mapping[str, pd.DataFrame],
+    validation: pd.DataFrame,
+    scores: ConditionScores | None = None,
+) -> str:
     """``summary.md``: what was analysed, the conventions, each file with
-    its sentence, and the failures."""
+    its sentence, the failures (of the reference, and of every condition
+    when ``scores`` is given), and the lists the analyses call for."""
     main = main_rows(tables.methods)
     counts = failure_counts(tables)
     failed = counts[counts["n_failures"] > 0]
@@ -4850,16 +5929,22 @@ def _summary(run_name: str, tables: RunTables, files: Sequence[tuple[str, str]])
         (
             f"`analyze.py` on `output/{run_name}/combined/`: {len(tables.sessions)} "
             f"sessions of {conditions}, {len(main)} methods (detectors at their defaults, "
-            "every recipe)."
+            "every recipe), unless a file says otherwise (the operating curves read the "
+            "sweeps; robustness and model sensitivity every condition)."
         ),
+        "",
         (
             "Events are matched one to one to the truth windows at 10 % of the peak (IoU "
             "0), each method against its primary expression unless a file says otherwise. "
             "Times are seconds; a signed error is detected minus truth (negative: early), a "
-            "difference between methods A minus B, A named first. Intervals are 95 % "
-            "paired-bootstrap intervals over sessions; p-values are two-sided sign-flip "
-            "tests over sessions."
+            "difference between methods A minus B, A named first, a change between "
+            "conditions the other condition minus the reference. Intervals are 95 % "
+            "paired-bootstrap intervals over sessions within a condition and over "
+            "replicates across conditions; p-values are two-sided sign-flip tests over the "
+            "same units."
         ),
+        "",
+        *_point_lines(tables),
         "",
         "## Files",
         "",
@@ -4875,14 +5960,135 @@ def _summary(run_name: str, tables: RunTables, files: Sequence[tuple[str, str]])
         "",
     ]
     if failed.empty:
-        lines.append("No method failed on these sessions.")
+        lines.append("No method failed on the reference condition's sessions.")
     else:
         lines += [
             f"- `{row.method}` ({row.setting}): {row.n_failures} of "
             f"{row.n_sessions + row.n_failures} sessions; {row.error}"
             for row in failed.itertuples()
         ]
+    if scores is not None:
+        everywhere = scores.failures.merge(
+            scores.sessions[["session_id", "condition_id"]], on="session_id"
+        )
+        grouped = everywhere.groupby(["method", "setting", "condition_id"]).size()
+        lines += [
+            "",
+            (
+                f"Across every condition, {len(everywhere)} calls failed (sweeps included), "
+                "by method, setting and condition:"
+            ),
+            "",
+        ]
+        lines += [
+            f"- `{method}` ({setting}), `{condition}`: {count} sessions"
+            for (method, setting, condition), count in grouped.items()
+        ] or ["None."]
+    robust = results.get("robustness_recall")
+    if robust is not None:
+        moved = recall_changes(robust)
+        lines += [
+            "",
+            f"## Recall changing by more than {RECALL_CHANGE:g} across a factor",
+            "",
+            (
+                "Pooled recall against the primary expression at each level, over the "
+                "replicates the levels share (`robustness_recall.csv`, which has each "
+                "change's interval)."
+            ),
+            "",
+        ]
+        lines += [
+            f"- `{row.factor}`: `{row.method}` ({row.setting}) {row.recall_lowest:.3f} at "
+            f"{row.lowest} to {row.recall_highest:.3f} at {row.highest}"
+            for row in moved.itertuples(index=False)
+        ] or ["None."]
+    sensitivity = results.get("matching_sensitivity")
+    if sensitivity is not None:
+        ranks = order_changes(sensitivity)
+        levels = [column for column in ranks.columns if column.startswith("rank_")]
+        lines += [
+            "",
+            "## Order changes with the minimum IoU",
+            "",
+            "Rank by recall among methods of the same primary expression (1 best, ties "
+            "sharing the best rank) at "
+            + ", ".join(level.removeprefix("rank_") for level in levels)
+            + " (`matching_sensitivity.csv`).",
+            "",
+        ]
+        lines += [
+            f"- `{row['method']}` ({row['primary_expression']}): "
+            + ", ".join(str(row[level]) for level in levels)
+            for row in ranks.to_dict("records")
+        ] or ["None."]
+    changes = results.get("model_sensitivity")
+    orders = results.get("model_sensitivity_orders")
+    if changes is not None and orders is not None:
+        lines += [
+            "",
+            "## Model sensitivity",
+            "",
+            (
+                "Each alternative model against the reference, paired by replicate "
+                "(`model_sensitivity.csv`, `model_sensitivity_orders.csv`). A statement here "
+                "is a reference order of detectors by recall at a common false-positive rate "
+                "that its interval supports; it survives an alternative when that "
+                "alternative's interval supports the same order. The alternatives are not "
+                "pooled: there is no overall winner across them, and one factor at a time "
+                "does not establish robustness to combinations of assumptions. Recipes have "
+                "one setting each, so their changes are reported but not ordered. The "
+                "validation report's changed target statistics are listed beside each."
+            ),
+            "",
+            *model_sensitivity_statements(changes, orders, validation),
+            "",
+            (
+                "Under `spatial_profile=local` timing errors are measured from the latent "
+                "anchor, the component's centre on its anchor channel; the other channels' "
+                "delays are part of that comparison. Under `fast_gamma_band=nearby` gamma "
+                "bursts at 90-140 Hz are non-events by this benchmark's declared taxonomy, "
+                "not by any physiological claim. Attribution computed on the reference alone "
+                "remains conditional on the reference simulator."
+            ),
+        ]
+    lines += [
+        "",
+        "## Held-out thresholds",
+        "",
+        (
+            "No threshold is recommended here. `held_out_thresholds.csv` gives, per detector "
+            "and target rate, the setting chosen on the even replicates and its performance "
+            "on the odd ones alone: the numbers a recommendation would quote. The operating "
+            "curves stay descriptive."
+        ),
+        "",
+        "## Trends and spot checks",
+        "",
+        (
+            f"No trend is stated yet. `{CANDIDATES}.csv` lists candidates with their evidence "
+            "rows; each is reported only once its underlying events have been looked at (a "
+            "figure in `spot_checks/`, and a sentence here), and once it is checked not to "
+            "come from failures, empty sweeps or a unit error."
+        ),
+    ]
     return "\n".join(lines) + "\n"
+
+
+def _validation(run_directory: Path) -> pd.DataFrame:
+    """``validation_changes`` of the report the run was checked against
+    (``run_spec.json``), read from the repository; empty when not found."""
+    spec = run_directory / "run_spec.json"
+    empty = pd.DataFrame(
+        columns=["alternative", "check", "statistic", "reference", "observed"]
+    )
+    if not spec.exists():
+        return empty
+    report = json.loads(spec.read_text()).get("validation_report") or {}
+    checks = REPOSITORY / str(report.get("path", "")) if report.get("path") else None
+    if checks is None or not checks.with_name("checks.csv").exists():
+        return empty
+    return validation_changes(pd.read_csv(checks.with_name("checks.csv")))
 
 
 def analyze_run(
@@ -4898,11 +6104,12 @@ def analyze_run(
     Parameters
     ----------
     run_directory : str or path-like
-        ``examples/benchmark/output/<run_name>``; its ``combined/`` is read.
+        ``examples/benchmark/output/<run_name>``; its ``combined/`` and
+        ``conditions.csv`` are read.
     results_directory : str or path-like
         Rebuilt from scratch (in ``<name>.partial``, renamed into place):
-        ``<name>.csv`` per analysis, ``<name>.png`` per figure and
-        ``summary.md``.
+        ``<name>.csv`` per analysis, ``<name>.png`` per figure (none for an
+        empty table), ``candidate_trends.csv`` and ``summary.md``.
     workers : int, optional
         Processes for matching the sessions again.
     figures : bool, optional
@@ -4912,7 +6119,8 @@ def analyze_run(
     Returns
     -------
     seconds : dict of str to float
-        Wall time of loading, matching, each analysis's table and each figure.
+        Wall time of loading, matching, loading every condition's scores,
+        each analysis's table and each figure.
 
     Raises
     ------
@@ -4925,27 +6133,47 @@ def analyze_run(
     tables = load_run(root / "combined")
     seconds["load"] = wall_clock.perf_counter() - started
     started = wall_clock.perf_counter()
-    matches = match_run(tables, workers=max(1, min(workers, len(tables.sessions))))
+    matches = match_run(
+        tables, workers=max(1, min(workers, len(tables.sessions))), levels=MATCH_IOU_LEVELS
+    )
     seconds["match"] = wall_clock.perf_counter() - started
+    started = wall_clock.perf_counter()
+    scores = load_scores(root, workers=workers)
+    seconds["scores"] = wall_clock.perf_counter() - started
+    inputs = Inputs(tables, matches, scores, _validation(root))
     if figures:
         import matplotlib as mpl
 
         mpl.use("Agg")
-    files = []
+    files, results = [], {}
     with replace_directory(Path(results_directory)) as partial:
         for analysis in analyses:
             started = wall_clock.perf_counter()
-            table = analysis.table(tables, matches)
+            table = analysis.table(inputs)
             seconds[analysis.name] = wall_clock.perf_counter() - started
+            results[analysis.name] = table
             text = table.to_csv(index=False, float_format=FLOAT_FORMAT)
             write_result(partial / f"{analysis.name}.csv", text.encode())
             files.append((f"{analysis.name}.csv", analysis.description))
-            if figures and analysis.figure is not None:
+            if figures and analysis.figure is not None and len(table):
                 started = wall_clock.perf_counter()
                 write_result(partial / f"{analysis.name}.png", _png(analysis.figure(table)))
                 seconds[f"{analysis.name}.png"] = wall_clock.perf_counter() - started
                 files.append((f"{analysis.name}.png", analysis.figure_description))
-        summary = _summary(root.name, tables, files)
+        trends = candidate_trends(results)
+        text = trends.to_csv(index=False, float_format=FLOAT_FORMAT)
+        write_result(partial / f"{CANDIDATES}.csv", text.encode())
+        files.append(
+            (
+                f"{CANDIDATES}.csv",
+                (
+                    "Candidate trends drawn from the tables, each with its evidence and the "
+                    "spot check to draw; none is a conclusion until its events have been "
+                    "looked at."
+                ),
+            )
+        )
+        summary = _summary(root.name, tables, files, results, inputs.validation, scores)
         write_result(partial / "summary.md", summary.encode())
     return seconds
 
