@@ -1150,59 +1150,184 @@ def match_run(
 
 # Intervals over groups
 
-# A statistic of every group at once: (group codes, rows, number of groups)
-# to an array of shape (n_statistics, n_groups).
-GroupStatistic = Callable[[np.ndarray[Any, Any], pd.DataFrame, int], np.ndarray[Any, Any]]
+
+class GroupStatistic:
+    """Statistics of every group of a frame's rows at once, and their
+    resamples over units.
+
+    Attributes
+    ----------
+    columns : tuple of str
+        The frame's columns it reads.
+    """
+
+    columns: tuple[str, ...]
+
+    def __call__(
+        self, codes: np.ndarray[Any, Any], frame: pd.DataFrame, n_groups: int
+    ) -> np.ndarray[Any, Any]:
+        """The statistics of each group.
+
+        Parameters
+        ----------
+        codes : ndarray of int, shape (n_rows,)
+            Each row's group, from 0.
+        frame : pandas.DataFrame
+            The rows, with ``columns``.
+        n_groups : int
+
+        Returns
+        -------
+        statistics : ndarray, shape (n_statistics, n_groups)
+        """
+        raise NotImplementedError
+
+    def resampled(
+        self,
+        codes: np.ndarray[Any, Any],
+        units: np.ndarray[Any, Any],
+        frame: pd.DataFrame,
+        n_groups: int,
+        picks: np.ndarray[Any, Any],
+    ) -> np.ndarray[Any, Any]:
+        """The statistics of each resample of units, as ``paired_bootstrap``
+        computes them on the resample's rows.
+
+        Parameters
+        ----------
+        codes : ndarray of int, shape (n_rows,)
+        units : ndarray of int, shape (n_rows,)
+            Each row's unit, from 0.
+        frame : pandas.DataFrame
+        n_groups : int
+        picks : ndarray of int, shape (n_resamples, n_units)
+            The units each resample draws, in order (``resample_picks``).
+
+        Returns
+        -------
+        statistics : ndarray, shape (n_resamples, n_statistics, n_groups)
+        """
+        raise NotImplementedError
+
+
+class _Sums(GroupStatistic):
+    """Statistics of sums over each group's rows: ``terms(frame)`` gives the
+    values summed, each shape (n_rows,), by name, and ``combine(sums)`` the
+    statistics, shape (n_statistics, ...), from each term's sums of any shape.
+
+    A resample's sums are added in the order its units are drawn, each unit's
+    rows in the frame's order summed first: ``paired_bootstrap``'s sums to the
+    bit where a unit has one row per group or the terms are whole numbers.
+    """
+
+    def __init__(
+        self,
+        columns: Sequence[str],
+        terms: Callable[[pd.DataFrame], dict[str, np.ndarray[Any, Any]]],
+        combine: Callable[[Mapping[str, np.ndarray[Any, Any]]], np.ndarray[Any, Any]],
+    ) -> None:
+        self.columns = tuple(columns)
+        self.terms = terms
+        self.combine = combine
+
+    def __call__(
+        self, codes: np.ndarray[Any, Any], frame: pd.DataFrame, n_groups: int
+    ) -> np.ndarray[Any, Any]:
+        return self.combine(
+            {
+                name: np.bincount(codes, weights=values, minlength=n_groups)
+                for name, values in self.terms(frame).items()
+            }
+        )
+
+    def resampled(
+        self,
+        codes: np.ndarray[Any, Any],
+        units: np.ndarray[Any, Any],
+        frame: pd.DataFrame,
+        n_groups: int,
+        picks: np.ndarray[Any, Any],
+    ) -> np.ndarray[Any, Any]:
+        sums = {}
+        for name, values in self.terms(frame).items():
+            per_unit = np.zeros((picks.shape[1], n_groups))
+            np.add.at(per_unit, (units, codes), values)
+            total = np.zeros((len(picks), n_groups))
+            for drawn in picks.T:
+                total += per_unit[drawn]
+            sums[name] = total
+        return np.moveaxis(self.combine(sums), 0, 1)
+
+
+class _Medians(GroupStatistic):
+    """Each column's median over each group's values, NaN left out and NaN
+    for a group with none."""
+
+    def __init__(self, columns: Sequence[str]) -> None:
+        self.columns = tuple(columns)
+
+    def __call__(
+        self, codes: np.ndarray[Any, Any], frame: pd.DataFrame, n_groups: int
+    ) -> np.ndarray[Any, Any]:
+        medians = frame[list(self.columns)].groupby(codes).median().reindex(range(n_groups))
+        return np.asarray(medians, dtype=float).T
+
+    def resampled(
+        self,
+        codes: np.ndarray[Any, Any],
+        units: np.ndarray[Any, Any],
+        frame: pd.DataFrame,
+        n_groups: int,
+        picks: np.ndarray[Any, Any],
+    ) -> np.ndarray[Any, Any]:
+        weights = _pick_counts(picks)
+        found = []
+        for column in self.columns:
+            values = frame[column].to_numpy(dtype=float)
+            known = ~np.isnan(values)
+            medians = WeightedMedians(values[known], codes[known], n_groups)
+            drawn = units[known]
+            found.append([medians(counts[drawn]) for counts in weights])
+        return np.stack(found, axis=1)
 
 
 def _ratio_of_sums(*ratios: tuple[str, str]) -> GroupStatistic:
     """Each (numerator, denominator) column pair's pooled ratio per group,
     NaN where the denominator sums to 0."""
+    columns = tuple(dict.fromkeys(itertools.chain.from_iterable(ratios)))
 
-    def statistic(
-        codes: np.ndarray[Any, Any], frame: pd.DataFrame, n_groups: int
-    ) -> np.ndarray[Any, Any]:
-        sums = {
-            column: np.bincount(
-                codes, weights=frame[column].to_numpy(dtype=float), minlength=n_groups
-            )
-            for column in dict.fromkeys(itertools.chain.from_iterable(ratios))
-        }
+    def combine(sums: Mapping[str, np.ndarray[Any, Any]]) -> np.ndarray[Any, Any]:
         with np.errstate(invalid="ignore", divide="ignore"):
             return np.array([sums[top] / sums[bottom] for top, bottom in ratios])
 
-    return statistic
+    def terms(frame: pd.DataFrame) -> dict[str, np.ndarray[Any, Any]]:
+        return {column: frame[column].to_numpy(dtype=float) for column in columns}
+
+    return _Sums(columns, terms, combine)
 
 
 def _means(*columns: str) -> GroupStatistic:
     """Each column's mean per group over its finite values, NaN for none."""
 
-    def statistic(
-        codes: np.ndarray[Any, Any], frame: pd.DataFrame, n_groups: int
-    ) -> np.ndarray[Any, Any]:
-        means = []
+    def terms(frame: pd.DataFrame) -> dict[str, np.ndarray[Any, Any]]:
+        found = {}
         for column in columns:
             values = frame[column].to_numpy(dtype=float)
             finite = np.isfinite(values)
-            total = np.bincount(codes[finite], weights=values[finite], minlength=n_groups)
-            count = np.bincount(codes[finite], minlength=n_groups)
-            with np.errstate(invalid="ignore", divide="ignore"):
-                means.append(total / count)
-        return np.array(means)
+            found[f"{column} total"] = np.where(finite, values, 0.0)
+            found[f"{column} count"] = finite.astype(float)
+        return found
 
-    return statistic
+    def combine(sums: Mapping[str, np.ndarray[Any, Any]]) -> np.ndarray[Any, Any]:
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return np.array([sums[f"{c} total"] / sums[f"{c} count"] for c in columns])
+
+    return _Sums(columns, terms, combine)
 
 
 def _medians(*columns: str) -> GroupStatistic:
     """Each column's median per group over its values, NaN for none."""
-
-    def statistic(
-        codes: np.ndarray[Any, Any], frame: pd.DataFrame, n_groups: int
-    ) -> np.ndarray[Any, Any]:
-        medians = frame[list(columns)].groupby(codes).median().reindex(range(n_groups))
-        return np.asarray(medians, dtype=float).T
-
-    return statistic
+    return _Medians(columns)
 
 
 def grouped_intervals(
@@ -1210,7 +1335,6 @@ def grouped_intervals(
     by: Sequence[str],
     statistic: GroupStatistic,
     names: Sequence[str],
-    columns: Sequence[str],
     *,
     n_resamples: int = N_RESAMPLES,
 ) -> pd.DataFrame:
@@ -1219,26 +1343,22 @@ def grouped_intervals(
     Parameters
     ----------
     frame : pandas.DataFrame
-        With ``session_id``, ``replicate``, the ``by`` columns and ``columns``.
+        With ``session_id``, the ``by`` columns and the statistic's columns.
     by : sequence of str
         The columns whose values name a group.
-    statistic : callable
-        ``statistic(codes, rows, n_groups)``: an array of shape
-        ``(len(names), n_groups)``, the statistics of each group, ``codes``
-        numbering the groups of ``rows`` from 0.
+    statistic : GroupStatistic
+        Of shape ``(len(names), n_groups)``.
     names : sequence of str
         The statistics' names.
-    columns : sequence of str
-        The columns ``statistic`` reads.
     n_resamples : int, optional
 
     Returns
     -------
     intervals : pandas.DataFrame
         One row per group, sorted by ``by``: the ``by`` columns, then each
-        name's estimate, ``<name>_low`` and ``<name>_high`` (95 %,
-        ``paired_bootstrap`` with ``key="session_id"``, every group of a
-        resample from the same sessions).
+        name's estimate, ``<name>_low`` and ``<name>_high`` (95 %, over
+        ``paired_bootstrap``'s resamples of sessions, ``resample_picks``,
+        every group of a resample from the same sessions).
     """
     grouped = frame.groupby(list(by), sort=True)
     keys = grouped.size().reset_index()[list(by)]
@@ -1247,27 +1367,20 @@ def grouped_intervals(
         keys[name] = keys[f"{name}_low"] = keys[f"{name}_high"] = np.nan
     if not n_groups:
         return keys
-    rows = frame[["session_id", "replicate", *columns]].assign(
-        _group=grouped.ngroup().to_numpy()
-    )
-
-    def flat(resampled: pd.DataFrame) -> pd.Series:
-        codes = resampled["_group"].to_numpy()
-        return pd.Series(statistic(codes, resampled, n_groups).ravel())
-
-    found = paired_bootstrap(rows, flat, key="session_id", n_resamples=n_resamples)
+    codes = grouped.ngroup().to_numpy()
+    rows = frame[list(statistic.columns)]
+    # the sessions in the order paired_bootstrap lists them
+    units, sessions = pd.factorize(frame["session_id"], sort=False)
+    picks = resample_picks(len(sessions), n_resamples=n_resamples)
+    estimate = statistic(codes, rows, n_groups)
+    resampled = statistic.resampled(codes, units, rows, n_groups, picks)
+    low, high = percentile_intervals(resampled.reshape(n_resamples, -1))
     for position, name in enumerate(names):
-        block = found.iloc[position * n_groups : (position + 1) * n_groups]
-        keys[name] = block["estimate"].to_numpy()
-        keys[f"{name}_low"] = block["low"].to_numpy()
-        keys[f"{name}_high"] = block["high"].to_numpy()
+        block = slice(position * n_groups, (position + 1) * n_groups)
+        keys[name] = estimate[position]
+        keys[f"{name}_low"] = low[block]
+        keys[f"{name}_high"] = high[block]
     return keys
-
-
-def _with_replicate(frame: pd.DataFrame, tables: RunTables) -> pd.DataFrame:
-    """``frame`` with each session's ``replicate``."""
-    replicates = tables.sessions.set_index("session_id")["replicate"]
-    return frame.assign(replicate=frame["session_id"].map(replicates).to_numpy())
 
 
 def _with_failures(frame: pd.DataFrame, tables: RunTables) -> pd.DataFrame:
@@ -1362,14 +1475,13 @@ def recall(
     frame = frame.join(n_truth, on=["session_id", "expression"]).join(
         n_found, on=[*_KEY, "expression"]
     )
-    frame = _with_replicate(frame.fillna({"n_truth": 0, "n_found": 0}), tables)
+    frame = frame.fillna({"n_truth": 0, "n_found": 0})
     by = ["method", "setting", "expression"]
     intervals = grouped_intervals(
         frame,
         by,
         _ratio_of_sums(("n_found", "n_truth")),
         ["recall"],
-        ["n_found", "n_truth"],
         n_resamples=n_resamples,
     )
     totals = frame.groupby(by)[["n_truth", "n_found"]].sum().astype(int).reset_index()
@@ -1718,16 +1830,39 @@ def _participation(
 # Resampling with weights: the draws of paired_bootstrap, as counts per unit
 
 
+def resample_picks(
+    n_units: int, *, n_resamples: int = N_RESAMPLES, seed: int = SEED
+) -> np.ndarray[Any, Any]:
+    """The units each resample of ``paired_bootstrap`` draws, in order.
+
+    ``paired_bootstrap`` draws the values of its key, in the order
+    ``frame[key].unique()`` lists them, with replacement; these are the
+    positions it draws, so a statistic of the resamples can be computed
+    without building each resample's frame.
+
+    Parameters
+    ----------
+    n_units : int
+    n_resamples : int, optional
+    seed : int, optional
+
+    Returns
+    -------
+    picks : ndarray of int, shape (n_resamples, n_units)
+    """
+    rng = np.random.default_rng(seed)
+    picks = [rng.choice(n_units, size=n_units, replace=True) for _ in range(n_resamples)]
+    return np.array(picks, dtype=int).reshape(n_resamples, n_units)
+
+
 def resample_weights(
     n_units: int, *, n_resamples: int = N_RESAMPLES, seed: int = SEED
 ) -> np.ndarray[Any, Any]:
     """How often each unit is drawn in each resample of ``paired_bootstrap``.
 
-    ``paired_bootstrap`` draws the values of its key, in the order
-    ``frame[key].unique()`` lists them, with replacement; a unit drawn ``k``
-    times counts ``k`` times. A statistic that pools over units is then the
-    same computed with these counts as weights, without building each
-    resample's frame.
+    ``resample_picks`` as counts: a unit drawn ``k`` times counts ``k``
+    times. A statistic that pools over units is then the same computed with
+    these counts as weights.
 
     Parameters
     ----------
@@ -1740,10 +1875,13 @@ def resample_weights(
     weights : ndarray, shape (n_resamples, n_units)
         Whole numbers; each row sums to ``n_units``.
     """
-    rng = np.random.default_rng(seed)
-    weights = np.zeros((n_resamples, n_units))
-    for draw in weights:
-        draw += np.bincount(rng.choice(n_units, size=n_units, replace=True), minlength=n_units)
+    return _pick_counts(resample_picks(n_units, n_resamples=n_resamples, seed=seed))
+
+
+def _pick_counts(picks: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
+    """How often each row of ``resample_picks``' draws each unit."""
+    weights = np.zeros(picks.shape)
+    np.add.at(weights, (np.arange(len(picks))[:, np.newaxis], picks), 1.0)
     return weights
 
 
@@ -1857,14 +1995,13 @@ def detection_profile(
         pd.DataFrame({"type": rd.EVENT_TYPES}), how="cross"
     )
     frame = frame.join(n_true, on=["session_id", "type"]).join(n_found, on=[*_KEY, "type"])
-    frame = _with_replicate(frame.fillna({"n_true": 0, "n_found": 0}), tables)
+    frame = frame.fillna({"n_true": 0, "n_found": 0})
     by = ["method", "setting", "type"]
     intervals = grouped_intervals(
         frame,
         by,
         _ratio_of_sums(("n_found", "n_true")),
         ["recall"],
-        ["n_found", "n_true"],
         n_resamples=n_resamples,
     )
     totals = frame.groupby(by)[["n_true", "n_found"]].sum().astype(int).reset_index()
@@ -1924,14 +2061,12 @@ def false_positive_classes(
     frame = _by_intervals(tables.ran).merge(pd.DataFrame({"label": labels}), how="cross")
     frame = frame.join(counted.rename("n_events"), on=[*_KEY, "label"]).fillna({"n_events": 0})
     frame["n_unmatched"] = frame.groupby(_KEY)["n_events"].transform("sum")
-    frame = _with_replicate(frame, tables)
     by = ["method", "setting", "label"]
     intervals = grouped_intervals(
         frame,
         by,
         _ratio_of_sums(("n_events", "n_unmatched")),
         ["fraction"],
-        ["n_events", "n_unmatched"],
         n_resamples=n_resamples,
     )
     totals = frame.groupby(by)[["n_events", "n_unmatched"]].sum().astype(int).reset_index()
@@ -2021,7 +2156,7 @@ def splits_and_merges(
         windows), ``merge_rate`` with ``_low`` and ``_high``;
         ``primary_expression``, ``n_sessions``, ``n_failures``.
     """
-    frame = _with_replicate(matches.overlaps, tables)
+    frame = matches.overlaps
     by = ["method", "setting", "subset"]
     counts = ["n_truth", "n_split", "n_detected", "n_merged"]
     intervals = grouped_intervals(
@@ -2029,7 +2164,6 @@ def splits_and_merges(
         by,
         _ratio_of_sums(("n_split", "n_truth"), ("n_merged", "n_detected")),
         ["split_rate", "merge_rate"],
-        counts,
         n_resamples=n_resamples,
     )
     totals = frame.groupby(by)[counts].sum().astype(int).reset_index()
@@ -2095,7 +2229,6 @@ def point_inventories(
         n_unmatched=own["n_detected"] - own["n_matched"],
         minutes=own["session_id"].map(_minutes_outside(tables.sessions)).to_numpy(),
     )
-    frame = _with_replicate(frame, tables)
     by = ["method", "setting"]
     intervals = grouped_intervals(
         frame,
@@ -2106,7 +2239,6 @@ def point_inventories(
             ("n_unmatched", "minutes"),
         ),
         ["recall", "precision", "false_positives_per_minute"],
-        [*counts, "n_unmatched", "minutes"],
         n_resamples=n_resamples,
     )
     totals = frame.groupby(by)[[*counts, "minutes"]].sum().reset_index()
@@ -2143,10 +2275,10 @@ def _session_means(
     ``expected`` (``method_a``, ``method_b``, ``truth_expression``) has a
     row, a pair never compared its values missing and ``n_sessions`` 0;
     default every pair of main interval methods against the network truth."""
-    frame = _with_replicate(comparisons, tables)
+    frame = comparisons
     by = ["method_a", "method_b", "truth_expression"]
     means = grouped_intervals(
-        frame, by, _means(*columns), list(columns), list(columns), n_resamples=n_resamples
+        frame, by, _means(*columns), list(columns), n_resamples=n_resamples
     )
     counted = [f"{column}_n_sessions" for column in columns]
     finite = pd.DataFrame(
@@ -2425,14 +2557,13 @@ def overlap_quality(
         and ``recall_high``, ``primary_expression``, ``n_sessions``,
         ``n_failures``.
     """
-    pairs = _with_replicate(_primary_pairs(tables, matches), tables)
+    pairs = _primary_pairs(tables, matches)
     by = ["method", "setting"]
     quality = _quantiles(pairs, by, OVERLAP_MEASURES)
     medians = grouped_intervals(
         pairs,
         by,
         _medians(*OVERLAP_MEASURES),
-        OVERLAP_MEASURES,
         OVERLAP_MEASURES,
         n_resamples=n_resamples,
     )
@@ -2530,12 +2661,10 @@ def boundary_errors(
     pairs = matches.pairs[matches.pairs["minimum_iou"] == 0].merge(
         scored, on=["method", "setting", "expression"]
     )
-    pairs, names = _errors(_with_replicate(pairs, tables))
+    pairs, names = _errors(pairs)
     by = ["method", "setting", "expression"]
     errors = _quantiles(pairs, by, names)
-    medians = grouped_intervals(
-        pairs, by, _medians(*names), names, names, n_resamples=n_resamples
-    )
+    medians = grouped_intervals(pairs, by, _medians(*names), names, n_resamples=n_resamples)
     errors = errors.merge(_long_intervals(medians, by, names), on=[*by, "measure"])
     errors["iqr"] = errors["q75"] - errors["q25"]
     found = recall(tables, matches, scored, n_resamples=n_resamples)
@@ -2641,11 +2770,9 @@ def paired_timing(
     pair = ["method_a", "method_b"]
     pooled = shared.groupby(pair)[names].median()
     n_shared = shared.groupby(pair).size().rename("n_shared")
-    per_session = _with_replicate(
-        shared.groupby([*pair, "session_id"])[names].median().reset_index(), tables
-    )
+    per_session = shared.groupby([*pair, "session_id"])[names].median().reset_index()
     estimates = grouped_intervals(
-        per_session, pair, _means(*names), names, names, n_resamples=n_resamples
+        per_session, pair, _means(*names), names, n_resamples=n_resamples
     ).set_index(pair)
     tests = _sign_flips(per_session, pair, names).set_index(pair)
     summary = (
@@ -4552,7 +4679,7 @@ def matching_sensitivity(
         found = at_level.groupby(_KEY).size().rename("n_matched")
         counted = frame.join(found, on=_KEY).fillna({"n_matched": 0}).assign(minimum_iou=level)
         parts.append(counted)
-    counted = _with_replicate(pd.concat(parts, ignore_index=True), tables)
+    counted = pd.concat(parts, ignore_index=True)
     counted = counted.assign(
         twice_matched=2 * counted["n_matched"],
         n_either=counted["n_reference"] + counted["n_detected"],
@@ -4566,7 +4693,6 @@ def matching_sensitivity(
             ("twice_matched", "n_either"),
         ),
         ["recall", "precision", "f1"],
-        ["n_matched", "n_reference", "n_detected", "twice_matched", "n_either"],
         n_resamples=n_resamples,
     )
     totals = counted.groupby([*by, "primary_expression"])[
@@ -4761,7 +4887,7 @@ def rates_by_state(
             }
         )
     frame = tables.ran.join(counted, on=_KEY).fillna({"rest": 0, "running": 0})
-    frame = _with_replicate(frame.merge(pd.DataFrame(truth), on="session_id"), tables)
+    frame = frame.merge(pd.DataFrame(truth), on="session_id")
     parts = []
     for state in STATES:
         part = frame.assign(
@@ -4770,7 +4896,7 @@ def rates_by_state(
             minutes=frame[f"{state}_minutes"],
             true_events=frame[f"{state}_true"],
         )
-        parts.append(part[[*_KEY, "replicate", "state", "n_events", "minutes", "true_events"]])
+        parts.append(part[[*_KEY, "state", "n_events", "minutes", "true_events"]])
     long = pd.concat(parts, ignore_index=True)
     by = ["method", "setting", "state"]
     intervals = grouped_intervals(
@@ -4778,7 +4904,6 @@ def rates_by_state(
         by,
         _ratio_of_sums(("n_events", "minutes"), ("true_events", "minutes")),
         ["rate", "true_rate"],
-        ["n_events", "minutes", "true_events"],
         n_resamples=n_resamples,
     )
     totals = long.groupby(by)[["n_events", "minutes", "true_events"]].sum().reset_index()
@@ -4805,18 +4930,21 @@ def _burst_participants(tables: RunTables) -> pd.DataFrame:
     return _concat(parts, ["session_id", "id", "n_participants"])
 
 
-def _ratio_of_means(
-    codes: np.ndarray[Any, Any], frame: pd.DataFrame, n_groups: int
-) -> np.ndarray[Any, Any]:
+def _ratio_of_means() -> GroupStatistic:
     """Per group, the mean of the matched events' participants over the
     mean of all events'."""
-    sums = {
-        column: np.bincount(codes, weights=frame[column].to_numpy(float), minlength=n_groups)
-        for column in ("matched_sum", "matched_n", "all_sum", "all_n")
-    }
-    with np.errstate(invalid="ignore", divide="ignore"):
-        ratio = (sums["matched_sum"] / sums["matched_n"]) / (sums["all_sum"] / sums["all_n"])
-    return ratio[np.newaxis]
+    columns = ("matched_sum", "matched_n", "all_sum", "all_n")
+
+    def terms(frame: pd.DataFrame) -> dict[str, np.ndarray[Any, Any]]:
+        return {column: frame[column].to_numpy(dtype=float) for column in columns}
+
+    def combine(sums: Mapping[str, np.ndarray[Any, Any]]) -> np.ndarray[Any, Any]:
+        with np.errstate(invalid="ignore", divide="ignore"):
+            matched = sums["matched_sum"] / sums["matched_n"]
+            ratio: np.ndarray[Any, Any] = matched / (sums["all_sum"] / sums["all_n"])
+        return ratio[np.newaxis]
+
+    return _Sums(columns, terms, combine)
 
 
 def participation_bias(
@@ -4865,14 +4993,13 @@ def participation_bias(
         .join(matched, on=_KEY)
         .join(every, on="session_id")
     )
-    frame = _with_replicate(frame.fillna(0.0), tables)
+    frame = frame.fillna(0.0)
     by = ["method", "setting"]
     intervals = grouped_intervals(
         frame,
         by,
-        _ratio_of_means,
+        _ratio_of_means(),
         ["ratio_of_means"],
-        ["matched_sum", "matched_n", "all_sum", "all_n"],
         n_resamples=n_resamples,
     )
     rows = []
@@ -4973,16 +5100,13 @@ def boundary_effect(
         )
         for selection, column in SELECTIONS.items()
     ]
-    long = _with_replicate(
-        _concat(parts, [*_KEY, "selection", "detected", "truth", "difference"]), tables
-    )
+    long = _concat(parts, [*_KEY, "selection", "detected", "truth", "difference"])
     by = ["method", "setting", "selection"]
     intervals = grouped_intervals(
         long,
         by,
         _means("difference"),
         ["mean_difference"],
-        ["difference"],
         n_resamples=n_resamples,
     )
     summary = long.groupby(by).agg(
@@ -5071,12 +5195,9 @@ def appendix_expressions(
         [frame.fillna(dict.fromkeys(counts, 0)), main_rows(matches.points)],
         ["session_id", *by, *counts],
     ).astype(dict.fromkeys(counts, int))
-    frame = _with_replicate(
-        frame.assign(
-            n_unmatched=frame["n_detected"] - frame["n_matched"],
-            minutes=frame["session_id"].map(_minutes_outside(tables.sessions)).to_numpy(),
-        ),
-        tables,
+    frame = frame.assign(
+        n_unmatched=frame["n_detected"] - frame["n_matched"],
+        minutes=frame["session_id"].map(_minutes_outside(tables.sessions)).to_numpy(),
     )
     rates = grouped_intervals(
         frame,
@@ -5087,23 +5208,19 @@ def appendix_expressions(
             ("n_unmatched", "minutes"),
         ),
         ["recall", "precision", "false_positives_per_minute"],
-        [*counts, "n_unmatched", "minutes"],
         n_resamples=n_resamples,
     )
     totals = frame.groupby(by)[[*counts, "minutes"]].sum().reset_index()
     appendix = totals.merge(rates, on=by)
-    pairs = _with_replicate(
-        found.assign(
-            **{
-                name: np.abs(found[column]) if absolute else found[column]
-                for name, column, absolute in _APPENDIX_MEDIANS
-            }
-        ),
-        tables,
+    pairs = found.assign(
+        **{
+            name: np.abs(found[column]) if absolute else found[column]
+            for name, column, absolute in _APPENDIX_MEDIANS
+        }
     )
     names = [name for name, _, _ in _APPENDIX_MEDIANS]
     medians = grouped_intervals(
-        pairs, by, _medians(*names), names, names, n_resamples=n_resamples
+        pairs, by, _medians(*names), names, n_resamples=n_resamples
     ).join(pairs.groupby(by).size().rename("n_pairs"), on=by)
     ordered = ["n_pairs", *(f"{n}{part}" for n in names for part in ("", "_low", "_high"))]
     appendix = appendix.merge(medians[[*by, *ordered]], on=by, how="left")

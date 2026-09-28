@@ -1168,6 +1168,63 @@ def test_resample_weights_are_the_bootstrap_draws(analyze):
     assert high.tolist() == sums.high.tolist()
 
 
+def _grouped_rows(rows_per_session, whole):
+    """Seven sessions, listed out of order, of three methods, with
+    ``rows_per_session`` rows of each: four value columns, whole numbers or
+    not, a tenth of the values missing."""
+    rng = np.random.default_rng(4)
+    n = 7 * 3 * rows_per_session
+    values = rng.integers(1, 9, size=(n, 4)) if whole else rng.normal(1.0, 3.0, (n, 4))
+    values = values.astype(float)
+    values[rng.random((n, 4)) < 0.1] = np.nan
+    sessions = [f"reference/{k}" for k in (3, 0, 5, 1, 6, 2, 4)]
+    return pd.DataFrame(
+        values, columns=["matched_sum", "matched_n", "all_sum", "all_n"]
+    ).assign(
+        session_id=np.repeat(sessions, 3 * rows_per_session),
+        method=np.tile(["x", "y", "z"], 7 * rows_per_session),
+    )
+
+
+@pytest.mark.parametrize(
+    ("factory", "arguments", "names", "rows_per_session", "whole"),
+    [
+        (
+            "_ratio_of_sums",
+            (("matched_sum", "matched_n"), ("all_sum", "matched_n")),
+            2,
+            1,
+            False,
+        ),
+        ("_means", ("matched_sum", "all_n"), 2, 1, False),
+        # a session's several rows of a group sum exactly when whole
+        ("_means", ("matched_sum", "all_n"), 2, 3, True),
+        ("_medians", ("matched_sum", "all_sum"), 2, 3, False),
+        ("_ratio_of_means", (), 1, 2, True),
+    ],
+)
+def test_grouped_intervals_are_the_paired_bootstrap(
+    analyze, factory, arguments, names, rows_per_session, whole
+):
+    frame = _grouped_rows(rows_per_session, whole)
+    statistic = getattr(analyze, factory)(*arguments)
+    names = ["first", "second"][:names]
+    got = analyze.grouped_intervals(frame, ["method"], statistic, names, n_resamples=FEW)
+    # the plain algorithm: the statistic of each resample's concatenated rows
+    codes = frame.groupby("method").ngroup().to_numpy()
+    expected = analyze.paired_bootstrap(
+        frame.assign(replicate=0, group=codes),
+        lambda f: pd.Series(statistic(f.group.to_numpy(), f, 3).ravel()),
+        key="session_id",
+        n_resamples=FEW,
+    )
+    for position, name in enumerate(names):
+        block = expected.iloc[3 * position : 3 * position + 3]
+        np.testing.assert_array_equal(got[name], block.estimate)
+        np.testing.assert_array_equal(got[f"{name}_low"], block.low)
+        np.testing.assert_array_equal(got[f"{name}_high"], block.high)
+
+
 def test_weighted_medians_count_each_value(analyze):
     rng = np.random.default_rng(2)
     values = rng.normal(size=60).round(1)
