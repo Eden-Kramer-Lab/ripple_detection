@@ -88,7 +88,15 @@ import os
 import sys
 import time as wall_clock
 from collections import OrderedDict
-from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import (
+    Callable,
+    Collection,
+    Hashable,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, TypeVar
@@ -1357,8 +1365,17 @@ def recipe_events(config: RecipeConfig, session: rd.SimulatedSession) -> FloatAr
         ``bounds`` of ``run_recipe`` on ``make_recording`` of the session's
         integer counts, with the policy's ``behavior_intervals``.
     """
+    return bounds(_public_call(config, session)())
+
+
+def _public_call(
+    config: RecipeConfig, session: rd.SimulatedSession
+) -> Callable[[], pd.DataFrame]:
+    """A configuration's public call on a session, its inputs built (an error
+    building them raises here, as in the runner, never as the method's)."""
     recording = make_recording(_counted(session), config)
-    return bounds(run_recipe(config, recording, behavior_intervals(session, config)))
+    intervals = behavior_intervals(session, config)
+    return lambda: run_recipe(config, recording, intervals)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -2788,10 +2805,35 @@ def shapley_pairs(
     return _rows("shapley", keys, configurations, outputs), pd.DataFrame(values)
 
 
+def recorded_failures(run_directory: str | os.PathLike[str]) -> set[tuple[str, str]]:
+    """The configurations' public calls the run recorded failing on its
+    reference sessions.
+
+    Parameters
+    ----------
+    run_directory : str or path-like
+
+    Returns
+    -------
+    failures : set of (str, str)
+        ``(config_id, session_id)`` of each ``recipe:`` row of the reference
+        condition's ``failures.csv``.
+    """
+    table = read_table(
+        Path(run_directory) / "conditions" / REFERENCE_CONDITION / "failures.csv"
+    )
+    recipes = table[table["method"].str.startswith("recipe:")]
+    return {
+        (method.removeprefix("recipe:"), session_id)
+        for method, session_id in zip(recipes["method"], recipes["session_id"], strict=True)
+    }
+
+
 def fixed_point_outputs(
     recipes: Sequence[RecipeConfig],
     contexts: Iterable[SessionContext],
     families: Sequence[str] = FAMILIES,
+    recorded: Collection[tuple[str, str]] = (),
 ) -> pd.DataFrame:
     """Every configuration without a template, its reason and its public-call ``Y``s.
 
@@ -2802,6 +2844,9 @@ def fixed_point_outputs(
         The ``K`` reference sessions, taken one at a time and released after.
     families : sequence of {"spikes", "lfp"}, optional
         The families whose expression and reference the ``Y``s are against.
+    recorded : collection of (str, str), optional
+        ``recorded_failures``: the (configuration, session) calls the run
+        recorded failing, the only ones allowed to fail here.
 
     Returns
     -------
@@ -2809,8 +2854,17 @@ def fixed_point_outputs(
         One row per fixed point and family: ``config_id``, ``family``,
         ``reason``, then each of ``Y_NAMES`` (the mean over the sessions)
         against that family's expression and reference configuration. A
-        configuration whose call raises on a session keeps its row, the
-        error in ``error`` and its ``Y``s missing.
+        configuration whose call raises on a session, as the run recorded,
+        keeps its row, the error in ``error`` (and on standard error) and its
+        ``Y``s missing.
+
+    Raises
+    ------
+    RuntimeError
+        A call raised where the run recorded no failure: the sessions or the
+        method are not those the run had.
+    Exception
+        Whatever building a call's inputs raises.
     """
     fixed = [config for config in recipes if config.config_id in FIXED_POINTS]
     references = {family: compile(reference_template(family)) for family in families}
@@ -2820,10 +2874,23 @@ def fixed_point_outputs(
         for config in fixed:
             if config.config_id in errors:
                 continue
+            call = _public_call(config, context.session)
             try:
-                events = recipe_events(config, context.session)
-            except Exception as error:  # a method's failure is recorded, never raised
-                errors[config.config_id] = f"{type(error).__name__}: {error}"[:200]
+                events = bounds(call())
+            except Exception as error:  # a failure the run recorded is data
+                text = f"{type(error).__name__}: {error}"[:200]
+                if (config.config_id, context.label) not in recorded:
+                    msg = (
+                        f"{config.config_id} raised on {context.label} ({text}), but the "
+                        "run recorded no such failure."
+                    )
+                    raise RuntimeError(msg) from error
+                print(
+                    f"{config.config_id} failed on {context.label}, as the run recorded: "
+                    f"{text}",
+                    file=sys.stderr,
+                )
+                errors[config.config_id] = text
                 continue
             for family, reference in references.items():
                 per_session.setdefault((config.config_id, family), []).append(
@@ -3199,7 +3266,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     write("reference", pd.DataFrame([_key_columns(reference_template(args.family))]))
     write(
         "fixed_points",
-        fixed_point_outputs(RECIPES, reference_contexts(run_directory), (args.family,)),
+        fixed_point_outputs(
+            RECIPES,
+            reference_contexts(run_directory),
+            (args.family,),
+            recorded_failures(run_directory),
+        ),
     )
     analyses = ("oat", "sobol", "shapley") if args.analysis == "all" else (args.analysis,)
     for analysis in analyses:

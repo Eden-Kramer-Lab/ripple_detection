@@ -1028,20 +1028,23 @@ def test_shapley_pairs(attribution, short_run):
     assert dict(zip(empty["y"], empty["value"], strict=True)) == pytest.approx(expected)
 
 
-def test_fixed_point_outputs(attribution, recipes, contexts, monkeypatch):
+def test_fixed_point_outputs(attribution, recipes, contexts, monkeypatch, capsys):
     chosen = [
         c for c in recipes if c.config_id in ("gupta_2010", "mallory_2025", "igata_2021")
     ]
-    original = attribution.recipe_events
+    original = attribution.run_recipe
 
-    def fails_on_edges(config, session):
-        if config.config_id == "mallory_2025" and session.time[0] > 0:
+    def fails_at_the_unix_origin(config, recording, intervals):
+        if config.config_id == "mallory_2025" and recording.time[0] > 0:
             message = "made to fail"
             raise ValueError(message)
-        return original(config, session)
+        return original(config, recording, intervals)
 
-    monkeypatch.setattr(attribution, "recipe_events", fails_on_edges)
-    table = attribution.fixed_point_outputs(chosen, contexts)
+    monkeypatch.setattr(attribution, "run_recipe", fails_at_the_unix_origin)
+    # a failure the run recorded is kept as data, and printed
+    recorded = {("mallory_2025", "edge/unix_origin")}
+    table = attribution.fixed_point_outputs(chosen, contexts, recorded=recorded)
+    assert "mallory_2025 failed on edge/unix_origin" in capsys.readouterr().err
     assert table[["config_id", "family"]].to_numpy().tolist() == [
         ["mallory_2025", "spikes"],
         ["mallory_2025", "lfp"],
@@ -1055,6 +1058,38 @@ def test_fixed_point_outputs(attribution, recipes, contexts, monkeypatch):
     assert gupta.loc["spikes", "events_per_minute"] == gupta.loc["lfp", "events_per_minute"]
     assert gupta.loc["spikes", "f1"] != gupta.loc["lfp", "f1"]
     assert (gupta["reason"] == attribution.FIXED_POINTS["gupta_2010"]).all()
+    # one the run did not record stops the analysis
+    unrecorded = "mallory_2025 raised on edge/unix_origin.*the run recorded no such failure"
+    with pytest.raises(RuntimeError, match=unrecorded):
+        attribution.fixed_point_outputs(chosen, contexts)
+
+    # and an error building a call's inputs is never a method's failure
+    def broken_inputs(session, config):
+        message = "no intervals"
+        raise KeyError(message)
+
+    monkeypatch.setattr(attribution, "behavior_intervals", broken_inputs)
+    with pytest.raises(KeyError, match="no intervals"):
+        attribution.fixed_point_outputs(chosen, contexts, recorded=recorded)
+
+
+def test_recorded_failures(attribution, run, short_run, tmp_path):
+    copy = tmp_path / "run"
+    shutil.copytree(short_run, copy)
+    assert attribution.recorded_failures(copy) == set()
+    failures = pd.DataFrame(
+        {
+            "session_id": ["reference/1", "reference/2", "reference/3"],
+            "method": ["recipe:mallory_2025", "Kay_ripple_detector", "recipe:gupta_2010"],
+            "setting": ["literature", "default", "literature"],
+            "error": ["ValueError: a", "ValueError: b", "ValueError: c"],
+        }
+    )
+    run._write_table(failures, copy / "conditions" / "reference" / "failures.csv")
+    assert attribution.recorded_failures(copy) == {
+        ("mallory_2025", "reference/1"),
+        ("gupta_2010", "reference/3"),
+    }
 
 
 def test_smoke(attribution, recipes, short_run):
