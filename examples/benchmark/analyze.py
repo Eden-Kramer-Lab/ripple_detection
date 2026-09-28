@@ -1418,7 +1418,7 @@ def _every_method(
 def _expected_pairs(tables: RunTables, expression: str | None = None) -> pd.DataFrame:
     """Every pair of main interval methods (of one primary expression when
     given), the first first by name: ``method_a``, ``method_b``."""
-    main = _by_intervals(main_rows(tables.methods))
+    main = _by_intervals(tables.methods)
     if expression is not None:
         main = main[main["primary_expression"] == expression]
     return pd.DataFrame(
@@ -2078,8 +2078,8 @@ def consensus(tables: RunTables, matches: Matches) -> pd.DataFrame:
         .drop(columns="_rank")
         .reset_index(drop=True)
     )
-    table["n_methods_compared"] = len(_by_intervals(main_rows(tables.methods)))
-    table["n_failed_calls"] = len(_by_intervals(main_rows(tables.failures)))
+    table["n_methods_compared"] = len(_by_intervals(tables.methods))
+    table["n_failed_calls"] = len(_by_intervals(tables.failures))
     return table
 
 
@@ -2202,7 +2202,7 @@ def point_inventories(
 def _with_pair_failures(frame: pd.DataFrame, tables: RunTables) -> pd.DataFrame:
     """A table of method pairs with each method's ``n_failures_a`` and
     ``n_failures_b`` added (main methods, one setting each)."""
-    failed = main_rows(failure_counts(tables)).set_index("method")["n_failures"]
+    failed = failure_counts(tables).set_index("method")["n_failures"]
     return frame.assign(
         n_failures_a=frame["method_a"].map(failed).to_numpy(),
         n_failures_b=frame["method_b"].map(failed).to_numpy(),
@@ -2332,7 +2332,7 @@ def agreement_dendrogram(tables: RunTables, matches: Matches) -> pd.DataFrame:
         merge (``node`` n, n + 1, ..., ``method`` ``""``, the two nodes it
         joins, their distance and the leaves under it).
     """
-    methods = sorted(_by_intervals(main_rows(tables.methods))["method"])
+    methods = sorted(_by_intervals(tables.methods)["method"])
     network = matches.comparisons[matches.comparisons["truth_expression"] == "network"]
     tree = agreement_linkage(
         methods, network.groupby(["method_a", "method_b"])["jaccard"].mean()
@@ -2445,9 +2445,7 @@ def error_correlations(
         ``n_failures_b``.
     """
     by = ["method_a", "method_b", "truth_expression"]
-    primary = _by_intervals(main_rows(tables.methods)).set_index("method")[
-        "primary_expression"
-    ]
+    primary = _by_intervals(tables.methods).set_index("method")["primary_expression"]
     expected = _expected_pairs(tables)
     first = expected["method_a"].map(primary).to_numpy()
     shared = first == expected["method_b"].map(primary).to_numpy()
@@ -2693,7 +2691,7 @@ def paired_timing(
         per-session medians, and ``_n_dropped``, the sessions left out of it
         as not finite; then ``n_failures_a``, ``n_failures_b``.
     """
-    members = _by_intervals(main_rows(tables.methods))
+    members = _by_intervals(tables.methods)
     members = members[members["primary_expression"] == expression]["method"]
     comparisons = matches.comparisons[
         (matches.comparisons["truth_expression"] == expression)
@@ -2704,7 +2702,6 @@ def paired_timing(
         (matches.pairs["minimum_iou"] == 0)
         & (matches.pairs["expression"] == expression)
         & matches.pairs["method"].isin(members)
-        & matches.pairs["setting"].isin(MAIN_SETTINGS)
     ][["session_id", "method", "truth_row", *ERROR_COLUMNS]]
     shared = pairs.merge(pairs, on=["session_id", "truth_row"], suffixes=("_a", "_b"))
     shared = shared[shared["method_a"] < shared["method_b"]]
@@ -4627,9 +4624,7 @@ def matching_sensitivity(
         among methods of the same primary expression at that level);
         ``n_sessions``, ``n_failures``.
     """
-    primary = _by_intervals(main_rows(tables.methods))[
-        ["method", "setting", "primary_expression"]
-    ]
+    primary = _by_intervals(tables.methods)[["method", "setting", "primary_expression"]]
     pairs = matches.pairs.merge(
         primary.rename(columns={"primary_expression": "expression"}),
         on=["method", "setting", "expression"],
@@ -4638,7 +4633,7 @@ def matching_sensitivity(
         matches.windows.groupby(["session_id", "expression"]).size().rename("n_reference")
     )
     n_events = tables.events.groupby(_KEY).size().rename("n_detected")
-    frame = _by_intervals(main_rows(tables.ran)).merge(primary, on=["method", "setting"])
+    frame = _by_intervals(tables.ran).merge(primary, on=["method", "setting"])
     frame = frame.join(n_truth, on=["session_id", "primary_expression"]).join(
         n_events, on=_KEY
     )
@@ -4959,11 +4954,7 @@ def participation_bias(
     found = found.merge(bursts, on=["session_id", "id"])
     matched = found.groupby(_KEY)["n_participants"].agg(matched_sum="sum", matched_n="size")
     every = bursts.groupby("session_id")["n_participants"].agg(all_sum="sum", all_n="size")
-    frame = (
-        _by_intervals(main_rows(tables.ran))
-        .join(matched, on=_KEY)
-        .join(every, on="session_id")
-    )
+    frame = _by_intervals(tables.ran).join(matched, on=_KEY).join(every, on="session_id")
     frame = frame.fillna(0.0)
     by = ["method", "setting"]
     intervals = grouped_intervals(
@@ -5018,7 +5009,7 @@ def participation_bias(
     ]
     bias = _every_method(
         bias[columns],
-        _by_intervals(main_rows(tables.methods)),
+        _by_intervals(tables.methods),
         zero=("n_matched_events", "n_events"),
     )
     return _with_failures(bias, tables)
@@ -5151,19 +5142,19 @@ def appendix_expressions(
     """
     by = ["method", "setting", "expression"]
     counts = ["n_reference", "n_detected", "n_matched"]
-    main = main_rows(tables.methods)
+    main = tables.methods
     n_reference = matches.windows.groupby(["session_id", "expression"]).size()
     n_detected = tables.events.groupby(_KEY).size()
-    found = main_rows(matches.pairs[matches.pairs["minimum_iou"] == 0])
+    found = matches.pairs[matches.pairs["minimum_iou"] == 0]
     n_matched = found.groupby([*by, "session_id"]).size()
-    frame = _by_intervals(main_rows(tables.ran)).merge(
+    frame = _by_intervals(tables.ran).merge(
         pd.DataFrame({"expression": EXPRESSION_ORDER}), how="cross"
     )
     frame = frame.join(n_reference.rename("n_reference"), on=["session_id", "expression"])
     frame = frame.join(n_detected.rename("n_detected"), on=_KEY)
     frame = frame.join(n_matched.rename("n_matched"), on=[*by, "session_id"])
     frame = _concat(
-        [frame.fillna(dict.fromkeys(counts, 0)), main_rows(matches.points)],
+        [frame.fillna(dict.fromkeys(counts, 0)), matches.points],
         ["session_id", *by, *counts],
     ).astype(dict.fromkeys(counts, int))
     frame = frame.assign(
@@ -7187,7 +7178,7 @@ def _summary(
     """``summary.md``: what was analysed, the conventions, each file with
     its sentence, the failures (of the reference, and of every condition
     when ``scores`` is given), and the lists the analyses call for."""
-    main = main_rows(tables.methods)
+    main = tables.methods
     counts = failure_counts(tables)
     failed = counts[counts["n_failures"] > 0]
     conditions = ", ".join(tables.sessions["condition_id"].drop_duplicates())
