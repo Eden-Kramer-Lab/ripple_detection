@@ -2781,8 +2781,53 @@ def _differing(first: Template, second: Template) -> tuple[str, ...]:
     )
 
 
+class _Agreement:
+    """``pair_agreement``'s means, built one session at a time."""
+
+    def __init__(self, templates: Mapping[str, Template]) -> None:
+        self.pipelines = {
+            config_id: compile(template) for config_id, template in templates.items()
+        }
+        self.jaccards: dict[tuple[str, str], list[float]] = {
+            pair: [] for pair in itertools.combinations(self.pipelines, 2)
+        }
+
+    def visit(self, context: SessionContext) -> None:
+        for (a, b), values in self.jaccards.items():
+            values.append(
+                jaccard(context.events(self.pipelines[a]), context.events(self.pipelines[b]))
+            )
+
+    def table(self) -> dict[tuple[str, str], float]:
+        return {pair: _mean(values) for pair, values in self.jaccards.items()}
+
+
+def pair_agreement(
+    templates: Mapping[str, Template], contexts: Iterable[SessionContext]
+) -> dict[tuple[str, str], float]:
+    """The mean Jaccard of every pair of templates' events over the sessions.
+
+    Parameters
+    ----------
+    templates : mapping of str to template
+        By configuration id, such as ``distinct_templates``'.
+    contexts : iterable of SessionContext
+        The ``K`` reference sessions, taken one at a time and released after.
+
+    Returns
+    -------
+    agreement : dict of (str, str) to float
+        By ``(a, b)``, ``a`` before ``b`` in ``templates``: the mean over the
+        sessions of ``jaccard`` of their events, ``jaccard_reference`` of
+        ``a`` against ``b``.
+    """
+    agreement = _Agreement(templates)
+    _visit(contexts, [agreement])
+    return agreement.table()
+
+
 def shapley_pair_list(
-    family: str, run_directory: str | os.PathLike[str], *, workers: int = 1
+    family: str, agreement: Mapping[tuple[str, str], float]
 ) -> list[tuple[str, str]]:
     """The pairs decomposed: each represented template (``distinct_templates``)
     against the family's reference, then the ``N_LOWEST_PAIRS`` pairs of them
@@ -2791,34 +2836,26 @@ def shapley_pair_list(
     Parameters
     ----------
     family : {"spikes", "lfp"}
-    run_directory : str or path-like
-    workers : int, optional
+    agreement : mapping of (str, str) to float
+        ``pair_agreement`` of the family's represented templates.
 
     Returns
     -------
     pairs : list of (str, str)
         ``(a, b)`` by configuration id, ``"reference"`` for the reference.
     """
-    templates = distinct_templates(family_templates(RECIPES, family))
-    ids = tuple(templates)
-    pipelines = [compile(template) for template in templates.values()]
-    combinations = list(itertools.combinations(range(len(ids)), 2))
-    outputs = evaluate_many(
-        [pipelines[i] for i, _ in combinations],
-        [pipelines[j] for _, j in combinations],
-        run_directory,
-        workers=workers,
-    )
-    agreement = sorted(
-        (_mean(found["jaccard_reference"]), ids[i], ids[j])
-        for (i, j), found in zip(combinations, outputs, strict=True)
-    )
-    pairs = [(config_id, "reference") for config_id in ids]
-    return pairs + [(a, b) for _, a, b in agreement[:N_LOWEST_PAIRS]]
+    ids = distinct_templates(family_templates(RECIPES, family))
+    lowest = sorted((value, a, b) for (a, b), value in agreement.items())
+    pairs = [(config_id, REFERENCE_CONDITION) for config_id in ids]
+    return pairs + [(a, b) for _, a, b in lowest[:N_LOWEST_PAIRS]]
 
 
 def shapley_pairs(
-    family: str, run_directory: str | os.PathLike[str], *, workers: int = 1
+    family: str,
+    run_directory: str | os.PathLike[str],
+    agreement: Mapping[tuple[str, str], float],
+    *,
+    workers: int = 1,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Shapley decompositions of the difference between pairs of configurations.
 
@@ -2830,6 +2867,9 @@ def shapley_pairs(
     ----------
     family : {"spikes", "lfp"}
     run_directory : str or path-like
+    agreement : mapping of (str, str) to float
+        ``pair_agreement`` of the family's represented templates, from which
+        ``shapley_pair_list`` takes the pairs.
     workers : int, optional
 
     Returns
@@ -2845,7 +2885,7 @@ def shapley_pairs(
     """
     reference = reference_template(family)
     templates = {**family_templates(RECIPES, family), REFERENCE_CONDITION: reference}
-    pairs = shapley_pair_list(family, run_directory, workers=workers)
+    pairs = shapley_pair_list(family, agreement)
     keys: list[dict[str, Any]] = []
     configurations: list[Template] = []
     references: list[Template] = []
@@ -3368,12 +3408,16 @@ def main(argv: Sequence[str] | None = None) -> None:
     if caveat:
         print(f"The {args.family} family {caveat}.", file=sys.stderr)
     analyses = ("oat", "sobol", "shapley") if args.analysis == "all" else (args.analysis,)
-    # the sensitivity and the fixed points are built in the verification's
-    # pass over the sessions
+    # the sensitivity, the fixed points and the pairs' agreement are built in
+    # the verification's pass over the sessions
     perturbed = _Sensitivity(RECIPES, args.family)
     fixed = _FixedPoints(RECIPES, (args.family,), recorded_failures(run_directory))
+    agreement = _Agreement(distinct_templates(templates))
+    wanted: list[Visitor] = [fixed]
+    if "shapley" in analyses and not refused:
+        wanted.append(agreement)
     verification = verify_family(
-        args.family, run_directory, also=[perturbed], on_reference=[fixed]
+        args.family, run_directory, also=[perturbed], on_reference=wanted
     )
     found = set(
         verification.loc[
@@ -3429,7 +3473,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                 plot_sobol(summary, args.family, caveat=caveat),
             )
         else:
-            rows, summary = shapley_pairs(args.family, run_directory, workers=args.workers)
+            rows, summary = shapley_pairs(
+                args.family, run_directory, agreement.table(), workers=args.workers
+            )
             for pair in dict.fromkeys(summary["pair"]):
                 slug = pair.replace("|", "__").replace(".", "-")
                 _save_figure(

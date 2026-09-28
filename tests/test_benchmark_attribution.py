@@ -8,6 +8,7 @@ checked against what it saved. No test draws a figure."""
 
 import dataclasses
 import gzip
+import itertools
 import json
 import math
 import shutil
@@ -712,32 +713,31 @@ def test_the_lowest_agreement_pairs_are_decomposed(attribution, recipes, monkeyp
     ids = tuple(
         attribution.distinct_templates(attribution.family_templates(recipes, "spikes"))
     )
-    names = {attribution.compile(attribution.TEMPLATES[i][0]): i for i in ids}
-    assert len(names) == len(ids)
-    agreement = {
+    lowest = {
         ("liu_2023", "chenani_2019"): 0.1,
         ("igata_2021", "bendor_2012"): 0.2,
         ("farooq_2019_neuron", "silva_2015"): 0.3,
     }
-
-    def evaluate_many(pipelines, references, run_directory, *, workers=1):
-        return [
-            {
-                name: [agreement.get((names[p], names[r]), 0.5)] * attribution.K
-                for name in attribution.Y_NAMES
-            }
-            for p, r in zip(pipelines, references, strict=True)
-        ]
-
-    monkeypatch.setattr(attribution, "evaluate_many", evaluate_many)
+    agreement = {pair: lowest.get(pair, 0.5) for pair in itertools.combinations(ids, 2)}
     monkeypatch.setattr(attribution, "N_LOWEST_PAIRS", 2)
-    pairs = attribution.shapley_pair_list("spikes", "unused")
+    pairs = attribution.shapley_pair_list("spikes", agreement)
     # each distinct template against the reference, then the two lowest pairs
     assert pairs == [
         *((config_id, "reference") for config_id in ids),
         ("liu_2023", "chenani_2019"),
         ("igata_2021", "bendor_2012"),
     ]
+
+
+def test_pair_agreement(attribution, recipes, short_run):
+    """The mean Jaccard of each pair, as each against the other as reference."""
+    templates = attribution.distinct_templates(attribution.family_templates(recipes, "lfp"))
+    found = attribution.pair_agreement(templates, attribution.reference_contexts(short_run))
+    assert list(found) == list(itertools.combinations(templates, 2))
+    pipelines = {name: attribution.compile(t) for name, t in templates.items()}
+    for (a, b), value in found.items():
+        outputs = attribution.evaluate_many([pipelines[a]], [pipelines[b]], short_run)
+        assert value == attribution._mean(outputs[0]["jaccard_reference"])
 
 
 def test_sobol_design(attribution):
@@ -1171,7 +1171,11 @@ def test_sobol(attribution, recipes, short_run):
 
 
 def test_shapley_pairs(attribution, recipes, short_run):
-    rows, values = attribution.shapley_pairs("lfp", short_run)
+    templates = attribution.distinct_templates(attribution.family_templates(recipes, "lfp"))
+    agreement = attribution.pair_agreement(
+        templates, attribution.reference_contexts(short_run)
+    )
+    rows, values = attribution.shapley_pairs("lfp", short_run, agreement)
     ids = list(attribution.family_templates(recipes, "lfp"))
     pairs = list(dict.fromkeys(values["pair"]))
     # every configuration against the reference, then the lowest-agreement pairs
