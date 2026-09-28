@@ -62,7 +62,8 @@ uv run python examples/benchmark/run.py --run-name smoke --smoke \
 uv run python examples/benchmark/run.py --run-name v1 --conditions all --workers N \
     --validation-report examples/benchmark/validation/v1/spec.json
 # Analyse a finished run's combined/ into examples/benchmark/results/<run_name>/ (CSV and
-# PNG per analysis, each under 1 MB, and summary.md; a few minutes)
+# PNG per analysis, each under 1 MB, candidate_trends.csv and summary.md; about 6.5
+# minutes and 4.5 GB with 6 workers)
 uv run python examples/benchmark/analyze.py --run-name v1 --workers N
 
 # Run every surveyed paper's packaged method on a simulated session (seconds;
