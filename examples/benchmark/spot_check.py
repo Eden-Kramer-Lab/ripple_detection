@@ -1,6 +1,6 @@
 """Look at single events of a benchmark run before trusting its aggregates.
 
-Re-simulates one session of a finished run from its condition and seed, and plots,
+Re-simulates one session of a finished run from its saved parameters and seed, and plots,
 for each event type, six of its true events: the ripple-band and radiatum signals,
 the spikes, the truth windows of each expression at every fraction of
 ``TRUTH_FRACTIONS``, and the events Kay, Karlsson, the HSE detector and two recipes
@@ -17,15 +17,14 @@ Usage, from the repository root::
 from __future__ import annotations
 
 import argparse
-import json
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
-from conditions import TRUTH_FRACTIONS, conditions, resolve, session_seed, simulate_condition
-from run import EXPRESSIONS, OUTPUT
+from conditions import TRUTH_FRACTIONS, parameters_from_json, session_seed, simulate_parameters
+from run import EXPRESSIONS, OUTPUT, read_table, truth_window_sets
 
 import ripple_detection as rd
 
@@ -72,29 +71,24 @@ def load_session(
     Raises
     ------
     ValueError
-        The run's parameters or seed for the session are not what simulating
-        the condition at the run's duration gives, so the re-simulated session
-        would not be the one the methods saw.
+        The saved parameters are not a full set (``parameters_from_json``),
+        or the run's seed for the session is not the replicate's, so the
+        re-simulated session would not be the one the methods saw.
     """
     condition_id, replicate = session_id.rsplit("/", 1)
-    listed = pd.read_csv(run_directory / "conditions.csv").set_index("condition_id")
-    params = json.loads(listed.loc[condition_id, "params"])
-    condition = next(c for c in conditions() if c.condition_id == condition_id)
-    overrides = {"session.duration_s": params["session"]["duration_s"]}
+    listed = read_table(run_directory / "conditions.csv").set_index("condition_id")
+    parameters = parameters_from_json(listed.loc[condition_id, "params"])
     directory = run_directory / "conditions" / condition_id
-    sessions = pd.read_csv(directory / "sessions.csv.gz").set_index("session_id")
-    seed = int(sessions.loc[session_id, "seed"])
-    expected = json.loads(json.dumps(resolve(condition, overrides)))
-    if expected != params or seed != session_seed(int(replicate)):
+    sessions = read_table(directory / "sessions.csv.gz").set_index("session_id")
+    if int(sessions.loc[session_id, "seed"]) != session_seed(int(replicate)):
         msg = (
-            f"{session_id}: the run's parameters or seed differ from simulating "
-            f"{condition_id} at {overrides['session.duration_s']} s, so it cannot be "
-            "simulated again."
+            f"{session_id}: the run's seed is not replicate {replicate}'s, so the "
+            "session cannot be simulated again."
         )
         raise ValueError(msg)
-    events = pd.read_csv(directory / "events.csv.gz", float_precision="round_trip")
+    events = read_table(directory / "events.csv.gz")
     return (
-        simulate_condition(condition, int(replicate), overrides),
+        simulate_parameters(parameters, int(replicate)),
         events[events.session_id == session_id],
     )
 
@@ -125,7 +119,7 @@ def _draw_event(
     figure: SubFigure,
     session: rd.SimulatedSession,
     filtered: np.ndarray[Any, Any],
-    windows: dict[str, list[pd.DataFrame]],
+    windows: Mapping[str, Sequence[pd.DataFrame]],
     found: pd.DataFrame,
     event_id: int,
 ) -> None:
@@ -199,13 +193,7 @@ def plot_session(run_directory: Path, session_id: str, per_type: int = 6) -> lis
 
     session, found = load_session(run_directory, session_id)
     filtered = rd.filter_ripple_band(session.lfps, session.sampling_frequency)
-    windows = {
-        expression: [
-            rd.truth_windows(session.events, fraction, expression)
-            for fraction in TRUTH_FRACTIONS
-        ]
-        for expression in EXPRESSIONS
-    }
+    windows = truth_window_sets(session.events)
     directory = run_directory / "spot_check"
     directory.mkdir(exist_ok=True)
     paths = []
