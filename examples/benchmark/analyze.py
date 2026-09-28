@@ -766,7 +766,9 @@ class Matches:
         ``end_time``.
     pairs : pandas.DataFrame
         One row per matched pair of each method and setting, expression and
-        ``minimum_iou``: ``truth_row``, ``event_index`` (``events.csv``'s),
+        ``minimum_iou`` (every expression at 0; the method's primary
+        expression and the network at every level matched):
+        ``truth_row``, ``event_index`` (``events.csv``'s),
         ``iou``, ``coverage``, ``temporal_precision`` and
         ``{onset,offset}_error_{10,25,50}``.
     overlaps : pandas.DataFrame
@@ -891,7 +893,9 @@ def match_session(
     primary : mapping of (method, setting) to str
         Each one's primary expression.
     levels : sequence of float, optional
-        The ``minimum_iou`` levels of ``pairs``; 0 is always among them.
+        The ``minimum_iou`` levels of ``pairs`` against each method's primary
+        expression and the network, the ones read at levels other than 0;
+        0 is always among them, and the only level of the other expressions.
     points : collection of str, optional
         Methods whose events are time points (``point_methods``): scored by
         peak containment in ``points`` and left out of every other table.
@@ -944,9 +948,13 @@ def match_session(
                 )
             continue
         detected[method, setting] = bounds
-        for expression, references in truth_bounds.items():
-            for level in levels:
+        expression = primary[method, setting]
+        at_zero = {}
+        for against, references in truth_bounds.items():
+            for level in levels if against in (expression, "network") else (0.0,):
                 matching = rd.match_events(references[0], bounds, minimum_iou=level)
+                if level == 0:
+                    at_zero[against] = matching
                 found = matching.pairs
                 errors = {
                     f"{kind}_error_{percent}": (
@@ -961,7 +969,7 @@ def match_session(
                     pd.DataFrame(
                         {
                             **key,
-                            "expression": expression,
+                            "expression": against,
                             "minimum_iou": level,
                             "truth_row": found["reference_index"].to_numpy(),
                             "event_index": index[found["detected_index"].to_numpy()],
@@ -973,9 +981,8 @@ def match_session(
                         columns=list(PAIR_COLUMNS),
                     )
                 )
-        expression = primary[method, setting]
         reference = truth_bounds[expression][0]
-        matching = rd.match_events(reference, bounds)
+        matching = at_zero[expression]
         unmatched = matching.unmatched_detected
         false_positives.append(
             pd.DataFrame(
@@ -1015,19 +1022,20 @@ def match_session(
                 columns=list(OVERLAP_COLUMNS),
             )
         )
+    unmatched_events = _concat(false_positives, FALSE_POSITIVE_COLUMNS)
     comparisons, consensus, groups = _compare_main(
         session_id,
         detected,
         primary,
         truth_bounds,
         sets["network"][0]["type"].to_numpy(),
-        _concat(false_positives, FALSE_POSITIVE_COLUMNS),
+        unmatched_events,
     )
     return Matches(
         windows=windows,
         pairs=_concat(pairs, PAIR_COLUMNS),
         overlaps=_concat(overlaps, OVERLAP_COLUMNS),
-        false_positives=_concat(false_positives, FALSE_POSITIVE_COLUMNS),
+        false_positives=unmatched_events,
         comparisons=comparisons,
         consensus=consensus,
         false_positive_groups=groups,

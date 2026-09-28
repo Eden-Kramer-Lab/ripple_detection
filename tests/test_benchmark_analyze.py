@@ -1152,6 +1152,24 @@ def test_a_method_that_never_ran_keeps_its_rows(analyze, failing_run):
     assert timing.onset_signed_estimate.isna().all()
 
 
+def test_other_levels_match_the_primary_expression_and_the_network(analyze, failing_run):
+    tables = analyze.load_run(failing_run)
+    pairs = analyze.match_run(tables, levels=(0.0, 0.2)).pairs
+    found = {
+        level: set(zip(rows.method, rows.expression, strict=True))
+        for level, rows in pairs.groupby("minimum_iou")
+    }
+    # every expression at IoU 0, Kay's events over sharp waves included
+    assert (KAY[0], "sharp_wave") in found[0.0]
+    # past it, what the analyses read there: each primary expression and the network
+    assert found[0.2] == {
+        (KAY[0], "ripple"),
+        (KAY[0], "network"),
+        (MALLORY[0], "burst"),
+        (MALLORY[0], "network"),
+    }
+
+
 def test_resample_weights_are_the_bootstrap_draws(analyze):
     rng = np.random.default_rng(1)
     frame = _per_session(rng.integers(0, 50, size=7).tolist(), shift=3)
