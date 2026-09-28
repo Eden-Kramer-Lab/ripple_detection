@@ -2293,10 +2293,10 @@ def _checks():
     )
 
 
-def _report(root, checks, *, spec_hash=None, checks_hash=None):
+def _report(root, checks, *, spec_hash=None, checks_hash=None, listed=True):
     """A run directory whose ``run_spec.json`` names a validation report
     written beside it (by absolute path), with the hashes given or the files'
-    own."""
+    own; its spec lists ``checks.csv`` unless not ``listed``."""
     import hashlib
     import json
 
@@ -2304,7 +2304,7 @@ def _report(root, checks, *, spec_hash=None, checks_hash=None):
     report.mkdir(parents=True)
     checks.to_csv(report / "checks.csv", index=False)
     digest = hashlib.sha256((report / "checks.csv").read_bytes()).hexdigest()
-    spec = {"artifacts": {"checks.csv": checks_hash or digest}}
+    spec = {"artifacts": {"checks.csv": checks_hash or digest} if listed else {}}
     (report / "spec.json").write_text(json.dumps(spec))
     identity = {
         "path": str(report / "spec.json"),
@@ -2328,13 +2328,14 @@ def test_the_validation_report_is_read_from_the_run_spec(analyze, tmp_path):
         "differs from the one the run was checked against": _report(
             tmp_path / "spec", _checks(), spec_hash="0" * 64
         ),
-        "checks.csv differs from the one its spec.json lists": _report(
+        "checks.csv does not match its recorded hash": _report(
             tmp_path / "checks", _checks(), checks_hash="0" * 64
         ),
     }
     missing = _report(tmp_path / "missing", _checks())
     (missing.parent / "validation" / "checks.csv").unlink()
     cases["checks.csv is missing"] = missing
+    cases["does not list checks.csv"] = _report(tmp_path / "unlisted", _checks(), listed=False)
     for reason, run_directory in cases.items():
         changed, problem = analyze._validation(run_directory)
         assert changed is None

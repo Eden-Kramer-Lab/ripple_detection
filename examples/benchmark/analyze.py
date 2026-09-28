@@ -7324,7 +7324,7 @@ def _validation(run_directory: Path) -> tuple[pd.DataFrame | None, str]:
     problem : str
         Why it was not read; ``""`` when it was.
     """
-    from validate_simulator import file_sha256
+    from validate_simulator import file_sha256, manifest_problems
 
     run_spec = run_directory / "run_spec.json"
     if not run_spec.exists():
@@ -7338,13 +7338,13 @@ def _validation(run_directory: Path) -> tuple[pd.DataFrame | None, str]:
             return None, f"{spec} is missing"
         if file_sha256(spec) != identity.get("sha256"):
             return None, f"{spec} differs from the one the run was checked against"
-        checks = spec.with_name("checks.csv")
-        if not checks.exists():
-            return None, f"{checks} is missing"
         listed = json.loads(spec.read_text()).get("artifacts", {}).get("checks.csv")
-        if file_sha256(checks) != listed:
-            return None, f"{checks} differs from the one its spec.json lists"
-        return validation_changes(pd.read_csv(checks)), ""
+        if listed is None:
+            return None, f"{spec} does not list checks.csv"
+        problems = manifest_problems(spec.parent, {"checks.csv": listed})
+        if problems:
+            return None, f"{spec.parent}: {problems[0]}"
+        return validation_changes(pd.read_csv(spec.with_name("checks.csv"))), ""
     except (OSError, ValueError, KeyError) as error:
         return None, f"the report could not be read: {type(error).__name__}: {error}"
 
