@@ -262,9 +262,19 @@ class Pipeline:
 # Templates
 
 
-@dataclasses.dataclass(frozen=True)
+def _factor(kind: str, absent: Any = dataclasses.MISSING) -> Any:
+    """A template field of a factor of ``kind``, defaulting to ``absent``, the
+    value when a method does not use the factor's step, if it has one."""
+    return dataclasses.field(default=absent, metadata={"kind": kind})
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class SpikeTemplate:
     """A configuration of the ``spikes`` family: one field per factor.
+
+    A factor with a default is a step a method may not use; the default is the
+    step's absence. Each field's ``metadata["kind"]`` is its factor's kind:
+    ``"continuous"``, ``"integer"`` or ``"categorical"``.
 
     Attributes
     ----------
@@ -298,26 +308,28 @@ class SpikeTemplate:
         A key of ``COINCIDENCES``.
     """
 
-    units: str
-    smoothing_sigma: float
-    normalization_period: str
-    threshold: float
-    bound_fraction: float
-    minimum_event_duration: float
-    maximum_duration: float | None
-    merge_gap: float
-    speed: str
-    minimum_active_units: int
-    state: str
-    coincidence: str
+    units: str = _factor("categorical")
+    smoothing_sigma: float = _factor("continuous")
+    normalization_period: str = _factor("categorical", "session")
+    threshold: float = _factor("continuous")
+    bound_fraction: float = _factor("categorical", 0.0)
+    minimum_event_duration: float = _factor("continuous", 0.0)
+    maximum_duration: float | None = _factor("categorical", None)
+    merge_gap: float = _factor("continuous", 0.0)
+    speed: str = _factor("categorical", "none")
+    minimum_active_units: int = _factor("integer", 0)
+    state: str = _factor("categorical", "none")
+    coincidence: str = _factor("categorical", "none")
 
     def __post_init__(self) -> None:
         _lists_to_tuples(self)
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class LfpTemplate:
-    """A configuration of the ``lfp`` family: one field per factor.
+    """A configuration of the ``lfp`` family: one field per factor, as
+    ``SpikeTemplate``'s (the ripple band, every channel and the envelope when a
+    method does not say).
 
     Attributes
     ----------
@@ -334,19 +346,19 @@ maximum_duration, merge_gap, speed, state, coincidence
         As ``SpikeTemplate``'s.
     """
 
-    band: tuple[float, float]
-    channels: int | None
-    trace: str
-    smoothing_sigma: float
-    normalization_period: str
-    threshold: float
-    bound_fraction: float
-    minimum_event_duration: float
-    maximum_duration: float | None
-    merge_gap: float
-    speed: str
-    state: str
-    coincidence: str
+    band: tuple[float, float] = _factor("categorical", (150.0, 250.0))
+    channels: int | None = _factor("categorical", None)
+    trace: str = _factor("categorical", "amplitude")
+    smoothing_sigma: float = _factor("continuous", 0.0)
+    normalization_period: str = _factor("categorical", "session")
+    threshold: float = _factor("continuous")
+    bound_fraction: float = _factor("categorical", 0.0)
+    minimum_event_duration: float = _factor("continuous", 0.0)
+    maximum_duration: float | None = _factor("categorical", None)
+    merge_gap: float = _factor("continuous", 0.0)
+    speed: str = _factor("categorical", "none")
+    state: str = _factor("categorical", "none")
+    coincidence: str = _factor("categorical", "none")
 
     def __post_init__(self) -> None:
         _lists_to_tuples(self)
@@ -363,25 +375,6 @@ def _lists_to_tuples(template: SpikeTemplate | LfpTemplate) -> None:
 
 Template = SpikeTemplate | LfpTemplate
 TemplateT = TypeVar("TemplateT", SpikeTemplate, LfpTemplate)
-
-# Each factor's kind: "continuous", "integer" or "categorical".
-FACTOR_KINDS: dict[str, str] = {
-    "units": "categorical",
-    "band": "categorical",
-    "channels": "categorical",
-    "trace": "categorical",
-    "smoothing_sigma": "continuous",
-    "normalization_period": "categorical",
-    "threshold": "continuous",
-    "bound_fraction": "categorical",
-    "minimum_event_duration": "continuous",
-    "maximum_duration": "categorical",
-    "merge_gap": "continuous",
-    "speed": "categorical",
-    "minimum_active_units": "integer",
-    "state": "categorical",
-    "coincidence": "categorical",
-}
 
 _NO_SPEED_RULE = ("endpoints", np.inf)
 # Speed levels: (speed_rule, speed_threshold). "<" is the next float below.
@@ -905,47 +898,6 @@ def run_pipeline(pipeline: Pipeline, context: SessionContext) -> FloatArray:
 # Which configurations have a template
 
 
-# By family, each factor's value when a method does not use its step (the
-# ripple band, every channel and the envelope for the LFP family's signal).
-ABSENT: dict[str, dict[str, Any]] = {
-    "spikes": {
-        "normalization_period": "session",
-        "bound_fraction": 0.0,
-        "minimum_event_duration": 0.0,
-        "maximum_duration": None,
-        "merge_gap": 0.0,
-        "speed": "none",
-        "minimum_active_units": 0,
-        "state": "none",
-        "coincidence": "none",
-    },
-    "lfp": {
-        "band": (150.0, 250.0),
-        "channels": None,
-        "trace": "amplitude",
-        "smoothing_sigma": 0.0,
-        "normalization_period": "session",
-        "bound_fraction": 0.0,
-        "minimum_event_duration": 0.0,
-        "maximum_duration": None,
-        "merge_gap": 0.0,
-        "speed": "none",
-        "state": "none",
-        "coincidence": "none",
-    },
-}
-
-
-def _spikes(**values: Any) -> SpikeTemplate:
-    """A spike template, a factor the method does not use at its ``ABSENT`` value."""
-    return SpikeTemplate(**{**ABSENT["spikes"], **values})
-
-
-def _lfp(**values: Any) -> LfpTemplate:
-    """An LFP template, a factor the method does not use at its ``ABSENT`` value."""
-    return LfpTemplate(**{**ABSENT["lfp"], **values})
-
-
 _REST_SLEEP = (
     "sleep_intervals are the input policy's rest (the samples outside the running "
     "bouts), so rec.sleep returns rest"
@@ -959,7 +911,7 @@ _REST_SLEEP = (
 # every value not listed is the method's absence of that step.
 TEMPLATES: dict[str, tuple[Template, str]] = {
     "yang_2024": (
-        _spikes(
+        SpikeTemplate(
             units="pyramidal",
             smoothing_sigma=0.015,
             normalization_period="rest",
@@ -978,7 +930,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ),
     ),
     "liu_2023": (
-        _spikes(
+        SpikeTemplate(
             units="pyramidal",
             smoothing_sigma=0.010,
             threshold=2.0,
@@ -992,7 +944,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ),
     ),
     "igata_2021": (
-        _spikes(
+        SpikeTemplate(
             units="all",
             smoothing_sigma=0.015,
             normalization_period="speed<5",
@@ -1007,7 +959,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ),
     ),
     "farooq_2019_neuron": (
-        _spikes(
+        SpikeTemplate(
             units="pyramidal",
             smoothing_sigma=0.015,
             threshold=2.0,
@@ -1024,7 +976,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ),
     ),
     "chenani_2019": (
-        _spikes(
+        SpikeTemplate(
             units="place",
             smoothing_sigma=0.030,
             threshold=3.0,
@@ -1038,7 +990,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ),
     ),
     "muessig_2019": (
-        _spikes(
+        SpikeTemplate(
             units="pyramidal",
             smoothing_sigma=0.010,
             threshold=3.0,
@@ -1055,7 +1007,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ),
     ),
     "drieu_2018": (
-        _spikes(
+        SpikeTemplate(
             units="place",
             smoothing_sigma=0.010,
             threshold=3.0,
@@ -1068,7 +1020,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ),
     ),
     "olafsdottir_2017": (
-        _spikes(
+        SpikeTemplate(
             units="place",
             smoothing_sigma=0.005,
             threshold=3.0,
@@ -1083,7 +1035,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ),
     ),
     "grosmark_2016": (
-        _spikes(
+        SpikeTemplate(
             units="pyramidal",
             smoothing_sigma=0.015,
             normalization_period="rest",
@@ -1097,7 +1049,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ("grosmark_2016 (detection stage) is _population_with_ripple_peak, as yang_2024"),
     ),
     "silva_2015": (
-        _spikes(
+        SpikeTemplate(
             units="pyramidal",
             smoothing_sigma=0.010,
             threshold=3.0,
@@ -1111,7 +1063,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ),
     ),
     "bendor_2012": (
-        _spikes(
+        SpikeTemplate(
             units="all",
             smoothing_sigma=0.015,
             threshold=4.0,
@@ -1125,7 +1077,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ),
     ),
     "davidson_2009": (
-        _spikes(
+        SpikeTemplate(
             units="all",
             smoothing_sigma=0.015,
             normalization_period="speed<5",
@@ -1139,7 +1091,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ),
     ),
     "widloski_2025_bursts": (
-        _spikes(
+        SpikeTemplate(
             units="all",
             smoothing_sigma=0.08,
             normalization_period="speed<5",
@@ -1152,14 +1104,14 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ),
     ),
     "krause_2022_hse": (
-        _spikes(units="all", smoothing_sigma=0.02, threshold=3.0, speed="all<=5"),
+        SpikeTemplate(units="all", smoothing_sigma=0.02, threshold=3.0, speed="all<=5"),
         (
             "krause_2022_hse (interpretation text, no baseline_intervals: statistics over "
             "the whole recording): every unit, 20 ms, 3 SD, every event speed <= 5"
         ),
     ),
     "gillespie_2021_mua": (
-        _spikes(
+        SpikeTemplate(
             units="all",
             smoothing_sigma=0.015,
             normalization_period="speed<4",
@@ -1172,7 +1124,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ),
     ),
     "pfeiffer_2015": (
-        _lfp(
+        LfpTemplate(
             smoothing_sigma=0.0125,
             normalization_period="speed<5",
             threshold=3.0,
@@ -1186,7 +1138,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ),
     ),
     "berners_lee_2021": (
-        _lfp(
+        LfpTemplate(
             channels=3,
             smoothing_sigma=0.0125,
             normalization_period="speed<5",
@@ -1201,7 +1153,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ),
     ),
     "ambrose_2016": (
-        _lfp(smoothing_sigma=0.0125, threshold=3.0, speed="restrict<5"),
+        LfpTemplate(smoothing_sigma=0.0125, threshold=3.0, speed="restrict<5"),
         (
             "ambrose_2016: mean 150-250 Hz envelope of every channel, 12.5 ms, 3 SD, "
             "detected only while speed < 5 (speed_rule restrict, so the statistics are "
@@ -1209,7 +1161,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
         ),
     ),
     "pfeiffer_2013_ripples": (
-        _lfp(
+        LfpTemplate(
             smoothing_sigma=0.0125,
             normalization_period="speed<5",
             threshold=3.0,
@@ -1512,15 +1464,14 @@ def perturbations(template: Template, space: Mapping[str, Factor]) -> list[tuple
         In field order, each ``(factor, value)``: a continuous value times
         each of ``PERTURBATION``, an integer one less and one more, a
         categorical value every other level of its factor in ``space``. A
-        value at its step's absence (``ABSENT``) is not changed.
+        value at its step's absence (the field's default) is not changed.
     """
-    absent = ABSENT[family_of(template)]
     changes: list[tuple[str, Any]] = []
     for field in dataclasses.fields(template):
         value = getattr(template, field.name)
-        if field.name in absent and value == absent[field.name]:
+        if field.default is not dataclasses.MISSING and value == field.default:
             continue
-        kind = FACTOR_KINDS[field.name]
+        kind = field.metadata["kind"]
         if kind == "continuous":
             changes += [(field.name, value * factor) for factor in PERTURBATION]
         elif kind == "integer":
@@ -1996,7 +1947,7 @@ def factor_space(recipes: Sequence[RecipeConfig], family: str) -> tuple[Factor, 
         distinct = tuple(dict.fromkeys(values))
         if len(distinct) < 2:
             continue
-        kind = FACTOR_KINDS[field.name]
+        kind = field.metadata["kind"]
         if kind == "continuous":
             levels: tuple[Any, ...] = (float(min(values)), float(max(values)))
         elif kind == "integer":
@@ -2035,7 +1986,7 @@ def reference_template(family: str, templates: Sequence[TemplateT] | None = None
     values: dict[str, Any] = {}
     for field in dataclasses.fields(chosen[0]):
         column = [getattr(template, field.name) for template in chosen]
-        kind = FACTOR_KINDS[field.name]
+        kind = field.metadata["kind"]
         if kind == "continuous":
             values[field.name] = float(np.median(column))
         elif kind == "integer":
