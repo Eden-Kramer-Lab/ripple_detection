@@ -4,9 +4,17 @@ Re-simulates one session of a finished run from its saved parameters and seed, a
 for each event type, six of its true events: the ripple-band and radiatum signals,
 the spikes, the truth windows of each expression at every fraction of
 ``TRUTH_FRACTIONS``, and the events Kay, Karlsson, the HSE detector and two recipes
-found there, read from the run's ``events.csv.gz``. Misaligned windows, events in
-the wrong units or events missing where the signal plainly holds one show up here
-first. One PNG per event type goes to ``<run directory>/spot_check/``.
+found there, read from the run's ``events.csv.gz``. Each panel shows 0.15 s on either
+side of the event's network window, so neighbouring events' windows and detections
+in that stretch are drawn too; a point event is a diamond, and a method that failed
+on the session has "failed" across its lane. Misaligned windows, events in the wrong
+units or events missing where the signal plainly holds one show up here first.
+
+One PNG per event type goes to ``<run directory>/spot_check/``, beside the run's
+outputs (git-ignored): a first look at a session, by event type. It is not
+``results/<run_name>/spot_checks/``, where ``analyze.spot_check`` draws, with
+``draw_window``, the events behind one candidate trend, the figures a stated trend
+cites.
 
 Usage, from the repository root::
 

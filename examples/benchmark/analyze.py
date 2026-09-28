@@ -6,47 +6,67 @@ Usage, from the repository root (see README.md, "Analysing a run")::
     uv run python examples/benchmark/analyze.py --run-name NAME [--workers N]
         [--run-directory PATH] [--results-directory PATH]
 
-It reads the run's ``combined/`` (``examples/benchmark/output/<run_name>/`` unless
-``--run-directory`` says otherwise; ``run.py``'s docstring lists every column) and
-rebuilds ``examples/benchmark/results/<run_name>/``: per analysis in ``ANALYSES``
-one CSV and one PNG, and ``summary.md``, which names each file with one sentence on
-what it shows and lists the methods that failed. No file may pass ``SIZE_LIMIT``
-(1 MB): the command stops before writing one, leaving the previous results as they
-were.
+It reads the run's ``combined/`` and ``conditions.csv``
+(``examples/benchmark/output/<run_name>/`` unless ``--run-directory`` says
+otherwise; ``run.py``'s docstring lists every column) and rebuilds
+``examples/benchmark/results/<run_name>/``: a CSV per analysis in ``ANALYSES``, a
+PNG for each with a figure (all but ``failures``, ``operating_differences``,
+``appendix_expressions``, the ``appendix_curves_<expression>`` and
+``model_sensitivity_orders``; none for an empty table), ``candidate_trends.csv``
+and ``summary.md``, which names each file with one sentence on what it shows and
+lists the methods that failed. ``trends.md`` and ``spot_checks/``, written there by
+hand, are carried over. No file may pass ``SIZE_LIMIT`` (1 MB): the command stops
+before writing one, leaving the previous results as they were.
 
-What is analysed. The reference condition's sessions and the rows whose
-``setting`` is ``"default"`` or ``"literature"`` (``main_rows``): each detector at
-its defaults and every recipe. The runner stores events, not pairs, so every
+What is analysed. Most tables read the reference condition's sessions and the rows
+whose ``setting`` is ``"default"`` or ``"literature"`` (``main_rows``): each detector
+at its defaults and every recipe. The runner stores events, not pairs, so every
 session is matched again (``match_run``, ``--workers`` processes): one to one
 (``match_events``, IoU 0: any overlap) against the truth windows at 10 % of the
 peak, errors also against those at 25 and 50 %. A method is headlined against its
-primary expression (``methods.csv``); comparisons of all pairs of methods use the
-network truth, the one every method is scored on.
+primary expression (``methods.csv``), and in the appendix against every
+expression; comparisons of all pairs of methods use the network truth, the one every
+method is scored on, but for timing and error correlations of two methods sharing a
+primary expression. The operating curves, points, differences, held-out thresholds
+and appendix curves read the detectors' sweeps too, in the reference alone
+(``load_scores``). Robustness and model sensitivity read every condition, model
+sensitivity each detector's sweep in the reference and the alternative models too.
 
 Failures. A session, method and setting the run should hold and has no scores for
-is a failure, never zero events (``load_run``). Every per-method table carries
-``n_sessions``, the sessions its numbers pool, and ``n_failures``; a table of pairs
-``n_failures_a`` and ``n_failures_b``.
+is a failure, never zero events (``load_run``). Every per-method table has a row for
+every method, one that never ran included, with ``n_sessions``, the sessions its
+numbers pool, and ``n_failures``; a table of pairs ``n_failures_a`` and
+``n_failures_b``; a table across conditions ``n_replicates``, ``n_dropped`` and
+``n_failures``; the curves and points ``n_sessions`` and ``n_dropped`` (a
+comparison or a curve pools only the units on which the method ran in every
+condition and at every setting it compares).
 
 Intervals and tests. Every interval is a 95 % percentile interval from
-``paired_bootstrap`` over sessions (2000 resamples, seed 0): a resample draws
+``paired_bootstrap`` (2000 resamples, seed 0): within a condition a resample draws
 sessions with replacement, one draw shared by every method, so the methods stay
-paired. A pooled ratio or median is resampled whole; a difference between two
-methods is summarized per session (the sessions are the independent units), and
-its estimate and interval are the mean of those per-session values and its
-p-value ``sign_flip_test``'s, two-sided, over them.
+paired; across conditions it draws replicates, a replicate's sessions sharing its
+seed in every condition. A pooled ratio or median is resampled whole; a difference
+between two methods is summarized per session (the sessions are the independent
+units), its estimate and interval the mean of those per-session values and its
+p-value ``sign_flip_test``'s, two-sided, over them. A change between conditions is
+the value pooled over the replicates minus the reference's pooled value, while its
+p-value is over each replicate's own change.
 
 Signs and units. Times and errors are seconds (the figures show milliseconds). A
 signed error is detected minus truth: negative, early. A difference between two
 methods is A minus B, A the method named first (by name): negative, A earlier, or
-for absolute errors, A closer to the truth.
+for absolute errors, A closer to the truth. A change between conditions is the other
+condition minus the reference.
 
 The tables, each built by the function of the same name, whose docstring lists its
-columns: ``failures`` (``failure_counts``), ``detection_profile``,
-``false_positive_classes``, ``pairwise_agreement``, ``agreement_dendrogram``,
-``consensus``, ``overlap_quality``, ``boundary_errors``,
-``paired_timing_<expression>`` (``paired_timing``, one per primary expression),
-``method_differences``, ``error_correlations`` and ``splits_and_merges``.
+columns, except: ``failures`` (``failure_counts``), ``paired_timing_<expression>``
+(``paired_timing``, one per primary expression), ``robustness_<measure>`` and
+``robustness_crossed_<measure>`` (``robustness`` and ``robustness_crossed``, their
+columns after the factor and levels ``CHANGE_COLUMNS``, ``paired_changes``'), the
+changes and orders of ``model_sensitivity`` (``SENSITIVITY_COLUMNS``,
+``ORDER_COLUMNS``), ``operating_differences`` (``DIFFERENCE_COLUMNS``),
+``appendix_curves_<expression>`` (``expression_curves``) and ``candidate_trends``
+(``TREND_COLUMNS``).
 """
 
 from __future__ import annotations
@@ -321,24 +341,25 @@ def paired_bootstrap(
 def sign_flip_test(
     differences: ArrayLike, *, n_resamples: int = 10_000, seed: int = SEED
 ) -> float:
-    """Two-sided paired test that the mean difference over sessions is 0.
+    """Two-sided paired test that the mean difference over units is 0.
 
     Parameters
     ----------
-    differences : array_like, shape (n_sessions,)
-        One paired difference per session, each finite: pair the sessions
-        where both values exist first, and report how many were dropped.
+    differences : array_like, shape (n_units,)
+        One paired difference per unit (a session, or a replicate across
+        conditions), each finite: pair the units where both values exist
+        first, and report how many were dropped.
     n_resamples : int, optional
-        Random sign vectors when there are more than 16 sessions.
+        Random sign vectors when there are more than 16 units.
     seed : int, optional
 
     Returns
     -------
     p_value : float
         The fraction of sign flips whose absolute mean is at least the
-        observed one: every flip, exactly, for up to 16 sessions; else
+        observed one: every flip, exactly, for up to 16 units; else
         ``(k + 1) / (n_resamples + 1)`` over random flips, never 0. NaN for
-        no sessions.
+        no units.
 
     Raises
     ------
@@ -453,8 +474,9 @@ def match_peaks(windows: ArrayLike, peaks: ArrayLike) -> np.ndarray[Any, Any]:
     """Pair truth windows one to one with the time points inside them.
 
     A point matches a window that contains it, bounds included, to the
-    timestamps' rounding (8 units in the last place of the largest
-    magnitude, as ``match_events`` judges a touch). Windows are taken in
+    timestamps' rounding: 8 units in the last place of the largest
+    magnitude, the room ``match_events`` gives a minimum IoU and ties
+    between overlaps. Windows are taken in
     order of their ends, each given the earliest unused point inside it:
     for points in intervals this gives the most pairs there can be.
 
@@ -726,7 +748,8 @@ class Matches:
     Attributes
     ----------
     windows : pandas.DataFrame
-        One row per truth window of each expression (``EXPRESSIONS``) at 10 %:
+        One row per truth window of each expression (``network``, ``ripple``,
+        ``sharp_wave``, ``burst``) at 10 %:
         ``expression``, ``row`` (its position, as ``truth_row`` gives it),
         ``id`` (the latent event), ``type`` (its event type), ``start_time``,
         ``end_time``.
@@ -1363,7 +1386,10 @@ ERROR_ROW_COLUMNS = (
 )
 EXPRESSION_COUNT_COLUMNS = (*COUNT_COLUMNS[:3], "expression", *COUNT_COLUMNS[3:])
 PARTICIPATION_COLUMNS = ("session_id", "method", "setting", "n_events", "principal_fraction")
-# The conditions whose sweeps are read: the reference and each alternative model.
+# The conditions whose every setting is matched again at every minimum IoU: the
+# reference and each alternative model. The operating curves, points and held-out
+# thresholds read the reference's pairs alone; model sensitivity reads the
+# alternatives' sweeps from the runner's counts, not from these pairs.
 CURVE_CONDITIONS = (
     REFERENCE_CONDITION,
     *(
@@ -1555,8 +1581,9 @@ def load_scores(
         ``combined/`` are read.
     curve_conditions : collection of str, optional
         The conditions whose every setting is matched at every level of
-        ``MATCH_IOU_LEVELS``, for the operating curves; the others' main
-        settings are matched at IoU 0. Those the run lacks are skipped.
+        ``MATCH_IOU_LEVELS`` (the operating curves read the reference's);
+        the others' main settings are matched at IoU 0. Those the run lacks
+        are skipped.
     workers : int, optional
         Processes matching sessions again; 1 matches in this one.
 
@@ -3031,10 +3058,11 @@ def operating_curves(
     Returns
     -------
     curves : pandas.DataFrame
-        One row per interval method, setting and ``minimum_iou``, by method,
-        level, then ``kind`` (``"sweep"`` in threshold order, ``"default"``,
-        ``"recipe"``): ``method``, ``setting``, ``kind``, ``threshold`` (the
-        swept value; NaN for a main setting), ``minimum_iou``,
+        One row per interval method, setting and ``minimum_iou``, by
+        ``minimum_iou``, then method, then ``kind`` (``"sweep"`` in threshold
+        order, ``"default"``, ``"recipe"``): ``method``, ``setting``,
+        ``kind``, ``threshold`` (the swept value; NaN for a main setting),
+        ``minimum_iou``,
         ``primary_expression``, ``n_sessions`` (pooled), ``n_dropped`` (those
         it ran on but another setting of the sweep did not, left out),
         ``n_reference``, ``n_detected``, ``n_matched``, ``minutes``, ``recall``,
@@ -5196,7 +5224,17 @@ def _tall(n_rows: int) -> float:
 
 
 def plot_detection_profile(profile: pd.DataFrame) -> Figure:
-    """``detection_profile``'s recall, method by event type."""
+    """``detection_profile``'s recall, method by event type.
+
+    Parameters
+    ----------
+    profile : pandas.DataFrame
+        ``detection_profile``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     methods = list(dict.fromkeys(profile["method"]))
@@ -5217,7 +5255,17 @@ def plot_detection_profile(profile: pd.DataFrame) -> Figure:
 
 
 def plot_false_positive_classes(classes: pd.DataFrame) -> Figure:
-    """``false_positive_classes``' fractions, stacked per method."""
+    """``false_positive_classes``' fractions, stacked per method.
+
+    Parameters
+    ----------
+    classes : pandas.DataFrame
+        ``false_positive_classes``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     methods = list(dict.fromkeys(classes["method"]))
@@ -5252,7 +5300,17 @@ def _leaf_order(agreement: pd.DataFrame) -> list[str]:
 
 def plot_pairwise_agreement(agreement: pd.DataFrame) -> Figure:
     """``pairwise_agreement``'s four Jaccard indices, methods in the
-    dendrogram's leaf order."""
+    dendrogram's leaf order.
+
+    Parameters
+    ----------
+    agreement : pandas.DataFrame
+        ``pairwise_agreement``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     methods = _leaf_order(agreement)
@@ -5274,7 +5332,17 @@ def plot_pairwise_agreement(agreement: pd.DataFrame) -> Figure:
 
 
 def plot_agreement_dendrogram(dendrogram: pd.DataFrame) -> Figure:
-    """``agreement_dendrogram``'s tree."""
+    """``agreement_dendrogram``'s tree.
+
+    Parameters
+    ----------
+    dendrogram : pandas.DataFrame
+        ``agreement_dendrogram``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
     from scipy.cluster.hierarchy import dendrogram as draw
 
@@ -5299,7 +5367,17 @@ def plot_agreement_dendrogram(dendrogram: pd.DataFrame) -> Figure:
 
 def plot_consensus(table: pd.DataFrame) -> Figure:
     """``consensus``: methods per true event by type, and per group of false
-    positives."""
+    positives.
+
+    Parameters
+    ----------
+    table : pandas.DataFrame
+        ``consensus``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     figure, (left, right) = plt.subplots(1, 2, figsize=(10, 4))
@@ -5322,7 +5400,17 @@ def plot_consensus(table: pd.DataFrame) -> Figure:
 
 
 def plot_overlap_quality(quality: pd.DataFrame) -> Figure:
-    """``overlap_quality``'s distributions, one panel per measure."""
+    """``overlap_quality``'s distributions, one panel per measure.
+
+    Parameters
+    ----------
+    quality : pandas.DataFrame
+        ``overlap_quality``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     methods = list(dict.fromkeys(quality["method"]))
@@ -5339,7 +5427,17 @@ def plot_overlap_quality(quality: pd.DataFrame) -> Figure:
 
 def plot_boundary_errors(errors: pd.DataFrame) -> Figure:
     """``boundary_errors`` in ms: boxes at 10 % of the peak, the medians at
-    25 % (triangle) and 50 % (square)."""
+    25 % (triangle) and 50 % (square).
+
+    Parameters
+    ----------
+    errors : pandas.DataFrame
+        ``boundary_errors``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     keys = errors[["method", "expression"]].drop_duplicates()
@@ -5360,14 +5458,25 @@ def plot_boundary_errors(errors: pd.DataFrame) -> Figure:
             axis.plot(at[fraction]["median"] * _MS, y, marker, markersize=2, color="C3")
         if measure == "signed":
             axis.axvline(0, color="0.7", linewidth=0.6)
-        axis.set_title(f"{boundary}, {measure} (ms; detected - truth)", fontsize=8)
+        shown = "detected - truth" if measure == "signed" else "|detected - truth|"
+        axis.set_title(f"{boundary}, {measure} (ms; {shown})", fontsize=8)
     axes[0].set_yticks(y, labels, fontsize=_FONT)
     return figure
 
 
 def plot_paired_timing(timing: pd.DataFrame) -> Figure:
     """``paired_timing``'s mean paired differences at 10 % of the peak, in ms:
-    row A minus column B."""
+    row A minus column B.
+
+    Parameters
+    ----------
+    timing : pandas.DataFrame
+        ``paired_timing``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     shown = timing[timing["fraction"] == TRUTH_FRACTIONS[0]]
@@ -5397,7 +5506,17 @@ def plot_paired_timing(timing: pd.DataFrame) -> Figure:
 
 def plot_method_differences(differences: pd.DataFrame) -> Figure:
     """``method_differences``' median start and end differences, in ms:
-    row A minus column B."""
+    row A minus column B.
+
+    Parameters
+    ----------
+    differences : pandas.DataFrame
+        ``method_differences``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     methods = sorted(set(differences["method_a"]) | set(differences["method_b"]))
@@ -5421,7 +5540,17 @@ def plot_method_differences(differences: pd.DataFrame) -> Figure:
 
 
 def plot_error_correlations(correlations: pd.DataFrame) -> Figure:
-    """``error_correlations``' mean correlations, method by method."""
+    """``error_correlations``' mean correlations, method by method.
+
+    Parameters
+    ----------
+    correlations : pandas.DataFrame
+        ``error_correlations``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     methods = sorted(set(correlations["method_a"]) | set(correlations["method_b"]))
@@ -5444,7 +5573,17 @@ def plot_error_correlations(correlations: pd.DataFrame) -> Figure:
 
 def plot_splits_and_merges(rates: pd.DataFrame) -> Figure:
     """``splits_and_merges``' rates with their intervals, overall and on
-    doublets."""
+    doublets.
+
+    Parameters
+    ----------
+    rates : pandas.DataFrame
+        ``splits_and_merges``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     methods = list(dict.fromkeys(rates["method"]))
@@ -5492,7 +5631,17 @@ def _dots(
 
 
 def plot_point_inventories(points: pd.DataFrame) -> Figure:
-    """``point_inventories``' recall, precision and false positives per minute."""
+    """``point_inventories``' recall, precision and false positives per minute.
+
+    Parameters
+    ----------
+    points : pandas.DataFrame
+        ``point_inventories``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     columns = ("recall", "precision", "false_positives_per_minute")
@@ -5511,7 +5660,17 @@ _EXPRESSION_COLORS = {"ripple": "C0", "sharp_wave": "C3", "burst": "C2", "networ
 def plot_operating_curves(curves: pd.DataFrame) -> Figure:
     """``operating_curves`` at IoU 0: one panel per primary expression, each
     detector's sweep a line (its default an open circle), each recipe a grey
-    dot, the target rates dotted."""
+    dot, the target rates dotted.
+
+    Parameters
+    ----------
+    curves : pandas.DataFrame
+        ``operating_curves``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     shown = curves[curves["minimum_iou"] == 0]
@@ -5563,7 +5722,17 @@ def plot_operating_curves(curves: pd.DataFrame) -> Figure:
 
 def plot_operating_points(points: pd.DataFrame) -> Figure:
     """``operating_points``: each detector's recall at the targets, one panel
-    per minimum IoU."""
+    per minimum IoU.
+
+    Parameters
+    ----------
+    points : pandas.DataFrame
+        ``operating_points``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     levels = list(dict.fromkeys(points["minimum_iou"]))
@@ -5603,7 +5772,17 @@ def plot_operating_points(points: pd.DataFrame) -> Figure:
 
 def plot_held_out_thresholds(thresholds: pd.DataFrame) -> Figure:
     """``held_out_thresholds``: held-out recall (with its interval) against
-    the calibration recall of the chosen setting, per target."""
+    the calibration recall of the chosen setting, per target.
+
+    Parameters
+    ----------
+    thresholds : pandas.DataFrame
+        ``held_out_thresholds``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     targets = list(dict.fromkeys(thresholds["fp_target"]))
@@ -5633,7 +5812,17 @@ def plot_held_out_thresholds(thresholds: pd.DataFrame) -> Figure:
 def plot_robustness(table: pd.DataFrame) -> Figure:
     """One measure of ``robustness``: a panel per factor, the measure against
     the factor's levels, one line per main setting (coloured by primary
-    expression), the reference level in place."""
+    expression), the reference level in place.
+
+    Parameters
+    ----------
+    table : pandas.DataFrame
+        One measure's rows of ``robustness``.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     factors = list(dict.fromkeys(table["factor"]))
@@ -5674,7 +5863,17 @@ def plot_robustness(table: pd.DataFrame) -> Figure:
 
 def plot_robustness_crossed(table: pd.DataFrame) -> Figure:
     """One measure of ``robustness_crossed``: per crossed pair, the change
-    from the reference in every cell, a row per main setting."""
+    from the reference in every cell, a row per main setting.
+
+    Parameters
+    ----------
+    table : pandas.DataFrame
+        One measure's rows of ``robustness_crossed``.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     pairs = list(dict.fromkeys(table["factors"]))
@@ -5710,7 +5909,17 @@ def plot_robustness_crossed(table: pd.DataFrame) -> Figure:
 
 def plot_rates_by_state(rates: pd.DataFrame) -> Figure:
     """``rates_by_state``: each method's rate at rest and while running, the
-    true rates as vertical lines."""
+    true rates as vertical lines.
+
+    Parameters
+    ----------
+    rates : pandas.DataFrame
+        ``rates_by_state``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     methods = list(dict.fromkeys(rates["method"]))
@@ -5726,7 +5935,17 @@ def plot_rates_by_state(rates: pd.DataFrame) -> Figure:
 
 
 def plot_participation_bias(bias: pd.DataFrame) -> Figure:
-    """``participation_bias``' ratio of means, per method, 1 marked."""
+    """``participation_bias``' ratio of means, per method, 1 marked.
+
+    Parameters
+    ----------
+    bias : pandas.DataFrame
+        ``participation_bias``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     figure, axis = plt.subplots(figsize=(5, _tall(len(bias))))
@@ -5739,7 +5958,17 @@ def plot_participation_bias(bias: pd.DataFrame) -> Figure:
 
 
 def plot_boundary_effect(effect: pd.DataFrame) -> Figure:
-    """``boundary_effect``' mean differences, per method and unit selection."""
+    """``boundary_effect``' mean differences, per method and unit selection.
+
+    Parameters
+    ----------
+    effect : pandas.DataFrame
+        ``boundary_effect``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     methods = list(dict.fromkeys(effect["method"]))
@@ -5755,7 +5984,17 @@ def plot_boundary_effect(effect: pd.DataFrame) -> Figure:
 
 
 def plot_matching_sensitivity(sensitivity: pd.DataFrame) -> Figure:
-    """``matching_sensitivity``: recall and precision at each minimum IoU."""
+    """``matching_sensitivity``: recall and precision at each minimum IoU.
+
+    Parameters
+    ----------
+    sensitivity : pandas.DataFrame
+        ``matching_sensitivity``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     methods = list(dict.fromkeys(sensitivity["method"]))
@@ -5786,7 +6025,17 @@ def plot_matching_sensitivity(sensitivity: pd.DataFrame) -> Figure:
 def plot_model_sensitivity(changes: pd.DataFrame) -> Figure:
     """``model_sensitivity``: per alternative model, each main setting's
     change in recall and each detector's at 1 per minute (triangles), with
-    intervals."""
+    intervals.
+
+    Parameters
+    ----------
+    changes : pandas.DataFrame
+        ``model_sensitivity``' table.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
     import matplotlib.pyplot as plt
 
     alternatives = list(dict.fromkeys(changes["alternative"]))
@@ -6848,13 +7097,17 @@ def _point_lines(tables: RunTables) -> list[str]:
             + (", ".join(f"`{method}`" for method in points) or "none in this run")
             + f'; the catalog\'s output "{POINT_OUTPUT}") return one time point per event, '
             "which no interval rule can credit. They are scored by peak containment: a "
-            "point matches a truth window of the method's primary expression that contains "
-            "it, one to one, the most pairs. Only recall, precision and false positives per "
-            "minute are reported for them (`point_inventories.csv`, and rows marked "
-            "`peak_containment` in the robustness and model sensitivity tables), never "
-            "pooled with interval scores; they are left out of the detection profile, false "
-            "positive classes, agreement, consensus, overlap, boundary errors, paired timing, "
-            "splits and merges, operating curves, participation and matching sensitivity."
+            "point matches a truth window that contains it, one to one, the most pairs. "
+            "Only recall, precision and false positives per minute are reported for them "
+            "(`point_inventories.csv` against the primary expression, "
+            "`appendix_expressions.csv` against every expression, and rows marked "
+            "`peak_containment` in `rates_by_state.csv`, the robustness and model "
+            "sensitivity tables and the recall changes below), never pooled with interval "
+            "scores; they are left out of the detection profile, false positive classes, "
+            "agreement and its dendrogram, consensus, overlap, boundary errors, paired "
+            "timing, method differences, error correlations, splits and merges, the "
+            "operating curves, points, differences and held-out thresholds, the appendix "
+            "curves, participation bias, the boundary effect and matching sensitivity."
         )
     ]
     if single:
@@ -6957,8 +7210,8 @@ def _summary(
             "",
             (
                 "Pooled recall against the primary expression at each level, over the "
-                "replicates the levels share (`robustness_recall.csv`, which has each "
-                "change's interval)."
+                "replicates every level shares on which the method ran in every level "
+                "(`robustness_recall.csv`, which has each change's interval)."
             ),
             "",
         ]

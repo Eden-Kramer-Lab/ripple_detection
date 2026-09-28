@@ -377,17 +377,23 @@ uv run python examples/benchmark/analyze.py --run-name v1 --workers N
 Most analyses read the reference condition's sessions and the main methods, each
 detector at its defaults and every recipe (`setting` `default` or `literature`), and
 match every session again, one process per session, since the runner keeps events, not
-pairs. The operating curves also read the detectors' sweeps, in the reference and the
-six alternative models; robustness and model sensitivity read every condition, paired
-by replicate. It rebuilds `examples/benchmark/results/<run_name>/`: one CSV and one PNG
-per analysis, `candidate_trends.csv`, and `summary.md`, which names each file with one
-sentence on what it shows, lists every method that failed on some session and the lists
-the analyses call for (below). What is written there by hand, `trends.md` (the trends
-stated, each with what its spot check showed) and the figures in `spot_checks/`, is
-carried over into the rebuilt directory, and `summary.md` links `trends.md`. No file may
-pass 1 MB: the command stops before writing one and leaves the previous results in
-place. `--run-directory` and
-`--results-directory` read and write elsewhere.
+pairs. The operating curves, points and differences, the held-out thresholds and the
+appendix curves also read the detectors' sweeps, in the reference condition alone.
+Robustness (`robustness_*`, `robustness_crossed_*`) and model sensitivity
+(`model_sensitivity`, `model_sensitivity_orders`) read every condition, the latter each
+detector's sweep in the reference and the six alternative models too, and resample
+replicates, not sessions, so that the conditions stay paired.
+
+It rebuilds `examples/benchmark/results/<run_name>/`: a CSV per analysis below, a PNG
+for each that has a figure (all but `failures`, `operating_differences`,
+`appendix_expressions`, the `appendix_curves_*` and `model_sensitivity_orders`; none
+for an empty table), `candidate_trends.csv`, and `summary.md`, which names each file with
+one sentence on what it shows, lists every method that failed on some session and the
+lists the analyses call for (below). What is written there by hand, `trends.md` (the
+trends stated, each with what its spot check showed) and the figures in `spot_checks/`,
+is carried over into the rebuilt directory, and `summary.md` links `trends.md`. No file
+may pass 1 MB: the command stops before writing one and leaves the previous results in
+place. `--run-directory` and `--results-directory` read and write elsewhere.
 
 Two scoring rules. An interval method is matched one to one to the truth windows of its
 primary expression at 10 % of the peak, any overlap counting (IoU 0). The two ripple
@@ -395,14 +401,24 @@ inventories whose catalog entry (`list_methods()`) gives `output` `"ripple peaks
 `davidson_2009_ripples` and `wu_2014_ripples`, return one time point per event, which no
 interval rule can credit: a point matches a window that contains it (closed bounds, to
 the timestamps' rounding), one to one, the most pairs (`match_peaks`). They get recall,
-precision and false positives per minute only, in `point_inventories` and in rows marked
-`peak_containment`, never pooled with interval scores, and are left out of every table
-of bounds, overlap or timing. A method whose intervals happen to be one sample long,
+precision and false positives per minute only: in `point_inventories`, in
+`appendix_expressions` against every expression, and in the rows marked
+`peak_containment` of `rates_by_state`, `robustness_*` and `model_sensitivity` (and of
+`summary.md`'s list of recall changes), never pooled with interval scores. Every table of
+bounds, overlap, timing, agreement, consensus, splits and merges, participation, sweeps
+or minimum IoU leaves them out. A method whose intervals happen to be one sample long,
 such as `lee_2002`'s, keeps the interval rule: the catalog decides, not the events.
 
 - `failures`: each method's sessions with scores and without, and its scoring rule. A
-  session without a method's scores is a failure, never zero events; every table
-  carries each method's `n_sessions` (the sessions its numbers pool) and `n_failures`.
+  session without a method's scores is a failure, never zero events. Every per-method
+  table has a row for every method, one that never ran included (its counts 0, its
+  values missing), with `n_sessions` (the sessions its numbers pool) and `n_failures`;
+  a table of pairs `n_failures_a` and `n_failures_b`; a table across conditions
+  `n_replicates`, `n_dropped` (replicates left out because the method failed in one of
+  the conditions compared) and `n_failures`; the curves and points `n_sessions`,
+  `n_dropped` (sessions left out because some setting of the sweep failed there) and
+  `n_failures`. The dendrogram and consensus count the methods compared and the calls
+  that failed.
 - `point_inventories`: the point methods' recall, precision and false positives per
   minute.
 - `detection_profile`: recall per event type against the network truth.
@@ -427,21 +443,35 @@ such as `lee_2002`'s, keeps the interval rule: the catalog decides, not the even
   which events each found.
 - `method_differences` and `error_correlations`: how every pair of methods' matched
   events differ in start and end, and whether their errors on the same true events
-  are correlated.
+  are correlated: against their shared primary expression's truth for two methods that
+  share one, as paired timing, else the network truth, whose correlations are beside
+  every pair's.
 - `splits_and_merges`: how often a method splits a true event or merges several,
   overall and on ripple doublets.
 - `operating_curves`, `operating_points` and `held_out_thresholds`: recall against false
-  positives per minute along each detector's sweep, read off at 0.5, 1, 2 and 5 per
-  minute, and a threshold per target chosen on the even replicates and judged on the
-  odd ones.
+  positives per minute along each detector's sweep, pooled over the sessions on which
+  every setting ran, read off at 0.5, 1, 2 and 5 per minute, and a threshold per target
+  chosen on the even replicates and judged on the odd ones.
+- `operating_differences`: for each pair of detectors sharing a primary expression, the
+  difference in recall at each target, paired by session, with its interval and
+  sign-flip test.
 - `robustness_<measure>` and `robustness_crossed_<measure>` (recall, precision, onset):
   each main setting along each factor and over the cells of the two crossed pairs.
 - `rates_by_state`, `participation_bias` and `boundary_effect`: event rates at rest and
   while running, which true events each method finds by their recruited cells, and what
   its bounds do to the units counted active.
-- `matching_sensitivity`: the scores at minimum IoU 0, 0.2 and 0.5.
+- `matching_sensitivity`: the main interval methods' scores against their primary
+  expression at minimum IoU 0, 0.2 and 0.5: recall, precision and F1 with intervals;
+  the IoU quartiles, median absolute errors and recall by event type without them; each
+  detector's recall at the target rates from `operating_points`; and a rank among the
+  methods of a primary expression that is descriptive, with no interval or test.
 - `model_sensitivity` and `model_sensitivity_orders`: each result, and each order of
   detectors, under each of the simulator's six alternative models.
+- `appendix_expressions`: every main method against every expression (network, ripple,
+  sharp wave, burst), not only its primary one: recall, precision, false positives per
+  minute, median IoU and median signed and absolute errors at 10 %, with intervals.
+- `appendix_curves_<expression>`: every interval method's curve against one expression,
+  one file per expression.
 - `candidate_trends`: patterns in the tables worth a spot check, not conclusions.
 
 Signs: an error is detected minus truth (negative: early); a difference between two
@@ -449,9 +479,20 @@ methods is A minus B, A the method named first; a change between conditions is t
 other condition minus the reference. Every interval is a 95 % paired bootstrap: over
 sessions within a condition, every session drawn for all methods at once, and over
 replicates across conditions, a replicate's sessions sharing its seed in every
-condition. A difference is summarized per session (or replicate), and its two-sided
-sign-flip p-value is over those per-unit values where both exist. What each column
-means is in the docstring of the function of the table's name in `analyze.py`.
+condition. A difference between methods is summarized per session, its estimate the
+mean of those values and its two-sided sign-flip p-value over them where both exist. A
+change between conditions is the value pooled over the replicates minus the reference's
+pooled value, over the replicates on which the method ran in both, and its p-value is
+over each replicate's own change.
+
+What each column means is in the docstring of the function that builds the table: the
+function of the table's name, except `failures` (`failure_counts`),
+`paired_timing_<expression>` (`paired_timing`), `robustness_<measure>` and
+`robustness_crossed_<measure>` (`robustness` and `robustness_crossed`, whose columns
+after the factor and levels are `paired_changes`' `CHANGE_COLUMNS`), the orders of
+`model_sensitivity` (`ORDER_COLUMNS`), `operating_differences` (`DIFFERENCE_COLUMNS`),
+`appendix_curves_<expression>` (`expression_curves`) and `candidate_trends`
+(`TREND_COLUMNS`).
 
 On run `v1` (the shared 18-core machine), with `--workers 6`, the command took 6.4
 minutes wall and at most 4.5 GB resident: loading the reference 12 s, matching it again
@@ -471,9 +512,9 @@ A result holds for the reference simulator unless a file compares conditions, an
 the six alternative models only one at a time.
 
 `summary.md` lists the files, the failures, the methods whose recall moves by more than
-0.1 across a factor, the rank changes with the minimum IoU, what survives each
-alternative model, and, once written by hand, each stated trend with the spot check
-behind it.
+0.1 across a factor, the rank changes with the minimum IoU and what survives each
+alternative model, and links `trends.md`, where each stated trend is written by hand
+with the spot check behind it.
 
 ### Detection and false positives
 
@@ -482,7 +523,7 @@ network truth (every component of an event joined), so a ripple detector can sco
 `burst_only` event only by overlapping its burst. `false_positive_classes.png` stacks,
 per method, what its unmatched events overlap longest. Neither says why a method misses
 or fires: the spot checks show single events. A false positive over a non-event is a
-false positive by this benchmark's taxonomy (nearby gamma, EMG, leaked spikes and theta
+false positive by this benchmark's taxonomy (fast gamma, EMG, leaked spikes and theta
 bursts are declared non-events), not a claim about what a recording's event was.
 
 ### Agreement, consensus and overlap
@@ -507,9 +548,10 @@ sharing a primary expression, the mean over sessions of the median paired differ
 the true events both found, A (row) minus B (column); negative on the absolute panels
 means A is closer to the truth. `method_differences.png` is the same for the methods'
 own bounds against each other, `error_correlations.png` whether their errors move
-together. The truth windows are cut at fractions of a latent envelope; no measured
-recording has such a boundary, so these compare methods with one convention, not with
-an observable onset.
+together (against a shared primary expression's truth, else the network truth; the CSV
+has the network truth's correlations beside every pair's). The truth windows are cut at
+fractions of a latent envelope; no measured recording has such a boundary, so these
+compare methods with one convention, not with an observable onset.
 
 ### Operating curves and thresholds
 
@@ -520,10 +562,17 @@ the panel of its primary expression. False positives are counted over the minute
 outside every network window, so a rate is per minute of time without events.
 `operating_points.png` gives recall at 0.5, 1, 2 and 5 per minute: a target a curve does
 not reach is missing, never its nearest end, and `attained` in the CSV says in what
-share of resamples it is reached. The curves describe the sessions they are read from:
-a threshold quoted from them is chosen on the even replicates and judged on the odd
-ones (`held_out_thresholds.png`, held-out recall beside the calibration recall). A
-recipe's point is one configured interpretation, not the paper's own tuning.
+share of resamples it is reached. `operating_differences.csv` has, for two detectors of
+one primary expression, the difference in recall at each target, paired by session,
+with its interval and test: two recalls whose intervals overlap can still differ, and
+two whose estimates differ may not. A sweep is pooled over the sessions on which every
+setting ran, so a failed call cannot bend one point of a curve. The curves describe the
+sessions they are read from: a threshold quoted from them is chosen on the even
+replicates and judged on the odd ones (`held_out_thresholds.png`, held-out recall beside
+the calibration recall). A recipe's point is one configured interpretation, not the
+paper's own tuning. `appendix_curves_<expression>.csv` gives every curve against each
+expression, not only the primary one, and `appendix_expressions.csv` every main method's
+scores against each.
 
 ### Robustness across conditions
 
@@ -531,20 +580,21 @@ recipe's point is one configured interpretation, not the paper's own tuning.
 levels with the reference level in place, one line per main setting coloured by
 primary expression. `robustness_crossed_<measure>.png` shows, per crossed pair, the
 change from the reference in every cell, a row per method. Changes are the level minus
-the reference, over the replicates both hold, with paired intervals and sign-flip
+the reference, over the replicates every level holds on which the method ran in every
+level (`n_dropped` counts those a failure left out), with paired intervals and sign-flip
 tests. One factor moves at a time (except the two crossed pairs), so the panels do not
 show how factors combine.
 
 ### Rates and participation
 
 `rates_by_state.png` gives each method's events per minute at rest and while running
-(an event placed by its peak time), the true rates marked: network events at rest and
-theta bursts, the running state's non-events. `participation_bias.png` shows the ratio
-of the mean number of recruited cells (latent, some of which never fire) of the true
-events a method finds to that of all true events with a burst: above 1, the method
-favours events with more recruited cells. `boundary_effect.png` shows the units active
-within the detected bounds minus those within the matched truth window, all units and
-principal ones: zero when the bounds agree, since silent recruits, interneurons and
+(an event placed by its peak time, else its midpoint), the true rates marked: network
+events at rest and theta bursts, the running state's non-events. `participation_bias.png`
+shows the ratio of the mean number of recruited cells (latent, some of which never fire)
+of the true events a method finds to that of all true events with a burst: above 1, the
+method favours events with more recruited cells. `boundary_effect.png` shows the units
+active within the detected bounds minus those within the matched truth window, all units
+and principal ones: zero when the bounds agree, since silent recruits, interneurons and
 background spikes count on both sides. None of these says how many cells participate
 in a recorded event.
 
@@ -553,7 +603,9 @@ in a recorded event.
 `matching_sensitivity.png` shows recall and precision when a pair must overlap by IoU
 0.2 and 0.5 instead of any overlap. The CSV keeps the IoU quartiles beside every
 headline at 0, the median absolute errors, recall by event type and each method's rank
-among those of its primary expression, whose changes `summary.md` lists.
+among those of its primary expression, whose changes `summary.md` lists. The ranks
+and the per-type recalls have no interval: a rank change says the order moved, not by
+how much or how surely.
 
 ### Model sensitivity
 
@@ -563,7 +615,10 @@ change at 1 false positive per minute as a triangle. `model_sensitivity_orders.c
 orders detectors of one primary expression by recall at each common target in both
 conditions, with the share of resamples in which the order reverses; `summary.md` says
 per alternative which supported reference orders survive, lose their support or reverse,
-beside the validation report's target statistics that the alternative moves. The
+and how many cannot be compared because a target is out of reach there or a detector
+failed (`status` `unattainable` or `failed`, never confused), beside the validation
+report's target statistics that the alternative moves (or that the report could not be
+read, which is not the same as nothing moving). The
 alternatives are not pooled into an overall winner, and one at a time they do not test
 combinations of assumptions.
 
@@ -574,7 +629,11 @@ been looked at. `candidate_trends.csv` lists candidates from the tables, each wi
 evidence and where to look; `select_events` picks the events (truth windows a method
 missed or found, or its false positives, of one condition) and `spot_check` draws six of
 them, the sessions simulated again from the run's parameters and seeds, with the
-signals, spikes, truth windows and the methods' events, into `spot_checks/`:
+signals, spikes, truth windows and the methods' events (a point event as a diamond, a
+method that failed on the session labelled so), into `spot_checks/`, which a rebuild
+keeps. Each candidate names the condition, one or two methods each with the setting to
+draw (at a false-positive target, the swept setting whose rate is nearest it) and
+which events:
 
 ```python
 import analyze  # with examples/benchmark on sys.path
