@@ -1879,6 +1879,13 @@ def test_rates_by_state_by_hand(analyze, tiny_tables):
     assert rates.loc[MALLORY[0], "minutes"].tolist() == pytest.approx([0.25, 5 / 60])
 
 
+def test_an_event_at_a_bout_end_is_running(analyze):
+    bouts = UNIX_ORIGIN + np.array([[10.0, 15.0], [20.0, 25.0]])
+    times = UNIX_ORIGIN + np.array([9.999, 10.0, 15.0, 15.001, 25.0, 30.0])
+    # both ends of a bout are in it
+    assert analyze._running(times, bouts).tolist() == [False, True, True, False, True, False]
+
+
 def test_session_bouts_are_the_simulated_schedule(analyze, benchmark_import):
     conditions = benchmark_import("conditions")
     rng = np.random.default_rng(conditions.stage_seeds(3)[0])
@@ -2221,6 +2228,25 @@ def test_the_validation_report_is_read_from_the_run_spec(analyze, tmp_path):
         assert reason in problem
 
 
+def test_the_command_reads_the_run_s_validation_report(analyze, two_condition_run, tmp_path):
+    import shutil
+
+    report = _report(tmp_path / "report", _checks())
+    run_directory = tmp_path / "run"
+    shutil.copytree(two_condition_run.parent, run_directory)
+    shutil.copy(report / "run_spec.json", run_directory / "run_spec.json")
+    model = [
+        _quick(analysis)
+        for analysis in analyze.ANALYSES
+        if analysis.name in ("model_sensitivity", "model_sensitivity_orders")
+    ]
+    results = tmp_path / "results"
+    analyze.analyze_run(run_directory, results, figures=False, analyses=model)
+    summary = (results / "summary.md").read_text()
+    assert "- `spike_model=refractory` (validation: rate 11.81 to 11.57)" in summary
+    assert "The validation report was not read" not in summary
+
+
 def test_validation_changes_list_moved_statistics(analyze):
     changed = analyze.validation_changes(_checks())
     assert changed.to_dict("records") == [
@@ -2360,6 +2386,114 @@ def test_a_spot_check_knows_which_methods_failed(benchmark_import, tiny_run):
     # Mallory failed on the second session only: its lane says so there
     assert spot_check.session_failures(tiny_run.parent, "reference/1") == {MALLORY}
     assert spot_check.session_failures(tiny_run.parent, "reference/0") == set()
+
+
+def _trend_rows(method, **columns):
+    return {"method": method, "setting": "default", **columns}
+
+
+def test_every_kind_of_candidate_trend(analyze):
+    bias = pd.DataFrame(
+        [
+            _trend_rows(
+                "a", ratio_of_means=1.2, ratio_of_means_low=1.1, ratio_of_means_high=1.3
+            ),
+            # its interval holds 1: no trend
+            _trend_rows(
+                "b", ratio_of_means=1.05, ratio_of_means_low=0.9, ratio_of_means_high=1.2
+            ),
+        ]
+    )
+    effect = pd.DataFrame(
+        [
+            # all units moved, principal ones not: no trend about principal units
+            _trend_rows(
+                "a",
+                selection="all",
+                mean_difference=2.0,
+                mean_difference_low=1.0,
+                mean_difference_high=3.0,
+            ),
+            _trend_rows(
+                "a",
+                selection="principal",
+                mean_difference=0.5,
+                mean_difference_low=-0.5,
+                mean_difference_high=1.5,
+            ),
+            _trend_rows(
+                "b",
+                selection="principal",
+                mean_difference=-1.0,
+                mean_difference_low=-2.0,
+                mean_difference_high=-0.5,
+            ),
+        ]
+    )
+    model = pd.DataFrame(
+        [
+            _trend_rows(
+                method,
+                alternative="spike_model=refractory",
+                status="compared",
+                measure="recall",
+                scoring="interval",
+                change=change,
+                change_low=change - 0.05,
+                change_high=change + 0.05,
+                change_p=0.01,
+            )
+            for method, change in (("a", -0.2), ("b", 0.2))
+        ]
+    )
+    # thirteen large changes in one condition and one small in another: the
+    # small one is still among the twelve kept, one per condition first
+    robust = pd.DataFrame(
+        [
+            _trend_rows(
+                f"m{k}",
+                level="low",
+                condition_id=condition,
+                primary_expression="ripple",
+                scoring="interval",
+                change=change,
+                change_low=change - 0.01,
+                change_high=change + 0.01,
+                change_p=0.01,
+            )
+            for k, (condition, change) in enumerate(
+                [("ripple_snr=low", 0.5)] * 13 + [("participation=low", 0.05)]
+            )
+        ]
+    )
+    trends = analyze.candidate_trends(
+        {
+            "participation_bias": bias,
+            "boundary_effect": effect,
+            "model_sensitivity": model,
+            "robustness_recall": robust,
+        }
+    )
+    kinds = trends.groupby("kind").method.apply(list).to_dict()
+    assert kinds["participation_bias"] == ["a"]
+    assert kinds["boundary_effect"] == ["b"]
+    assert "principal units" in trends[trends.kind == "boundary_effect"].statement.iloc[0]
+    changed = trends[trends.kind == "model_change"].set_index("method")
+    # a fall is looked at in the events missed, a rise in those found
+    assert changed.spot_selection.to_dict() == {"b": "found", "a": "missed"}
+    robustness = trends[trends.kind == "robustness"]
+    assert len(robustness) == 12
+    assert "participation=low" in set(robustness.condition_id)
+
+
+def test_summary_accounts_for_point_and_single_sample_methods(analyze, point_run):
+    summary = analyze._summary("points", analyze.load_run(point_run), [], {}, None)
+    listed = f"Point inventories (`{DAVIDSON[0]}`; the catalog's output " + '"ripple peaks")'
+    assert listed in summary
+    assert (
+        f"Interval methods whose events can be one sample long (`{LEE[0]}`) keep the "
+        "interval rule" in summary
+    )
 
 
 def test_select_events_for_a_spot_check(analyze, tiny_tables, point_run):
