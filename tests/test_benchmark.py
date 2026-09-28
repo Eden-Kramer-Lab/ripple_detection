@@ -190,6 +190,14 @@ COUNTED_RECIPES = (
 # the commit the runs record, whatever state the checkout running the tests is in.
 RUN_CONDITIONS = ["reference", "ripple_snr=high", "emg_rate=3"]
 RUN_METHODS = (("Kay_ripple_detector", "default"),)
+RUN_ARGUMENTS = {
+    "validation_report": "report/spec.json",
+    "condition_ids": RUN_CONDITIONS,
+    "replicates": 1,
+    "duration": 30.0,
+    "workers": 1,
+    "methods": RUN_METHODS,
+}
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
 
 
@@ -926,14 +934,20 @@ def _fake_report(calls):
     return require
 
 
+def _stub_runner(patch, run, output, reports):
+    """Point the runner at ``output``, stub its report preflight (recording
+    its arguments in ``reports``) and pin its commit."""
+    patch.setattr(run, "OUTPUT", output)
+    patch.setattr(run, "_require_report", _fake_report(reports))
+    patch.setattr(run, "_git_commit", lambda: COMMIT)
+
+
 @pytest.fixture
 def cli(run, tmp_path, monkeypatch):
     """The runner writing under ``tmp_path``, its preflight recording its
     arguments, and ``run_session`` recording each session it runs."""
     reports, sessions = [], []
-    monkeypatch.setattr(run, "OUTPUT", tmp_path)
-    monkeypatch.setattr(run, "_require_report", _fake_report(reports))
-    monkeypatch.setattr(run, "_git_commit", lambda: COMMIT)
+    _stub_runner(monkeypatch, run, tmp_path, reports)
     real = run.run_session
 
     def counted(condition, replicate, methods=None, overrides=None):
@@ -943,16 +957,7 @@ def cli(run, tmp_path, monkeypatch):
     monkeypatch.setattr(run, "run_session", counted)
 
     def start(name="v1", *, resume=False, **options):
-        arguments = {
-            "validation_report": "report/spec.json",
-            "condition_ids": RUN_CONDITIONS,
-            "replicates": 1,
-            "duration": 30.0,
-            "workers": 1,
-            "methods": RUN_METHODS,
-            **options,
-        }
-        return run.run_benchmark(name, resume=resume, **arguments)
+        return run.run_benchmark(name, resume=resume, **{**RUN_ARGUMENTS, **options})
 
     return start, reports, sessions
 
@@ -962,23 +967,29 @@ def finished_run(run, tmp_path_factory):
     """A finished run of the three conditions, to copy."""
     root = tmp_path_factory.mktemp("runs")
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(run, "OUTPUT", root)
-        patch.setattr(run, "_require_report", _fake_report([]))
-        patch.setattr(run, "_git_commit", lambda: COMMIT)
-        run.run_benchmark(
-            "v1",
-            validation_report="report/spec.json",
-            condition_ids=RUN_CONDITIONS,
-            replicates=1,
-            duration=30.0,
-            workers=1,
-            methods=RUN_METHODS,
-        )
+        _stub_runner(patch, run, root, [])
+        run.run_benchmark("v1", **RUN_ARGUMENTS)
     return root / "v1"
 
 
 def _copy(finished_run, tmp_path):
     return Path(shutil.copytree(finished_run, tmp_path / "v1"))
+
+
+def _interrupt(root, condition_id="emg_rate=3"):
+    """Leave a finished condition of the run at ``root`` as if interrupted
+    while written: its directory renamed ``.partial``."""
+    partial = root / "conditions" / f"{condition_id}.partial"
+    (root / "conditions" / condition_id).rename(partial)
+    return partial
+
+
+def _assert_the_same_but_the_clock(got, expected):
+    """Two snapshots of a condition's directory hold the same files, byte for
+    byte, but for the wall-clock times in sessions.csv.gz and so done.json."""
+    assert set(got) == set(expected)
+    for name in set(got) - {"sessions.csv.gz", "done.json"}:
+        assert got[name] == expected[name], name
 
 
 def _snapshot(directory):
@@ -1070,8 +1081,7 @@ def test_resume_reruns_interrupted_conditions(
     root = _copy(finished_run, tmp_path)
     conditions = root / "conditions"
     if damage == "partial":
-        (conditions / "emg_rate=3").rename(conditions / "emg_rate=3.partial")
-        deleted = f"Deleting {conditions / 'emg_rate=3.partial'}: interrupted while written"
+        deleted = f"Deleting {_interrupt(root)}: interrupted while written"
     else:
         with (conditions / "emg_rate=3" / "events.csv.gz").open("ab") as file:
             file.write(b"\0")
@@ -1081,12 +1091,10 @@ def test_resume_reruns_interrupted_conditions(
     assert capsys.readouterr().out.splitlines() == [deleted]
     assert not (conditions / "emg_rate=3.partial").exists()
     assert run.condition_is_finished(conditions / "emg_rate=3")
-    # the same files again, but for the wall-clock times in sessions.csv.gz
-    rerun = _snapshot(conditions / "emg_rate=3")
-    first = _snapshot(finished_run / "conditions" / "emg_rate=3")
-    assert set(rerun) == set(first)
-    for name in set(rerun) - {"sessions.csv.gz", "done.json"}:
-        assert rerun[name] == first[name], name
+    _assert_the_same_but_the_clock(
+        _snapshot(conditions / "emg_rate=3"),
+        _snapshot(finished_run / "conditions" / "emg_rate=3"),
+    )
 
 
 def test_resume_after_two_finished_and_one_interrupted(run, cli, finished_run, tmp_path):
@@ -1094,8 +1102,7 @@ def test_resume_after_two_finished_and_one_interrupted(run, cli, finished_run, t
     root = _copy(finished_run, tmp_path)
     conditions = root / "conditions"
     # C was being written when the run stopped: no done.json, an unfinished table
-    partial = conditions / "emg_rate=3.partial"
-    (conditions / "emg_rate=3").rename(partial)
+    partial = _interrupt(root)
     (partial / "done.json").unlink()
     (partial / "metrics.csv.gz").unlink()
     shutil.rmtree(root / "combined")
@@ -1122,7 +1129,7 @@ def test_the_manifest_records_the_workers_used(cli, finished_run, tmp_path):
     root = _copy(finished_run, tmp_path)
     manifest = json.loads((root / "manifest.json").read_text())
     (root / "manifest.json").write_text(json.dumps({**manifest, "n_workers": 7}))
-    (root / "conditions" / "emg_rate=3").rename(root / "conditions" / "emg_rate=3.partial")
+    _interrupt(root)
     start(resume=True, workers=4)
     resumed = json.loads((root / "manifest.json").read_text())
     assert resumed == {**manifest, "n_workers": 1, "finished": resumed["finished"]}
@@ -1148,7 +1155,7 @@ def test_combine_names_the_conditions_it_leaves_out(run, cli, finished_run, tmp_
     root = _copy(finished_run, tmp_path)
     conditions = root / "conditions"
     # one condition interrupted, one whose files no longer match done.json
-    (conditions / "emg_rate=3").rename(conditions / "emg_rate=3.partial")
+    _interrupt(root)
     with (conditions / "ripple_snr=high" / "events.csv.gz").open("ab") as file:
         file.write(b"\0")
     # and a combine that stopped half way
@@ -1182,7 +1189,7 @@ def test_combine_names_the_conditions_it_leaves_out(run, cli, finished_run, tmp_
 def test_resume_rejects_a_changed_specification(cli, finished_run, tmp_path, change, keys):
     start, _, sessions = cli
     root = _copy(finished_run, tmp_path)
-    (root / "conditions" / "emg_rate=3").rename(root / "conditions" / "emg_rate=3.partial")
+    _interrupt(root)
     before = _snapshot(root)
     with pytest.raises(SystemExit, match="differs at") as raised:
         start(resume=True, **change)
@@ -1291,7 +1298,7 @@ def test_an_unknown_or_dirty_commit_stops_the_run(
         start()
     assert list(tmp_path.iterdir()) == []
     root = _copy(finished_run, tmp_path)
-    (root / "conditions" / "emg_rate=3").rename(root / "conditions" / "emg_rate=3.partial")
+    _interrupt(root)
     before = _snapshot(root)
     with pytest.raises(SystemExit, match="git commit is unknown"):
         start(resume=True)
@@ -1432,9 +1439,7 @@ def test_workers_write_what_one_process_writes(run, cli, finished_run):
     start, _, _ = cli
     root = start("pooled", workers=2)
     for condition_id in RUN_CONDITIONS:
-        expected = _snapshot(finished_run / "conditions" / condition_id)
-        got = _snapshot(root / "conditions" / condition_id)
-        # sessions.csv holds wall-clock times; everything else is identical
-        assert set(got) == set(expected)
-        for name in set(got) - {"sessions.csv.gz", "done.json"}:
-            assert got[name] == expected[name], name
+        _assert_the_same_but_the_clock(
+            _snapshot(root / "conditions" / condition_id),
+            _snapshot(finished_run / "conditions" / condition_id),
+        )

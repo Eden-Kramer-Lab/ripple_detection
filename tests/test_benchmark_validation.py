@@ -110,21 +110,40 @@ def ready_copy(report, tmp_path):
     to the predeclared count."""
     directory = tmp_path / "copy"
     shutil.copytree(report["directory"], directory)
-    spec = json.loads((directory / "spec.json").read_text())
-    replicates = list(range(10000, 10020))
-    spec.update(status="ready", reasons=[], replicates=replicates)
-    (directory / "spec.json").write_text(json.dumps(spec))
+    _edit_spec(directory, status="ready", reasons=[], replicates=list(range(10000, 10020)))
     return directory
 
 
 @pytest.fixture
-def resolved(validate, conditions):
+def resolved(conditions):
     reference = conditions.conditions()[0]
     return {"reference": conditions.resolve(reference, OVERRIDES)}
 
 
+@pytest.fixture(scope="module")
+def package_copy(tmp_path_factory):
+    """A copy of the package's source elsewhere, never edited."""
+    return _copy_package(tmp_path_factory.mktemp("elsewhere"))
+
+
 def _sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _edit_spec(directory, **changes):
+    """Set ``changes`` in the report's spec.json in ``directory``; return its path."""
+    path = directory / "spec.json"
+    spec = json.loads(path.read_text())
+    spec.update(changes)
+    path.write_text(json.dumps(spec))
+    return path
+
+
+def _copy_package(directory):
+    """A copy of the package's source in ``directory``."""
+    copy = directory / "ripple_detection"
+    shutil.copytree(PACKAGE, copy, ignore=shutil.ignore_patterns("__pycache__"))
+    return copy
 
 
 class TestMeasurements:
@@ -731,7 +750,6 @@ class TestReport:
 
     def test_participation_counts_spikes_not_recruitment(self, validate, conditions, measured):
         reference = conditions.conditions()[0]
-        result = measured
         session = conditions.simulate_condition(reference, validate.FIRST_REPLICATE, OVERRIDES)
         events = session.events
         first = events[(events.expression == "ripple") & (events.component == 0)]
@@ -740,7 +758,7 @@ class TestReport:
         expected = validate.observed_participation(
             session.time, samples, units, principal, first.center_time.to_numpy(), 0.025
         )
-        observed = result.samples[result.samples.quantity == "observed_participation"]
+        observed = measured.samples[measured.samples.quantity == "observed_participation"]
         by_type = np.concatenate(
             [expected[first.event_type.to_numpy() == t] for t in observed.group.unique()]
         )
@@ -834,26 +852,23 @@ class TestPreflight:
 
     def test_too_few_replicates(self, validate, ready_copy, resolved):
         assert validate.DEFAULT_REPLICATES == 20
-        spec = json.loads((ready_copy / "spec.json").read_text())
-        spec["replicates"] = spec["replicates"][:19]
-        (ready_copy / "spec.json").write_text(json.dumps(spec))
+        spec = _edit_spec(ready_copy, replicates=list(range(10000, 10019)))
         with pytest.raises(
             validate.ReportNotReady, match=re.escape("19 replicates, fewer than the 20")
         ):
-            validate.require_ready_report(ready_copy / "spec.json", resolved)
+            validate.require_ready_report(spec, resolved)
 
     def test_a_failed_report(self, validate, ready_copy, resolved):
-        spec = json.loads((ready_copy / "spec.json").read_text())
-        spec.update(status="not_ready", reasons=["target check x fails in reference"])
-        (ready_copy / "spec.json").write_text(json.dumps(spec))
+        spec = _edit_spec(
+            ready_copy, status="not_ready", reasons=["target check x fails in reference"]
+        )
         with pytest.raises(validate.ReportNotReady, match="target check x fails"):
-            validate.require_ready_report(ready_copy / "spec.json", resolved)
+            validate.require_ready_report(spec, resolved)
 
     def test_stale_simulation_source(
         self, validate, ready_copy, resolved, tmp_path, monkeypatch
     ):
-        package = tmp_path / "package"
-        shutil.copytree(PACKAGE, package, ignore=shutil.ignore_patterns("__pycache__"))
+        package = _copy_package(tmp_path)
         simulate = package / "simulate.py"
         simulate.write_text(
             simulate.read_text().replace("_SPIKE_BLOCK = 8", "_SPIKE_BLOCK = 4")
@@ -876,13 +891,11 @@ class TestPreflight:
     def test_changed_targets(self, validate, ready_copy, resolved, tmp_path):
         edited = tmp_path / "targets.csv"
         edited.write_text(validate.TARGETS.read_text().replace(",0.13,0.40,", ",0.10,0.40,"))
-        spec = json.loads((ready_copy / "spec.json").read_text())
-        spec["target_table_hash"] = validate.target_table_hash(edited)
-        (ready_copy / "spec.json").write_text(json.dumps(spec))
+        spec = _edit_spec(ready_copy, target_table_hash=_sha256(edited))
         with pytest.raises(
             validate.ReportNotReady, match=re.escape("simulator_targets.csv has changed")
         ):
-            validate.require_ready_report(ready_copy / "spec.json", resolved)
+            validate.require_ready_report(spec, resolved)
 
     def test_uncovered_settings(self, validate, conditions, ready_copy, resolved):
         local = next(
@@ -920,13 +933,15 @@ class TestPreflight:
         assert validate.require_ready_report(spec, resolved)["sha256"] == _sha256(spec)
 
     def test_every_problem_is_listed_at_once(self, validate, ready_copy, resolved):
-        spec = json.loads((ready_copy / "spec.json").read_text())
-        spec.update(
-            status="not_ready", reasons=["r"], simulation_fingerprint="0" * 64, artifacts={}
+        spec = _edit_spec(
+            ready_copy,
+            status="not_ready",
+            reasons=["r"],
+            simulation_fingerprint="0" * 64,
+            artifacts={},
         )
-        (ready_copy / "spec.json").write_text(json.dumps(spec))
         with pytest.raises(validate.ReportNotReady) as raised:
-            validate.require_ready_report(ready_copy / "spec.json", {**resolved, "other": {}})
+            validate.require_ready_report(spec, {**resolved, "other": {}})
         message = str(raised.value)
         for part in (
             "status is 'not_ready'",
@@ -941,8 +956,8 @@ class TestPreflight:
 class TestFingerprint:
     @pytest.fixture
     def package(self, validate, tmp_path, monkeypatch):
-        copy = tmp_path / "ripple_detection"
-        shutil.copytree(PACKAGE, copy, ignore=shutil.ignore_patterns("__pycache__"))
+        """A copy of the package and of conditions.py, to edit, in their place."""
+        copy = _copy_package(tmp_path)
         conditions_copy = tmp_path / "conditions.py"
         shutil.copy(validate.CONDITIONS_SOURCE, conditions_copy)
         monkeypatch.setattr(validate, "PACKAGE", copy)
@@ -955,18 +970,18 @@ class TestFingerprint:
         assert text.count(old) == 1, old
         path.write_text(text.replace(old, new))
 
-    def test_a_copy_has_the_same_fingerprint(self, validate, tmp_path, monkeypatch):
+    def test_a_copy_has_the_same_fingerprint(self, validate, package_copy, monkeypatch):
         real = validate.simulation_fingerprint()
         assert len(real) == 64
-        copy = tmp_path / "elsewhere" / "ripple_detection"
-        shutil.copytree(PACKAGE, copy, ignore=shutil.ignore_patterns("__pycache__"))
-        monkeypatch.setattr(validate, "PACKAGE", copy)
+        monkeypatch.setattr(validate, "PACKAGE", package_copy)
         assert validate.simulation_fingerprint() == real
 
-    def test_the_covered_sources(self, validate, package):
+    def test_the_covered_sources(self, validate, package_copy):
         labels = [
             label
-            for label, _ in validate._simulation_sources(package, validate.CONDITIONS_SOURCE)
+            for label, _ in validate._simulation_sources(
+                package_copy, validate.CONDITIONS_SOURCE
+            )
         ]
         assert labels[:3] == [
             "conditions.py",
