@@ -3025,8 +3025,9 @@ def smoke(
 ) -> dict[str, Any]:
     """Time ``SMOKE_CONFIGURATIONS`` configurations on one reference session.
 
-    The configurations are the first rows of ``A`` of the Sobol design at
-    ``SOBOL_N``.
+    The run's validation report is checked first (``check_report``), as
+    before every analysis. The configurations are the first rows of ``A`` of
+    the Sobol design at ``SOBOL_N``.
 
     Parameters
     ----------
@@ -3042,6 +3043,7 @@ def smoke(
         checking the session), ``peak_rss_bytes``, ``d``, the
         configurations and hours of each analysis at ``workers``.
     """
+    check_report(run_directory, reference_parameters(run_directory))
     started = wall_clock.perf_counter()
     context = next(iter(reference_contexts(run_directory, [0])))
     context_seconds = wall_clock.perf_counter() - started

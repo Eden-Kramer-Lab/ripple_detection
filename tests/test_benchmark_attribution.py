@@ -1092,8 +1092,16 @@ def test_recorded_failures(attribution, run, short_run, tmp_path):
     }
 
 
-def test_smoke(attribution, recipes, short_run):
+def test_smoke(attribution, recipes, short_run, monkeypatch):
+    checked = []
+    monkeypatch.setattr(
+        attribution,
+        "check_report",
+        lambda directory, parameters: checked.append((directory, parameters)),
+    )
     report = attribution.smoke("lfp", short_run, workers=4)
+    # the run's validation report is checked first, as before every analysis
+    assert checked == [(short_run, attribution.reference_parameters(short_run))]
     d = len(attribution.factor_space(recipes, "lfp"))
     assert report["d"] == d
     assert report["n_in_space"] == 4
