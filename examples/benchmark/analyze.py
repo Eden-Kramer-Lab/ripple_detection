@@ -2784,36 +2784,43 @@ def paired_timing(
         .reindex(pd.MultiIndex.from_frame(_expected_pairs(tables, expression)))
         .fillna({"n_run": 0, "n_shared": 0, "n_sessions": 0})
     )
-    rows = []
-    for (a, b), found in summary.iterrows():
-        for percent in PERCENTS:
-            row: dict[str, Any] = {
-                "expression": expression,
-                "method_a": a,
-                "method_b": b,
-                "fraction": percent / 100,
-                "n_shared": int(found["n_shared"]),
-                "n_sessions": int(found["n_sessions"]),
-                "n_sessions_without": int(found["n_run"] - found["n_sessions"]),
-                "jaccard_truth_ids": found["jaccard_truth_ids"],
-            }
-            for boundary in ("onset", "offset"):
-                for measure in ("signed", "absolute"):
-                    name = f"{boundary}_{measure}_{percent}"
-                    stem = f"{boundary}_{measure}"
-                    known = (a, b) in estimates.index
-                    row[f"{stem}_pooled"] = pooled.loc[(a, b), name] if known else np.nan
-                    for part in ("estimate", "low", "high"):
-                        column = name if part == "estimate" else f"{name}_{part}"
-                        row[f"{stem}_{part}"] = (
-                            estimates.loc[(a, b), column] if known else np.nan
-                        )
-                    row[f"{stem}_p"] = tests.loc[(a, b), f"{name}_p"] if known else np.nan
-                    row[f"{stem}_n_dropped"] = (
-                        tests.loc[(a, b), f"{name}_n_dropped"] if known else 0
-                    )
-            rows.append(row)
-    return _with_pair_failures(pd.DataFrame(rows, columns=PAIRED_TIMING_COLUMNS), tables)
+    # each pair's values of every stem at every percent, a pair missing NaN
+    found = pooled.add_suffix("_pooled").join([estimates, tests]).reindex(summary.index)
+
+    def by_fraction(stem: str, suffix: str) -> np.ndarray[Any, Any]:
+        """A column at each percent in turn, pair by pair."""
+        columns = [f"{stem}_{percent}{suffix}" for percent in PERCENTS]
+        values: np.ndarray[Any, Any] = found[columns].to_numpy(dtype=float).ravel()
+        return values
+
+    stems = [f"{b}_{m}" for b in ("onset", "offset") for m in ("signed", "absolute")]
+    n_percents = len(PERCENTS)
+    counts = summary[["n_shared", "n_sessions", "n_run"]].astype(int)
+    columns: dict[str, Any] = {
+        "expression": expression,
+        "method_a": np.repeat(summary.index.get_level_values("method_a"), n_percents),
+        "method_b": np.repeat(summary.index.get_level_values("method_b"), n_percents),
+        "fraction": np.tile([percent / 100 for percent in PERCENTS], len(summary)),
+        "n_shared": np.repeat(counts["n_shared"].to_numpy(), n_percents),
+        "n_sessions": np.repeat(counts["n_sessions"].to_numpy(), n_percents),
+        "n_sessions_without": np.repeat(
+            (counts["n_run"] - counts["n_sessions"]).to_numpy(), n_percents
+        ),
+        "jaccard_truth_ids": np.repeat(summary["jaccard_truth_ids"].to_numpy(), n_percents),
+    }
+    for stem in stems:
+        for part, suffix in (
+            ("pooled", "_pooled"),
+            ("estimate", ""),
+            ("low", "_low"),
+            ("high", "_high"),
+            ("p", "_p"),
+        ):
+            columns[f"{stem}_{part}"] = by_fraction(stem, suffix)
+        dropped = np.nan_to_num(by_fraction(stem, "_n_dropped"), nan=0.0)
+        columns[f"{stem}_n_dropped"] = dropped.astype(int)
+    timing = pd.DataFrame(columns)[list(PAIRED_TIMING_COLUMNS)]
+    return _with_pair_failures(timing, tables)
 
 
 # Operating curves
