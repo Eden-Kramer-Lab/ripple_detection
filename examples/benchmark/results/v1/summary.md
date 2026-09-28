@@ -1,0 +1,531 @@
+# Benchmark results: v1
+
+`analyze.py` on `/Users/edeno/Documents/GitHub/ripple_detection/examples/benchmark/output/v1/combined/`: 20 sessions of reference, 86 methods (detectors at their defaults, every recipe), unless a file says otherwise (the operating curves, points, differences and thresholds and the appendix curves read the reference's sweeps; robustness and model sensitivity every condition).
+
+Events are matched one to one to the truth windows at 10 % of the peak (IoU 0), each method against its primary expression unless a file says otherwise. Times are seconds; a signed error is detected minus truth (negative: early), a difference between methods A minus B, A named first, a change between conditions the other condition minus the reference. Intervals are 95 % paired-bootstrap intervals over sessions within a condition and over replicates across conditions; p-values are two-sided sign-flip tests over the same units.
+
+Point inventories (`recipe:davidson_2009_ripples`, `recipe:wu_2014_ripples`; the catalog's output "ripple peaks") return one time point per event, which no interval rule can credit. They are scored by peak containment: a point matches a truth window that contains it, one to one, the most pairs. Only recall, precision and false positives per minute are reported for them (`point_inventories.csv` against the primary expression, `appendix_expressions.csv` against every expression, and rows marked `peak_containment` in `rates_by_state.csv`, the robustness and model sensitivity tables and the recall changes below), never pooled with interval scores; they are left out of the detection profile, false positive classes, agreement and its dendrogram, consensus, overlap, boundary errors, paired timing, method differences, error correlations, splits and merges, the operating curves, points, differences and held-out thresholds, the appendix curves, participation bias, the boundary effect and matching sensitivity.
+
+Interval methods whose events can be one sample long (`recipe:lee_2002`) keep the interval rule: the catalog, not the events' lengths, decides.
+
+## Files
+
+- `failures.csv`: Each method's sessions with scores and failures (a missing result, never zero events), with the first error and its scoring rule.
+- `point_inventories.csv`: Recall, precision and false positives per minute of the methods that return time points, scored by peak containment and never pooled with interval scores.
+- `point_inventories.png`: Those three with their intervals.
+- `detection_profile.csv`: Recall per event type against the network truth, per method, pooled over sessions.
+- `detection_profile.png`: Recall as a heatmap, method by event type.
+- `false_positive_classes.csv`: What each method's false positives (unmatched against its primary expression) overlap longest: an event type's component, a non-event or nothing.
+- `false_positive_classes.png`: Those fractions stacked per method.
+- `pairwise_agreement.csv`: Agreement of every pair of methods against the network truth: Jaccard of their events, of their true and of their false events, and of the true events found.
+- `pairwise_agreement.png`: The four indices as heatmaps, methods in the dendrogram's order.
+- `agreement_dendrogram.csv`: Methods clustered by average linkage on 1 - Jaccard.
+- `agreement_dendrogram.png`: The dendrogram.
+- `consensus.csv`: How many methods found each true event, by type, and how many methods each group of overlapping false positives spans.
+- `consensus.png`: Both distributions.
+- `overlap_quality.csv`: IoU, coverage and temporal precision of each method's matched pairs against its primary expression, with its recall.
+- `overlap_quality.png`: Their distributions per method.
+- `boundary_errors.csv`: Signed and absolute onset and offset errors (detected minus truth) against the truth at 10, 25 and 50 % of the peak, each median with its pair count and the method's recall.
+- `boundary_errors.png`: Their distributions at 10 % and the medians at 25 and 50 %, in ms.
+- `paired_timing_ripple.csv`: For methods whose primary expression is ripple, each pair's error differences (A minus B) on the true events both found, with a sign-flip test.
+- `paired_timing_ripple.png`: The mean paired differences at 10 % as heatmaps, in ms.
+- `paired_timing_burst.csv`: For methods whose primary expression is burst, each pair's error differences (A minus B) on the true events both found, with a sign-flip test.
+- `paired_timing_burst.png`: The mean paired differences at 10 % as heatmaps, in ms.
+- `paired_timing_network.csv`: For methods whose primary expression is network, each pair's error differences (A minus B) on the true events both found, with a sign-flip test.
+- `paired_timing_network.png`: The mean paired differences at 10 % as heatmaps, in ms.
+- `method_differences.csv`: How every pair of methods' matched events differ in start and end (A minus B), and how often A's comes first.
+- `method_differences.png`: The median differences as heatmaps, in ms.
+- `error_correlations.csv`: Spearman correlation of every pair of methods' signed errors on the true events both found, against their shared primary expression's truth (else the network truth), with the network truth's beside it.
+- `error_correlations.png`: The correlations as heatmaps.
+- `splits_and_merges.csv`: How often each method splits a true event or merges several, overall and on ripple doublets.
+- `splits_and_merges.png`: Both rates with their intervals.
+- `operating_curves.csv`: Recall against false positives per minute at every setting of each detector's sweep, its default and each recipe, against the primary expression, at every minimum IoU, with the matched pairs' median errors.
+- `operating_curves.png`: The curves at IoU 0 by primary expression, recipes as grey points on them.
+- `operating_points.csv`: Each detector's recall and median onset and offset errors read off its sweep at 0.5, 1, 2 and 5 false positives per minute, with intervals; missing where the curve does not reach the target.
+- `operating_points.png`: Recall at each target, per minimum IoU.
+- `operating_differences.csv`: For each pair of detectors sharing a primary expression, the difference in recall (A minus B) at each target rate, paired by session, with its interval and sign-flip test; missing where a curve does not reach the target.
+- `held_out_thresholds.csv`: Per detector and target, the setting chosen on the even replicates and its recall, false positives and errors on the odd (held-out) replicates alone.
+- `held_out_thresholds.png`: Held-out recall beside the calibration recall of the chosen setting.
+- `robustness_recall.csv`: Each method's recall at every level of each factor, and its change from the reference level, paired by replicate.
+- `robustness_recall.png`: One panel per factor, one line per method.
+- `robustness_precision.csv`: Each method's precision at every level of each factor, and its change from the reference level, paired by replicate.
+- `robustness_precision.png`: One panel per factor, one line per method.
+- `robustness_onset.csv`: Each method's median onset error at every level of each factor, and its change from the reference level, paired by replicate.
+- `robustness_onset.png`: One panel per factor, one line per method.
+- `robustness_crossed_recall.csv`: Each method's recall in every cell of the two crossed pairs of factors, and its change from the reference, paired by replicate.
+- `robustness_crossed_recall.png`: The changes as a heatmap per pair, a row per method.
+- `robustness_crossed_precision.csv`: Each method's precision in every cell of the two crossed pairs of factors, and its change from the reference, paired by replicate.
+- `robustness_crossed_precision.png`: The changes as a heatmap per pair, a row per method.
+- `robustness_crossed_onset.csv`: Each method's median onset error in every cell of the two crossed pairs of factors, and its change from the reference, paired by replicate.
+- `robustness_crossed_onset.png`: The changes as a heatmap per pair, a row per method.
+- `rates_by_state.csv`: Each method's events per minute at rest and while running, beside the true rates (network events at rest, theta bursts while running).
+- `rates_by_state.png`: Both rates per method, the true rates marked.
+- `participation_bias.csv`: The recruited cells of the true events each method finds against those of all true events with a burst: ratio of means and KS statistic.
+- `participation_bias.png`: The ratios with their intervals.
+- `boundary_effect.csv`: Units active within the detected bounds minus within the matched truth window, for all units and principal ones.
+- `boundary_effect.png`: The mean differences with their intervals.
+- `matching_sensitivity.csv`: Recall, precision, F1, the IoU distribution, median absolute errors, recall by event type and at the target rates, and ranks, at minimum IoU 0, 0.2 and 0.5.
+- `matching_sensitivity.png`: Recall and precision at each minimum IoU.
+- `appendix_expressions.csv`: Every main method against every expression (network, ripple, sharp wave, burst) at IoU 0, not only its primary one: recall, precision, false positives per minute, median IoU and median signed and absolute onset and offset errors, with intervals; point methods by peak containment.
+- `appendix_curves_network.csv`: Every interval method's recall, precision and false positives per minute at every setting and minimum IoU against the network truth, whatever its primary expression.
+- `appendix_curves_ripple.csv`: Every interval method's recall, precision and false positives per minute at every setting and minimum IoU against the ripple truth, whatever its primary expression.
+- `appendix_curves_sharp_wave.csv`: Every interval method's recall, precision and false positives per minute at every setting and minimum IoU against the sharp wave truth, whatever its primary expression.
+- `appendix_curves_burst.csv`: Every interval method's recall, precision and false positives per minute at every setting and minimum IoU against the burst truth, whatever its primary expression.
+- `model_sensitivity.csv`: Each result's change under each of the simulator's six alternative models, paired with the reference by replicate; unreachable targets stay missing.
+- `model_sensitivity.png`: Recall changes per alternative, detectors at 1 per minute as triangles.
+- `model_sensitivity_orders.csv`: Orders of detectors by recall at common false-positive rates in the reference and under each alternative model, with intervals and the share of resamples reversed.
+- `candidate_trends.csv`: Candidate trends drawn from the tables, each with its evidence and the spot check to draw; none is a conclusion until its events have been looked at.
+
+## Failures
+
+Every table counts each method's failures (`n_failures`): a session without its scores is a failure, never zero events, and the numbers pool the sessions it ran.
+
+No method failed on the reference condition's sessions.
+
+Across every condition, 135 calls failed (sweeps included), by method, setting and condition:
+
+- `Shvartsman_ripple_detector` (1.5), `n_channels=1`: 10 sessions
+- `Shvartsman_ripple_detector` (2.0), `n_channels=1`: 10 sessions
+- `Shvartsman_ripple_detector` (2.5), `n_channels=1`: 10 sessions
+- `Shvartsman_ripple_detector` (3.0), `n_channels=1`: 10 sessions
+- `Shvartsman_ripple_detector` (3.5), `n_channels=1`: 10 sessions
+- `Shvartsman_ripple_detector` (4.0), `n_channels=1`: 10 sessions
+- `Shvartsman_ripple_detector` (5.0), `n_channels=1`: 10 sessions
+- `Shvartsman_ripple_detector` (6.0), `n_channels=1`: 10 sessions
+- `Shvartsman_ripple_detector` (8.0), `n_channels=1`: 10 sessions
+- `Shvartsman_ripple_detector` (default), `n_channels=1`: 10 sessions
+- `Yu_ripple_detector` (99.0), `noise_type=brown`: 2 sessions
+- `Yu_ripple_detector` (99.5), `noise_type=brown`: 2 sessions
+- `Yu_ripple_detector` (99.9), `noise_type=brown`: 1 sessions
+- `recipe:berners_lee_2021` (literature), `n_channels=1`: 10 sessions
+- `recipe:bhattarai_2020` (literature), `n_channels=1`: 10 sessions
+- `recipe:bhattarai_2020_ripples` (literature), `n_channels=1`: 10 sessions
+
+## Recall changing by more than 0.1 across a factor
+
+Pooled recall against the primary expression at each level, over the replicates every level shares on which the method ran in every level (`robustness_recall.csv`, which has each change's interval).
+
+- `noise_type`: `recipe:wu_2014_ripples` (literature) 0.004 at brown to 0.898 at reference, by peak containment
+- `noise_type`: `recipe:davidson_2009_ripples` (literature) 0.004 at brown to 0.875 at reference, by peak containment
+- `noise_type`: `recipe:igata_2021_ripples` (literature) 0.013 at brown to 0.873 at reference
+- `noise_type`: `recipe:wikenheiser_2013` (literature) 0.005 at brown to 0.832 at reference
+- `n_units`: `recipe:carey_2019` (literature) 0.000 at 120 to 0.826 at reference
+- `noise_type`: `recipe:denovellis_2021` (literature) 0.009 at brown to 0.828 at reference
+- `noise_type`: `Roumis_ripple_detector` (default) 0.010 at brown to 0.828 at reference
+- `noise_type`: `Kay_ripple_detector` (default) 0.011 at brown to 0.827 at reference
+- `noise_type`: `recipe:gillespie_2021` (literature) 0.011 at brown to 0.827 at reference
+- `noise_type`: `recipe:berners_lee_2021` (literature) 0.010 at brown to 0.790 at reference
+- `noise_type`: `recipe:ambrose_2016` (literature) 0.008 at brown to 0.728 at reference
+- `noise_type`: `recipe:pfeiffer_2013_ripples` (literature) 0.008 at brown to 0.728 at reference
+- `noise_type`: `recipe:pfeiffer_2015` (literature) 0.008 at brown to 0.728 at reference
+- `noise_type`: `Karlsson_ripple_detector` (default) 0.013 at brown to 0.725 at reference
+- `noise_type`: `recipe:carr_2012` (literature) 0.013 at brown to 0.725 at reference
+- `noise_type`: `recipe:karlsson_2009` (literature) 0.013 at brown to 0.725 at reference
+- `noise_type`: `recipe:shin_2019` (literature) 0.013 at brown to 0.725 at reference
+- `noise_type`: `recipe:tang_2017` (literature) 0.013 at brown to 0.725 at reference
+- `n_units`: `recipe:liu_2019` (literature) 0.133 at 120 to 0.844 at reference
+- `n_units`: `recipe:liu_2019_awake` (literature) 0.133 at 120 to 0.844 at reference
+- `participation`: `recipe:olafsdottir_2016` (literature) 0.093 at low to 0.789 at high
+- `participation`: `recipe:olafsdottir_2017.trajectory` (literature) 0.093 at low to 0.789 at high
+- `noise_type`: `recipe:mallory_2025_ripples` (literature) 0.005 at brown to 0.690 at reference
+- `noise_type`: `Zugaro_ripple_detector` (default) 0.003 at brown to 0.675 at reference
+- `noise_type`: `Shvartsman_ripple_detector` (default) 0.005 at brown to 0.664 at reference
+- `noise_type`: `recipe:stella_2019` (literature) 0.008 at brown to 0.667 at reference
+- `participation`: `recipe:bush_2022` (literature) 0.167 at low to 0.805 at high
+- `participation`: `recipe:olafsdottir_2015.bayesian_candidates` (literature) 0.158 at low to 0.776 at high
+- `noise_type`: `recipe:krause_2022` (literature) 0.007 at brown to 0.620 at reference
+- `ripple_snr`: `recipe:nadasdy_1999` (literature) 0.058 at low to 0.654 at high
+- `noise_type`: `recipe:harvey_2023_no_radiatum` (literature) 0.002 at brown to 0.597 at reference
+- `noise_type`: `recipe:jadhav_2016` (literature) 0.012 at brown to 0.586 at reference
+- `ripple_snr`: `recipe:harvey_2023_text` (literature) 0.177 at low to 0.748 at high
+- `ripple_snr`: `recipe:stella_2019` (literature) 0.220 at low to 0.790 at high
+- `noise_type`: `recipe:yamamoto_2017` (literature) 0.003 at brown to 0.561 at reference
+- `participation`: `recipe:olafsdottir_2015` (literature) 0.258 at low to 0.808 at high
+- `participation`: `recipe:diba_2007` (literature) 0.008 at low to 0.555 at high
+- `ripple_snr`: `Zugaro_ripple_detector` (default) 0.233 at low to 0.758 at high
+- `ripple_snr`: `Shvartsman_ripple_detector` (default) 0.226 at low to 0.741 at high
+- `noise_type`: `recipe:huelin_gorriz_2023` (literature) 0.004 at brown to 0.511 at reference
+- `noise_type`: `recipe:tirole_2022` (literature) 0.004 at brown to 0.511 at reference
+- `noise_type`: `recipe:widloski_2025` (literature) 0.006 at brown to 0.508 at reference
+- `participation`: `recipe:chenani_2019` (literature) 0.314 at low to 0.803 at high
+- `type_mix`: `recipe:krause_2022` (literature) 0.415 at hard to 0.883 at swr_only
+- `participation`: `recipe:foster_2006` (literature) 0.001 at low to 0.469 at high
+- `n_units`: `recipe:olafsdottir_2015.bayesian_candidates` (literature) 0.147 at 30 to 0.612 at reference
+- `participation`: `recipe:olafsdottir_2017` (literature) 0.378 at low to 0.843 at high
+- `noise_type`: `recipe:bhattarai_2020_ripples` (literature) 0.003 at brown to 0.465 at reference
+- `participation`: `recipe:maboudi_2018_open_field` (literature) 0.371 at low to 0.832 at high
+- `participation`: `recipe:pfeiffer_2013` (literature) 0.371 at low to 0.832 at high
+- `noise_type`: `recipe:nadasdy_1999` (literature) 0.004 at brown to 0.462 at reference
+- `participation`: `recipe:wu_2017` (literature) 0.284 at low to 0.741 at high
+- `slow_amplitude`: `recipe:carey_2019` (literature) 0.379 at 0 to 0.826 at reference
+- `spatial_profile`: `recipe:nadasdy_1999` (literature) 0.022 at local to 0.462 at reference
+- `n_units`: `recipe:olafsdottir_2017.trajectory` (literature) 0.160 at 30 to 0.588 at 120
+- `noise_type`: `recipe:grosmark_2016` (literature) 0.002 at brown to 0.417 at reference
+- `noise_type`: `recipe:yang_2024` (literature) 0.002 at brown to 0.417 at reference
+- `ripple_snr`: `recipe:bhattarai_2020_ripples` (literature) 0.125 at low to 0.536 at high
+- `ripple_snr`: `recipe:foster_2006_ripples` (literature) 0.004 at low to 0.412 at high
+- `ripple_snr`: `recipe:lee_2002_ripples` (literature) 0.004 at low to 0.412 at high
+- `participation`: `recipe:bhattarai_2020_ripples` (literature) 0.146 at low to 0.550 at high
+- `participation`: `recipe:xu_2019` (literature) 0.430 at low to 0.834 at high
+- `type_mix`: `recipe:harvey_2023_no_radiatum` (literature) 0.419 at hard to 0.818 at swr_only
+- `participation`: `recipe:silva_2015` (literature) 0.306 at low to 0.701 at high
+- `type_mix`: `recipe:pfeiffer_2015` (literature) 0.547 at hard to 0.942 at swr_only
+- `type_mix`: `recipe:ambrose_2016` (literature) 0.548 at hard to 0.943 at swr_only
+- `type_mix`: `recipe:pfeiffer_2013_ripples` (literature) 0.548 at hard to 0.943 at swr_only
+- `n_units`: `recipe:wu_2017` (literature) 0.383 at 30 to 0.776 at 120
+- `noise_type`: `recipe:bhattarai_2020` (literature) 0.003 at brown to 0.383 at reference
+- `type_mix`: `Karlsson_ripple_detector` (default) 0.535 at hard to 0.910 at swr_only
+- `type_mix`: `recipe:carr_2012` (literature) 0.535 at hard to 0.910 at swr_only
+- `type_mix`: `recipe:karlsson_2009` (literature) 0.535 at hard to 0.910 at swr_only
+- `type_mix`: `recipe:shin_2019` (literature) 0.535 at hard to 0.910 at swr_only
+- `type_mix`: `recipe:tang_2017` (literature) 0.535 at hard to 0.910 at swr_only
+- `type_mix`: `Shvartsman_ripple_detector` (default) 0.474 at hard to 0.844 at swr_only
+- `n_units`: `recipe:ji_2007` (literature) 0.529 at 30 to 0.895 at 120
+- `n_units`: `recipe:bhattarai_2020_ripples` (literature) 0.200 at 30 to 0.560 at 120
+- `type_mix`: `recipe:mallory_2025_ripples` (literature) 0.523 at hard to 0.883 at swr_only
+- `ripple_snr`: `Karlsson_ripple_detector` (default) 0.392 at low to 0.746 at high
+- `ripple_snr`: `recipe:carr_2012` (literature) 0.392 at low to 0.746 at high
+- `ripple_snr`: `recipe:karlsson_2009` (literature) 0.392 at low to 0.746 at high
+- `ripple_snr`: `recipe:shin_2019` (literature) 0.392 at low to 0.746 at high
+- `ripple_snr`: `recipe:tang_2017` (literature) 0.392 at low to 0.746 at high
+- `ripple_snr`: `recipe:michon_2019` (literature) 0.013 at low to 0.365 at high
+- `ripple_snr`: `recipe:michon_2021` (literature) 0.013 at low to 0.365 at high
+- `type_mix`: `recipe:tirole_2022` (literature) 0.327 at hard to 0.678 at swr_only
+- `type_mix`: `recipe:huelin_gorriz_2023` (literature) 0.327 at hard to 0.677 at swr_only
+- `participation`: `recipe:mallory_2025` (literature) 0.492 at low to 0.840 at high
+- `n_units`: `recipe:chenani_2019` (literature) 0.409 at 30 to 0.757 at 120
+- `noise_modulation`: `recipe:widloski_2025` (literature) 0.161 at varying to 0.508 at reference
+- `ripple_snr`: `recipe:kudrimoti_1999` (literature) 0.000 at low to 0.345 at high
+- `spatial_profile`: `Zugaro_ripple_detector` (default) 0.331 at local to 0.675 at reference
+- `type_mix`: `recipe:yamamoto_2017` (literature) 0.407 at hard to 0.751 at swr_only
+- `type_mix`: `recipe:berners_lee_2021` (literature) 0.636 at hard to 0.979 at swr_only
+- `participation`: `recipe:bhattarai_2020` (literature) 0.121 at low to 0.463 at high
+- `ripple_snr`: `recipe:bhattarai_2020` (literature) 0.104 at low to 0.445 at high
+- `participation`: `recipe:huelin_gorriz_2023` (literature) 0.243 at low to 0.584 at high
+- `participation`: `recipe:tirole_2022` (literature) 0.243 at low to 0.584 at high
+- `spatial_profile`: `recipe:harvey_2023_text` (literature) 0.267 at local to 0.605 at reference
+- `participation`: `recipe:farooq_2019_science` (literature) 0.054 at low to 0.390 at high
+- `participation`: `recipe:farooq_2019_science_awake` (literature) 0.054 at low to 0.390 at high
+- `ripple_snr`: `recipe:widloski_2025` (literature) 0.255 at low to 0.584 at high
+- `spatial_profile`: `recipe:mallory_2025_ripples` (literature) 0.362 at local to 0.690 at reference
+- `type_mix`: `recipe:jadhav_2016` (literature) 0.425 at hard to 0.751 at swr_only
+- `participation`: `recipe:farooq_2019_neuron` (literature) 0.065 at low to 0.390 at high
+- `type_mix`: `Roumis_ripple_detector` (default) 0.668 at hard to 0.980 at swr_only
+- `ripple_snr`: `recipe:grosmark_2016` (literature) 0.180 at low to 0.484 at high
+- `ripple_snr`: `recipe:yang_2024` (literature) 0.180 at low to 0.484 at high
+- `type_mix`: `recipe:denovellis_2021` (literature) 0.667 at hard to 0.972 at swr_only
+- `type_mix`: `recipe:widloski_2025` (literature) 0.364 at hard to 0.667 at swr_only
+- `participation`: `recipe:bendor_2012` (literature) 0.472 at low to 0.775 at high
+- `type_mix`: `Kay_ripple_detector` (default) 0.674 at hard to 0.975 at swr_only
+- `type_mix`: `recipe:gillespie_2021` (literature) 0.674 at hard to 0.975 at swr_only
+- `n_units`: `recipe:huelin_gorriz_2023` (literature) 0.286 at 30 to 0.584 at 120
+- `n_units`: `recipe:tirole_2022` (literature) 0.286 at 30 to 0.584 at 120
+- `n_channels`: `recipe:nadasdy_1999` (literature) 0.249 at 1 to 0.543 at 16
+- `type_mix`: `recipe:grosmark_2016` (literature) 0.297 at hard to 0.586 at swr_only
+- `type_mix`: `recipe:yang_2024` (literature) 0.297 at hard to 0.586 at swr_only
+- `n_units`: `recipe:bendor_2012` (literature) 0.513 at 30 to 0.802 at 120
+- `n_units`: `recipe:maboudi_2018` (literature) 0.622 at 30 to 0.905 at 120
+- `participation`: `recipe:ji_2007` (literature) 0.534 at low to 0.815 at high
+- `ripple_snr`: `recipe:mallory_2025_ripples` (literature) 0.440 at low to 0.718 at high
+- `type_mix`: `Yu_ripple_detector` (default) 0.705 at hard to 0.983 at swr_only
+- `type_mix`: `recipe:bhattarai_2020_ripples` (literature) 0.311 at hard to 0.587 at swr_only
+- `type_mix`: `recipe:bhattarai_2020` (literature) 0.248 at hard to 0.520 at swr_only
+- `ripple_snr`: `recipe:jadhav_2016` (literature) 0.340 at low to 0.610 at high
+- `spatial_profile`: `recipe:muessig_2019_ripples` (literature) 0.606 at local to 0.875 at reference
+- `type_mix`: `Zugaro_ripple_detector` (default) 0.527 at hard to 0.793 at swr_only
+- `spatial_profile`: `recipe:harvey_2023_no_radiatum` (literature) 0.331 at local to 0.597 at reference
+- `n_channels`: `recipe:gupta_2010` (literature) 0.586 at 1 to 0.850 at 16
+- `n_units`: `recipe:bhattarai_2020` (literature) 0.166 at 30 to 0.427 at 120
+- `participation`: `recipe:drieu_2018` (literature) 0.574 at low to 0.833 at high
+- `n_channels`: `recipe:igata_2021_ripples` (literature) 0.677 at 1 to 0.936 at 16
+- `ripple_snr`: `recipe:harvey_2023_no_radiatum` (literature) 0.382 at low to 0.638 at high
+- `n_units`: `recipe:maboudi_2018_open_field` (literature) 0.546 at 30 to 0.800 at 120
+- `n_units`: `recipe:pfeiffer_2013` (literature) 0.546 at 30 to 0.800 at 120
+- `participation`: `recipe:grosmark_2016` (literature) 0.219 at low to 0.472 at high
+- `participation`: `recipe:yang_2024` (literature) 0.219 at low to 0.472 at high
+- `spatial_profile`: `Yu_ripple_detector` (default) 0.598 at local to 0.848 at reference
+- `noise_type`: `recipe:michon_2019` (literature) 0.003 at brown to 0.250 at reference
+- `noise_type`: `recipe:michon_2021` (literature) 0.003 at brown to 0.250 at reference
+- `type_mix`: `recipe:harvey_2023_text` (literature) 0.456 at hard to 0.701 at swr_only
+- `ripple_snr`: `Long_sharp_wave_ripple_detector` (default) 0.506 at low to 0.748 at high
+- `spatial_profile`: `recipe:yamamoto_2017` (literature) 0.320 at local to 0.561 at reference
+- `spatial_profile`: `recipe:bhattarai_2020_ripples` (literature) 0.225 at local to 0.465 at reference
+- `type_mix`: `recipe:liu_2023` (literature) 0.297 at hard to 0.537 at swr_only
+- `type_mix`: `Carey_candidate_detector` (default) 0.737 at hard to 0.976 at swr_only
+- `participation`: `recipe:maboudi_2018` (literature) 0.629 at low to 0.866 at high
+- `type_mix`: `recipe:harvey_2023_code` (literature) 0.443 at hard to 0.680 at swr_only
+- `type_mix`: `recipe:stella_2019` (literature) 0.532 at hard to 0.767 at swr_only
+- `participation`: `recipe:harvey_2023_code` (literature) 0.397 at low to 0.631 at high
+- `emg_rate`: `Zugaro_ripple_detector` (default) 0.538 at 3 to 0.772 at 0
+- `participation`: `recipe:liu_2023` (literature) 0.236 at low to 0.467 at high
+- `participation`: `recipe:berners_lee_2022` (literature) 0.531 at low to 0.760 at high
+- `n_units`: `recipe:silva_2015` (literature) 0.454 at 30 to 0.680 at 120
+- `type_mix`: `recipe:olafsdottir_2015` (literature) 0.553 at hard to 0.779 at swr_only
+- `spatial_profile`: `Shvartsman_ripple_detector` (default) 0.443 at local to 0.664 at reference
+- `type_mix`: `recipe:carey_2019` (literature) 0.752 at hard to 0.969 at swr_only
+- `n_channels`: `recipe:stella_2019` (literature) 0.531 at 1 to 0.746 at 16
+- `spatial_profile`: `recipe:widloski_2025` (literature) 0.293 at local to 0.508 at reference
+- `type_mix`: `recipe:davidson_2009_ripples` (literature) 0.749 at hard to 0.963 at swr_only, by peak containment
+- `n_units`: `recipe:olafsdottir_2017` (literature) 0.619 at 30 to 0.832 at 120
+- `type_mix`: `recipe:olafsdottir_2017` (literature) 0.618 at hard to 0.831 at swr_only
+- `participation`: `recipe:harvey_2023_no_radiatum` (literature) 0.439 at low to 0.652 at high
+- `noise_type`: `recipe:harvey_2023_text` (literature) 0.393 at brown to 0.605 at reference
+- `event_rate`: `recipe:widloski_2025_bursts` (literature) 0.379 at 0.6 to 0.590 at 0.15
+- `type_mix`: `recipe:olafsdottir_2015.bayesian_candidates` (literature) 0.485 at hard to 0.693 at swr_only
+- `spatial_profile`: `recipe:michon_2019` (literature) 0.044 at local to 0.250 at reference
+- `spatial_profile`: `recipe:michon_2021` (literature) 0.044 at local to 0.250 at reference
+- `type_mix`: `recipe:maboudi_2018_open_field` (literature) 0.615 at hard to 0.821 at swr_only
+- `type_mix`: `recipe:pfeiffer_2013` (literature) 0.615 at hard to 0.821 at swr_only
+- `type_mix`: `recipe:drieu_2018` (literature) 0.666 at hard to 0.871 at swr_only
+- `spatial_profile`: `recipe:huelin_gorriz_2023` (literature) 0.306 at local to 0.511 at reference
+- `spatial_profile`: `recipe:tirole_2022` (literature) 0.306 at local to 0.511 at reference
+- `ripple_snr`: `recipe:harvey_2023_code` (literature) 0.413 at low to 0.617 at high
+- `type_mix`: `recipe:chenani_2019` (literature) 0.564 at hard to 0.768 at swr_only
+- `type_mix`: `recipe:mallory_2025` (literature) 0.650 at hard to 0.852 at swr_only
+- `type_mix`: `recipe:bush_2022` (literature) 0.509 at hard to 0.710 at swr_only
+- `type_mix`: `recipe:xu_2019` (literature) 0.630 at hard to 0.831 at swr_only
+- `ripple_snr`: `recipe:denovellis_2021` (literature) 0.627 at low to 0.828 at reference
+- `n_units`: `recipe:farooq_2019_science` (literature) 0.154 at 30 to 0.355 at 120
+- `n_units`: `recipe:farooq_2019_science_awake` (literature) 0.154 at 30 to 0.355 at 120
+- `ripple_snr`: `Yu_ripple_detector` (default) 0.652 at low to 0.848 at reference
+- `type_mix`: `recipe:wu_2017` (literature) 0.433 at hard to 0.628 at swr_only
+- `participation`: `recipe:widloski_2025_bursts` (literature) 0.402 at low to 0.597 at high
+- `n_units`: `recipe:berners_lee_2022` (literature) 0.572 at 30 to 0.766 at 120
+- `spatial_profile`: `recipe:pfeiffer_2015` (literature) 0.534 at local to 0.728 at reference
+- `spatial_profile`: `recipe:bhattarai_2020` (literature) 0.190 at local to 0.383 at reference
+- `spatial_profile`: `recipe:ambrose_2016` (literature) 0.535 at local to 0.728 at reference
+- `spatial_profile`: `recipe:pfeiffer_2013_ripples` (literature) 0.535 at local to 0.728 at reference
+- `spatial_profile`: `Roumis_ripple_detector` (default) 0.636 at local to 0.828 at reference
+- `n_units`: `recipe:gillespie_2021_mua` (literature) 0.718 at 30 to 0.909 at 120
+- `n_units`: `recipe:krause_2022_hse` (literature) 0.722 at 30 to 0.911 at 120
+- `type_mix`: `recipe:wikenheiser_2013` (literature) 0.773 at hard to 0.961 at swr_only
+- `spatial_profile`: `recipe:grosmark_2016` (literature) 0.230 at local to 0.417 at reference
+- `spatial_profile`: `recipe:yang_2024` (literature) 0.230 at local to 0.417 at reference
+- `n_units`: `recipe:davidson_2009` (literature) 0.700 at 30 to 0.887 at 120
+- `type_mix`: `Long_sharp_wave_ripple_detector` (default) 0.580 at hard to 0.765 at swr_only
+- `type_mix`: `recipe:olafsdottir_2016` (literature) 0.453 at hard to 0.638 at swr_only
+- `type_mix`: `recipe:olafsdottir_2017.trajectory` (literature) 0.453 at hard to 0.638 at swr_only
+- `n_units`: `recipe:xu_2019` (literature) 0.621 at 30 to 0.805 at 120
+- `spatial_profile`: `recipe:davidson_2009_ripples` (literature) 0.692 at local to 0.875 at reference, by peak containment
+- `ripple_snr`: `recipe:muessig_2019_ripples` (literature) 0.704 at low to 0.886 at high
+- `n_units`: `recipe:mou_2022` (literature) 0.721 at 30 to 0.903 at 120
+- `n_units`: `recipe:farooq_2019_neuron` (literature) 0.173 at 30 to 0.355 at 120
+- `type_mix`: `recipe:wu_2014_ripples` (literature) 0.799 at hard to 0.979 at swr_only, by peak containment
+- `participation`: `recipe:krause_2022_hse` (literature) 0.700 at low to 0.879 at high
+- `shared_noise_fraction`: `recipe:nadasdy_1999` (literature) 0.343 at 0.8 to 0.522 at 0.2
+- `emg_rate`: `recipe:bhattarai_2020_ripples` (literature) 0.340 at 3 to 0.518 at 0
+- `ripple_snr`: `Kay_ripple_detector` (default) 0.650 at low to 0.827 at reference
+- `ripple_snr`: `recipe:gillespie_2021` (literature) 0.650 at low to 0.827 at reference
+- `participation`: `recipe:davidson_2009` (literature) 0.689 at low to 0.865 at high
+- `participation`: `recipe:gillespie_2021_mua` (literature) 0.709 at low to 0.883 at high
+- `spatial_profile`: `Long_sharp_wave_ripple_detector` (default) 0.517 at local to 0.690 at reference
+- `type_mix`: `recipe:ji_2007` (literature) 0.627 at hard to 0.800 at swr_only
+- `participation`: `recipe:muessig_2019` (literature) 0.007 at low to 0.180 at high
+- `n_units`: `recipe:bush_2022` (literature) 0.491 at 30 to 0.662 at 120
+- `type_mix`: `recipe:wu_2014` (literature) 0.764 at hard to 0.934 at swr_only
+- `shared_noise_fraction`: `Long_sharp_wave_ripple_detector` (default) 0.598 at 0.2 to 0.768 at 0.8
+- `n_units`: `recipe:diba_2007` (literature) 0.185 at 120 to 0.354 at 30
+- `ripple_snr`: `recipe:igata_2021_ripples` (literature) 0.704 at low to 0.873 at reference
+- `n_units`: `recipe:yamamoto_2017` (literature) 0.459 at 30 to 0.627 at 120
+- `ripple_snr`: `Roumis_ripple_detector` (default) 0.661 at low to 0.828 at reference
+- `event_rate`: `recipe:nadasdy_1999` (literature) 0.370 at 0.6 to 0.537 at 0.15
+- `ripple_snr`: `recipe:pfeiffer_2015` (literature) 0.562 at low to 0.728 at reference
+- `type_mix`: `recipe:igata_2021_ripples` (literature) 0.773 at hard to 0.939 at swr_only
+- `type_mix`: `recipe:nadasdy_1999` (literature) 0.379 at hard to 0.545 at swr_only
+- `ripple_snr`: `recipe:krause_2022` (literature) 0.466 at low to 0.632 at high
+- `ripple_snr`: `recipe:ambrose_2016` (literature) 0.565 at low to 0.728 at reference
+- `ripple_snr`: `recipe:pfeiffer_2013_ripples` (literature) 0.565 at low to 0.728 at reference
+- `noise_type`: `Yu_ripple_detector` (default) 0.686 at brown to 0.848 at reference
+- `spatial_profile`: `recipe:krause_2022` (literature) 0.459 at local to 0.620 at reference
+- `event_rate`: `recipe:michon_2019` (literature) 0.168 at 0.6 to 0.329 at 0.15
+- `event_rate`: `recipe:michon_2021` (literature) 0.168 at 0.6 to 0.329 at 0.15
+- `participation`: `recipe:gridchyn_2020` (literature) 0.785 at low to 0.946 at high
+- `participation`: `recipe:wu_2014` (literature) 0.717 at low to 0.876 at high
+- `ripple_snr`: `recipe:davidson_2009_ripples` (literature) 0.717 at low to 0.875 at reference, by peak containment
+- `type_mix`: `recipe:maboudi_2018` (literature) 0.722 at hard to 0.879 at swr_only
+- `spatial_profile`: `recipe:wu_2014_ripples` (literature) 0.743 at local to 0.898 at reference, by peak containment
+- `emg_rate`: `recipe:nadasdy_1999` (literature) 0.368 at 3 to 0.522 at 0
+- `slow_amplitude`: `recipe:harvey_2023_text` (literature) 0.490 at 8 to 0.639 at 0
+- `ripple_snr`: `recipe:yamamoto_2017` (literature) 0.417 at low to 0.565 at high
+- `emg_rate`: `recipe:michon_2019` (literature) 0.152 at 3 to 0.301 at 0
+- `emg_rate`: `recipe:michon_2021` (literature) 0.152 at 3 to 0.301 at 0
+- `n_units`: `recipe:liu_2023` (literature) 0.317 at 30 to 0.464 at 120
+- `slow_amplitude`: `recipe:kaefer_2020` (literature) 0.000 at 8 to 0.146 at 0
+- `type_mix`: `recipe:bendor_2012` (literature) 0.579 at hard to 0.725 at swr_only
+- `n_units`: `recipe:widloski_2025_bursts` (literature) 0.423 at 30 to 0.569 at 120
+- `spatial_profile`: `recipe:harvey_2023_code` (literature) 0.419 at local to 0.564 at reference
+- `emg_rate`: `recipe:bhattarai_2020` (literature) 0.287 at 3 to 0.430 at 0
+- `n_units`: `recipe:muessig_2019` (literature) 0.031 at 30 to 0.173 at 120
+- `event_rate`: `recipe:bendor_2012` (literature) 0.576 at 0.6 to 0.717 at 0.15
+- `n_units`: `recipe:mallory_2025` (literature) 0.672 at 30 to 0.813 at 120
+- `n_units`: `recipe:grosmark_2016` (literature) 0.313 at 30 to 0.452 at 120
+- `n_units`: `recipe:yang_2024` (literature) 0.313 at 30 to 0.452 at 120
+- `spatial_profile`: `recipe:gupta_2010` (literature) 0.661 at local to 0.800 at reference
+- `ripple_snr`: `recipe:huelin_gorriz_2023` (literature) 0.380 at low to 0.517 at high
+- `ripple_snr`: `recipe:tirole_2022` (literature) 0.380 at low to 0.517 at high
+- `emg_rate`: `recipe:widloski_2025` (literature) 0.421 at 3 to 0.558 at 0
+- `spatial_profile`: `recipe:denovellis_2021` (literature) 0.693 at local to 0.828 at reference
+- `shared_noise_fraction`: `recipe:harvey_2023_code` (literature) 0.493 at 0.2 to 0.625 at 0.8
+- `type_mix`: `recipe:gillespie_2021_mua` (literature) 0.767 at hard to 0.898 at swr_only
+- `spatial_profile`: `Kay_ripple_detector` (default) 0.697 at local to 0.827 at reference
+- `spatial_profile`: `recipe:gillespie_2021` (literature) 0.697 at local to 0.827 at reference
+- `noise_type`: `recipe:gupta_2010` (literature) 0.671 at brown to 0.800 at reference
+- `type_mix`: `recipe:davidson_2009` (literature) 0.749 at hard to 0.878 at swr_only
+- `ripple_snr`: `recipe:liu_2023` (literature) 0.332 at low to 0.461 at high
+- `type_mix`: `recipe:silva_2015` (literature) 0.525 at hard to 0.653 at swr_only
+- `event_rate`: `recipe:gillespie_2021_mua` (literature) 0.749 at 0.6 to 0.876 at 0.15
+- `participation`: `recipe:yamamoto_2017` (literature) 0.479 at low to 0.604 at high
+- `event_rate`: `recipe:davidson_2009` (literature) 0.733 at 0.6 to 0.857 at 0.15
+- `type_mix`: `recipe:gupta_2010` (literature) 0.755 at hard to 0.878 at swr_only
+- `spatial_profile`: `recipe:berners_lee_2021` (literature) 0.668 at local to 0.790 at reference
+- `type_mix`: `recipe:muessig_2019_ripples` (literature) 0.808 at hard to 0.930 at swr_only
+- `participation`: `recipe:krause_2022` (literature) 0.515 at low to 0.637 at high
+- `n_units`: `recipe:lee_2002` (literature) 0.830 at 30 to 0.950 at reference
+- `ripple_snr`: `recipe:ji_2007_ripples` (literature) 0.002 at low to 0.120 at high
+- `n_units`: `multiunit_HSE_detector` (default) 0.861 at 30 to 0.978 at 120
+- `n_units`: `recipe:denovellis_2021_mua` (literature) 0.862 at 30 to 0.978 at 120
+- `n_units`: `recipe:igata_2021` (literature) 0.864 at 30 to 0.979 at 120
+- `n_units`: `recipe:harvey_2023_no_radiatum` (literature) 0.550 at 30 to 0.664 at 120
+- `type_mix`: `recipe:krause_2022_hse` (literature) 0.777 at hard to 0.889 at swr_only
+- `event_rate`: `recipe:mallory_2025` (literature) 0.699 at 0.6 to 0.811 at 0.15
+- `event_rate`: `recipe:krause_2022_hse` (literature) 0.752 at 0.6 to 0.863 at 0.15
+- `noise_modulation`: `recipe:nadasdy_1999` (literature) 0.350 at varying to 0.462 at reference
+- `noise_modulation`: `recipe:wikenheiser_2013` (literature) 0.722 at varying to 0.832 at reference
+- `n_units`: `recipe:harvey_2023_code` (literature) 0.516 at 30 to 0.625 at 120
+- `noise_type`: `recipe:muessig_2019_ripples` (literature) 0.766 at brown to 0.875 at reference
+- `noise_modulation`: `recipe:harvey_2023_text` (literature) 0.495 at varying to 0.605 at reference
+- `ripple_snr`: `recipe:kaefer_2020` (literature) 0.004 at low to 0.113 at high
+- `n_channels`: `Karlsson_ripple_detector` (default) 0.650 at 1 to 0.757 at 16
+- `n_channels`: `recipe:carr_2012` (literature) 0.650 at 1 to 0.757 at 16
+- `n_channels`: `recipe:karlsson_2009` (literature) 0.650 at 1 to 0.757 at 16
+- `n_channels`: `recipe:shin_2019` (literature) 0.650 at 1 to 0.757 at 16
+- `n_channels`: `recipe:tang_2017` (literature) 0.650 at 1 to 0.757 at 16
+- `noise_modulation`: `recipe:stella_2019` (literature) 0.561 at varying to 0.667 at reference
+- `event_rate`: `recipe:widloski_2025` (literature) 0.431 at 0.6 to 0.537 at 0.15
+- `n_units`: `recipe:wu_2014` (literature) 0.782 at 30 to 0.888 at 120
+- `ripple_snr`: `recipe:wu_2014_ripples` (literature) 0.794 at low to 0.898 at reference, by peak containment
+- `noise_type`: `Long_sharp_wave_ripple_detector` (default) 0.690 at reference to 0.794 at brown
+- `event_rate`: `recipe:grosmark_2016` (literature) 0.362 at 0.6 to 0.465 at 0.15
+- `event_rate`: `recipe:yang_2024` (literature) 0.362 at 0.6 to 0.465 at 0.15
+- `n_units`: `recipe:drieu_2018` (literature) 0.719 at 30 to 0.821 at 120
+- `n_units`: `recipe:gridchyn_2020` (literature) 0.814 at 30 to 0.916 at 120
+
+## Order changes with the minimum IoU
+
+Rank by recall among methods of the same primary expression (1 best, ties sharing the best rank) at 0, 0.2, 0.5 (`matching_sensitivity.csv`).
+
+- `Carey_candidate_detector` (network): 2, 2, 1
+- `Karlsson_ripple_detector` (ripple): 14, 10, 9
+- `Kay_ripple_detector` (ripple): 5, 4, 4
+- `Long_sharp_wave_ripple_detector` (ripple): 20, 19, 27
+- `Roumis_ripple_detector` (ripple): 7, 6, 6
+- `Shvartsman_ripple_detector` (ripple): 22, 21, 14
+- `Yu_ripple_detector` (ripple): 3, 3, 2
+- `Zugaro_ripple_detector` (ripple): 21, 20, 22
+- `multiunit_HSE_detector` (burst): 3, 2, 4
+- `recipe:ambrose_2016` (ripple): 11, 15, 18
+- `recipe:bendor_2012` (burst): 23, 20, 12
+- `recipe:berners_lee_2021` (ripple): 10, 8, 15
+- `recipe:berners_lee_2022` (burst): 24, 22, 16
+- `recipe:bhattarai_2020` (network): 10, 10, 12
+- `recipe:bhattarai_2020_ripples` (ripple): 30, 28, 24
+- `recipe:bush_2022` (burst): 25, 23, 15
+- `recipe:carey_2019` (network): 1, 1, 2
+- `recipe:carr_2012` (ripple): 14, 10, 9
+- `recipe:chenani_2019` (burst): 21, 19, 13
+- `recipe:davidson_2009` (burst): 13, 10, 11
+- `recipe:denovellis_2021` (ripple): 7, 6, 3
+- `recipe:denovellis_2021_mua` (burst): 4, 3, 3
+- `recipe:drieu_2018` (burst): 14, 12, 5
+- `recipe:farooq_2019_neuron` (burst): 32, 32, 29
+- `recipe:farooq_2019_science` (burst): 33, 33, 30
+- `recipe:farooq_2019_science_awake` (burst): 33, 33, 30
+- `recipe:foster_2006` (burst): 36, 36, 32
+- `recipe:gillespie_2021` (ripple): 5, 4, 4
+- `recipe:gillespie_2021_mua` (burst): 10, 6, 9
+- `recipe:gridchyn_2020` (burst): 5, 4, 1
+- `recipe:gupta_2010` (ripple): 9, 9, 8
+- `recipe:harvey_2023_code` (ripple): 27, 26, 28
+- `recipe:harvey_2023_no_radiatum` (ripple): 24, 23, 26
+- `recipe:huelin_gorriz_2023` (network): 5, 4, 4
+- `recipe:igata_2021` (burst): 2, 1, 2
+- `recipe:igata_2021_ripples` (ripple): 2, 1, 1
+- `recipe:jadhav_2016` (ripple): 26, 24, 17
+- `recipe:ji_2007` (burst): 20, 18, 18
+- `recipe:ji_2007_ripples` (ripple): 35, 35, 34
+- `recipe:kaefer_2020` (ripple): 34, 34, 30
+- `recipe:karlsson_2009` (ripple): 14, 10, 9
+- `recipe:krause_2022_hse` (burst): 11, 7, 21
+- `recipe:lee_2002` (burst): 1, 9, 28
+- `recipe:liu_2019` (burst): 8, 29, 33
+- `recipe:liu_2019_awake` (burst): 8, 29, 33
+- `recipe:liu_2023` (network): 7, 9, 6
+- `recipe:maboudi_2018` (burst): 12, 11, 22
+- `recipe:maboudi_2018_open_field` (burst): 18, 16, 6
+- `recipe:mallory_2025` (burst): 15, 13, 10
+- `recipe:mallory_2025_ripples` (ripple): 19, 18, 21
+- `recipe:michon_2019` (network): 11, 11, 9
+- `recipe:michon_2021` (network): 11, 11, 9
+- `recipe:mou_2022` (burst): 6, 8, 27
+- `recipe:muessig_2019_ripples` (ripple): 1, 2, 7
+- `recipe:nadasdy_1999` (ripple): 29, 27, 23
+- `recipe:olafsdottir_2015` (burst): 22, 21, 19
+- `recipe:olafsdottir_2015.bayesian_candidates` (burst): 27, 25, 23
+- `recipe:olafsdottir_2016` (burst): 28, 26, 24
+- `recipe:olafsdottir_2017` (burst): 17, 15, 17
+- `recipe:olafsdottir_2017.trajectory` (burst): 28, 26, 24
+- `recipe:pfeiffer_2013` (burst): 18, 16, 6
+- `recipe:pfeiffer_2013_ripples` (ripple): 11, 15, 18
+- `recipe:pfeiffer_2015` (ripple): 11, 15, 18
+- `recipe:shin_2019` (ripple): 14, 10, 9
+- `recipe:silva_2015` (burst): 26, 24, 20
+- `recipe:stella_2019` (ripple): 23, 22, 16
+- `recipe:tang_2017` (ripple): 14, 10, 9
+- `recipe:tirole_2022` (network): 5, 4, 4
+- `recipe:widloski_2025` (ripple): 28, 30, 34
+- `recipe:widloski_2025_bursts` (burst): 31, 31, 36
+- `recipe:wikenheiser_2013` (ripple): 4, 29, 29
+- `recipe:wu_2014` (burst): 7, 5, 8
+- `recipe:wu_2017` (burst): 30, 28, 26
+- `recipe:xu_2019` (burst): 16, 14, 14
+- `recipe:yamamoto_2017` (network): 4, 6, 11
+
+## Model sensitivity
+
+Each alternative model against the reference, paired by replicate (`model_sensitivity.csv`, `model_sensitivity_orders.csv`). A statement here is a reference order of detectors by recall at a common false-positive rate that its interval supports; it survives an alternative when that alternative's interval supports the same order. The alternatives are not pooled: there is no overall winner across them, and one factor at a time does not establish robustness to combinations of assumptions. Recipes have one setting each, so their changes are reported but not ordered. The validation report's changed target statistics are listed beside each.
+
+- `strength_correlation=coupled` (validation: ripple_duration 44 to 43.33; ripple_duration_sleep 54.67 to 53.83; pyramidal_ripple_gain 8.328 to 8.424; sharp_wave_ripple_power_correlation -0.00142 to 0.5582; sharp_wave_ripple_power_correlation_control -0.00142 to 0.5582; sharp_wave_frequency_relation 0.02915 to 0.5683): of 23 reference orders of detectors by recall at a common false-positive rate that their intervals support, 21 keep that support, 0 lose it, 0 reverse and 2 cannot be compared here (0 for a failure, 2 out of reach) and 0 more are untested because a detector failed; 12 of 86 main settings' recall compared moves with an interval excluding 0 (0 failed); 11 detector targets are out of reach in one condition and 0 missing for failures, all left missing.
+- `spatial_profile=local` (validation: ripple_duration 44 to 36.67; ripple_duration_sleep 54.67 to 53.51): of 23 reference orders of detectors by recall at a common false-positive rate that their intervals support, 5 keep that support, 0 lose it, 16 reverse and 2 cannot be compared here (0 for a failure, 2 out of reach) and 0 more are untested because a detector failed; 48 of 86 main settings' recall compared moves with an interval excluding 0 (0 failed); 11 detector targets are out of reach in one condition and 0 missing for failures, all left missing.
+  - reversed at 1/min: `Karlsson_ripple_detector` minus `Kay_ripple_detector` -0.114 (-0.157, -0.094) in the reference, +0.074 (+0.002, +0.093) here; reversed in 98% of resamples
+  - reversed at 2/min: `Karlsson_ripple_detector` minus `Kay_ripple_detector` -0.072 (-0.081, -0.063) in the reference, +0.073 (+0.060, +0.085) here; reversed in 100% of resamples
+  - reversed at 5/min: `Karlsson_ripple_detector` minus `Kay_ripple_detector` -0.052 (-0.065, -0.042) in the reference, +0.057 (+0.042, +0.073) here; reversed in 100% of resamples
+  - reversed at 1/min: `Karlsson_ripple_detector` minus `Roumis_ripple_detector` -0.114 (-0.155, -0.096) in the reference, +0.189 (+0.106, +0.208) here; reversed in 100% of resamples
+  - reversed at 2/min: `Karlsson_ripple_detector` minus `Roumis_ripple_detector` -0.073 (-0.082, -0.065) in the reference, +0.179 (+0.170, +0.188) here; reversed in 100% of resamples
+  - reversed at 5/min: `Karlsson_ripple_detector` minus `Roumis_ripple_detector` -0.052 (-0.062, -0.044) in the reference, +0.133 (+0.108, +0.155) here; reversed in 100% of resamples
+  - reversed at 1/min: `Karlsson_ripple_detector` minus `Shvartsman_ripple_detector` -0.078 (-0.120, -0.060) in the reference, +0.062 (-0.016, +0.084) here; reversed in 95% of resamples
+  - reversed at 2/min: `Karlsson_ripple_detector` minus `Shvartsman_ripple_detector` -0.039 (-0.050, -0.029) in the reference, +0.071 (+0.060, +0.086) here; reversed in 100% of resamples
+  - reversed at 5/min: `Karlsson_ripple_detector` minus `Shvartsman_ripple_detector` -0.016 (-0.026, -0.007) in the reference, +0.082 (+0.067, +0.097) here; reversed in 100% of resamples
+  - reversed at 5/min: `Karlsson_ripple_detector` minus `Yu_ripple_detector` -0.046 (-0.057, -0.035) in the reference, +0.213 (+0.185, +0.236) here; reversed in 100% of resamples
+  - reversed at 1/min: `Kay_ripple_detector` minus `Shvartsman_ripple_detector` +0.036 (+0.024, +0.048) in the reference, -0.012 (-0.027, +0.004) here; reversed in 93% of resamples
+  - reversed at 2/min: `Kay_ripple_detector` minus `Shvartsman_ripple_detector` +0.033 (+0.022, +0.043) in the reference, -0.002 (-0.015, +0.017) here; reversed in 52% of resamples
+  - reversed at 1/min: `Roumis_ripple_detector` minus `Shvartsman_ripple_detector` +0.036 (+0.025, +0.048) in the reference, -0.127 (-0.142, -0.112) here; reversed in 100% of resamples
+  - reversed at 2/min: `Roumis_ripple_detector` minus `Shvartsman_ripple_detector` +0.034 (+0.022, +0.044) in the reference, -0.108 (-0.119, -0.095) here; reversed in 100% of resamples
+  - reversed at 5/min: `Roumis_ripple_detector` minus `Shvartsman_ripple_detector` +0.036 (+0.028, +0.044) in the reference, -0.051 (-0.070, -0.029) here; reversed in 100% of resamples
+  - reversed at 5/min: `Shvartsman_ripple_detector` minus `Yu_ripple_detector` -0.030 (-0.039, -0.020) in the reference, +0.131 (+0.110, +0.147) here; reversed in 100% of resamples
+- `noise_modulation=varying` (validation: ripple_duration 44 to 39.33): of 23 reference orders of detectors by recall at a common false-positive rate that their intervals support, 19 keep that support, 1 lose it, 1 reverse and 2 cannot be compared here (0 for a failure, 2 out of reach) and 0 more are untested because a detector failed; 39 of 86 main settings' recall compared moves with an interval excluding 0 (0 failed); 10 detector targets are out of reach in one condition and 0 missing for failures, all left missing.
+  - reversed at 0.5/min: `Roumis_ripple_detector` minus `Shvartsman_ripple_detector` +0.024 (+0.015, +0.316) in the reference, -0.025 (-0.089, +0.168) here; reversed in 20% of resamples
+- `fast_gamma_band=nearby` (validation: no target statistic moved by more than 1 %): of 23 reference orders of detectors by recall at a common false-positive rate that their intervals support, 23 keep that support, 0 lose it, 0 reverse and 0 cannot be compared here (0 for a failure, 0 out of reach) and 0 more are untested because a detector failed; 0 of 86 main settings' recall compared moves with an interval excluding 0 (0 failed); 9 detector targets are out of reach in one condition and 0 missing for failures, all left missing.
+- `spike_model=refractory` (validation: interneuron_baseline_rate 11.81 to 11.57): of 23 reference orders of detectors by recall at a common false-positive rate that their intervals support, 23 keep that support, 0 lose it, 0 reverse and 0 cannot be compared here (0 for a failure, 0 out of reach) and 0 more are untested because a detector failed; 3 of 86 main settings' recall compared moves with an interval excluding 0 (0 failed); 9 detector targets are out of reach in one condition and 0 missing for failures, all left missing.
+- `envelope_power=quartic` (validation: ripple_frequency_decline 1.786 to 1.758; ripple_duration 44 to 45.33; sharp_wave_duration 56.67 to 42; pyramidal_baseline_rate 0.444 to 0.4373; pyramidal_ripple_gain 8.328 to 8.861; observed_participation_largest 0.24 to 0.26): of 23 reference orders of detectors by recall at a common false-positive rate that their intervals support, 21 keep that support, 2 lose it, 0 reverse and 0 cannot be compared here (0 for a failure, 0 out of reach) and 0 more are untested because a detector failed; 44 of 86 main settings' recall compared moves with an interval excluding 0 (0 failed); 9 detector targets are out of reach in one condition and 0 missing for failures, all left missing.
+
+Under `spatial_profile=local` timing errors are measured from the latent anchor, the component's centre on its anchor channel; the other channels' delays are part of that comparison. Under `fast_gamma_band=nearby` gamma bursts at 90-140 Hz are non-events by this benchmark's declared taxonomy, not by any physiological claim. Attribution computed on the reference alone remains conditional on the reference simulator.
+
+## Held-out thresholds
+
+No threshold is recommended here. `held_out_thresholds.csv` gives, per detector and target rate, the setting chosen on the even replicates and its performance on the odd ones alone: the numbers a recommendation would quote. The operating curves stay descriptive.
+
+## Trends and spot checks
+
+The trends stated so far, each with what its spot check showed, are in [trends.md](trends.md).
+
+`candidate_trends.csv` lists candidates with their evidence rows; each is stated (in `trends.md`, with a sentence on what its spot check showed) only once its underlying events have been looked at (a figure in `spot_checks/`) and it is checked not to come from failures, empty sweeps or a unit error. `trends.md` and `spot_checks/` are written by hand and carried over when `analyze.py` rebuilds this directory; every other file is rebuilt.
