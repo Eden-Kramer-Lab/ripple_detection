@@ -245,8 +245,18 @@ run `min(requested, free cores - 1, 0.7 x available memory / peak memory)` worke
 smoke test reports each rule's verdict; the runner has no switch for the events rule, so
 acting on it needs a change to `run.py`.
 
-> **Placeholder, smoke test:** the measured numbers (per-session simulate and detect
-> time, peak memory, rows and bytes per table), the extrapolation and any rule applied.
+Measured on 2026-09-27 (commit 8582977, report `v1`; an 18-core, 64 GB macOS machine
+shared with other work, load about 8): one reference session of 600 s simulates in 0.9 s
+and runs and scores its 160 method calls (83 detector settings, 77 recipes) in 70.8 s,
+74 s wall in all, with a peak resident memory of 3.56 GiB; no call failed or warned. It
+writes 24,171 events (318 kB), 1,920 metrics rows (178 kB), 160 methods rows, 329 truth
+rows and 2.2 MB of complete results. Extrapolated to the 440 sessions: 8.8 CPU hours and
+1.15 GiB written (0.13 GiB of events); the 860-session validation adds 2.8 CPU hours
+(11.7 s and at most 2.04 GiB a session). Rules: 72 s is under 300 s, so `duration_s`
+stays 600; events stay under 2 GB, so every condition's events are written. Memory, not
+cores, sets the workers: at 3.56 GiB a session, `0.7 x available / peak` allows 12
+workers with 64 GB free and 4 with the 23 GB that were free that day. Sessions of the
+`n_units=120` and `n_channels=16` conditions need more of both.
 
 Look at single events before trusting any aggregate: `spot_check.py` simulates the
 smoke session again from its seed and draws six true events of each type with their
