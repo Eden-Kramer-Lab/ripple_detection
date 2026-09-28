@@ -87,7 +87,7 @@ import math
 import os
 import sys
 import time as wall_clock
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from collections.abc import (
     Callable,
     Collection,
@@ -105,7 +105,7 @@ import numpy as np
 import pandas as pd
 from analyze import resample_weights, write_result
 from conditions import parameters_from_json, session_seed, simulate_parameters
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, DTypeLike
 from recipe_configs import (
     _POLICY,
     RECIPES,
@@ -566,8 +566,13 @@ def _counted(session: rd.SimulatedSession) -> rd.SimulatedSession:
         return _integer_counts(session)
 
 
-def _read_only(values: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
-    values.flags.writeable = False
+ArrayT = TypeVar("ArrayT", bound=np.ndarray[Any, Any] | None)
+
+
+def _read_only(values: ArrayT) -> ArrayT:
+    """``values`` made read-only; None as it is."""
+    if values is not None:
+        values.flags.writeable = False
     return values
 
 
@@ -627,12 +632,11 @@ class SessionContext:
             signals.raw_lfp,
             signals.sharp_wave_lfp,
             signals.multiunit,
+            signals.speed,
             self.recording.place_cells,
             self.recording.pyramidal,
         ):
             _read_only(values)
-        if signals.speed is not None:
-            _read_only(signals.speed)
         self.rest: FloatArray = _read_only(rest_intervals(session))
         self.minutes = len(session.time) / session.sampling_frequency / 60
         self.windows = {
@@ -685,8 +689,7 @@ class SessionContext:
                 trace.first_sample,
                 trace.last_sample,
             ):
-                if values is not None:
-                    _read_only(values)
+                _read_only(values)
             return trace
 
         trace: PopulationTrace = self._traces.get(("rate", units, smoothing_sigma), compute)
@@ -743,16 +746,6 @@ def _long_swrs(context: SessionContext) -> FloatArray:
     )
 
 
-def _configured_events(config_id: str) -> Callable[[SessionContext], FloatArray]:
-    """A configured method's public-call events on the context's session."""
-
-    def events(context: SessionContext) -> FloatArray:
-        config = _config(config_id)
-        return recipe_events(config, context.session)
-
-    return events
-
-
 def _running_30s(context: SessionContext) -> FloatArray:
     """Running (speed above 15 cm/s) widened by 30 s on each side, davidson_2009's
     "within 30 s of running"."""
@@ -766,7 +759,9 @@ PARTNERS: dict[str, Callable[[SessionContext], FloatArray]] = {
     "rest": lambda context: context.rest,
     "running_30s": _running_30s,
     "long_swrs": _long_swrs,
-    "muessig_2019_ripples": _configured_events("muessig_2019_ripples"),
+    "muessig_2019_ripples": lambda context: recipe_events(
+        _config("muessig_2019_ripples"), context.session
+    ),
     "external_ripple_peaks": lambda context: external_ripples(context.session)[:, 2],
 }
 
@@ -1191,6 +1186,7 @@ _TIROLE = (
     "with fallback bounds, a speed median sampled every 10 ms and a resampled ripple "
     "gate"
 )
+_MALLORY = "peaks bounded by mean crossings merged by retained peak (custom peak merging)"
 _MICHON = "5 ms bins, 3 s median detrending and a ripple partner on a detrended envelope"
 _TEN_MS = "a population trace on 10 ms bins; the template's grid is 1 ms"
 _FRACTION = (
@@ -1210,8 +1206,7 @@ _RECTIFIED_SLEEP = (
 
 # Every configuration without a template, and why.
 FIXED_POINTS: dict[str, str] = {
-    "mallory_2025": "peaks bounded by mean crossings merged by retained peak (custom "
-    "peak merging)",
+    "mallory_2025": _MALLORY,
     "widloski_2025": "a minimum time above threshold (15 ms); the template needs one sample",
     "huelin_gorriz_2023": _TIROLE,
     "harvey_2023_code": "Long_sharp_wave_ripple_detector (k-means on sharp-wave and "
@@ -1266,8 +1261,7 @@ FIXED_POINTS: dict[str, str] = {
     "kudrimoti_1999": "a minimum time above threshold (25 ms); the template needs one sample",
     "harvey_2023_no_radiatum": "Zugaro_ripple_detector then a pyramidal spiking veto "
     "near the peak",
-    "mallory_2025_ripples": "peaks bounded by mean crossings merged by retained peak "
-    "(custom peak merging)",
+    "mallory_2025_ripples": _MALLORY,
     "igata_2021_ripples": "one inventory per channel",
     "wu_2014_ripples": _PEAKS,
     "davidson_2009_ripples": _PEAKS,
@@ -1412,7 +1406,7 @@ def verify_all(
             expected = recipe_events(config, context.session)
             events = context.events(compile(template_of(config)))
             n_events = verification.n_events + len(expected)
-            if expected.shape != events.shape or not np.array_equal(expected, events):
+            if not np.array_equal(expected, events):
                 reason = (
                     f"events differ on {context.label}: {len(events)} from the template, "
                     f"{len(expected)} from the public call"
@@ -1785,13 +1779,19 @@ def edge_sessions(
     session = simulate_parameters(changed, 0)
     start, end = gap_interval(session)
     missing = (session.time >= start) & (session.time < end)
-    lfps = session.lfps.copy()
-    lfps[missing] = np.nan
-    sharp_wave = session.sharp_wave_lfp.copy()
-    sharp_wave[missing] = np.nan
-    counts = session.multiunit.astype(float)
-    counts[missing] = np.nan
-    gap = dataclasses.replace(session, lfps=lfps, sharp_wave_lfp=sharp_wave, multiunit=counts)
+
+    def cut(values: FloatArray, dtype: DTypeLike) -> FloatArray:
+        # a copy as ``dtype`` with the gap's samples missing
+        copied = values.astype(dtype)
+        copied[missing] = np.nan
+        return copied
+
+    gap = dataclasses.replace(
+        session,
+        lfps=cut(session.lfps, session.lfps.dtype),
+        sharp_wave_lfp=cut(session.sharp_wave_lfp, session.sharp_wave_lfp.dtype),
+        multiunit=cut(session.multiunit, float),
+    )
     moved = dataclasses.replace(
         session,
         time=session.time + UNIX_ORIGIN,
@@ -1978,26 +1978,9 @@ def reference_template(family: str, templates: Sequence[TemplateT] | None = None
         elif kind == "integer":
             values[field.name] = int(np.floor(np.median(column)))
         else:
-            counts: dict[Any, int] = {}
-            for value in column:
-                counts[value] = counts.get(value, 0) + 1
-            values[field.name] = max(counts, key=lambda value: counts[value])
+            # ties go to the value counted first
+            values[field.name] = Counter(column).most_common(1)[0][0]
     return type(chosen[0])(**values)  # type: ignore[return-value]
-
-
-def with_factors(template: TemplateT, values: Mapping[str, Any]) -> TemplateT:
-    """``template`` with some factors set.
-
-    Parameters
-    ----------
-    template : SpikeTemplate or LfpTemplate
-    values : mapping of str to object
-
-    Returns
-    -------
-    template
-    """
-    return dataclasses.replace(template, **dict(values))
 
 
 # Outputs
@@ -2114,9 +2097,7 @@ def _worker_context(run_directory: str, replicate: int) -> SessionContext:
     """This process's context of a reference session, the only one it holds."""
     key = (run_directory, replicate)
     if key not in _WORKER_CONTEXT:
-        for context in _WORKER_CONTEXT.values():
-            context.release()
-        _WORKER_CONTEXT.clear()
+        _release_worker_context()
         _WORKER_CONTEXT[key] = next(iter(reference_contexts(run_directory, [replicate])))
     return _WORKER_CONTEXT[key]
 
@@ -2487,7 +2468,7 @@ def one_at_a_time(
         *(
             (
                 {"factor": factor.name, "level": _as_text(level)},
-                with_factors(reference, {factor.name: level}),
+                dataclasses.replace(reference, **{factor.name: level}),
             )
             for factor in factor_space(RECIPES, family)
             for level in factor.points()
@@ -2521,9 +2502,8 @@ def session_interval(values: ArrayLike, level: float = 0.95) -> dict[str, float]
     """The mean of per-session values with a paired bootstrap interval.
 
     ``paired_bootstrap`` over the sessions (``analyze.N_RESAMPLES`` draws, its
-    seed),
-    the statistic the mean of the finite values, computed draw for draw from
-    ``resample_weights``, the counts of each session in each draw.
+    seed), the statistic the mean of the finite values, computed draw for draw
+    from ``resample_weights``, the counts of each session in each draw.
 
     Parameters
     ----------
@@ -2586,9 +2566,9 @@ def sobol_design(
     a_rows, b_rows = sample[:, :d], sample[:, d:]
 
     def configuration(row: FloatArray) -> TemplateT:
-        return with_factors(
+        return dataclasses.replace(
             reference,
-            {
+            **{
                 factor.name: factor.value(float(u))
                 for factor, u in zip(factors, row, strict=True)
             },
