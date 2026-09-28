@@ -2204,13 +2204,16 @@ def test_model_sensitivity_includes_all_variants(analyze):
     # reversed at 0.5, 1 and 2 per minute; 5 is out of reach for both detectors
     assert "of 3 reference orders" in refractory_lines[0]
     assert (
-        "0 keep that support, 0 lose it, 3 reverse and 0 cannot be compared here"
-        in refractory_lines[0]
+        "0 keep that support, 0 lose it (0 of them with the point estimates reversed), "
+        "3 reverse and 0 cannot be compared here" in refractory_lines[0]
     )
     assert "2 detector targets are out of reach" in refractory_lines[0]
     assert refractory_lines[2].startswith("  - reversed at 1/min: `Karlsson_ripple_detector`")
     kept = next(line for line in lines if line.startswith("- `noise_modulation=varying`"))
-    assert "3 keep that support, 0 lose it, 0 reverse and 0 cannot" in kept
+    assert (
+        "3 keep that support, 0 lose it (0 of them with the point estimates reversed), "
+        "0 reverse and 0 cannot" in kept
+    )
 
 
 def test_model_sensitivity_keeps_failures_apart_from_unreachable_targets(analyze):
@@ -2256,8 +2259,9 @@ def test_model_sensitivity_keeps_failures_apart_from_unreachable_targets(analyze
     coupled = next(line for line in lines if "`strength_correlation=coupled`" in line)
     assert (
         "of 3 reference orders of detectors by recall at a common false-positive rate that "
-        "their intervals support, 2 keep that support, 0 lose it, 0 reverse and 1 cannot be "
-        "compared here (0 for a failure, 1 out of reach) and 0 more are untested" in coupled
+        "their intervals support, 2 keep that support, 0 lose it (0 of them with the point "
+        "estimates reversed), 0 reverse and 1 cannot be compared here (0 for a failure, 1 "
+        "out of reach) and 0 more are untested" in coupled
     )
     # Kay failed on every replicate there, so no order has a reference
     # difference over replicates both ran on: untested, at every target
@@ -2267,6 +2271,98 @@ def test_model_sensitivity_keeps_failures_apart_from_unreachable_targets(analyze
     assert "0 of 1 main settings' recall compared moves" in spiking
     assert "(1 failed)" in spiking
     assert "1 detector targets are out of reach in one condition and 4 missing" in spiking
+
+
+# Per target, A minus B in the reference and in the alternative, each as its
+# estimate and the range its resamples span evenly: a supported order the
+# alternative reverses with an interval excluding 0, one whose point estimate
+# alone reverses, an unsupported one the alternative orders the other way, and
+# one that keeps its support.
+_HAND_ORDERS = (
+    ((0.1, 0.05, 0.15), (-0.1, -0.15, -0.05)),
+    ((0.1, 0.05, 0.15), (-0.02, -0.1, 0.05)),
+    ((0.02, -0.05, 0.1), (-0.1, -0.15, -0.05)),
+    ((0.1, 0.05, 0.15), (0.08, 0.03, 0.12)),
+)
+_HAND_TARGETS = (0.5, 1.0, 2.0, 5.0)
+
+
+def _hand_orders(analyze, alternative="spike_model=refractory"):
+    """``_orders`` of Karlsson (A) and Kay (B) over ``_HAND_ORDERS``: B's
+    recall 0.5 everywhere, A's 0.5 plus the difference, 41 resamples."""
+    n_resamples = 41
+    estimate = np.full((2, 2, len(_HAND_TARGETS)), 0.5)
+    draws = np.full((n_resamples, 2, 2, len(_HAND_TARGETS)), 0.5)
+    for t, conditions in enumerate(_HAND_ORDERS):
+        for c, (value, low, high) in enumerate(conditions):
+            estimate[c, 0, t] += value
+            draws[:, c, 0, t] += np.linspace(low, high, n_resamples)
+    found = analyze.SweepRecalls(
+        estimate=estimate,
+        draws=draws,
+        alone=np.full((4, 2, 2, len(_HAND_TARGETS)), np.nan),
+        replicates=[{0, 1, 2, 3}, {0, 1, 2, 3}],
+        nearest=np.full((2, 2, len(_HAND_TARGETS)), "2.0", dtype=object),
+    )
+    detectors = [SWEPT_KARLSSON, KAY[0]]
+    return analyze._orders(
+        alternative,
+        detectors,
+        pd.Series("ripple", index=detectors),
+        _HAND_TARGETS,
+        {(0, 1): found},
+        4,
+        dict.fromkeys(detectors, 0),
+    )
+
+
+def test_a_reversal_needs_the_alternative_interval_to_exclude_zero(analyze):
+    orders = _hand_orders(analyze)
+    assert list(orders.columns) == list(analyze.ORDER_COLUMNS)
+    orders = orders.set_index("fp_target")
+    assert orders.supported.tolist() == [True, True, False, True]
+    # opposite signs with the alternative's interval on the other side of 0
+    assert orders.reversed.tolist() == [True, False, False, False]
+    # opposite point estimates, the alternative's interval holding 0
+    assert orders.point_reversed.tolist() == [False, True, False, False]
+    assert orders.loc[1.0, "alternative_low"] < 0 < orders.loc[1.0, "alternative_high"]
+
+
+def test_statements_count_point_reversals_as_lost_support(analyze):
+    alternative = "spike_model=refractory"
+    orders = _hand_orders(analyze, alternative)
+    changes = pd.DataFrame(
+        [
+            {
+                "alternative": alternative,
+                "status": "compared",
+                "method": KAY[0],
+                "measure": "recall",
+                "change": 0.0,
+                "change_low": -0.1,
+                "change_high": 0.1,
+            }
+        ]
+    )
+    lines = analyze.model_sensitivity_statements(changes, orders)
+    mine = [line for line in lines if alternative in line or line.startswith("  - ")]
+    assert (
+        "of 3 reference orders of detectors by recall at a common false-positive rate that "
+        "their intervals support, 1 keep that support, 1 lose it (1 of them with the point "
+        "estimates reversed), 1 reverse and 0 cannot be compared here" in mine[0]
+    )
+    assert mine[1].startswith(
+        f"  - reversed at 0.5/min: `{SWEPT_KARLSSON}` minus `{KAY[0]}` +0.100"
+    )
+    assert mine[2].startswith(
+        f"  - point estimate reversed at 1/min: `{SWEPT_KARLSSON}` minus `{KAY[0]}` +0.100"
+    )
+    assert "the order loses its support" in mine[2]
+    assert len(mine) == 3
+    # a candidate trend of the supported reversal alone
+    trends = analyze.candidate_trends({"model_sensitivity_orders": orders})
+    reversals = trends[trends.kind == "model_order_reversal"]
+    assert reversals.statement.str.startswith("At 0.5 false positives").tolist() == [True]
 
 
 def _checks():

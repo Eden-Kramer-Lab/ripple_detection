@@ -3992,6 +3992,7 @@ ORDER_COLUMNS = (
     "alternative_high",
     "supported",
     "reversed",
+    "point_reversed",
     "p_reversed",
 )
 # Relative and absolute room within which a validation statistic is unchanged.
@@ -4235,9 +4236,13 @@ def model_sensitivity(
         (``setting_a``, ``setting_b``: where a spot check looks), their
         recall differences (A minus B) in the reference and in the
         alternative with intervals;
-        ``supported``, the reference interval excludes 0; ``reversed``, the
-        two estimates have opposite signs; ``p_reversed``, the fraction of
-        resamples (where both are defined) in which they do.
+        ``supported``, the reference interval excludes 0; ``reversed``, a
+        supported order the alternative reverses: the estimates have opposite
+        signs and the alternative's interval excludes 0; ``point_reversed``,
+        the estimates have opposite signs but the alternative's interval holds
+        0 (supported or not: only the point estimate reverses); ``p_reversed``,
+        the fraction of resamples (where both are defined) in which the signs
+        differ.
     """
     main = _main_methods(scores)
     detectors = _detectors(scores)
@@ -4369,6 +4374,10 @@ def _orders(
         observed = found.estimate[:, 0] - found.estimate[:, 1]
         resampled = found.draws[:, :, 0] - found.draws[:, :, 1]
         low, high = _conditional_intervals(observed, resampled)
+        supported = (low[0] > 0) | (high[0] < 0)
+        opposite = observed[0] * observed[1] < 0
+        holds_zero = (low[1] <= 0) & (high[1] >= 0)
+        excludes_zero = (low[1] > 0) | (high[1] < 0)
         for t, target in enumerate(targets):
             both = np.isfinite(resampled[:, 0, t]) & np.isfinite(resampled[:, 1, t])
             flips = np.sign(resampled[both, 0, t]) * np.sign(resampled[both, 1, t]) < 0
@@ -4395,8 +4404,9 @@ def _orders(
                     "alternative_difference": observed[1, t],
                     "alternative_low": low[1, t],
                     "alternative_high": high[1, t],
-                    "supported": bool(low[0, t] > 0 or high[0, t] < 0),
-                    "reversed": bool(observed[0, t] * observed[1, t] < 0),
+                    "supported": bool(supported[t]),
+                    "reversed": bool(supported[t] & opposite[t] & excludes_zero[t]),
+                    "point_reversed": bool(opposite[t] & holds_zero[t]),
                     "p_reversed": flips.mean() if both.any() else np.nan,
                 }
             )
@@ -4544,8 +4554,10 @@ def model_sensitivity_statements(
 
     A reference order counts as a statement when its interval excludes 0
     (``supported``): it survives an alternative when the alternative's
-    interval excludes 0 on the same side, loses its support when it
-    includes 0, and reverses when the estimates' signs differ; it cannot be
+    interval excludes 0 on the same side, reverses when it excludes 0 on
+    the other side (``reversed``), and otherwise loses its support, among
+    those the ones whose point estimate alone reverses
+    (``point_reversed``) counted and listed as such; it cannot be
     compared when the alternative's difference is missing, counted apart by
     why (a detector failed, or its curve does not reach the target there).
     Orders a detector's failures leave without a reference difference are
@@ -4562,7 +4574,8 @@ def model_sensitivity_statements(
     Returns
     -------
     lines : list of str
-        One bullet per alternative, then its reversed orders.
+        One bullet per alternative, then its reversed orders and those whose
+        point estimate alone reverses.
     """
     lines = []
     for _, _, alternative in MODEL_ALTERNATIVES:
@@ -4591,6 +4604,7 @@ def model_sensitivity_statements(
             ).sum()
         )
         reversed_ = mine[mine["reversed"]]
+        point_reversed = mine[mine["point_reversed"]]
         missing = mine["alternative_difference"].isna()
         failed_orders = int((missing & (mine["status"] == "failed")).sum())
         lost = len(mine) - survive - len(reversed_) - int(missing.sum())
@@ -4607,8 +4621,9 @@ def model_sensitivity_statements(
         lines.append(
             f"- `{alternative}` (validation: {observed}): of {len(mine)} reference orders "
             f"of detectors by recall at a common false-positive rate that their intervals "
-            f"support, {survive} keep that support, {lost} lose it, {len(reversed_)} "
-            f"reverse and {int(missing.sum())} cannot be compared here ({failed_orders} for "
+            f"support, {survive} keep that support, {lost} lose it ({len(point_reversed)} "
+            f"of them with the point estimates reversed), {len(reversed_)} reverse and "
+            f"{int(missing.sum())} cannot be compared here ({failed_orders} for "
             f"a failure, {int(missing.sum()) - failed_orders} out of reach) and "
             f"{len(untested)} more are untested because a detector failed; "
             f"{len(moved_recall)} of {len(compared)} main settings' recall compared moves "
@@ -4625,6 +4640,15 @@ def model_sensitivity_statements(
             f"{row.alternative_difference:+.3f} ({row.alternative_low:+.3f}, "
             f"{row.alternative_high:+.3f}) here; reversed in {row.p_reversed:.0%} of resamples"
             for row in reversed_.itertuples(index=False)
+        ]
+        lines += [
+            f"  - point estimate reversed at {row.fp_target:g}/min: `{row.method_a}` minus "
+            f"`{row.method_b}` {row.reference_difference:+.3f} "
+            f"({row.reference_low:+.3f}, {row.reference_high:+.3f}) in the reference, "
+            f"{row.alternative_difference:+.3f} ({row.alternative_low:+.3f}, "
+            f"{row.alternative_high:+.3f}) here, an interval holding 0: the order loses its "
+            f"support; reversed in {row.p_reversed:.0%} of resamples"
+            for row in point_reversed.itertuples(index=False)
         ]
     return lines
 
