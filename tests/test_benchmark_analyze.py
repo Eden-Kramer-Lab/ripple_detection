@@ -363,6 +363,21 @@ def test_sign_flip_needs_finite_pairs(analyze):
     assert np.isnan(analyze.sign_flip_test([]))
 
 
+def test_sign_flip_enumerates_up_to_sixteen_sessions(analyze):
+    # 16 sessions: every flip, the two of one sign as large as observed
+    assert analyze.sign_flip_test(np.ones(16)) == 2 / 2**16
+    # 17: random flips, (k + 1) / (n + 1), never the exact 2 / 2 ** 17
+    assert analyze.sign_flip_test(np.ones(17), n_resamples=999) == 1 / 1000
+
+
+def test_choose_setting_boundary_and_ties(analyze):
+    # a setting exactly at the target is allowed
+    assert analyze.choose_setting([0.5, 0.8], [0.5, 1.0], 1.0) == 1
+    # of equal recalls, the first in threshold order
+    assert analyze.choose_setting([0.8, 0.8, 0.6], [1.0, 0.5, 0.2], 1.0) == 0
+    assert analyze.choose_setting([0.8, 0.9], [1.5, 2.0], 1.0) is None
+
+
 def test_held_out_membership_is_the_same_in_every_condition(analyze):
     reference, other = range(20), range(10)
     held_out = {k for k in reference if analyze.is_held_out(k)}
@@ -1430,6 +1445,43 @@ def test_operating_curves_and_points_by_hand(analyze):
     # 5 per minute is past the curve's end: missing, not its last point
     assert points.loc[5.0, ["recall", "recall_low", "recall_high"]].isna().all()
     assert points.attained.tolist() == [1.0, 1.0, 1.0, 0.0]
+
+
+def test_operating_curves_label_defaults_and_recipes(analyze):
+    counts = []
+    for replicate in (0, 1):
+        counts += _curve("reference", replicate, KAY[0], ((8, 28), (6, 11)))
+        counts += [
+            _kay("reference", replicate, "default", 6, 11),
+            {**_kay("reference", replicate, KARLSSON[1], 5, 9), "method": KARLSSON[0]},
+        ]
+    curves = analyze.operating_curves(_hand_scores(analyze, counts))
+    at_zero = curves[curves.minimum_iou == 0]
+    assert at_zero[["method", "setting", "kind"]].to_numpy().tolist() == [
+        [KAY[0], "2.0", "sweep"],
+        [KAY[0], "3.0", "sweep"],
+        [KAY[0], "default", "default"],
+        [KARLSSON[0], "literature", "recipe"],
+    ]
+    assert at_zero.threshold.isna().tolist() == [False, False, True, True]
+
+
+def test_an_unreached_target_keeps_no_interval(analyze):
+    # the first session's curve reaches 4 false positives a minute, the
+    # second's 0.5, the two pooled 2.25: 3 per minute is past the pooled
+    # curve, though resamples of the first session alone reach it
+    counts = [
+        *_curve("reference", 0, KAY[0], ((8, 48), (6, 8))),
+        *_curve("reference", 1, KAY[0], ((8, 13), (6, 9))),
+    ]
+    points = analyze.operating_points(
+        _hand_scores(analyze, counts), targets=(3.0,), n_resamples=FEW
+    )
+    row = points[points.minimum_iou == 0].iloc[0]
+    assert 0 < row.attained < 1
+    assert np.isnan(row.recall)
+    assert np.isnan(row.recall_low)
+    assert np.isnan(row.recall_high)
 
 
 def test_held_out_threshold_reports_held_out_replicates(analyze):
