@@ -175,11 +175,46 @@ def test_sobol_indices_do_not_move_with_the_outputs_origin(attribution):
     shifted = attribution.sobol_indices(y_a + 10.0, y_b + 10.0, y_ab + 10.0)
     np.testing.assert_allclose(shifted[0], first, atol=1e-12)
     np.testing.assert_allclose(shifted[1], total, atol=1e-12)
-    # every resample centred on its own mean: the intervals do not move either
+    # nor do the intervals (each resample's centre moves with the outputs)
     table = attribution.sobol_intervals(y_a, y_b, y_ab, n_resamples=50)
     moved = attribution.sobol_intervals(y_a + 10.0, y_b + 10.0, y_ab + 10.0, n_resamples=50)
     columns = ["first", "first_low", "first_high", "total", "total_low", "total_high"]
     np.testing.assert_allclose(moved[columns], table[columns], atol=1e-12)
+
+
+def _first_order_draws(y_a, y_b, y_ab, n_resamples, centre_of):
+    """sobol_intervals' resampled first-order indices, written out: the same
+    rows drawn (its seed 0), each resample's outputs centred on
+    ``centre_of(rows)``."""
+    rng = np.random.default_rng(0)
+    draws = []
+    for _ in range(n_resamples):
+        rows = rng.integers(len(y_a), size=len(y_a))
+        a, b, ab = y_a[rows], y_b[rows], y_ab[:, rows]
+        variance = np.var(np.concatenate([a, b]), ddof=1)
+        draws.append(np.mean((b - centre_of(rows)) * (ab - a), axis=1) / variance)
+    return np.array(draws)
+
+
+def test_each_sobol_resample_is_centred_on_its_own_mean(attribution):
+    rng = np.random.default_rng(5)
+    y_a, y_b, y_ab = rng.normal(size=48), rng.normal(size=48), rng.normal(size=(2, 48))
+    y_ab[0] += y_b
+    y_b[:8] += 3.0  # a few large outputs, so a resample's mean moves
+    table = attribution.sobol_intervals(y_a, y_b, y_ab, n_resamples=200)
+
+    def own(rows):
+        return np.concatenate([y_a[rows], y_b[rows], y_ab[:, rows].ravel()]).mean()
+
+    def whole(rows):
+        return np.concatenate([y_a, y_b, y_ab.ravel()]).mean()
+
+    low, high = attribution.percentile_intervals(_first_order_draws(y_a, y_b, y_ab, 200, own))
+    np.testing.assert_allclose(table["first_low"], low, rtol=1e-12)
+    np.testing.assert_allclose(table["first_high"], high, rtol=1e-12)
+    # centred on the whole sample's mean instead, the intervals differ
+    other = attribution.percentile_intervals(_first_order_draws(y_a, y_b, y_ab, 200, whole))
+    assert not np.allclose(other[0], low)
 
 
 def test_sobol_intervals_honour_the_level(attribution):

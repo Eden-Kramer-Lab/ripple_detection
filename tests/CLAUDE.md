@@ -25,8 +25,9 @@ The suite, with its shared fixtures:
    reference sessions written by the runner's own functions (with the two methods whose
    saved events regenerated sessions are checked against): the Sobol estimator on the
    Ishigami function and by hand, unchanged (intervals too) by a constant added to every
-   output, its intervals' level, missing outputs (no interval without an estimate, finite
-   rows and draws counted, an output never defined); Shapley values (additive,
+   output, each resample centred on its own mean (its intervals written out), its
+   intervals' level, missing outputs (no interval without an estimate, finite rows and
+   draws counted, an output never defined); Shapley values (additive,
    efficiency, the Monte Carlo path and its standard errors on the 10-factor toy, the
    subsets asked); every configuration a template or a fixed point with its reason,
    compiled step order, hashable pipelines, a rate core refusing LFP steps, bounds as

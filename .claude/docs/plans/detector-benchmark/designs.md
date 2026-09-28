@@ -1061,8 +1061,11 @@ def sobol_indices(y_a, y_b, y_ab):
     """First-order (Saltelli et al. 2010) and total (Jansen 1999) indices.
     y_a, y_b: (N,); y_ab: (d, N)."""
     variance = np.var(np.concatenate([y_a, y_b]), ddof=1)
-    # centred on the mean of every output, A, B and AB together (as SALib does)
-    centre = np.mean(np.concatenate([y_a, y_b, y_ab.ravel()]))
+    # centred on the mean of every finite output, A, B and AB together (as SALib
+    # does), so one missing AB output leaves only its own index missing
+    everything = np.concatenate([y_a, y_b, y_ab.ravel()])
+    finite = everything[np.isfinite(everything)]
+    centre = finite.mean() if finite.size else np.nan
     first = np.mean((y_b - centre) * (y_ab - y_a), axis=1) / variance
     total = 0.5 * np.mean((y_a - y_ab) ** 2, axis=1) / variance
     return first, total
