@@ -103,7 +103,7 @@ from typing import Any, TypeVar
 
 import numpy as np
 import pandas as pd
-from analyze import resample_weights, write_result
+from analyze import percentile_intervals, resample_weights, write_result
 from conditions import parameters_from_json, session_seed, simulate_parameters
 from numpy.typing import ArrayLike, DTypeLike
 from recipe_configs import (
@@ -2270,9 +2270,11 @@ def sobol_intervals(
             drawn_first, drawn_total = sobol_indices(y_a[rows], y_b[rows], y_ab[:, rows])
             draws_first.append(drawn_first)
             draws_total.append(drawn_total)
-    alpha = (1 - level) / 2
-    first_bounds = _percentiles(np.array(draws_first), alpha)
-    total_bounds = _percentiles(np.array(draws_total), alpha)
+    # each interval over the finite draws only
+    first_bounds, total_bounds = (
+        np.array(percentile_intervals(np.where(np.isfinite(draws), draws, np.nan), level))
+        for draws in (np.array(draws_first), np.array(draws_total))
+    )
     first_bounds[:, np.isnan(first)] = np.nan
     total_bounds[:, np.isnan(total)] = np.nan
     finite_rows = (np.isfinite(y_a) & np.isfinite(y_b) & np.isfinite(y_ab)).sum(axis=1)
@@ -2289,17 +2291,6 @@ def sobol_intervals(
             "total_finite_draws": np.isfinite(draws_total).sum(axis=0),
         }
     )
-
-
-def _percentiles(draws: FloatArray, alpha: float) -> FloatArray:
-    """The ``alpha`` and ``1 - alpha`` quantiles of each column's finite draws,
-    shape (2, n_columns); NaN for a column without one."""
-    bounds = np.full((2, draws.shape[1]), np.nan)
-    for column in range(draws.shape[1]):
-        finite = draws[:, column][np.isfinite(draws[:, column])]
-        if len(finite):
-            bounds[:, column] = np.quantile(finite, [alpha, 1 - alpha])
-    return bounds
 
 
 def shapley(
@@ -2528,7 +2519,7 @@ def session_interval(values: ArrayLike, level: float = 0.95) -> dict[str, float]
         totals = weights.sum(axis=1)
         with np.errstate(invalid="ignore", divide="ignore"):
             draws = (weights @ np.where(finite, values, 0.0)) / totals
-        low, high = _percentiles(draws[:, np.newaxis], (1 - level) / 2)[:, 0]
+        (low,), (high,) = percentile_intervals(draws[:, np.newaxis], level)
     return {
         "change": _mean(values.tolist()),
         "low": float(low),
