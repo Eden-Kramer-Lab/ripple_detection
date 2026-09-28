@@ -1742,13 +1742,13 @@ def gap_interval(session: rd.SimulatedSession) -> tuple[float, float]:
         The session has no sharp-wave ripple at rest.
     """
     windows = rd.truth_windows(session.events, 0.1, "network")
-    rest = rest_intervals(session)
-    for row in windows[windows["type"] == "swr"].itertuples():
-        if np.any((rest[:, 0] <= row.start_time) & (row.end_time <= rest[:, 1])):
-            middle = (row.start_time + row.end_time) / 2
-            return middle - GAP_WIDTH / 2, middle + GAP_WIDTH / 2
-    msg = "The session has no sharp-wave ripple at rest to put the gap in."
-    raise ValueError(msg)
+    swrs = bounds(windows[windows["type"] == "swr"])
+    at_rest = rd.require_inside(swrs, rest_intervals(session))
+    if not len(at_rest):
+        msg = "The session has no sharp-wave ripple at rest to put the gap in."
+        raise ValueError(msg)
+    middle = float(at_rest[0].sum()) / 2
+    return middle - GAP_WIDTH / 2, middle + GAP_WIDTH / 2
 
 
 def edge_sessions(
