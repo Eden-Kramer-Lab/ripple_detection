@@ -3028,6 +3028,29 @@ def test_the_command_keeps_the_hand_written_spot_checks(analyze, tiny_run, tmp_p
     assert "No `trends.md` has been written yet" in (fresh / "summary.md").read_text()
 
 
+def test_a_rebuild_keeps_what_is_written_while_it_runs(analyze, tiny_run, tmp_path):
+    """attribution.py's results, or an edit to trends.md, written into the
+    results while a rebuild runs, are in the rebuilt directory."""
+    results = tmp_path / "results"
+    (results / "attribution").mkdir(parents=True)
+    (results / "attribution" / "spikes_oat.csv").write_text("before\n")
+    (results / "trends.md").write_text("# Trends\n")
+
+    def table(inputs):
+        (results / "attribution" / "lfp_sobol.csv").write_text("during\n")
+        (results / "attribution" / "spikes_oat.csv").write_text("rewritten\n")
+        (results / "trends.md").write_text("# Trends\n\nEdited during the rebuild.\n")
+        return pd.DataFrame({"x": [1]})
+
+    analyze.analyze_run(
+        tiny_run.parent, results, figures=False, analyses=[analyze.Analysis("x", table, "A.")]
+    )
+    assert (results / "x.csv").exists()
+    assert (results / "attribution" / "lfp_sobol.csv").read_text() == "during\n"
+    assert (results / "attribution" / "spikes_oat.csv").read_text() == "rewritten\n"
+    assert (results / "trends.md").read_text() == "# Trends\n\nEdited during the rebuild.\n"
+
+
 def test_the_analysis_registry_is_checked(analyze, tiny_run, tmp_path):
     def table(inputs):
         return pd.DataFrame()

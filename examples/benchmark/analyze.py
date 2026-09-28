@@ -7521,7 +7521,7 @@ def analyze_run(
         empty table), ``candidate_trends.csv`` and ``summary.md``. What is
         written there by hand or by another command (``KEPT``: ``trends.md``,
         ``spot_checks/`` and attribution.py's ``attribution/``) is copied into
-        the rebuilt directory.
+        the rebuilt directory last, just before it replaces the old one.
     workers : int, optional
         Processes for matching the sessions again.
     figures : bool, optional
@@ -7568,13 +7568,6 @@ def analyze_run(
     files, results = [], {}
     previous = Path(results_directory)
     with replace_directory(previous) as partial:
-        # the hand-written trends, their spot checks and the attribution's
-        # results outlive a rebuild
-        for name in KEPT:
-            if (previous / name).is_dir():
-                shutil.copytree(previous / name, partial / name)
-            elif (previous / name).is_file():
-                shutil.copy2(previous / name, partial / name)
         for analysis in analyses:
             started = wall_clock.perf_counter()
             table = analysis.table(inputs)
@@ -7609,10 +7602,18 @@ def analyze_run(
             inputs.validation,
             scores,
             inputs.validation_problem,
-            (partial / TRENDS).is_file(),
+            (previous / TRENDS).is_file(),
             _shown(root),
         )
         write_result(partial / "summary.md", summary.encode())
+        # the hand-written trends, their spot checks and the attribution's
+        # results outlive a rebuild: copied last, just before the rename, so
+        # what is written there while the tables are built is kept too
+        for name in KEPT:
+            if (previous / name).is_dir():
+                shutil.copytree(previous / name, partial / name)
+            elif (previous / name).is_file():
+                shutil.copy2(previous / name, partial / name)
     return seconds
 
 
