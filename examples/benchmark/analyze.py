@@ -1226,6 +1226,37 @@ def _with_failures(frame: pd.DataFrame, tables: RunTables) -> pd.DataFrame:
     return frame.merge(counts, on=["method", "setting"], how="left")
 
 
+def _every_method(
+    frame: pd.DataFrame,
+    methods: pd.DataFrame,
+    keys: Mapping[str, Sequence[Any]] | None = None,
+    zero: Sequence[str] = (),
+) -> pd.DataFrame:
+    """``frame`` with a row for every method and setting of ``methods`` and
+    every combination of ``keys``' values, in that order: a method that never
+    ran keeps its rows, its counts (``zero``) 0 and every other value missing,
+    so a complete failure stays in the table rather than dropping out."""
+    grid = methods[["method", "setting"]].drop_duplicates().reset_index(drop=True)
+    for column, values in (keys or {}).items():
+        grid = grid.merge(pd.DataFrame({column: list(values)}), how="cross")
+    on = list(grid.columns)
+    full = grid.merge(frame, on=on, how="left")
+    full[list(zero)] = full[list(zero)].fillna(0).astype(int)
+    return full[list(frame.columns)]
+
+
+def _expected_pairs(tables: RunTables, expression: str | None = None) -> pd.DataFrame:
+    """Every pair of main interval methods (of one primary expression when
+    given), the first first by name: ``method_a``, ``method_b``."""
+    main = _by_intervals(main_rows(tables.methods))
+    if expression is not None:
+        main = main[main["primary_expression"] == expression]
+    return pd.DataFrame(
+        list(itertools.combinations(sorted(main["method"]), 2)),
+        columns=["method_a", "method_b"],
+    )
+
+
 def _in_order(frame: pd.DataFrame, column: str, order: Sequence[str]) -> pd.DataFrame:
     """``frame`` sorted by method, setting and then ``column`` in ``order``."""
     rank = {value: position for position, value in enumerate(order)}
@@ -1765,6 +1796,12 @@ def detection_profile(
     )
     totals = frame.groupby(by)[["n_true", "n_found"]].sum().astype(int).reset_index()
     profile = totals.merge(intervals, on=by).rename(columns={"type": "event_type"})
+    profile = _every_method(
+        profile,
+        _by_intervals(tables.methods),
+        {"event_type": rd.EVENT_TYPES},
+        ("n_true", "n_found"),
+    )
     return _in_order(_with_failures(profile, tables), "event_type", rd.EVENT_TYPES)
 
 
@@ -1825,7 +1862,12 @@ def false_positive_classes(
         n_resamples=n_resamples,
     )
     totals = frame.groupby(by)[["n_events", "n_unmatched"]].sum().astype(int).reset_index()
-    classes = totals.merge(intervals, on=by)
+    classes = _every_method(
+        totals.merge(intervals, on=by),
+        _by_intervals(tables.methods),
+        {"label": labels},
+        ("n_events", "n_unmatched"),
+    )
     return _in_order(_with_failures(classes, tables), "label", labels)
 
 
@@ -1932,7 +1974,10 @@ def splits_and_merges(
         "merge_rate_low",
         "merge_rate_high",
     ]
-    return _in_order(_with_failures(rates[columns], tables), "subset", ("all", DOUBLET))
+    rates = _every_method(
+        rates[columns], _by_intervals(tables.methods), {"subset": ("all", DOUBLET)}, counts
+    )
+    return _in_order(_with_failures(rates, tables), "subset", ("all", DOUBLET))
 
 
 def _minutes_outside(sessions: pd.DataFrame) -> pd.Series:
@@ -1989,6 +2034,8 @@ def point_inventories(
     )
     totals = frame.groupby(by)[[*counts, "minutes"]].sum().reset_index()
     table = totals.astype(dict.fromkeys(counts, int)).merge(intervals, on=by)
+    points = tables.methods[tables.methods["scoring"] == PEAK_CONTAINMENT]
+    table = _every_method(table, points, zero=counts).fillna({"minutes": 0.0})
     table.insert(2, "scoring", PEAK_CONTAINMENT)
     return _with_failures(table, tables)
 
@@ -2009,10 +2056,14 @@ def _session_means(
     columns: Sequence[str],
     *,
     n_resamples: int,
+    expected: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Each pair's per-session ``compare_detectors`` values averaged over the
     sessions both methods have scores on (NaN sessions left out), with
-    intervals; ``n_sessions`` counts those sessions."""
+    intervals; ``n_sessions`` counts those sessions. Every pair of
+    ``expected`` (``method_a``, ``method_b``, ``truth_expression``) has a
+    row, a pair never compared its values missing and ``n_sessions`` 0;
+    default every pair of main interval methods against the network truth."""
     frame = _with_replicate(comparisons, tables)
     by = ["method_a", "method_b", "truth_expression"]
     means = grouped_intervals(
@@ -2020,6 +2071,10 @@ def _session_means(
     )
     n_sessions = frame.groupby(by).size().rename("n_sessions")
     means = means.join(n_sessions, on=by)
+    if expected is None:
+        expected = _expected_pairs(tables).assign(truth_expression="network")
+    means = expected[by].merge(means, on=by, how="left")
+    means = means.fillna({"n_sessions": 0}).astype({"n_sessions": int})
     return _with_pair_failures(means, tables)
 
 
@@ -2265,6 +2320,9 @@ def overlap_quality(
     quality = quality.merge(
         found[[*by, "recall", "recall_low", "recall_high"]], on=by, how="left"
     )
+    quality = _every_method(
+        quality, _by_intervals(tables.methods), {"measure": OVERLAP_MEASURES}, ("n_pairs",)
+    )
     return _in_order(_with_failures(quality, tables), "measure", OVERLAP_MEASURES)
 
 
@@ -2358,7 +2416,10 @@ def boundary_errors(
     errors = errors.merge(
         found[[*by, "recall", "recall_low", "recall_high"]], on=by, how="left"
     )
-    errors = _split_error_names(errors)
+    # every method scored, each expression and measure, whether it ran or not
+    grid = scored.merge(pd.DataFrame({"measure": names}), how="cross")
+    errors = grid.merge(errors, on=[*by, "measure"], how="left").fillna({"n_pairs": 0})
+    errors = _split_error_names(errors.astype({"n_pairs": int}))
     columns = [
         *by,
         "fraction",
@@ -2465,7 +2526,9 @@ def paired_timing(
         .agg(n_run=("session_id", "size"), jaccard_truth_ids=("jaccard_truth_ids", "mean"))
         .join(n_shared)
         .join(per_session.groupby(pair).size().rename("n_sessions"))
-        .fillna({"n_shared": 0, "n_sessions": 0})
+        # every pair of the expression's methods, one never compared included
+        .reindex(pd.MultiIndex.from_frame(_expected_pairs(tables, expression)))
+        .fillna({"n_run": 0, "n_shared": 0, "n_sessions": 0})
     )
     rows = []
     for (a, b), found in summary.iterrows():
@@ -4266,6 +4329,12 @@ def matching_sensitivity(
                 on=["method", "minimum_iou"],
                 how="left",
             )
+    table = _every_method(
+        table,
+        primary,
+        {"minimum_iou": MATCH_IOU_LEVELS},
+        ("n_reference", "n_detected", "n_matched"),
+    )
     table["rank"] = (
         table.groupby(["minimum_iou", "primary_expression"])["recall"]
         .rank(ascending=False, method="min")
@@ -4428,7 +4497,9 @@ def rates_by_state(
     )
     totals = long.groupby(by)[["n_events", "minutes", "true_events"]].sum().reset_index()
     rates = totals.merge(intervals.drop(columns=["true_rate_low", "true_rate_high"]), on=by)
-    rates = rates.astype({"n_events": int, "true_events": int})
+    rates = _every_method(
+        rates, tables.methods, {"state": STATES}, ("n_events", "true_events")
+    ).fillna({"minutes": 0.0})
     rates.insert(3, "scoring", rates["method"].map(scoring_rule))
     columns = [*by, "scoring", "n_events", "minutes", "rate", "rate_low", "rate_high"]
     rates = rates[[*columns, "true_events", "true_rate"]]
@@ -4539,7 +4610,17 @@ def participation_bias(
                 ),
             }
         )
-    bias = pd.DataFrame(rows).merge(intervals, on=by)
+    bias = pd.DataFrame(
+        rows,
+        columns=[
+            *by,
+            "n_matched_events",
+            "n_events",
+            "mean_matched",
+            "mean_all",
+            "ks_statistic",
+        ],
+    ).merge(intervals, on=by)
     columns = [
         *by,
         "n_matched_events",
@@ -4551,7 +4632,12 @@ def participation_bias(
         "ratio_of_means_high",
         "ks_statistic",
     ]
-    return _with_failures(bias[columns], tables)
+    bias = _every_method(
+        bias[columns],
+        _by_intervals(main_rows(tables.methods)),
+        zero=("n_matched_events", "n_events"),
+    )
+    return _with_failures(bias, tables)
 
 
 def boundary_effect(
@@ -4630,7 +4716,13 @@ def boundary_effect(
         "mean_detected",
         "mean_truth",
     ]
-    return _in_order(_with_failures(effect[columns], tables), "selection", tuple(SELECTIONS))
+    effect = _every_method(
+        effect[columns],
+        _by_intervals(tables.methods),
+        {"selection": tuple(SELECTIONS)},
+        ("n_pairs",),
+    )
+    return _in_order(_with_failures(effect, tables), "selection", tuple(SELECTIONS))
 
 
 # Figures (matplotlib is imported only inside them)

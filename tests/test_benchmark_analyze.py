@@ -799,6 +799,81 @@ def test_point_inventories_are_scored_apart(analyze, point_run):
     assert counts.loc[DAVIDSON[0], "scoring"] == "peak_containment"
 
 
+@pytest.fixture(scope="module")
+def failing_run(run, tmp_path_factory):
+    """The tiny sessions with Kay and Mallory running and Karlsson's recipe
+    and Davidson's ripple peaks failing on every session."""
+    sessions = [_tiny_session(run, 0.0), _tiny_session(run, UNIX_ORIGIN)]
+    for session in sessions:
+        session["detected"] = {
+            KAY: session["detected"][KAY],
+            MALLORY: session["detected"][MALLORY],
+            KARLSSON: None,
+            DAVIDSON: None,
+        }
+    return _write_run(run, tmp_path_factory.mktemp("failing"), sessions)
+
+
+def test_a_method_that_never_ran_keeps_its_rows(analyze, failing_run):
+    tables = analyze.load_run(failing_run)
+    matches = analyze.match_run(tables, levels=(0.0, 0.2, 0.5))
+    quick = {"n_resamples": FEW}
+    bouts = {"reference/0": np.array([[10.0, 15.0]])}
+    bouts["reference/1"] = bouts["reference/0"] + UNIX_ORIGIN
+    per_method = {
+        "detection_profile": analyze.detection_profile(tables, matches, **quick),
+        "false_positive_classes": analyze.false_positive_classes(tables, matches, **quick),
+        "splits_and_merges": analyze.splits_and_merges(tables, matches, **quick),
+        "overlap_quality": analyze.overlap_quality(tables, matches, **quick),
+        "boundary_errors": analyze.boundary_errors(tables, matches, **quick),
+        "participation_bias": analyze.participation_bias(tables, matches, **quick),
+        "boundary_effect": analyze.boundary_effect(tables, matches, **quick),
+        "matching_sensitivity": analyze.matching_sensitivity(tables, matches, **quick),
+        "rates_by_state": analyze.rates_by_state(tables, bouts=bouts, **quick),
+        "point_inventories": analyze.point_inventories(tables, matches, **quick),
+    }
+    measured = {
+        "detection_profile": "recall",
+        "false_positive_classes": "fraction",
+        "splits_and_merges": "split_rate",
+        "overlap_quality": "median",
+        "boundary_errors": "median",
+        "participation_bias": "ratio_of_means",
+        "boundary_effect": "mean_difference",
+        "matching_sensitivity": "recall",
+        "rates_by_state": "rate",
+        "point_inventories": "recall",
+    }
+    for name, table in per_method.items():
+        failed = (
+            DAVIDSON[0] if name in ("rates_by_state", "point_inventories") else KARLSSON[0]
+        )
+        rows = table[table.method == failed]
+        # every row a method that ran has, each counting its failures
+        ran = table[table.method == KAY[0]] if name != "point_inventories" else rows
+        assert len(rows) == len(ran) > 0, name
+        assert (rows.n_failures == 2).all(), name
+        assert (rows.n_sessions == 0).all(), name
+        assert rows[measured[name]].isna().all(), name
+    pairs = {
+        "pairwise_agreement": analyze.pairwise_agreement(tables, matches, **quick),
+        "method_differences": analyze.method_differences(tables, matches, **quick),
+        "error_correlations": analyze.error_correlations(tables, matches, **quick),
+        "paired_timing_ripple": analyze.paired_timing(tables, matches, "ripple", **quick),
+    }
+    for name, table in pairs.items():
+        rows = table[(table.method_a == KAY[0]) & (table.method_b == KARLSSON[0])]
+        assert len(rows) > 0, name
+        assert (rows.n_failures_b == 2).all(), name
+        assert (rows.n_failures_a == 0).all(), name
+    agreement = pairs["pairwise_agreement"].set_index(["method_a", "method_b"])
+    assert agreement.loc[(KAY[0], KARLSSON[0]), "n_sessions"] == 0
+    assert np.isnan(agreement.loc[(KAY[0], KARLSSON[0]), "jaccard"])
+    timing = pairs["paired_timing_ripple"]
+    assert timing.fraction.tolist() == [0.1, 0.25, 0.5]
+    assert timing.onset_signed_estimate.isna().all()
+
+
 def test_resample_weights_are_the_bootstrap_draws(analyze):
     rng = np.random.default_rng(1)
     frame = _per_session(rng.integers(0, 50, size=7).tolist(), shift=3)
