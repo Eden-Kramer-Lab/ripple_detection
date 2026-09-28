@@ -2935,19 +2935,28 @@ def test_the_command_keeps_the_hand_written_spot_checks(analyze, tiny_run, tmp_p
     (results / "spot_checks" / "kay_missed_weak.png").write_bytes(b"figure")
     (results / "trends.md").write_text("# Trends\n\nKay misses weak ripples.\n")
     (results / "stale.csv").write_text("an earlier analysis\n")
+    # attribution.py's results, another command's, in a nested directory
+    (results / "attribution" / "nested").mkdir(parents=True)
+    (results / "attribution" / "spikes_sobol.csv").write_text("y,factor\n")
+    (results / "attribution" / "nested" / "figure.png").write_bytes(b"bars")
     failures = next(a for a in analyze.ANALYSES if a.name == "failures")
     analyze.analyze_run(tiny_run.parent, results, figures=False, analyses=[failures])
-    # the tables are rebuilt; what was written by hand is carried over
+    # the tables are rebuilt; what was written by hand or by another command is
+    # carried over
     assert not (results / "stale.csv").exists()
     assert (results / "spot_checks" / "kay_missed_weak.png").read_bytes() == b"figure"
     assert (results / "trends.md").read_text() == "# Trends\n\nKay misses weak ripples.\n"
+    assert (results / "attribution" / "spikes_sobol.csv").read_text() == "y,factor\n"
+    assert (results / "attribution" / "nested" / "figure.png").read_bytes() == b"bars"
     summary = (results / "summary.md").read_text()
     assert "[trends.md](trends.md)" in summary
     assert "carried over" in summary
+    assert "`attribution/`" in summary
     # without them, the summary says there are none yet
     fresh = tmp_path / "fresh"
     analyze.analyze_run(tiny_run.parent, fresh, figures=False, analyses=[failures])
     assert not (fresh / "spot_checks").exists()
+    assert not (fresh / "attribution").exists()
     assert "No `trends.md` has been written yet" in (fresh / "summary.md").read_text()
 
 

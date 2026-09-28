@@ -392,7 +392,8 @@ for an empty table), `candidate_trends.csv`, and `summary.md`, which names each 
 one sentence on what it shows, lists every method that failed on some session and the
 lists the analyses call for (below). What is written there by hand, `trends.md` (the
 trends stated, each with what its spot check showed) and the figures in `spot_checks/`,
-is carried over into the rebuilt directory, and `summary.md` links `trends.md`. No file
+and by another command, `attribution/` ([Attribution](#attribution)), is carried over
+into the rebuilt directory (`KEPT`), and `summary.md` links `trends.md`. No file
 may pass 1 MB: the command stops before writing one and leaves the previous results in
 place. `--run-directory` and `--results-directory` read and write elsewhere.
 

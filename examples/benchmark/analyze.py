@@ -15,8 +15,9 @@ PNG for each with a figure (all but ``failures``, ``operating_differences``,
 ``model_sensitivity_orders``; none for an empty table), ``candidate_trends.csv``
 and ``summary.md``, which names each file with one sentence on what it shows and
 lists the methods that failed. ``trends.md`` and ``spot_checks/``, written there by
-hand, are carried over. No file may pass ``SIZE_LIMIT`` (1 MB): the command stops
-before writing one, leaving the previous results as they were.
+hand, and ``attribution/``, written by ``attribution.py``, are carried over
+(``KEPT``). No file may pass ``SIZE_LIMIT`` (1 MB): the command stops before writing
+one, leaving the previous results as they were.
 
 What is analysed. Most tables read the reference condition's sessions and the rows
 whose ``setting`` is ``"default"`` or ``"literature"`` (``main_rows``): each detector
@@ -6468,6 +6469,10 @@ OPERATING_DIFFERENCES = "operating_differences"
 CANDIDATES = "candidate_trends"
 TRENDS = "trends.md"
 SPOT_CHECKS = "spot_checks"
+# attribution.py's results, written beside these by that command.
+ATTRIBUTION = "attribution"
+# What a rebuild carries over: written by hand, or by another command.
+KEPT = (TRENDS, SPOT_CHECKS, ATTRIBUTION)
 # Names no analysis may take: the command's own steps and files.
 RESERVED = ("load", "match", "scores", CANDIDATES)
 
@@ -7631,8 +7636,9 @@ def _summary(
             f"(in `{TRENDS}`, with a sentence on what its spot check showed) only once its "
             f"underlying events have been looked at (a figure in `{SPOT_CHECKS}/`) and it is "
             "checked not to come from failures, empty sweeps or a unit error. "
-            f"`{TRENDS}` and `{SPOT_CHECKS}/` are written by hand and carried over when "
-            "`analyze.py` rebuilds this directory; every other file is rebuilt."
+            f"`{TRENDS}` and `{SPOT_CHECKS}/`, written by hand, and `{ATTRIBUTION}/`, "
+            "written by `attribution.py`, are carried over when `analyze.py` rebuilds this "
+            "directory; every other file is rebuilt."
         ),
     ]
     return "\n".join(lines) + "\n"
@@ -7711,8 +7717,9 @@ def analyze_run(
         Rebuilt from scratch (in ``<name>.partial``, renamed into place):
         ``<name>.csv`` per analysis, ``<name>.png`` per figure (none for an
         empty table), ``candidate_trends.csv`` and ``summary.md``. What is
-        written there by hand, ``trends.md`` and ``spot_checks/``, is copied
-        into the rebuilt directory.
+        written there by hand or by another command (``KEPT``: ``trends.md``,
+        ``spot_checks/`` and attribution.py's ``attribution/``) is copied into
+        the rebuilt directory.
     workers : int, optional
         Processes for matching the sessions again.
     figures : bool, optional
@@ -7759,11 +7766,13 @@ def analyze_run(
     files, results = [], {}
     previous = Path(results_directory)
     with replace_directory(previous) as partial:
-        # the hand-written trends and their spot checks outlive a rebuild
-        if (previous / SPOT_CHECKS).is_dir():
-            shutil.copytree(previous / SPOT_CHECKS, partial / SPOT_CHECKS)
-        if (previous / TRENDS).is_file():
-            shutil.copy2(previous / TRENDS, partial / TRENDS)
+        # the hand-written trends, their spot checks and the attribution's
+        # results outlive a rebuild
+        for name in KEPT:
+            if (previous / name).is_dir():
+                shutil.copytree(previous / name, partial / name)
+            elif (previous / name).is_file():
+                shutil.copy2(previous / name, partial / name)
         for analysis in analyses:
             started = wall_clock.perf_counter()
             table = analysis.table(inputs)
