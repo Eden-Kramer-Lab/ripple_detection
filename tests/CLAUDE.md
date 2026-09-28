@@ -30,21 +30,24 @@ The suite, with its shared fixtures:
    subsets asked); every configuration a template or a fixed point with its reason,
    compiled step order, hashable pipelines, a rate core refusing LFP steps, bounds as
    fractions of the threshold (each template's bound bit for bit, no sampled bound above
-   its threshold); the in-space count per family pinned on two 30 s sessions, a gap cutting
-   a sharp-wave ripple (events of both families cut there) and a Unix clock origin, a
-   session with running for the one method needing it, wrong templates (counts kept,
-   bounds changed) and equal empty results refused, the edge sessions part of
+   its threshold); the in-space count per family pinned on two 30 s sessions, a gap
+   cutting a sharp-wave ripple (events of both families cut there) and a Unix clock
+   origin, a session with running for the one method needing it, wrong templates (counts
+   kept, bounds changed) and equal empty results refused, the edge sessions part of
    verification; the perturbations and the sensitivity table; the factor spaces pinned,
    reference templates by hand (integer medians rounded down, identical templates once),
-   the Sobol design; memoized evaluation (call counts) on a read-only, bounded, releasable
-   context, means skipping missing values, the outputs against `match_events`; halved
-   sessions and a non-default rendering parameter regenerated, and every mismatch with
-   the saved tables and events raising, the report check stubbed and its every field;
-   one factor at a time (its interval equal to `paired_bootstrap`'s, none from one
-   session), Sobol, Shapley pairs and the lowest-agreement selection, fixed points
-   (failures the run recorded kept, others and input errors raised), a failing
-   configuration named and cancelling the queued chunks, two workers, the smoke report
-   and the command line (files per family, the report checked once, the eight-method stop
+   the Sobol design; memoized evaluation (call counts) on a read-only, bounded,
+   releasable context, means skipping missing values, the outputs against `match_events`;
+   halved sessions and a non-default rendering parameter regenerated, and every mismatch
+   with the saved tables and events raising, the evaluation simulating them without
+   checking them again, the report check stubbed and its every field; one factor at a
+   time (its interval equal to `paired_bootstrap`'s, none from one session), Sobol,
+   Shapley pairs, the pairs' agreement (equal to the evaluated Jaccard) and the
+   lowest-agreement selection, fixed points (failures the run recorded kept, others and
+   input errors raised), a failing configuration named and cancelling the queued chunks,
+   two workers, the evaluation order (grouped by trace) and chunks sharing the work over
+   the workers, the smoke report (the exact Shapley counts) and the command line (files
+   per family, the report and each reference session checked once, the eight-method stop
    and the labelled override). No test draws a figure
 
 The whole suite runs in seconds; `pytest` reports coverage of `src/ripple_detection` with the missing lines. The package also validates that example notebooks run without errors in CI.
