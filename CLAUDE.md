@@ -65,6 +65,10 @@ uv run python examples/benchmark/run.py --run-name v1 --conditions all --workers
 # per analysis, a PNG per figure, each under 1 MB, candidate_trends.csv and summary.md;
 # trends.md and spot_checks/, written by hand, are kept; the README gives its runtime)
 uv run python examples/benchmark/analyze.py --run-name v1 --workers N
+# Attribute the literature methods' disagreement to their rule components (the reference
+# condition's sessions; minutes per family; --smoke prints each analysis's cost first;
+# a family below eight represented methods needs --below-minimum)
+uv run python examples/benchmark/attribution.py --run-name v1 --family spikes --analysis all
 
 # Run every surveyed paper's packaged method on a simulated session (seconds;
 # overwrites examples/literature_recipes_results.csv). Widloski 2022 has none:
