@@ -1111,8 +1111,16 @@ decided during the phase:
   family reference for every distinct template and the ten lowest-agreement pairs; wall 9 min
   52 s (spikes) and 6 min 42 s (lfp) at 8 workers after caching binned traces and pipeline
   stages and grouping configurations (0.65 to 0.077 s per spike configuration, outputs
-  identical). At N = 256 the first-order estimates are noisier than the totals (spike
-  first-order estimates sum past 1); indices are read with their intervals.
+  identical). Indices are read with their intervals.
+- **Centred first-order estimates** (after an external review, 2026-09-28). The first-order
+  estimator of run v1 used uncentred outputs (the code above now centres them), so its
+  estimates moved with the outputs' origin and their intervals were inflated: spike F1
+  `bound_fraction` 0.416 (-0.109, 0.844) became 0.137 (0.051, 0.226), the LFP F1
+  threshold's interval width 5.81 became 0.29, and the spike F1 first-order estimates,
+  which summed to 1.33, sum to 0.96. The spike first-order estimates summing past 1 was this
+  bug, not noise at N = 256. Both families' Sobol tables were rebuilt from the same
+  configurations (`--analysis sobol`); the raw rows came out identical and the totals are
+  unchanged.
 
 ## Rates and participation
 

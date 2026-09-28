@@ -835,7 +835,11 @@ uv run python examples/benchmark/attribution.py --run-name v1 --family lfp \
 ```
 
 took 9 min 52 s (`spikes`) and 6 min 42 s (`lfp`) wall, at most 4.2 GB in the main
-process. Sobol's first-order indices are estimated with more noise than the totals at
-`N = 256`: on `spikes` a factor's first-order estimate can exceed its total and the
-first-order estimates sum past 1, which the exact values cannot; read each index with its
-interval.
+process. The first-order estimator centres the outputs on their mean before its product.
+The first version did not, so its estimates moved with the outputs' origin (adding 10 to
+every spike F1 took `bound_fraction`'s from 0.42 to 4.9) and their intervals were several
+times wider; that, not `N = 256`, is why the spike F1 first-order estimates summed past 1
+(1.33; 0.96 centred). Both families' Sobol tables were rebuilt from the saved rows, which
+the rebuild reproduced exactly. Centred, a first-order estimate still exceeds its total
+here and there (16 of 60 `spikes` indices, by at most 0.045, each total inside the
+first-order interval), which the exact values cannot: read each index with its interval.
