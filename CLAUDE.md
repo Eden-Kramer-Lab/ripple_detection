@@ -63,7 +63,8 @@ uv run python examples/benchmark/run.py --run-name v1 --conditions all --workers
     --validation-report examples/benchmark/validation/v1/spec.json
 # Analyse a finished run's combined/ into examples/benchmark/results/<run_name>/ (a CSV
 # per analysis, a PNG per figure, each under 1 MB, candidate_trends.csv and summary.md;
-# trends.md and spot_checks/, written by hand, are kept; the README gives its runtime)
+# trends.md and spot_checks/, written by hand, and attribution.py's attribution/ are
+# kept; the README gives its runtime)
 uv run python examples/benchmark/analyze.py --run-name v1 --workers N
 # Attribute the literature methods' disagreement to their rule components (the reference
 # condition's sessions; minutes per family; --smoke prints each analysis's cost first;
