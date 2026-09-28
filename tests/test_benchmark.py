@@ -383,7 +383,7 @@ def test_run_session_schema(run, output, written):
         assert list(getattr(output, name).columns) == columns, name
         suffix = ".csv" if name in ("methods", "failures", "warnings") else ".csv.gz"
         assert list(run.read_table(written / f"{name}{suffix}").columns) == columns, name
-    kay = run.read_table(written / "results" / "Kay_ripple_detector__default.csv.gz")
+    kay = pd.read_csv(written / "results" / "Kay_ripple_detector__default.csv.gz", nrows=0)
     result = output.results["Kay_ripple_detector", "default"]
     assert list(kay.columns) == ["event_number", "session_id", *result.columns]
     assert sorted(p.name for p in (written / "results").iterdir()) == sorted(
@@ -447,9 +447,9 @@ def test_read_table_keeps_text_as_text(run, written, tmp_path):
     # a table whose settings are all swept values, and levels that look like numbers
     metrics = run.read_table(written / "metrics.csv.gz")
     swept = metrics[metrics.setting == "3.0"]
-    run._write_table(swept, tmp_path / "swept.csv.gz")
-    assert pd.read_csv(tmp_path / "swept.csv.gz").setting.dtype == float
-    read = run.read_table(tmp_path / "swept.csv.gz")
+    run._write_table(swept, tmp_path / "metrics.csv.gz")
+    assert pd.read_csv(tmp_path / "metrics.csv.gz").setting.dtype == float
+    read = run.read_table(tmp_path / "metrics.csv.gz")
     assert (read.setting == "3.0").all()
     pd.testing.assert_frame_equal(read, swept.reset_index(drop=True), check_exact=True)
     assert read.median_iou.dtype == float
@@ -463,6 +463,14 @@ def test_read_table_keeps_text_as_text(run, written, tmp_path):
     )
     run._write_table(listed, tmp_path / "conditions.csv")
     assert run.read_table(tmp_path / "conditions.csv").level.tolist() == ["30"]
+    # the truth's event columns are missing on non-event rows, like the others
+    truth = run.read_table(written / "truth.csv.gz")
+    non_events = truth[truth.table == "non_event"]
+    assert len(non_events)
+    assert non_events[["expression", "component", "frequency_start"]].isna().all().all()
+    assert non_events.type.map(type).eq(str).all()
+    with pytest.raises(ValueError, match=r"swept\.csv\.gz is not a table the runner writes"):
+        run.read_table(tmp_path / "swept.csv.gz")
 
 
 def test_metrics_agree_with_match_events(run, written, session):

@@ -325,30 +325,40 @@ METRIC_COLUMNS = ("session_id", "method", "setting", *SCORE_COLUMNS)
 FAILURE_COLUMNS = ("session_id", "method", "setting", "error")
 WARNING_COLUMNS = ("session_id", "method", "setting", "category", "message")
 CONDITION_COLUMNS = ("condition_id", "factor", "level", "params")
-# Columns that hold text in every row of every table, "" included.
-TEXT_COLUMNS = frozenset(
-    {
-        *CONDITION_COLUMNS,
-        *METHOD_COLUMNS,
-        *FAILURE_COLUMNS,
-        *WARNING_COLUMNS,
-        "unit_type",
-    }
-)
 
-# Every table a condition directory holds, by file name, with its columns.
-TABLES: dict[str, tuple[str, ...]] = {
-    "sessions.csv.gz": SESSION_COLUMNS,
-    "truth.csv.gz": TRUTH_COLUMNS,
-    "truth_counts.csv.gz": TRUTH_COUNT_COLUMNS,
-    "ripple_channels.csv.gz": RIPPLE_CHANNEL_COLUMNS,
-    "units.csv.gz": UNIT_COLUMNS,
-    "methods.csv": METHOD_COLUMNS,
-    "events.csv.gz": EVENT_COLUMNS,
-    "metrics.csv.gz": METRIC_COLUMNS,
-    "failures.csv": FAILURE_COLUMNS,
-    "warnings.csv": WARNING_COLUMNS,
+
+@dataclasses.dataclass(frozen=True)
+class Table:
+    """A table the runner writes.
+
+    Attributes
+    ----------
+    columns : tuple of str
+        In order.
+    text : frozenset of str
+        The columns that hold text in every row, ``""`` included.
+    """
+
+    columns: tuple[str, ...]
+    text: frozenset[str]
+
+
+_KEY = ("session_id", "method", "setting")
+# Every table a condition directory holds, by file name.
+TABLES: dict[str, Table] = {
+    "sessions.csv.gz": Table(SESSION_COLUMNS, frozenset({"session_id", "condition_id"})),
+    "truth.csv.gz": Table(TRUTH_COLUMNS, frozenset({"session_id", "table", "type"})),
+    "truth_counts.csv.gz": Table(TRUTH_COUNT_COLUMNS, frozenset({"session_id", "expression"})),
+    "ripple_channels.csv.gz": Table(RIPPLE_CHANNEL_COLUMNS, frozenset({"session_id"})),
+    "units.csv.gz": Table(UNIT_COLUMNS, frozenset({"session_id", "unit_type"})),
+    "methods.csv": Table(METHOD_COLUMNS, frozenset(METHOD_COLUMNS)),
+    "events.csv.gz": Table(EVENT_COLUMNS, frozenset(_KEY)),
+    "metrics.csv.gz": Table(METRIC_COLUMNS, frozenset({*_KEY, "expression"})),
+    "failures.csv": Table(FAILURE_COLUMNS, frozenset(FAILURE_COLUMNS)),
+    "warnings.csv": Table(WARNING_COLUMNS, frozenset(WARNING_COLUMNS)),
 }
+# The run's table of its conditions.
+CONDITIONS_TABLE = Table(CONDITION_COLUMNS, frozenset(CONDITION_COLUMNS))
 
 # (method, setting, prepare): prepare builds the call's inputs and returns the
 # method's call itself.
@@ -1000,23 +1010,33 @@ def read_table(path: str | os.PathLike[str]) -> pd.DataFrame:
     Parameters
     ----------
     path : str or path-like
-        A ``.csv`` or ``.csv.gz`` table of a condition, of ``combined/``, or
-        ``conditions.csv``.
+        A table of a condition or of ``combined/``, by its file name in
+        ``TABLES``, or ``conditions.csv``.
 
     Returns
     -------
     table : pandas.DataFrame
-        Each column of ``TEXT_COLUMNS`` as ``str``, an empty field as ``""``;
-        every other column as pandas infers it, an empty field as NaN, floats
-        exactly as written.
+        The table's text columns (``Table.text``) as ``str``, an empty field
+        as ``""``; every other column as pandas infers it, an empty field as
+        NaN, floats exactly as written. So ``truth.csv.gz``'s ``expression``
+        and ``component``, which only event rows have, are NaN on non-event
+        rows, as is every column of the other table.
+
+    Raises
+    ------
+    ValueError
+        The file name is not one of the runner's tables.
     """
-    header = pd.read_csv(path, nrows=0).columns
-    text = [column for column in header if column in TEXT_COLUMNS]
+    name = Path(path).name
+    table = CONDITIONS_TABLE if name == "conditions.csv" else TABLES.get(name)
+    if table is None:
+        msg = f"{name} is not a table the runner writes; use conditions.csv or {list(TABLES)}."
+        raise ValueError(msg)
     return pd.read_csv(
         path,
-        dtype=dict.fromkeys(text, str),
+        dtype=dict.fromkeys(table.text, str),
         keep_default_na=False,
-        na_values={column: [""] for column in header if column not in TEXT_COLUMNS},
+        na_values={column: [""] for column in table.columns if column not in table.text},
         float_precision="round_trip",
     )
 
@@ -1152,9 +1172,9 @@ def write_condition(
     root = Path(directory)
     (root / "results").mkdir(parents=True)
     rows: dict[str, int | None] = {}
-    for name in TABLES:
+    for name, table in TABLES.items():
         frames = [getattr(output, name.split(".")[0]) for output in outputs]
-        rows[name] = _write_table(_concat(frames, TABLES[name]), root / name)
+        rows[name] = _write_table(_concat(frames, table.columns), root / name)
     keys = dict.fromkeys(key for output in outputs for key in output.results)
     for method, setting in keys:
         found = [
@@ -1639,7 +1659,7 @@ def run_benchmark(
                     }
                     for c in selected
                 ],
-                columns=list(CONDITION_COLUMNS),
+                columns=list(CONDITIONS_TABLE.columns),
             ),
             root / "conditions.csv",
         )
