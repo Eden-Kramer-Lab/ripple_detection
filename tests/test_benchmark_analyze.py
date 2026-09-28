@@ -2703,7 +2703,7 @@ def test_operating_order_trend_is_the_paired_difference(analyze):
     assert row.method == KAY[0]
     assert [row.value, row.low, row.high, row.p] == pytest.approx([0.1, 0.1, 0.1, 0.0])
     assert (
-        f"{KAY[0]} minus {SWEPT_KARLSSON} +0.100 (+0.100, +0.100), bootstrap p < 1/{FEW} "
+        f"{KAY[0]} minus {SWEPT_KARLSSON} +0.100 (+0.100, +0.100), bootstrap p < 2/{FEW} "
         f"(approximate, from the interval's {FEW} resamples) over 4 sessions, paired."
     ) in row.statement
     # a detector whose curve does not reach the target is named, not dropped

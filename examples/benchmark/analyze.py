@@ -1983,8 +1983,8 @@ def bootstrap_p(draws: ArrayLike) -> tuple[np.ndarray[Any, Any], np.ndarray[Any,
     the same draws as ``percentile_intervals``' 95 % interval, p < 0.05
     exactly when that interval excludes 0 (but within one draw of p = 0.05,
     where the interpolated bound can fall on either side). An
-    approximation, not an exact randomization test; 0 means no draw on one
-    side, below ``1 / n_draws``.
+    approximation, not an exact randomization test. p takes the values
+    ``2 k / n_draws``, so 0 means no draw on one side: p < ``2 / n_draws``.
 
     Parameters
     ----------
@@ -6592,7 +6592,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                 f"{first.recall_high:.3f}); next {second.method}, {second.recall:.3f} "
                 f"({second.recall_low:.3f}, {second.recall_high:.3f}); {first.method} "
                 f"minus {second.method} {value:+.3f} ({low:+.3f}, {high:+.3f}), bootstrap "
-                f"p {f'< 1/{n_draws}' if p == 0 else f'{p:.3g}'} (approximate, from the "
+                f"p {f'< 2/{n_draws}' if p == 0 else f'{p:.3g}'} (approximate, from the "
                 f"interval's {n_draws} resamples) over {n_replicates} sessions, paired."
             )
             if unreached:
