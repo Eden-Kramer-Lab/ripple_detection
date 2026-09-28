@@ -366,13 +366,15 @@ SPEED: dict[str, tuple[str, float]] = {
 # The samples each normalization period takes its statistics from; the
 # statistics are always over valid (finite) samples of the trace.
 NORMALIZATION = ("session", "speed<5", "speed<4", "rest")
-# State levels: a trace restriction ("restrict:<intervals>") or a post step.
+# State levels: a trace restriction (RESTRICTIONS) or a post step.
 STATES: dict[str, Step | None] = {
     "none": None,
     "restrict:rest": None,
     "inside:rest": Step("inside", (("intervals", "rest"),)),
     "overlap:running_30s": Step("overlap", (("partner", "running_30s"),)),
 }
+# The state levels that restrict the trace, to the intervals of the partner named.
+RESTRICTIONS: dict[str, str] = {"restrict:rest": "rest"}
 # Coincidence levels: a whole post step with its partner.
 COINCIDENCES: dict[str, Step | None] = {
     "none": None,
@@ -470,9 +472,7 @@ def compile(template: Template) -> Pipeline:
     speed_rule, speed_threshold = SPEED[template.speed]
     core = ThresholdCore(
         signal=signal,
-        restrict_to=template.state.split(":")[1]
-        if template.state.startswith("restrict:")
-        else None,
+        restrict_to=RESTRICTIONS.get(template.state),
         normalization_period=template.normalization_period,
         smoothing_sigma=smoothing,
         threshold=template.threshold,
@@ -637,16 +637,29 @@ class SessionContext:
         raise ValueError(msg)
 
     def population(self, units: str, smoothing_sigma: float) -> PopulationTrace:
-        """``population_trace`` of ``units`` on ``BIN_WIDTH`` bins, smoothed."""
-        return self._traces.get(  # type: ignore[no-any-return]
-            ("rate", units, smoothing_sigma),
-            lambda: population_trace(
+        """``population_trace`` of ``units`` on ``BIN_WIDTH`` bins, smoothed, its
+        arrays read-only."""
+
+        def compute() -> PopulationTrace:
+            trace = population_trace(
                 self.recording,
                 bin_width=BIN_WIDTH,
                 units=self.units(units),
                 smoothing_sigma=smoothing_sigma,
-            ),
-        )
+            )
+            for values in (
+                trace.time,
+                trace.data,
+                trace.speed,
+                trace.first_sample,
+                trace.last_sample,
+            ):
+                if values is not None:
+                    _read_only(values)
+            return trace
+
+        trace: PopulationTrace = self._traces.get(("rate", units, smoothing_sigma), compute)
+        return trace
 
     def mean_envelope(self, band: tuple[float, float], channels: int | None) -> FloatArray:
         """``Recording.mean_envelope(band, channels)``, read-only."""
@@ -1690,7 +1703,10 @@ class Factor:
 
 
 def in_space_ids(family: str) -> tuple[str, ...]:
-    """The configurations of a family with a template, in configuration order.
+    """The configurations of a family with a template written, in configuration order.
+
+    Written, not verified: ``verify_all`` decides which of them stand for
+    their methods on a run's sessions.
 
     Parameters
     ----------

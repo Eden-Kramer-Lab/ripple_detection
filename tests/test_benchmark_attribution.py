@@ -210,6 +210,9 @@ def test_compile_orders_the_steps(attribution):
     assert pipeline.core.speed_threshold == np.inf
     restricted = attribution.compile(attribution.TEMPLATES["drieu_2018"][0])
     assert restricted.core.restrict_to == "rest"
+    # a restriction is a level of the state with no post step
+    assert attribution.RESTRICTIONS == {"restrict:rest": "rest"}
+    assert all(attribution.STATES[level] is None for level in attribution.RESTRICTIONS)
     assert restricted.steps == ()
     squared = dataclasses.replace(attribution.TEMPLATES["pfeiffer_2015"][0], trace="squared")
     compiled = attribution.compile(squared)
@@ -493,6 +496,11 @@ def test_the_context_is_read_only_and_bounded(attribution, long_context):
     pipeline = attribution.compile(attribution.TEMPLATES["pfeiffer_2015"][0])
     with pytest.raises(ValueError, match="read-only"):
         long_context.events(pipeline)[0] = 0.0
+    trace = long_context.population("all", 0.015)
+    cached = [trace.time, trace.data, trace.speed, trace.first_sample, trace.last_sample]
+    for values in (values for values in cached if values is not None):
+        with pytest.raises(ValueError, match="read-only"):
+            values[0] = 0.0
     calls = []
     cache = attribution._Cache(2)
     for key in ("a", "b", "a", "c", "b"):
