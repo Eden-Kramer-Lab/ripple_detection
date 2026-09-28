@@ -149,6 +149,10 @@ FAMILY_EXPRESSION = {"spikes": "burst", "lfp": "ripple"}
 REFERENCE_CONDITION = "reference"
 # The reference sessions every Y averages: replicates 0 to K - 1.
 K = 5
+# Configurations whose public-call events on each regenerated reference
+# session must equal those the run saved (one per family), catching any drift
+# in rendering the truth tables would not show.
+SAVED_EVENT_CHECKS = ("bendor_2012", "pfeiffer_2015")
 # The spikes family's population grid, in seconds.
 BIN_WIDTH = 0.001
 Y_NAMES = ("f1", "f1_network", "events_per_minute", "onset_error_25", "jaccard_reference")
@@ -1316,12 +1320,15 @@ FIXED_POINTS: dict[str, str] = {
 }
 
 
+# Every configuration by id, whichever of them an analysis takes (RECIPES).
+_BY_ID = {config.config_id: config for config in RECIPES}
+
+
 def _config(config_id: str) -> RecipeConfig:
-    for config in RECIPES:
-        if config.config_id == config_id:
-            return config
-    msg = f"No configuration {config_id!r} in recipe_configs.RECIPES."
-    raise KeyError(msg)
+    if config_id not in _BY_ID:
+        msg = f"No configuration {config_id!r} in recipe_configs.RECIPES."
+        raise KeyError(msg)
+    return _BY_ID[config_id]
 
 
 def template_of(config: RecipeConfig) -> Template:
@@ -1668,14 +1675,17 @@ def reference_session(
     session : SimulatedSession
         ``simulate_parameters(parameters, replicate)``, checked against what
         the run saved for it: the seed and duration in ``sessions.csv.gz``, the
-        latent event and non-event tables in ``truth.csv.gz`` and the ripple
-        channels in ``ripple_channels.csv.gz``, value for value.
+        latent event and non-event tables in ``truth.csv.gz``, the ripple
+        channels in ``ripple_channels.csv.gz``, value for value, and the
+        public-call events of ``SAVED_EVENT_CHECKS`` against its
+        ``events.csv.gz``, bound for bound (so the signals, not only the
+        truth, are the run's).
 
     Raises
     ------
     ValueError
-        The run holds no such session, or any of those differ: the sessions
-        would not be the run's.
+        The run holds no such session or ran no ``SAVED_EVENT_CHECKS`` call
+        on it, or any of those differ: the sessions would not be the run's.
     """
     directory = Path(run_directory) / "conditions" / REFERENCE_CONDITION
     if parameters is None:
@@ -1708,6 +1718,21 @@ def reference_session(
     simulated = session.ripple_channels[columns]
     if not _same_frame(channels[columns].astype(simulated.dtypes), simulated):
         problems.append("its ripple channels")
+    ran = read_table(
+        directory / "methods.csv", keep=lambda frame: frame["session_id"] == session_id
+    )
+    saved = read_table(
+        directory / "events.csv.gz", keep=lambda frame: frame["session_id"] == session_id
+    )
+    for config_id in SAVED_EVENT_CHECKS:
+        method = f"recipe:{config_id}"
+        if not (ran["method"] == method).any():
+            problems.append(f"no {method} call (the run's methods.csv)")
+            continue
+        rows = saved[saved["method"] == method].sort_values("event_index")
+        expected = rows[["start_time", "end_time"]].to_numpy(dtype=float)
+        if not np.array_equal(recipe_events(_config(config_id), session), expected):
+            problems.append(f"its {method} events")
     if problems:
         msg = (
             f"The simulated {session_id} is not the run's: {'; '.join(problems)} differ "

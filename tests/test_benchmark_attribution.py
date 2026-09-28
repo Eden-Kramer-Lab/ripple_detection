@@ -25,6 +25,7 @@ SHORT = 30.0  # seconds: the halved sessions of the run the templates are checke
 LONG = 60.0
 N_REPLICATES = 5
 FS = 1500.0
+SAVED_EVENT_CHECKS = ("bendor_2012", "pfeiffer_2015")
 
 
 @pytest.fixture(scope="module")
@@ -52,13 +53,15 @@ def recipes(benchmark_import):
     return benchmark_import("recipe_configs").RECIPES
 
 
-def _write_run(run, conditions, root, duration, replicates):
+def _write_run(run, conditions, root, duration, replicates, overrides=None):
     """A run of the reference condition at ``duration`` seconds, written by
-    the runner's own functions, with no method run: what attribution reads."""
+    the runner's own functions, with only the methods whose saved events the
+    regenerated sessions are checked against: what attribution reads."""
     reference = conditions.conditions()[0]
-    overrides = {"session.duration_s": duration}
+    overrides = {"session.duration_s": duration, **(overrides or {})}
+    methods = [(f"recipe:{config_id}", "literature") for config_id in SAVED_EVENT_CHECKS]
     outputs = [
-        run.run_session(reference, replicate, methods=(), overrides=overrides)
+        run.run_session(reference, replicate, methods=methods, overrides=overrides)
         for replicate in range(replicates)
     ]
     run.write_condition(root / "conditions" / "reference", outputs)
@@ -226,6 +229,8 @@ def test_every_configuration_has_a_template_or_a_reason(attribution, recipes):
     stranger = dataclasses.replace(by_id["bendor_2012"], config_id="bendor_2012.other")
     with pytest.raises(KeyError, match="neither"):
         attribution.template_of(stranger)
+    with pytest.raises(KeyError, match="No configuration 'bendor_2012.other'"):
+        attribution._config("bendor_2012.other")
 
 
 def test_compile_orders_the_steps(attribution):
@@ -822,6 +827,7 @@ def _set_first(column, value, table=None):
         ("sessions.csv.gz", _set_first("seed", "7"), "seed 7"),
         ("sessions.csv.gz", _set_first("duration_s", "60.0"), "duration 60.0 s"),
         ("ripple_channels.csv.gz", _set_first("gain", "0.5"), "its ripple channels"),
+        ("events.csv.gz", _set_first("start_time", "0.5"), r"its recipe:\w+ events"),
     ],
 )
 def test_a_session_unlike_the_runs_raises(
@@ -832,6 +838,26 @@ def test_a_session_unlike_the_runs_raises(
     _rewrite(copy / "conditions" / "reference" / table, change)
     with pytest.raises(ValueError, match=f"reference/0 is not the run's: .*{names}"):
         attribution.reference_session(copy, 0)
+
+
+def test_the_saved_events_checked(attribution, run, short_run, tmp_path):
+    assert attribution.SAVED_EVENT_CHECKS == SAVED_EVENT_CHECKS
+    events = run.read_table(short_run / "conditions" / "reference" / "events.csv.gz")
+    # the checks compare real inventories: each method found events
+    assert set(events["method"]) == {f"recipe:{c}" for c in SAVED_EVENT_CHECKS}
+    copy = tmp_path / "run"
+    shutil.copytree(short_run, copy)
+    path = copy / "conditions" / "reference" / "methods.csv"
+    methods = run.read_table(path)
+    kept = (methods["session_id"] != "reference/0") | (
+        methods["method"] != "recipe:bendor_2012"
+    )
+    run._write_table(methods[kept], path)
+    with pytest.raises(
+        ValueError, match="reference/0 is not the run's: no recipe:bendor_2012"
+    ):
+        attribution.reference_session(copy, 0)
+    attribution.reference_session(copy, 1)
 
 
 def test_a_run_without_the_session_or_reference_raises(attribution, run, short_run, tmp_path):

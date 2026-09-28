@@ -684,7 +684,9 @@ runs, the command checks the run's validation report (ready, and the one the run
 recorded), simulates the reference condition's first five sessions again from the saved
 parameters in `conditions.csv` (a run with a halved `duration_s` gives halved sessions)
 and stops unless each has the run's seed, duration, latent events, non-events and ripple
-channels.
+channels, and unless two methods' public calls on it (`bendor_2012` and `pfeiffer_2015`,
+`SAVED_EVENT_CHECKS`) give the events the run saved, bound for bound, so the rendered
+signals are the run's too.
 
 ### Templates and fixed points
 
