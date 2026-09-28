@@ -329,7 +329,7 @@ def test_in_space_recipes(attribution, recipes, verified):
         rows = verified[verified["family"] == family]
         assert int(rows["in_space"].sum()) == count
     in_space = verified[verified["in_space"]]
-    # positive controls: every template verified found events to compare
+    # every template verified found events to compare, not only equal empty ones
     assert (in_space["n_events"] > 0).all()
     assert set(in_space["config_id"]) <= set(attribution.TEMPLATES)
     out = verified[(verified["family"] != "") & ~verified["in_space"]]

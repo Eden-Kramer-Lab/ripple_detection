@@ -11,9 +11,9 @@ difference between two configurations.
 
 Usage, from the repository root (see README.md, "Attribution")::
 
-    uv run python examples/benchmark/attribution.py --run-name NAME
-        --family spikes|lfp [--analysis oat|sobol|shapley|all] [--workers N]
-        [--smoke] [--sobol-n 128|256] [--below-minimum] [--run-directory PATH]
+    uv run python examples/benchmark/attribution.py --run-name NAME \
+        --family spikes|lfp [--analysis oat|sobol|shapley|all] [--workers N] \
+        [--smoke] [--sobol-n 128|256] [--below-minimum] [--run-directory PATH] \
         [--results-directory PATH]
 
 It reads a finished run's reference condition (``conditions.csv``'s saved
@@ -27,10 +27,10 @@ that on a session's ``SessionContext``. ``TEMPLATES`` maps a configuration of
 ``recipe_configs.RECIPES`` to the template written after reading its method's
 body, with the source of each value; ``FIXED_POINTS`` gives every other
 configuration and why it has none. A template stands for its method only when
-``in_space`` finds identical events from both on the sessions checked:
-positive controls (some event must be found), a gap of missing samples cutting
-a sharp-wave ripple, a Unix
-clock origin and the ``K`` reference sessions. The configuration's public call
+``in_space`` finds identical events from both on the sessions checked (and
+some event among them, since equal empty results verify nothing): a gap of
+missing samples cutting a sharp-wave ripple, a Unix clock origin and the ``K``
+reference sessions. The configuration's public call
 (``recipe_configs.run_recipe``) stays the only source of its events in every
 other analysis; a template never replaces it.
 
@@ -222,7 +222,10 @@ class ThresholdCore:
         Seconds, the whole event; 0.0, none.
     maximum_duration : float or None
         Seconds; None, none.
-    speed_rule : str
+    speed_rule : {"endpoints", "all", "restrict"}
+        ``detect_events_from_trace``'s: speed at or below ``speed_threshold``
+        at both ends of an event, at every sample of it, or detection only
+        where it is (the other samples missing).
     speed_threshold : float
         cm/s; ``np.inf`` turns the speed rule off.
     close_event_threshold : float
@@ -599,7 +602,8 @@ class SessionContext:
     minutes : float
         The session's length.
     windows : dict of str to dict of float to ndarray
-        By expression and fraction (0.1, 0.25), the truth windows' bounds.
+        By expression and fraction (0.1, 0.25), the truth windows' bounds,
+        each shape (n_windows, 2).
     n_runs : int
         How many pipelines this context has run, a cache miss each.
     """
@@ -690,7 +694,7 @@ class SessionContext:
         return trace
 
     def mean_envelope(self, band: tuple[float, float], channels: int | None) -> FloatArray:
-        """``Recording.mean_envelope(band, channels)``, read-only."""
+        """``Recording.mean_envelope(band, channels)``, read-only, shape (n_time,)."""
         return self._traces.get(  # type: ignore[no-any-return]
             ("mean_envelope", band, channels),
             lambda: _read_only(self.recording.mean_envelope(band, channels)),
@@ -709,7 +713,8 @@ class SessionContext:
         raise ValueError(msg)
 
     def partner(self, name: str) -> FloatArray:
-        """A post step's partner: intervals, or times for ``contains_time``."""
+        """A post step's partner: intervals, shape (n_intervals, 2), or times,
+        shape (n_times,), for ``contains_time``; read-only."""
         if name not in self._partners:
             self._partners[name] = _read_only(PARTNERS[name](self))
         return self._partners[name]
@@ -948,10 +953,10 @@ _REST_SLEEP = (
 
 # Every template, by configuration, each written after reading the method's
 # body in ripple_detection.literature_methods: the source of each value, and
-# the benchmark's input policy where it supplies one. All population methods
-# use _detect_population or _detect_population_in on 1 ms bins with
-# minimum_duration=0.0; every value not listed is the method's absence of that
-# step.
+# the benchmark's input policy where it supplies one. Every population method
+# thresholds a trace on 1 ms bins with minimum_duration=0.0 (_detect_population,
+# _detect_population_in, or population_trace(...).detect for krause_2022_hse);
+# every value not listed is the method's absence of that step.
 TEMPLATES: dict[str, tuple[Template, str]] = {
     "yang_2024": (
         _spikes(
@@ -1482,7 +1487,7 @@ def in_space(config: RecipeConfig, contexts: Iterable[SessionContext]) -> bool:
     ----------
     config : RecipeConfig
     contexts : iterable of SessionContext
-        The positive controls, edge cases and reference sessions to check on.
+        The edge cases and reference sessions to check on.
 
     Returns
     -------
@@ -1809,7 +1814,7 @@ def gap_interval(session: rd.SimulatedSession) -> tuple[float, float]:
 def edge_sessions(
     parameters: Mapping[str, Mapping[str, Any]], duration: float = EDGE_DURATION
 ) -> dict[str, rd.SimulatedSession]:
-    """Short sessions for the edge cases of ``verify``.
+    """Short sessions for the edge cases of ``verify_all``.
 
     Parameters
     ----------
@@ -2140,9 +2145,10 @@ def evaluate_config(
 ) -> dict[str, float]:
     """The ``Y``s of a pipeline, each averaged over the sessions.
 
-    A pipeline's events on a session are computed once per context and kept
-    (memoized by the pipeline and the context's replicate), so a configuration
-    repeated in one analysis runs no detection again.
+    A pipeline's events on a session are kept by the session's context, keyed
+    by the pipeline, in a least-recently-used cache of ``EVENT_CACHE_SIZE``
+    pipelines, so a configuration repeated while it stays cached runs no
+    detection again.
 
     Parameters
     ----------
@@ -2577,7 +2583,8 @@ def one_at_a_time(
 def session_interval(values: ArrayLike, level: float = 0.95) -> dict[str, float]:
     """The mean of per-session values with a paired bootstrap interval.
 
-    ``paired_bootstrap`` over the sessions (``N_RESAMPLES`` draws, its seed),
+    ``paired_bootstrap`` over the sessions (``analyze.N_RESAMPLES`` draws, its
+    seed),
     the statistic the mean of the finite values, computed draw for draw from
     ``resample_weights``, the counts of each session in each draw.
 
@@ -3200,12 +3207,24 @@ def family_caveat(n_distinct: int, *, below_minimum: bool) -> str:
 def main(argv: Sequence[str] | None = None) -> None:
     """The command line; see the module docstring."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--run-name", required=True)
-    parser.add_argument("--family", required=True, choices=FAMILIES)
     parser.add_argument(
-        "--analysis", default="all", choices=("oat", "sobol", "shapley", "all")
+        "--run-name", required=True, help="the finished run whose reference condition is read"
     )
-    parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
+    parser.add_argument(
+        "--family", required=True, choices=FAMILIES, help="the family of templates analysed"
+    )
+    parser.add_argument(
+        "--analysis",
+        default="all",
+        choices=("oat", "sobol", "shapley", "all"),
+        help="one factor at a time, Sobol indices, Shapley pairs, or all three in turn",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=max(1, (os.cpu_count() or 2) - 1),
+        help="processes evaluating configurations (default: the cores less one)",
+    )
     parser.add_argument(
         "--smoke",
         action="store_true",
