@@ -1001,8 +1001,10 @@ def test_evaluate_many_on_two_workers(attribution, short_run):
         for name in ("pfeiffer_2015", "berners_lee_2021", "ambrose_2016")
     ]
     references = pipelines[::-1]
+    # evaluated grouped by trace: the two on every channel's envelope together
+    assert attribution.evaluation_order(pipelines) == [0, 2, 1]
     one = attribution.evaluate_many(pipelines, references, short_run, chunk_size=2)
-    two = attribution.evaluate_many(pipelines, references, short_run, workers=2, chunk_size=2)
+    two = attribution.evaluate_many(pipelines, references, short_run, workers=2)
     assert one == two
     assert all(len(values) == attribution.K for found in one for values in found.values())
     contexts = list(attribution.reference_contexts(short_run))
@@ -1032,7 +1034,7 @@ def test_a_failing_configuration_is_named(attribution, short_run):
     bad = dataclasses.replace(good, steps=(attribution.Step("bogus"),))
     pipelines = [good, good, bad]
     named = (
-        r"(?s)configuration 2 \(the chunk from 2\) on reference/0"
+        r"(?s)configuration 2 \(of a chunk of 1\) on reference/0"
         r".*ValueError: Unknown post step 'bogus'.*Step\(operation='bogus'"
     )
     with pytest.raises(RuntimeError, match=named):
@@ -1046,8 +1048,8 @@ def test_a_failing_chunk_cancels_the_queued_ones(attribution, monkeypatch):
     release = threading.Event()
     started = []
 
-    def evaluate_chunk(run_directory, replicate, start, pipelines, references):
-        started.append((replicate, start))
+    def evaluate_chunk(run_directory, replicate, indices, pipelines, references):
+        started.append((replicate, indices))
         if len(started) == 1:
             msg = "the first chunk failed"
             raise RuntimeError(msg)
@@ -1058,16 +1060,44 @@ def test_a_failing_chunk_cancels_the_queued_ones(attribution, monkeypatch):
 
     monkeypatch.setattr(attribution, "ProcessPoolExecutor", ThreadPoolExecutor)
     monkeypatch.setattr(attribution, "_evaluate_chunk", evaluate_chunk)
+    pipelines = [attribution.compile(attribution.TEMPLATES["pfeiffer_2015"][0])] * 4
     try:
         with pytest.raises(RuntimeError, match="the first chunk failed"):
-            attribution.evaluate_many(
-                [None] * 4, [None] * 4, "unused", workers=2, chunk_size=1
-            )
+            attribution.evaluate_many(pipelines, pipelines, "unused", workers=2, chunk_size=1)
         # the failed chunk, the one beside it and at most one the freed worker
         # took before the queue was cancelled; not all twenty
         assert len(started) <= 3
     finally:
         release.set()
+
+
+def test_the_chunks_share_the_work_over_the_workers(attribution, monkeypatch):
+    """Threads stand in for the processes; each stub output is its position."""
+    tasks = []
+
+    def evaluate_chunk(run_directory, replicate, indices, pipelines, references):
+        tasks.append((replicate, list(indices)))
+        return [dict.fromkeys(attribution.Y_NAMES, float(i)) for i in indices]
+
+    monkeypatch.setattr(attribution, "ProcessPoolExecutor", ThreadPoolExecutor)
+    monkeypatch.setattr(attribution, "_evaluate_chunk", evaluate_chunk)
+    lfp, spikes = (
+        attribution.compile(attribution.TEMPLATES[name][0])
+        for name in ("pfeiffer_2015", "igata_2021")
+    )
+    # 19 configurations, as the LFP family's one-at-a-time analysis has
+    pipelines = [lfp, spikes] * 9 + [lfp]
+    found = attribution.evaluate_many(pipelines, pipelines, "unused", workers=10)
+    assert len(tasks) >= 10
+    # each chunk one trace's, every configuration on every session once, and
+    # the outputs back in the order given
+    assert all(len({pipelines[i].core for i in indices}) == 1 for _, indices in tasks)
+    covered = sorted((replicate, i) for replicate, indices in tasks for i in indices)
+    assert covered == [(r, i) for r in range(attribution.K) for i in range(len(pipelines))]
+    assert [row["f1"] for row in found] == [[float(i)] * attribution.K for i in range(19)]
+    tasks.clear()
+    attribution.evaluate_many([lfp] * 1000, [lfp] * 1000, "unused", workers=2)
+    assert max(len(indices) for _, indices in tasks) == attribution.CHUNK_SIZE
 
 
 def test_one_at_a_time(attribution, analyze, recipes, short_run):

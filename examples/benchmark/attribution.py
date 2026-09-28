@@ -176,6 +176,8 @@ GAP_WIDTH = 0.02
 UNIX_ORIGIN = 1_700_000_000.0
 # The input policy's inputs a session context's recording holds.
 CONTEXT_INPUTS = ("lfps", "sharp_wave_lfp", "multiunit", "speed", "place_cells", "pyramidal")
+# Configurations per task of evaluate_many, at most.
+CHUNK_SIZE = 64
 # Pipeline stages' events kept per session, and traces (large arrays) per session.
 EVENT_CACHE_SIZE = 4096
 TRACE_CACHE_SIZE = 8
@@ -2156,11 +2158,11 @@ def _worker_context(run_directory: str, replicate: int) -> SessionContext:
 def _evaluate_chunk(
     run_directory: str,
     replicate: int,
-    start: int,
+    indices: Sequence[int],
     pipelines: Sequence[Pipeline],
     references: Sequence[Pipeline],
 ) -> list[dict[str, float]]:
-    """The ``Y``s of a chunk of configurations, those from ``start`` on, on one
+    """The ``Y``s of a chunk of configurations, those at ``indices``, on one
     session; a failure names the configuration, its chunk, the session and
     its pipeline."""
     context = _worker_context(run_directory, replicate)
@@ -2170,7 +2172,7 @@ def _evaluate_chunk(
             rows.append(evaluate_session(pipeline, context, reference))
     except Exception as error:
         msg = (
-            f"configuration {start + len(rows)} (the chunk from {start}) on "
+            f"configuration {indices[len(rows)]} (of a chunk of {len(indices)}) on "
             f"{context.label} raised {type(error).__name__}: {error}\n"
             f"Its pipeline: {pipelines[len(rows)]!r}"
         )
@@ -2184,9 +2186,13 @@ def evaluate_many(
     run_directory: str | os.PathLike[str],
     *,
     workers: int = 1,
-    chunk_size: int = 64,
+    chunk_size: int | None = None,
 ) -> list[dict[str, list[float]]]:
     """Every pipeline's ``Y``s on each reference session.
+
+    The pipelines are evaluated in ``evaluation_order``, in chunks, so those
+    sharing a trace or a core meet a session's caches together; the outputs
+    are in the order given.
 
     Parameters
     ----------
@@ -2200,7 +2206,9 @@ def evaluate_many(
         Processes (``ProcessPoolExecutor``); each holds one session at a time,
         taking a chunk of configurations of one session.
     chunk_size : int, optional
-        Configurations per task.
+        Configurations per task; default the pipelines on the ``K`` sessions
+        shared evenly over the workers, at most ``CHUNK_SIZE``, so each
+        worker has a task.
 
     Returns
     -------
@@ -2215,17 +2223,23 @@ def evaluate_many(
         is released.
     """
     directory = str(run_directory)
-    tasks = [
-        (replicate, start)
-        for replicate in range(K)
-        for start in range(0, len(pipelines), chunk_size)
-    ]
+    if chunk_size is None:
+        chunk_size = min(CHUNK_SIZE, max(1, math.ceil(len(pipelines) * K / workers)))
+    order = evaluation_order(pipelines)
+    chunks = [order[start : start + chunk_size] for start in range(0, len(order), chunk_size)]
+    tasks = [(replicate, chunk) for replicate in range(K) for chunk in range(len(chunks))]
     found: dict[tuple[int, int], list[dict[str, float]]] = {}
 
     def arguments(task: tuple[int, int]) -> tuple[Any, ...]:
-        replicate, start = task
-        stop = start + chunk_size
-        return directory, replicate, start, pipelines[start:stop], references[start:stop]
+        replicate, chunk = task
+        indices = chunks[chunk]
+        return (
+            directory,
+            replicate,
+            indices,
+            [pipelines[i] for i in indices],
+            [references[i] for i in indices],
+        )
 
     if workers == 1:
         try:
@@ -2246,11 +2260,38 @@ def evaluate_many(
             raise
         pool.shutdown()
     outputs: list[dict[str, list[float]]] = [{name: [] for name in Y_NAMES} for _ in pipelines]
-    for (_, start), rows in sorted(found.items()):
-        for offset, row in enumerate(rows):
+    for (_, chunk), rows in sorted(found.items()):
+        for index, row in zip(chunks[chunk], rows, strict=True):
             for name in Y_NAMES:
-                outputs[start + offset][name].append(row[name])
+                outputs[index][name].append(row[name])
     return outputs
+
+
+def evaluation_order(pipelines: Sequence[Pipeline]) -> list[int]:
+    """The pipelines' positions grouped by their trace, then by their core.
+
+    Parameters
+    ----------
+    pipelines : sequence of Pipeline
+
+    Returns
+    -------
+    order : list of int
+        Every position once: those whose core has the same ``signal``
+        together, and within them those with the same core, each group in the
+        order it first appears.
+    """
+    groups: dict[tuple[Step, ...], dict[ThresholdCore, list[int]]] = {}
+    for position, pipeline in enumerate(pipelines):
+        groups.setdefault(pipeline.core.signal, {}).setdefault(pipeline.core, []).append(
+            position
+        )
+    return [
+        position
+        for cores in groups.values()
+        for members in cores.values()
+        for position in members
+    ]
 
 
 def _release_worker_context() -> None:
