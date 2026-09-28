@@ -274,7 +274,23 @@ uv run python examples/benchmark/run.py --run-name v1 --conditions all --workers
     --validation-report examples/benchmark/validation/v1/spec.json
 ```
 
-> **Placeholder, full run:** the command as run, its wall time and the output's size.
+The full run, 2026-09-28, commit 3d1fa33, report `v1`, on the same shared machine
+(load 5-15 from other work):
+
+```bash
+uv run python examples/benchmark/run.py --run-name v1 --conditions all --workers 5 \
+    --validation-report examples/benchmark/validation/v1/spec.json
+```
+
+It took 2 h 23 min wall (8.9 CPU hours of user time; a session's detection 95 s on
+average, 176 s at most), peaked at 4.98 GB in one process, and wrote 2.3 GB, 1.2 GB of
+it `combined/` (10.7 million events, 144 MB of `events.csv.gz`). 135 of the 70,400
+method calls failed, each with its reason in `failures.csv`: the 130 calls on the
+single-channel condition (`n_channels=1`) of Shvartsman's detector at every setting and
+of the recipes that need two or three channels, and Yu's detector at five sweep points
+under brown noise, whose estimated threshold did not lie above the immobility mean. No
+call warned. A first run with the same command, before commit 3d1fa33, ran only 41 of
+the 43 conditions; the 41 it ran are byte-identical to this run's.
 
 Other options: `--conditions` takes `all` or condition ids separated by commas. A
 crossed cell's id holds a comma itself (`ripple_snr=low,participation=low`), so the
