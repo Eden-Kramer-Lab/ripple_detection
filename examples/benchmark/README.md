@@ -692,7 +692,9 @@ parameters in `conditions.csv` (a run with a halved `duration_s` gives halved se
 and stops unless each has the run's seed, duration, latent events, non-events and ripple
 channels, and unless two methods' public calls on it (`bendor_2012` and `pfeiffer_2015`,
 `SAVED_EVENT_CHECKS`) give the events the run saved, bound for bound, so the rendered
-signals are the run's too.
+signals are the run's too. Each is checked once, in the one pass over the sessions that
+also verifies the templates and builds the sensitivity and fixed-point tables (next
+section); the processes evaluating configurations afterwards only simulate them again.
 
 ### Templates and fixed points
 
