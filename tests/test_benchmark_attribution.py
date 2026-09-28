@@ -296,6 +296,31 @@ def test_a_wrong_template_is_not_in_space(attribution, recipes, contexts, monkey
         assert row["reason"].startswith("events differ on reference/0")
 
 
+@pytest.mark.parametrize(
+    ("config_id", "change"),
+    [
+        ("yang_2024", {"smoothing_sigma": 0.015 * 1.1}),
+        ("pfeiffer_2015", {"smoothing_sigma": 0.0125 * 1.1}),
+        ("krause_2022_hse", {"bound_fraction": 0.5}),
+        ("ambrose_2016", {"channels": 3}),
+    ],
+)
+def test_a_wrong_template_with_the_same_counts_is_not_in_space(
+    attribution, recipes, contexts, monkeypatch, config_id, change
+):
+    """The bounds are compared, not only how many events there are."""
+    config = next(c for c in recipes if c.config_id == config_id)
+    template, source = attribution.TEMPLATES[config_id]
+    changed = dataclasses.replace(template, **change)
+    for context in contexts:
+        right = context.events(attribution.compile(template))
+        assert len(context.events(attribution.compile(changed))) == len(right)
+    monkeypatch.setitem(attribution.TEMPLATES, config_id, (changed, source))
+    row = attribution.verify_all([config], contexts).iloc[0]
+    assert not row["in_space"]
+    assert row["reason"].startswith("events differ")
+
+
 def test_equal_empty_results_verify_nothing(attribution, recipes, contexts, monkeypatch):
     config = next(c for c in recipes if c.config_id == "bendor_2012")
     template, source = attribution.TEMPLATES["bendor_2012"]
