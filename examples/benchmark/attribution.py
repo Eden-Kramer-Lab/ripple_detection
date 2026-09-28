@@ -52,11 +52,11 @@ matched events over the union against the reference configuration's (1 when
 both are empty).
 
 Analyses (``--analysis``): ``oat`` (``one_at_a_time``), ``sobol`` (``sobol``, at
-``--sobol-n`` rows, ``SOBOL_N`` or 128) and ``shapley`` (``shapley_pairs``). A family with fewer than
-``MINIMUM_IN_SPACE`` represented methods (identical templates once) runs no Sobol
-or Shapley analysis: the command stops and says so, unless ``--below-minimum``
-is given, when it runs them and every output of the family carries
-``family_caveat``'s label (a ``caveat`` column, and the figures' titles).
+``--sobol-n`` rows, ``SOBOL_N`` or 128) and ``shapley`` (``shapley_pairs``). A
+family with fewer than ``MINIMUM_IN_SPACE`` represented methods (identical
+templates once) runs no Sobol or Shapley analysis: the command stops and says
+so, unless ``--below-minimum`` is given, when it runs them and every output of
+the family carries ``family_caveat``'s label (a ``caveat`` column, and the figures' titles).
 ``--smoke`` evaluates ``SMOKE_CONFIGURATIONS`` configurations on one session and
 prints the cost of each analysis, writing nothing.
 
