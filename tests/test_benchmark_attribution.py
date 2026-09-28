@@ -321,6 +321,73 @@ def test_a_wrong_template_with_the_same_counts_is_not_in_space(
     assert row["reason"].startswith("events differ")
 
 
+def test_perturbations(attribution, recipes):
+    """Every value a template sets, moved: continuous ones 10 % either way,
+    integers by one, categorical ones to each other level of the space;
+    values at a step's absence are left alone."""
+    lfp = {factor.name: factor for factor in attribution.factor_space(recipes, "lfp")}
+    assert attribution.perturbations(attribution.TEMPLATES["pfeiffer_2015"][0], lfp) == [
+        ("smoothing_sigma", 0.0125 * 0.9),
+        ("smoothing_sigma", 0.0125 * 1.1),
+        ("normalization_period", "session"),
+        ("threshold", 3.0 * 0.9),
+        ("threshold", 3.0 * 1.1),
+        ("minimum_event_duration", 0.05 * 0.9),
+        ("minimum_event_duration", 0.05 * 1.1),
+        ("maximum_duration", None),
+        ("speed", "restrict<5"),
+    ]
+    spikes = {factor.name: factor for factor in attribution.factor_space(recipes, "spikes")}
+    found = attribution.perturbations(attribution.TEMPLATES["chenani_2019"][0], spikes)
+    assert [value for name, value in found if name == "minimum_active_units"] == [4, 6]
+    assert [value for name, value in found if name == "bound_fraction"] == [0.0, 1.0, 0.5]
+    assert [value for name, value in found if name == "units"] == ["pyramidal", "all"]
+    assert {name for name, _ in found} == {
+        "units", "smoothing_sigma", "threshold", "bound_fraction",
+        "minimum_active_units", "state",
+    }  # fmt: skip
+
+
+def test_sensitivity(attribution, recipes, contexts):
+    table = attribution.sensitivity(recipes, contexts, "lfp")
+    space = {factor.name: factor for factor in attribution.factor_space(recipes, "lfp")}
+    ids = attribution.in_space_ids("lfp")
+    expected = [
+        (config_id, name, attribution._as_text(value))
+        for config_id in ids
+        for name, value in attribution.perturbations(
+            attribution.TEMPLATES[config_id][0], space
+        )
+    ]
+    found = zip(table["config_id"], table["factor"], table["perturbed"], strict=True)
+    assert list(found) == expected
+
+    def row(config_id, factor, perturbed=None):
+        chosen = (table["config_id"] == config_id) & (table["factor"] == factor)
+        if perturbed is not None:
+            chosen &= table["perturbed"] == perturbed
+        return table[chosen]
+
+    # told apart on the first session where the events differ, bound for bound
+    template = attribution.TEMPLATES["pfeiffer_2015"][0]
+    for name, value in (("smoothing_sigma", 0.0125 * 1.1), ("maximum_duration", None)):
+        changed = attribution.compile(dataclasses.replace(template, **{name: value}))
+        right = attribution.compile(template)
+        differs = [
+            context.label
+            for context in contexts
+            if not np.array_equal(context.events(changed), context.events(right))
+        ]
+        found = row("pfeiffer_2015", name, attribution._as_text(value))
+        assert found["told_apart"].tolist() == [bool(differs)]
+        assert found["session"].tolist() == [differs[0] if differs else ""]
+    # no 30 s session has a ripple past 2 s: the maximum is not exercised
+    assert row("pfeiffer_2015", "maximum_duration")["exercised"].tolist() == [False]
+    exercised = table.groupby(["config_id", "factor"])["told_apart"].transform("any")
+    assert (table["exercised"] == exercised).all()
+    assert row("pfeiffer_2015", "smoothing_sigma")["exercised"].tolist() == [True, True]
+
+
 def test_equal_empty_results_verify_nothing(attribution, recipes, contexts, monkeypatch):
     config = next(c for c in recipes if c.config_id == "bendor_2012")
     template, source = attribution.TEMPLATES["bendor_2012"]
@@ -935,6 +1002,7 @@ def test_the_command_line(attribution, recipes, short_run, tmp_path, monkeypatch
         "lfp_in_space.csv",
         "lfp_oat.csv",
         "lfp_reference.csv",
+        "lfp_sensitivity.csv",
     ]
     in_space = pd.read_csv(results / "lfp_in_space.csv")
     # the fixed points and the family's templates, not the other family's
@@ -950,6 +1018,9 @@ def test_the_command_line(attribution, recipes, short_run, tmp_path, monkeypatch
         [c.config_id, "lfp"] for c in kept if c.config_id in attribution.FIXED_POINTS
     ]
     assert fixed[list(attribution.Y_NAMES[:3])].notna().all().all()
+    perturbed = pd.read_csv(results / "lfp_sensitivity.csv")
+    assert set(perturbed["config_id"]) == set(attribution.in_space_ids("lfp"))
+    assert "template values no perturbation changes" in capsys.readouterr().err
     rows = pd.read_csv(copy / "attribution" / "lfp_oat.csv.gz")
     assert set(rows["y"]) == set(attribution.Y_NAMES)
     # four represented LFP methods: no Sobol or Shapley analysis; all runs the

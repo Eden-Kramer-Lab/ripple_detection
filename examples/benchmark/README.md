@@ -699,7 +699,14 @@ call's, bound for bound, on a session with 20 ms of missing samples in the middl
 sharp-wave ripple at rest (so events of both families are cut there), one at a Unix clock
 origin and the five reference sessions, with some event found. `<family>_in_space.csv`
 lists the family's templates, every one verified (the command stops, naming the others
-and why, before any analysis otherwise), and every fixed point with its reason. The
+and why, before any analysis otherwise), and every fixed point with its reason.
+`<family>_sensitivity.csv` says how tightly those sessions pin each template: every
+value a template sets (not a step's absence) is changed alone, a continuous one by 10 %
+either way, an integer by one, a categorical one to each other level of the family's
+space, and a row per change says whether the events differ on some verification session
+(`told_apart`, and the first such `session`). A value none of whose changes is told apart
+(`exercised` false) is not pinned by the sessions: another value would have verified too,
+so the template's value there rests on reading the method, not on the comparison. The
 public call stays the only source of a method's events everywhere else:
 `<family>_fixed_points.csv` gives each fixed point's `Y`s (below) from its public call,
 against the family's expression and reference, so no method silently drops out.

@@ -65,6 +65,8 @@ per configuration and ``Y``: its factors, the ``Y``, the mean and each
 session's value) and ``results/<run_name>/attribution/``:
 ``<family>_in_space.csv`` (the family's templates, every one verified, since the
 command stops otherwise, and every fixed point with its reason),
+``<family>_sensitivity.csv`` (``sensitivity``: whether the verification
+sessions tell each template value from its perturbations),
 ``<family>_fixed_points.csv`` (every configuration without a template, with its
 public-call ``Y``s against the family's expression and reference),
 ``<family>_factor_space.csv``, ``<family>_reference.csv``,
@@ -86,7 +88,7 @@ import os
 import sys
 import time as wall_clock
 from collections import OrderedDict
-from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import Any, TypeVar
@@ -148,6 +150,8 @@ SOBOL_N = 256
 SOBOL_SEED = 0
 N_SOBOL_RESAMPLES = 1000
 OAT_POINTS = 5
+# The factors a continuous template value is multiplied by to test verification.
+PERTURBATION = (0.9, 1.1)
 SHAPLEY_EXACT_UP_TO = 8
 SHAPLEY_PERMUTATIONS = 128
 N_LOWEST_PAIRS = 10
@@ -884,9 +888,10 @@ def run_pipeline(pipeline: Pipeline, context: SessionContext) -> FloatArray:
 # Which configurations have a template
 
 
-def _spikes(**values: Any) -> SpikeTemplate:
-    """A spike template, a factor the method does not use at its "none" value."""
-    defaults: dict[str, Any] = {
+# By family, each factor's value when a method does not use its step (the
+# ripple band, every channel and the envelope for the LFP family's signal).
+ABSENT: dict[str, dict[str, Any]] = {
+    "spikes": {
         "normalization_period": "session",
         "bound_fraction": 0.0,
         "minimum_event_duration": 0.0,
@@ -896,13 +901,8 @@ def _spikes(**values: Any) -> SpikeTemplate:
         "minimum_active_units": 0,
         "state": "none",
         "coincidence": "none",
-    }
-    return SpikeTemplate(**{**defaults, **values})
-
-
-def _lfp(**values: Any) -> LfpTemplate:
-    """An LFP template, a factor the method does not use at its "none" value."""
-    defaults: dict[str, Any] = {
+    },
+    "lfp": {
         "band": (150.0, 250.0),
         "channels": None,
         "trace": "amplitude",
@@ -915,8 +915,18 @@ def _lfp(**values: Any) -> LfpTemplate:
         "speed": "none",
         "state": "none",
         "coincidence": "none",
-    }
-    return LfpTemplate(**{**defaults, **values})
+    },
+}
+
+
+def _spikes(**values: Any) -> SpikeTemplate:
+    """A spike template, a factor the method does not use at its ``ABSENT`` value."""
+    return SpikeTemplate(**{**ABSENT["spikes"], **values})
+
+
+def _lfp(**values: Any) -> LfpTemplate:
+    """An LFP template, a factor the method does not use at its ``ABSENT`` value."""
+    return LfpTemplate(**{**ABSENT["lfp"], **values})
 
 
 _REST_SLEEP = (
@@ -1452,6 +1462,108 @@ def in_space(config: RecipeConfig, contexts: Iterable[SessionContext]) -> bool:
         As ``verify_all`` decides it.
     """
     return bool(verify_all([config], contexts)["in_space"].iloc[0])
+
+
+def perturbations(template: Template, space: Mapping[str, Factor]) -> list[tuple[str, Any]]:
+    """The changes of one template value each that verification should notice.
+
+    Parameters
+    ----------
+    template : SpikeTemplate or LfpTemplate
+    space : mapping of str to Factor
+        The family's ``factor_space`` by factor name.
+
+    Returns
+    -------
+    changes : list of (str, object)
+        In field order, each ``(factor, value)``: a continuous value times
+        each of ``PERTURBATION``, an integer one less and one more, a
+        categorical value every other level of its factor in ``space``. A
+        value at its step's absence (``ABSENT``) is not changed.
+    """
+    absent = ABSENT[family_of(template)]
+    changes: list[tuple[str, Any]] = []
+    for field in dataclasses.fields(template):
+        value = getattr(template, field.name)
+        if field.name in absent and value == absent[field.name]:
+            continue
+        kind = FACTOR_KINDS[field.name]
+        if kind == "continuous":
+            changes += [(field.name, value * factor) for factor in PERTURBATION]
+        elif kind == "integer":
+            changes += [(field.name, value - 1), (field.name, value + 1)]
+        elif field.name in space:
+            levels = space[field.name].levels
+            changes += [(field.name, level) for level in levels if level != value]
+    return changes
+
+
+def sensitivity(
+    recipes: Sequence[RecipeConfig], contexts: Iterable[SessionContext], family: str
+) -> pd.DataFrame:
+    """Whether the verification sessions tell each template from its perturbations.
+
+    A template value that no perturbation changes the events of, on every
+    session verification uses, is not pinned by those sessions: another
+    value would have verified as well.
+
+    Parameters
+    ----------
+    recipes : sequence of RecipeConfig
+        Those with a template in ``family`` are perturbed, in their order,
+        within ``factor_space(recipes, family)``.
+    contexts : iterable of SessionContext
+        The sessions verification uses, taken one at a time and released
+        after.
+    family : {"spikes", "lfp"}
+
+    Returns
+    -------
+    table : pandas.DataFrame
+        One row per template and ``perturbations`` change: ``config_id``,
+        ``factor``, ``value`` (the template's) and ``perturbed`` (tuples and
+        None as JSON), ``told_apart`` (the events differ on some session),
+        ``session`` (the first such, ``""`` for none) and ``exercised``
+        (some change of that factor of that template is told apart).
+    """
+    space = {factor.name: factor for factor in factor_space(recipes, family)}
+    cases = []
+    for config in recipes:
+        if config.config_id not in TEMPLATES:
+            continue
+        template = TEMPLATES[config.config_id][0]
+        if family_of(template) != family:
+            continue
+        right = compile(template)
+        for name, value in perturbations(template, space):
+            changed = compile(dataclasses.replace(template, **{name: value}))
+            cases.append(
+                (config.config_id, name, getattr(template, name), value, changed, right)
+            )
+    first: dict[int, str] = {}
+    for context in contexts:
+        for i, (*_, changed, right) in enumerate(cases):
+            if i not in first and not np.array_equal(
+                context.events(changed), context.events(right)
+            ):
+                first[i] = context.label
+        context.release()
+    table = pd.DataFrame(
+        [
+            {
+                "config_id": config_id,
+                "factor": name,
+                "value": _as_text(value),
+                "perturbed": _as_text(perturbed),
+                "told_apart": i in first,
+                "session": first.get(i, ""),
+            }
+            for i, (config_id, name, value, perturbed, _, _) in enumerate(cases)
+        ],
+        columns=["config_id", "factor", "value", "perturbed", "told_apart", "session"],
+    )
+    exercised = table.groupby(["config_id", "factor"])["told_apart"].transform("any")
+    return table.assign(exercised=exercised.astype(bool))
 
 
 # Reference sessions
@@ -2880,19 +2992,32 @@ def verify_family(family: str, run_directory: str | os.PathLike[str]) -> pd.Data
     table : pandas.DataFrame
         ``verify_all``'s, after ``check_report``.
     """
-    parameters = reference_parameters(run_directory)
-    check_report(run_directory, parameters)
+    check_report(run_directory, reference_parameters(run_directory))
     recipes = [
         config
         for config in RECIPES
         if config.config_id in FIXED_POINTS
         or family_of(TEMPLATES[config.config_id][0]) == family
     ]
-    edges = (
-        SessionContext(session, f"edge/{name}")
-        for name, session in edge_sessions(parameters).items()
-    )
-    return verify_all(recipes, itertools.chain(edges, reference_contexts(run_directory)))
+    return verify_all(recipes, verification_contexts(run_directory))
+
+
+def verification_contexts(run_directory: str | os.PathLike[str]) -> Iterator[SessionContext]:
+    """The sessions templates are verified on, one at a time.
+
+    Parameters
+    ----------
+    run_directory : str or path-like
+
+    Yields
+    ------
+    context : SessionContext
+        ``edge_sessions`` of the run's reference parameters, labelled
+        ``"edge/<name>"``, then ``reference_contexts``.
+    """
+    for name, session in edge_sessions(reference_parameters(run_directory)).items():
+        yield SessionContext(session, f"edge/{name}")
+    yield from reference_contexts(run_directory)
 
 
 def family_caveat(n_distinct: int, *, below_minimum: bool) -> str:
@@ -2983,6 +3108,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         _results_csv(results / f"{args.family}_{name}.csv", frame.assign(caveat=caveat))
 
     write("in_space", verification)
+    perturbed = sensitivity(RECIPES, verification_contexts(run_directory), args.family)
+    write("sensitivity", perturbed)
+    blind = perturbed.loc[~perturbed["exercised"]].drop_duplicates(["config_id", "factor"])
+    print(
+        f"{args.family}: {len(blind)} template values no perturbation changes on the "
+        f"verification sessions: {blind['factor'].value_counts().to_dict()}",
+        file=sys.stderr,
+    )
     space = factor_space(RECIPES, args.family)
     write(
         "factor_space",
