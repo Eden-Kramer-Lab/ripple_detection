@@ -96,6 +96,7 @@ from conditions import (
     running_schedule,
     stage_seeds,
 )
+from conditions import conditions as benchmark_conditions
 from numpy.typing import ArrayLike
 from recipe_configs import RECIPES
 from run import (
@@ -3708,16 +3709,38 @@ def paired_changes(
     return pd.DataFrame(rows, columns=list(CHANGE_COLUMNS))
 
 
+def _condition_ids(scores: ConditionScores) -> dict[tuple[str, str], str]:
+    """The id of each condition of the run with sessions, by its
+    ``conditions.csv`` factor and level."""
+    present = set(scores.sessions["condition_id"])
+    listed = scores.conditions[["condition_id", "factor", "level"]]
+    return {
+        (factor, level): condition
+        for condition, factor, level in listed.itertuples(index=False)
+        if condition in present
+    }
+
+
+def _cell(factors: Sequence[str], levels: Sequence[str]) -> tuple[str, str]:
+    """The ``conditions.csv`` factor and level of the condition setting each
+    factor to its level: the reference's own when every level is the
+    reference, else those of the factors moved from it, joined by commas."""
+    moved = [
+        (f, level)
+        for f, level in zip(factors, levels, strict=True)
+        if level != REFERENCE_LEVEL
+    ]
+    if not moved:
+        return REFERENCE_CONDITION, REFERENCE_LEVEL
+    return ",".join(f for f, _ in moved), ",".join(level for _, level in moved)
+
+
 def _level_conditions(scores: ConditionScores, factor: str) -> list[tuple[str, str]]:
     """A one-factor factor's (level, condition id) in its levels' order,
     those the run holds."""
-    present = set(scores.sessions["condition_id"])
-    found = []
-    for level in factor_levels(factor):
-        condition = REFERENCE_CONDITION if level == REFERENCE_LEVEL else f"{factor}={level}"
-        if condition in present:
-            found.append((level, condition))
-    return found
+    ids = _condition_ids(scores)
+    cells = ((level, _cell([factor], [level])) for level in factor_levels(factor))
+    return [(level, ids[cell]) for level, cell in cells if cell in ids]
 
 
 def robustness(
@@ -3793,22 +3816,16 @@ def robustness_crossed(
         ``factors`` (``"<first>,<second>"``), ``level_1``, ``level_2``, then
         ``CHANGE_COLUMNS``.
     """
-    present = set(scores.sessions["condition_id"])
+    ids = _condition_ids(scores)
     pairs = [factor for factor in dict.fromkeys(scores.conditions["factor"]) if "," in factor]
     parts = []
     for pair in pairs:
-        first, second = pair.split(",")
+        factors = pair.split(",")
         cells = {}
-        for level_1 in factor_levels(first):
-            for level_2 in factor_levels(second):
-                named = [
-                    f"{factor}={level}"
-                    for factor, level in ((first, level_1), (second, level_2))
-                    if level != REFERENCE_LEVEL
-                ]
-                condition = ",".join(named) or REFERENCE_CONDITION
-                if condition in present:
-                    cells[condition] = (level_1, level_2)
+        for levels in itertools.product(*(factor_levels(factor) for factor in factors)):
+            cell = _cell(factors, levels)
+            if cell in ids:
+                cells[ids[cell]] = levels
         if REFERENCE_CONDITION not in cells or len(cells) < 2:
             continue
         changes = paired_changes(
@@ -3888,10 +3905,9 @@ def recall_changes(table: pd.DataFrame, threshold: float = RECALL_CHANGE) -> pd.
 
 # The simulator's alternative models: (factor, level, condition id).
 MODEL_ALTERNATIVES = tuple(
-    (factor, level, f"{factor}={level}")
-    for factor, levels in ALTERNATIVES.items()
-    for level in levels
-    if level != REFERENCE_LEVEL
+    (condition.factor, condition.level, condition.condition_id)
+    for condition in benchmark_conditions()
+    if condition.factor in ALTERNATIVES
 )
 SENSITIVITY_COLUMNS = (
     "alternative",

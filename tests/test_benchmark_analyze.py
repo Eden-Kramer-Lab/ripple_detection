@@ -1651,6 +1651,23 @@ def test_robustness_pairs_conditions_by_replicate(analyze):
     assert analyze.recall_changes(table, threshold=0.5).empty
 
 
+def test_conditions_are_found_by_their_listed_factor_and_level(analyze):
+    scores = _snr_run(analyze)
+    # an id that is not "<factor>=<level>": conditions.csv says what it is
+    renamed = {"condition_id": {"ripple_snr=low": "snr_low"}}
+    scores = dataclasses.replace(
+        scores,
+        sessions=scores.sessions.replace(renamed),
+        conditions=scores.conditions.replace(renamed),
+    )
+    table = analyze.robustness(scores, measures=("recall",), n_resamples=FEW)
+    assert table.set_index("level").condition_id.to_dict() == {
+        "low": "snr_low",
+        "reference": "reference",
+        "high": "ripple_snr=high",
+    }
+
+
 def _failed(scores, sessions, method, settings):
     """``scores`` with ``method``'s rows at ``settings`` on ``sessions`` removed
     and recorded as failures."""
