@@ -1908,6 +1908,11 @@ def test_operating_order_trend_is_the_paired_difference(analyze):
     )
     # a detector whose curve does not reach the target is named, not dropped
     assert f"{ROUMIS} does not reach 1 false positive a minute" in row.statement
+    # the settings to look at: each curve's nearest to 1 per minute (2 and 0.5
+    # are as near; the first in threshold order)
+    assert [row.spot_method_a, row.spot_setting_a] == [KAY[0], "2.0"]
+    assert [row.spot_method_b, row.spot_setting_b] == [SWEPT_KARLSSON, "2.0"]
+    assert row.scoring == "interval"
 
 
 def test_candidate_trends_carry_their_evidence(analyze):
@@ -1924,9 +1929,12 @@ def test_candidate_trends_carry_their_evidence(analyze):
             "rank": [1, 2, 5],
         }
     )
+    recall = robustness[robustness.measure == "recall"]
+    # the same rows for a point method
+    points = recall.assign(method=DAVIDSON[0], setting=DAVIDSON[1], scoring="peak_containment")
     trends = analyze.candidate_trends(
         {
-            "robustness_recall": robustness[robustness.measure == "recall"],
+            "robustness_recall": pd.concat([recall, points], ignore_index=True),
             "model_sensitivity": changes,
             "model_sensitivity_orders": orders,
             "matching_sensitivity": ranks,
@@ -1938,7 +1946,7 @@ def test_candidate_trends_carry_their_evidence(analyze):
             "0.5 (descriptive: ranks carry no interval or test)."
         )
     ]
-    robust = trends[trends.kind == "robustness"]
+    robust = trends[(trends.kind == "robustness") & (trends.method == KAY[0])]
     # the two levels whose change excludes 0, the reference level never
     assert robust.condition_id.tolist() == ["ripple_snr=low", "ripple_snr=high"]
     assert robust.value.tolist() == pytest.approx([-0.2, 0.2])
@@ -1947,10 +1955,26 @@ def test_candidate_trends_carry_their_evidence(analyze):
         f"{KAY[0]}'s recall against ripple changes by -0.200 (-0.200, -0.200) from the "
         "reference to ripple_snr=low."
     )
+    # one method and its setting per spot column
+    assert robust[
+        ["spot_method_a", "spot_setting_a", "spot_method_b", "spot_setting_b"]
+    ].drop_duplicates().to_numpy().tolist() == [[KAY[0], "default", "", ""]]
+    assert (robust.scoring == "interval").all()
+    point = trends[(trends.kind == "robustness") & (trends.method == DAVIDSON[0])].iloc[0]
+    assert point.scoring == "peak_containment"
+    assert point.spot_setting_a == "literature"
+    assert (
+        f"{DAVIDSON[0]}'s recall against ripple by peak containment changes" in point.statement
+    )
     reversals = trends[trends.kind == "model_order_reversal"]
     assert set(reversals.condition_id) == {"spike_model=refractory"}
-    assert set(reversals.spot_methods) == {f"{SWEPT_KARLSSON} {KAY[0]}"}
+    assert set(reversals.spot_method_a) == {SWEPT_KARLSSON}
+    assert set(reversals.spot_method_b) == {KAY[0]}
+    # at 0.5 per minute both detectors' 3.0 setting is exactly there
+    half = reversals[reversals.statement.str.startswith("At 0.5 ")].iloc[0]
+    assert [half.spot_setting_a, half.spot_setting_b] == ["3.0", "3.0"]
     assert list(trends.columns) == list(analyze.TREND_COLUMNS)
+    assert "spot_event_type" not in trends.columns
 
 
 def test_select_events_for_a_spot_check(analyze, tiny_tables, point_run):

@@ -3801,6 +3801,8 @@ ORDER_COLUMNS = (
     "n_dropped",
     "n_failures_a",
     "n_failures_b",
+    "setting_a",
+    "setting_b",
     "reference_difference",
     "reference_low",
     "reference_high",
@@ -3833,6 +3835,60 @@ def _recall_at(
     )[:, 0]
 
 
+@dataclasses.dataclass(frozen=True)
+class SweepRecalls:
+    """Detectors' recalls at target false-positive rates, read off their sweeps.
+
+    Attributes
+    ----------
+    estimate : ndarray, shape (n_conditions, n_detectors, n_targets)
+    draws : ndarray, shape (n_resamples, n_conditions, n_detectors, n_targets)
+        ``paired_bootstrap``'s resamples of replicates, as weights.
+    alone : ndarray, shape (n_replicates, n_conditions, n_detectors, n_targets)
+        Each replicate's own curves read off.
+    replicates : list of set
+        Per detector, the replicates pooled: those on which every setting of
+        its sweep ran in every condition, so that the conditions are paired.
+    nearest : ndarray of str, shape (n_conditions, n_detectors, n_targets)
+        The swept setting whose pooled false-positive rate is nearest each
+        target in log rate (``""`` for a curve with none), where a spot check
+        of the operating point looks.
+    """
+
+    estimate: np.ndarray[Any, Any]
+    draws: np.ndarray[Any, Any]
+    alone: np.ndarray[Any, Any]
+    replicates: list[set[Any]]
+    nearest: np.ndarray[Any, Any]
+
+    def pair(self, a: int, b: int) -> SweepRecalls:
+        """Two detectors' slices, A (``a``) at index 0 and B at 1."""
+        return SweepRecalls(
+            self.estimate[:, [a, b]],
+            self.draws[:, :, [a, b]],
+            self.alone[:, :, [a, b]],
+            [self.replicates[a], self.replicates[b]],
+            self.nearest[:, [a, b]],
+        )
+
+
+def _nearest_settings(
+    pool: Pool, settings: Sequence[str], n_units: int, targets: Sequence[float]
+) -> list[str]:
+    """The setting of a sweep pool whose false-positive rate, pooled over
+    every unit, is nearest each target in log rate; ``""`` for none."""
+    pooled = pool(np.ones(n_units))
+    held = np.flatnonzero(pooled["ran"] > 0)
+    if not len(held):
+        return [""] * len(targets)
+    rates = _rates(pooled)["fp_rate"][held]
+    floor = 0.5 / pooled["minutes"][held].max()
+    distance = np.abs(
+        np.log(np.maximum(rates, floor))[:, None] - np.log(np.asarray(targets))[None, :]
+    )
+    return [settings[held[position]] for position in np.argmin(distance, axis=0)]
+
+
 def _sweep_recalls(
     scores: ConditionScores,
     conditions: Sequence[str],
@@ -3840,13 +3896,9 @@ def _sweep_recalls(
     detectors: Sequence[str],
     targets: Sequence[float],
     n_resamples: int,
-) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any], list[set[Any]]]:
-    """Each detector's recall at each target in each condition, over shared
-    replicates: the estimate, shape (n_conditions, n_detectors, n_targets),
-    the resamples (a leading axis of n_resamples), each replicate alone (a
-    leading axis of n_replicates), and each detector's replicates pooled:
-    those on which every setting of its sweep ran in every condition, the
-    only ones its curves pool, so that they are paired."""
+) -> SweepRecalls:
+    """Each detector's recall at each target in each condition, over the
+    shared ``replicates`` on which its whole sweep ran in every condition."""
     sessions = scores.sessions[
         scores.sessions["condition_id"].isin(conditions)
         & scores.sessions["replicate"].isin(replicates)
@@ -3854,36 +3906,32 @@ def _sweep_recalls(
     counts = _by_method(_session_counts(scores, 0.0, sessions["session_id"]))
     pools: list[list[Pool]] = [[] for _ in conditions]
     paired = []
-    for detector in detectors:
+    nearest = np.full((len(conditions), len(detectors), len(targets)), "", dtype=object)
+    for d, detector in enumerate(detectors):
         settings = _sweep_settings(detector, scores.methods)
         own = counts.get(detector, _NO_COUNTS)
         cells = [(condition, setting) for condition in conditions for setting in settings]
         complete = _complete_units(own, "replicate", ["condition_id", "setting"], cells)
         paired.append(complete)
         own = own[own["replicate"].isin(list(complete)).to_numpy()]
-        for row, condition in zip(pools, conditions, strict=True):
+        for c, (row, condition) in enumerate(zip(pools, conditions, strict=True)):
             mine = own[(own["condition_id"] == condition).to_numpy()]
             row.append(_curve_pool(mine, _NO_ERRORS, "replicate", replicates, settings, ()))
+            nearest[c, d] = _nearest_settings(row[-1], settings, len(replicates), targets)
 
     def statistic(weights: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
         return np.array(
             [[_recall_at(pool, weights, targets) for pool in row] for row in pools]
         )
 
-    estimate = statistic(np.ones(len(replicates)))
     weights = resample_weights(len(replicates), n_resamples=n_resamples)
-    draws = np.array([statistic(w) for w in weights])
-    alone = np.array([statistic(w) for w in np.eye(len(replicates))])
-    return estimate, draws, alone, paired
-
-
-# A pair of detectors' recalls at the targets: their estimate, shape
-# (n_conditions, 2, n_targets), resamples (a leading axis of n_resamples),
-# each replicate alone (a leading axis of n_replicates) and the replicates
-# both were pooled over.
-PairRecalls = tuple[
-    np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any], list[int]
-]
+    return SweepRecalls(
+        estimate=statistic(np.ones(len(replicates))),
+        draws=np.array([statistic(w) for w in weights]),
+        alone=np.array([statistic(w) for w in np.eye(len(replicates))]),
+        replicates=paired,
+        nearest=nearest,
+    )
 
 
 def _pair_recalls(
@@ -3891,30 +3939,21 @@ def _pair_recalls(
     conditions: Sequence[str],
     detectors: Sequence[str],
     pair: tuple[int, int],
-    found: tuple[
-        np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any], list[set[Any]]
-    ],
+    found: SweepRecalls,
     targets: Sequence[float],
     n_resamples: int,
-) -> PairRecalls:
+) -> SweepRecalls:
     """Two detectors' recalls at the targets over the replicates both were
     pooled over: ``found`` (``_sweep_recalls`` of every detector) sliced when
     each detector's replicates are the same, else pooled again over those
     the two share, so a difference between them is paired."""
     a, b = pair
-    estimate, draws, alone, complete = found
-    if complete[a] == complete[b]:
-        return (
-            estimate[:, [a, b]],
-            draws[:, :, [a, b]],
-            alone[:, :, [a, b]],
-            sorted(complete[a]),
-        )
-    shared = sorted(complete[a] & complete[b])
-    again = _sweep_recalls(
+    if found.replicates[a] == found.replicates[b]:
+        return found.pair(a, b)
+    shared = sorted(found.replicates[a] & found.replicates[b])
+    return _sweep_recalls(
         scores, conditions, shared, [detectors[a], detectors[b]], targets, n_resamples
     )
-    return again[0], again[1], again[2], shared
 
 
 def _status(value: ArrayLike, n_failures: ArrayLike, otherwise: str) -> Any:
@@ -3987,8 +4026,11 @@ def model_sensitivity(
         with the same primary expression (A first by name), ``status`` as
         above, the ``n_replicates`` both were pooled over (``n_dropped`` left
         out), each detector's failed calls in both conditions
-        (``n_failures_a``, ``n_failures_b``), their recall differences (A
-        minus B) in the reference and in the alternative with intervals;
+        (``n_failures_a``, ``n_failures_b``), each detector's swept setting
+        whose false-positive rate in the alternative is nearest the target
+        (``setting_a``, ``setting_b``: where a spot check looks), their
+        recall differences (A minus B) in the reference and in the
+        alternative with intervals;
         ``supported``, the reference interval excludes 0; ``reversed``, the
         two estimates have opposite signs; ``p_reversed``, the fraction of
         resamples (where both are defined) in which they do.
@@ -4049,7 +4091,8 @@ def model_sensitivity(
             for detector in detectors
         }
         found = _sweep_recalls(scores, pair, replicates, detectors, targets, n_resamples)
-        estimate, draws, alone, complete = found
+        estimate, draws, alone = found.estimate, found.draws, found.alone
+        complete = found.replicates
         difference = estimate[1] - estimate[0]
         low, high = _conditional_intervals(difference, draws[:, 1] - draws[:, 0])
         per_replicate = alone[:, 1] - alone[:, 0]
@@ -4110,7 +4153,7 @@ def _orders(
     detectors: Sequence[str],
     primary: pd.Series,
     targets: Sequence[float],
-    pairs: Mapping[tuple[int, int], PairRecalls],
+    pairs: Mapping[tuple[int, int], SweepRecalls],
     n_shared: int,
     failures: Mapping[str, int],
 ) -> pd.DataFrame:
@@ -4120,9 +4163,10 @@ def _orders(
     ``n_shared`` the conditions share; ``failures``, each detector's failed
     calls in the two conditions."""
     rows = []
-    for (a, b), (estimate, draws, _, paired) in pairs.items():
-        observed = estimate[:, 0] - estimate[:, 1]
-        resampled = draws[:, :, 0] - draws[:, :, 1]
+    for (a, b), found in pairs.items():
+        paired = found.replicates[0]
+        observed = found.estimate[:, 0] - found.estimate[:, 1]
+        resampled = found.draws[:, :, 0] - found.draws[:, :, 1]
         low, high = _conditional_intervals(observed, resampled)
         for t, target in enumerate(targets):
             both = np.isfinite(resampled[:, 0, t]) & np.isfinite(resampled[:, 1, t])
@@ -4142,6 +4186,8 @@ def _orders(
                     "n_dropped": n_shared - len(paired),
                     "n_failures_a": failures[detectors[a]],
                     "n_failures_b": failures[detectors[b]],
+                    "setting_a": found.nearest[1, 0, t],
+                    "setting_b": found.nearest[1, 1, t],
                     "reference_difference": observed[0, t],
                     "reference_low": low[0, t],
                     "reference_high": high[0, t],
@@ -4161,6 +4207,8 @@ DIFFERENCE_COLUMNS = (
     "fp_target",
     "method_a",
     "method_b",
+    "setting_a",
+    "setting_b",
     "recall_a",
     "recall_b",
     "reached_a",
@@ -4202,7 +4250,9 @@ def operating_differences(
     -------
     differences : pandas.DataFrame
         ``DIFFERENCE_COLUMNS``: per pair (A first by name) and target,
-        ``recall_a`` and ``recall_b``, ``reached_a`` and ``reached_b``
+        ``setting_a`` and ``setting_b`` (each detector's swept setting whose
+        false-positive rate is nearest the target, where a spot check
+        looks), ``recall_a`` and ``recall_b``, ``reached_a`` and ``reached_b``
         (whether each curve reaches the target; a recall it does not reach
         is NaN, never the curve's end), ``difference`` (A minus B) with
         ``_low``, ``_high`` and ``_p``, ``n_paired`` (sessions whose own
@@ -4221,9 +4271,10 @@ def operating_differences(
     for a, b in itertools.combinations(range(len(detectors)), 2):
         if primary[detectors[a]] != primary[detectors[b]]:
             continue
-        estimate, draws, alone, paired = _pair_recalls(
+        own = _pair_recalls(
             scores, [condition], detectors, (a, b), found, targets, n_resamples
         )
+        estimate, draws, alone, paired = own.estimate, own.draws, own.alone, own.replicates[0]
         difference = estimate[0, 0] - estimate[0, 1]
         low, high = _conditional_intervals(difference, draws[:, 0, 0] - draws[:, 0, 1])
         per_session = alone[:, 0, 0] - alone[:, 0, 1]
@@ -4235,6 +4286,8 @@ def operating_differences(
                     "fp_target": target,
                     "method_a": detectors[a],
                     "method_b": detectors[b],
+                    "setting_a": own.nearest[0, 0, t],
+                    "setting_b": own.nearest[0, 1, t],
                     "recall_a": estimate[0, 0, t],
                     "recall_b": estimate[0, 1, t],
                     "reached_a": bool(np.isfinite(estimate[0, 0, t])),
@@ -5764,15 +5817,18 @@ TREND_COLUMNS = (
     "statement",
     "source",
     "method",
+    "scoring",
     "condition_id",
     "value",
     "low",
     "high",
     "p",
     "spot_condition",
-    "spot_methods",
+    "spot_method_a",
+    "spot_setting_a",
+    "spot_method_b",
+    "spot_setting_b",
     "spot_selection",
-    "spot_event_type",
 )
 # Candidates of each kind kept, largest first.
 _TRENDS_PER_KIND = 12
@@ -5783,15 +5839,43 @@ def _excludes(frame: pd.DataFrame, low: str, high: str, value: float = 0.0) -> p
     return (frame[low] > value) | (frame[high] < value)
 
 
+def _scored(scoring: str) -> str:
+    """The words a statement about a point method adds: its scoring rule."""
+    return " by peak containment" if scoring == PEAK_CONTAINMENT else ""
+
+
+def _spot(
+    condition: str,
+    selection: str,
+    method_a: str,
+    setting_a: str,
+    method_b: str = "",
+    setting_b: str = "",
+) -> dict[str, str]:
+    """A trend's spot-check columns: where to look, one method and its
+    setting per column."""
+    return {
+        "spot_condition": condition,
+        "spot_method_a": method_a,
+        "spot_setting_a": setting_a,
+        "spot_method_b": method_b,
+        "spot_setting_b": setting_b,
+        "spot_selection": selection,
+    }
+
+
 def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     """Candidate trend statements, each with the rows that support it.
 
     Not conclusions: each is a pattern in the tables worth stating only after
     its underlying events have been looked at (``spot_check``), and after
     checking that it does not come from failures, empty sweeps or a unit
-    error. Each names where to look: a condition, methods and which events
-    (``"missed"`` or ``"found"`` truth events of the first method's primary
-    expression, or its ``"false_positive"`` events), for ``select_events``.
+    error. Each names where to look, for ``select_events``: a condition, one
+    or two methods each with its setting (a main setting's own; for a trend
+    at a false-positive target, the swept setting whose rate is nearest the
+    target), and which events (``"missed"`` or ``"found"`` truth events of
+    the first method's primary expression, or its ``"false_positive"``
+    events).
 
     Parameters
     ----------
@@ -5802,9 +5886,13 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     -------
     trends : pandas.DataFrame
         ``TREND_COLUMNS``: ``kind``, a templated ``statement``, its
-        ``source`` table, the ``method`` and ``condition_id`` it is about,
-        the ``value`` with its interval and p-value where the table has them,
-        and the spot check to draw. Largest effects first within a kind.
+        ``source`` table, the ``method`` it is about and its ``scoring``
+        (a point method's statement says it is by peak containment), the
+        ``condition_id``, the ``value`` with its interval and p-value where
+        the table has them, and the spot check to draw
+        (``spot_condition``, ``spot_method_a`` and ``spot_setting_a``,
+        ``spot_method_b`` and ``spot_setting_b`` (``""`` for one method),
+        ``spot_selection``). Largest effects first within a kind.
     """
     rows: list[dict[str, Any]] = []
 
@@ -5838,20 +5926,21 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
             lambda r: {
                 "kind": "robustness",
                 "statement": (
-                    f"{r.method}'s recall against {r.primary_expression} changes by "
-                    f"{r.change:+.3f} ({r.change_low:+.3f}, {r.change_high:+.3f}) from the "
-                    f"reference to {r.condition_id}."
+                    f"{r.method}'s recall against {r.primary_expression}"
+                    f"{_scored(r.scoring)} changes by {r.change:+.3f} ({r.change_low:+.3f}, "
+                    f"{r.change_high:+.3f}) from the reference to {r.condition_id}."
                 ),
                 "source": "robustness_recall",
                 "method": r.method,
+                "scoring": r.scoring,
                 "condition_id": r.condition_id,
                 "value": r.change,
                 "low": r.change_low,
                 "high": r.change_high,
                 "p": r.change_p,
-                "spot_condition": r.condition_id,
-                "spot_methods": r.method,
-                "spot_selection": "missed" if r.change < 0 else "found",
+                **_spot(
+                    r.condition_id, "missed" if r.change < 0 else "found", r.method, r.setting
+                ),
             },
             per="condition_id",
         )
@@ -5872,14 +5961,15 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                 ),
                 "source": "model_sensitivity_orders",
                 "method": f"{r.method_a} {r.method_b}",
+                "scoring": INTERVAL,
                 "condition_id": r.alternative,
                 "value": r.alternative_difference,
                 "low": r.alternative_low,
                 "high": r.alternative_high,
                 "p": np.nan,
-                "spot_condition": r.alternative,
-                "spot_methods": f"{r.method_a} {r.method_b}",
-                "spot_selection": "missed",
+                **_spot(
+                    r.alternative, "missed", r.method_a, r.setting_a, r.method_b, r.setting_b
+                ),
             },
         )
     model = results.get("model_sensitivity", pd.DataFrame())
@@ -5895,19 +5985,20 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
             lambda r: {
                 "kind": "model_change",
                 "statement": (
-                    f"{r.method}'s recall changes by {r.change:+.3f} ({r.change_low:+.3f}, "
-                    f"{r.change_high:+.3f}) under {r.alternative}."
+                    f"{r.method}'s recall{_scored(r.scoring)} changes by {r.change:+.3f} "
+                    f"({r.change_low:+.3f}, {r.change_high:+.3f}) under {r.alternative}."
                 ),
                 "source": "model_sensitivity",
                 "method": r.method,
+                "scoring": r.scoring,
                 "condition_id": r.alternative,
                 "value": r.change,
                 "low": r.change_low,
                 "high": r.change_high,
                 "p": r.change_p,
-                "spot_condition": r.alternative,
-                "spot_methods": r.method,
-                "spot_selection": "missed" if r.change < 0 else "found",
+                **_spot(
+                    r.alternative, "missed" if r.change < 0 else "found", r.method, r.setting
+                ),
             },
             per="alternative",
         )
@@ -5932,14 +6023,13 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                     ),
                     "source": "matching_sensitivity",
                     "method": r.method,
+                    "scoring": INTERVAL,
                     "condition_id": REFERENCE_CONDITION,
                     "value": float(r.rank_last - r.rank_0),
                     "low": np.nan,
                     "high": np.nan,
                     "p": np.nan,
-                    "spot_condition": REFERENCE_CONDITION,
-                    "spot_methods": r.method,
-                    "spot_selection": "found",
+                    **_spot(REFERENCE_CONDITION, "found", r.method, r.setting),
                 },
             )
     bias = results.get("participation_bias", pd.DataFrame())
@@ -5957,14 +6047,13 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                 ),
                 "source": "participation_bias",
                 "method": r.method,
+                "scoring": INTERVAL,
                 "condition_id": REFERENCE_CONDITION,
                 "value": r.ratio_of_means,
                 "low": r.ratio_of_means_low,
                 "high": r.ratio_of_means_high,
                 "p": np.nan,
-                "spot_condition": REFERENCE_CONDITION,
-                "spot_methods": r.method,
-                "spot_selection": "missed",
+                **_spot(REFERENCE_CONDITION, "missed", r.method, r.setting),
             },
         )
     effect = results.get("boundary_effect", pd.DataFrame())
@@ -5985,14 +6074,13 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                 ),
                 "source": "boundary_effect",
                 "method": r.method,
+                "scoring": INTERVAL,
                 "condition_id": REFERENCE_CONDITION,
                 "value": r.mean_difference,
                 "low": r.mean_difference_low,
                 "high": r.mean_difference_high,
                 "p": np.nan,
-                "spot_condition": REFERENCE_CONDITION,
-                "spot_methods": r.method,
-                "spot_selection": "found",
+                **_spot(REFERENCE_CONDITION, "found", r.method, r.setting),
             },
         )
     points = results.get("operating_points", pd.DataFrame())
@@ -6009,6 +6097,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
             unreached = sorted(own.loc[own["recall"].isna(), "method"])
             value = low = high = p = np.nan
             n_paired = 0
+            settings = {first.method: "", second.method: ""}
             if len(differences):
                 pair = differences[
                     (differences["fp_target"] == 1.0)
@@ -6024,6 +6113,10 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                         (sign * found.difference_low, sign * found.difference_high)
                     )
                     p, n_paired = found.difference_p, int(found.n_paired)
+                    settings = {
+                        found.method_a: found.setting_a,
+                        found.method_b: found.setting_b,
+                    }
             statement = (
                 f"At 1 false positive a minute against {expression}, {first.method} has "
                 f"the highest recall, {first.recall:.3f} ({first.recall_low:.3f}, "
@@ -6043,17 +6136,23 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                     "statement": statement,
                     "source": "operating_differences",
                     "method": first.method,
+                    "scoring": INTERVAL,
                     "condition_id": REFERENCE_CONDITION,
                     "value": value,
                     "low": low,
                     "high": high,
                     "p": p,
-                    "spot_condition": REFERENCE_CONDITION,
-                    "spot_methods": f"{first.method} {second.method}",
-                    "spot_selection": "missed",
+                    **_spot(
+                        REFERENCE_CONDITION,
+                        "missed",
+                        first.method,
+                        settings[first.method],
+                        second.method,
+                        settings[second.method],
+                    ),
                 }
             )
-    return pd.DataFrame(rows, columns=list(TREND_COLUMNS)).fillna({"spot_event_type": ""})
+    return pd.DataFrame(rows, columns=list(TREND_COLUMNS))
 
 
 # Spot checks
