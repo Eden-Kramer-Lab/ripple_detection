@@ -2371,9 +2371,20 @@ def sobol_indices(
     Returns
     -------
     first, total : ndarray, shape (d,)
+
+    Notes
+    -----
+    The first-order product is of outputs centred on the mean of every
+    finite output (``A``, ``B`` and ``AB`` together, as SALib centres them),
+    so adding a constant to every output changes neither index; uncentred,
+    the first-order estimate moves with the outputs' origin. The total index
+    is a difference of outputs and needs no centring.
     """
     variance = np.var(np.concatenate([y_a, y_b]), ddof=1)
-    first = np.mean(y_b * (y_ab - y_a), axis=1) / variance
+    everything = np.concatenate([y_a, y_b, y_ab.ravel()])
+    finite = everything[np.isfinite(everything)]
+    centre = finite.mean() if finite.size else np.nan
+    first = np.mean((y_b - centre) * (y_ab - y_a), axis=1) / variance
     total = 0.5 * np.mean((y_a - y_ab) ** 2, axis=1) / variance
     return first, total
 

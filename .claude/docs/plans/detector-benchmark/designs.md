@@ -1023,10 +1023,18 @@ def sobol_indices(y_a, y_b, y_ab):
     """First-order (Saltelli et al. 2010) and total (Jansen 1999) indices.
     y_a, y_b: (N,); y_ab: (d, N)."""
     variance = np.var(np.concatenate([y_a, y_b]), ddof=1)
-    first = np.mean(y_b * (y_ab - y_a), axis=1) / variance
+    # centred on the mean of every output, A, B and AB together (as SALib does)
+    centre = np.mean(np.concatenate([y_a, y_b, y_ab.ravel()]))
+    first = np.mean((y_b - centre) * (y_ab - y_a), axis=1) / variance
     total = 0.5 * np.mean((y_a - y_ab) ** 2, axis=1) / variance
     return first, total
 ```
+
+The first-order product is of centred outputs. Uncentred, adding a constant `c` to every output
+adds `c mean(y_ab - y_a) / variance` to each first-order index, a term zero only in expectation,
+so the estimate moves with the outputs' origin (an F1 near 0.5 is far from 0) and its interval
+widens with it. Each bootstrap resample is centred on its own mean; the total is a difference of
+outputs and needs none. (This design first had the uncentred product; see the note on run v1.)
 
 Intervals: bootstrap over the `N` sample rows (1000 resamples, percentile), not over sessions:
 each `Y` already averages the `K` sessions. Cost `N (d + 2)` configs × `K` sessions; phase 6

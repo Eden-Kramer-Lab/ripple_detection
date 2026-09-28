@@ -155,13 +155,31 @@ def test_sobol_on_ishigami(attribution):
 
 def test_sobol_indices_by_hand(attribution):
     """One factor, two rows: the variance is that of y_a and y_b together
-    (0, 1, 1, 3: 19/12), first = mean(y_b (y_ab - y_a)) = 3 over it and
-    total = mean((y_a - y_ab)^2) / 2 = 1 over it."""
+    (0, 1, 1, 3: 19/12); the outputs' mean, A, B and AB together, is 8/6, so
+    first = mean((y_b - 4/3) (y_ab - y_a)) = (0 + 5/3 * 2) / 2 = 5/3 over it
+    and total = mean((y_a - y_ab)^2) / 2 = 1 over it."""
     first, total = attribution.sobol_indices(
         np.array([0.0, 1.0]), np.array([1.0, 3.0]), np.array([[0.0, 3.0]])
     )
-    np.testing.assert_allclose(first, [36 / 19], rtol=1e-12)
+    np.testing.assert_allclose(first, [20 / 19], rtol=1e-12)
     np.testing.assert_allclose(total, [12 / 19], rtol=1e-12)
+
+
+def test_sobol_indices_do_not_move_with_the_outputs_origin(attribution):
+    """Adding a constant to every output changes neither index: the
+    first-order product is of outputs centred on their mean."""
+    rng = np.random.default_rng(2)
+    y_a, y_b, y_ab = rng.normal(size=64), rng.normal(size=64), rng.normal(size=(3, 64))
+    y_ab[0] += y_b
+    first, total = attribution.sobol_indices(y_a, y_b, y_ab)
+    shifted = attribution.sobol_indices(y_a + 10.0, y_b + 10.0, y_ab + 10.0)
+    np.testing.assert_allclose(shifted[0], first, atol=1e-12)
+    np.testing.assert_allclose(shifted[1], total, atol=1e-12)
+    # every resample centred on its own mean: the intervals do not move either
+    table = attribution.sobol_intervals(y_a, y_b, y_ab, n_resamples=50)
+    moved = attribution.sobol_intervals(y_a + 10.0, y_b + 10.0, y_ab + 10.0, n_resamples=50)
+    columns = ["first", "first_low", "first_high", "total", "total_low", "total_high"]
+    np.testing.assert_allclose(moved[columns], table[columns], atol=1e-12)
 
 
 def test_sobol_intervals_honour_the_level(attribution):
@@ -204,6 +222,11 @@ def test_sobol_intervals_with_missing_outputs(attribution):
     table = attribution.sobol_intervals(y_a, y_b, y_ab, n_resamples=300)
     assert table[["first", "first_low", "total", "total_high"]].isna().all().all()
     assert table["finite_rows"].tolist() == [n - 1, n - 2, n - 1]
+    # an output never defined: every index and interval missing, without a warning
+    missing = np.full(n, np.nan)
+    table = attribution.sobol_intervals(missing, missing, np.full((3, n), np.nan), n_resamples=10)
+    assert table[["first", "first_low", "total", "total_high"]].isna().all().all()
+    assert (table[["finite_rows", "first_finite_draws"]] == 0).all().all()
 
 
 def _toy(subset):
