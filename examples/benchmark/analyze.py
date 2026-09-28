@@ -65,7 +65,14 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
-from conditions import ALTERNATIVES, REFERENCE_LEVEL, TRUTH_FRACTIONS, factor_levels
+from conditions import (
+    ALTERNATIVES,
+    REFERENCE_LEVEL,
+    TRUTH_FRACTIONS,
+    factor_levels,
+    running_schedule,
+    stage_seeds,
+)
 from numpy.typing import ArrayLike
 from recipe_configs import RECIPES
 from run import (
@@ -3457,6 +3464,336 @@ def recall_changes(table: pd.DataFrame, threshold: float = RECALL_CHANGE) -> pd.
         .sort_values("span", ascending=False, kind="stable")
         .reset_index(drop=True)
     )
+
+
+# Rates and participation
+
+STATES = ("rest", "running")
+SELECTIONS = {"all": "n_active_units", "principal": "n_active_principal"}
+
+
+def session_bouts(sessions: pd.DataFrame) -> dict[str, np.ndarray[Any, Any]]:
+    """Each session's running bouts, drawn again from its replicate's seed.
+
+    ``running_schedule`` with the schedule stage's seed (``stage_seeds``),
+    as the simulation drew it, in seconds from the session's first sample
+    (a run's sessions start at 0).
+
+    Parameters
+    ----------
+    sessions : pandas.DataFrame
+        ``session_id``, ``replicate``, ``duration_s`` and ``rest_s``.
+
+    Returns
+    -------
+    bouts : dict of str to ndarray, shape (n_bouts, 2)
+
+    Raises
+    ------
+    ValueError
+        A session's rest is not its duration less the bouts drawn again, so
+        the schedule is not the one the run simulated.
+    """
+    bouts = {}
+    for row in sessions.itertuples(index=False):
+        rng = np.random.default_rng(stage_seeds(int(row.replicate))[0])
+        drawn = running_schedule(float(row.duration_s), rng)
+        rest = float(row.duration_s) - float(np.sum(np.diff(drawn, axis=1)))
+        if not np.isclose(rest, float(row.rest_s), rtol=0, atol=1e-6):
+            msg = (
+                f"{row.session_id}: the running schedule drawn again leaves {rest} s of "
+                f"rest, the run recorded {row.rest_s} s."
+            )
+            raise ValueError(msg)
+        bouts[row.session_id] = drawn
+    return bouts
+
+
+def _running(times: np.ndarray[Any, Any], bouts: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
+    """Whether each time is inside a bout, bounds included."""
+    position = np.searchsorted(bouts[:, 0], times, side="right") - 1
+    inside = position >= 0
+    inside[inside] = times[inside] <= bouts[position[inside], 1]
+    return inside
+
+
+def rates_by_state(
+    tables: RunTables,
+    *,
+    bouts: Mapping[str, np.ndarray[Any, Any]] | None = None,
+    n_resamples: int = N_RESAMPLES,
+) -> pd.DataFrame:
+    """Each main method's events per minute at rest and while running.
+
+    An event is placed by its ``peak_time``, else its bounds' midpoint
+    (``event_times``). Beside each rate, the true rate in that state: network
+    events per minute of rest (they occur at rest only), and theta bursts, the
+    non-events of running, per minute of running.
+
+    Parameters
+    ----------
+    tables : RunTables
+    bouts : mapping of str to ndarray, optional
+        Each session's running bouts; default ``session_bouts``.
+    n_resamples : int, optional
+
+    Returns
+    -------
+    rates : pandas.DataFrame
+        One row per method, setting and ``state`` (``"rest"``, ``"running"``):
+        ``scoring``, ``n_events``, ``minutes`` (pooled over the sessions it
+        has scores on), ``rate`` with ``_low`` and ``_high``, ``true_events``
+        and ``true_rate`` over the same sessions, ``primary_expression``,
+        ``n_sessions``, ``n_failures``.
+    """
+    bouts = session_bouts(tables.sessions) if bouts is None else bouts
+    durations = tables.sessions.set_index("session_id")["duration_s"]
+    frames = []
+    for session_id, events in tables.events.groupby("session_id", sort=False):
+        running = _running(event_times(events), bouts[session_id])
+        frames.append(
+            events[_KEY].assign(rest=(~running).astype(int), running=running.astype(int))
+        )
+    placed = _concat(frames, [*_KEY, "rest", "running"])
+    counted = placed.groupby(_KEY)[["rest", "running"]].sum()
+    truth = []
+    for session_id, (events, non_events) in tables.truth.items():
+        running_minutes = float(np.sum(np.diff(bouts[session_id], axis=1))) / 60
+        truth.append(
+            {
+                "session_id": session_id,
+                "rest_minutes": durations[session_id] / 60 - running_minutes,
+                "running_minutes": running_minutes,
+                "rest_true": events["event_id"].nunique(),
+                "running_true": int((non_events["non_event_type"] == "theta_burst").sum()),
+            }
+        )
+    frame = tables.ran.join(counted, on=_KEY).fillna({"rest": 0, "running": 0})
+    frame = _with_replicate(frame.merge(pd.DataFrame(truth), on="session_id"), tables)
+    parts = []
+    for state in STATES:
+        part = frame.assign(
+            state=state,
+            n_events=frame[state],
+            minutes=frame[f"{state}_minutes"],
+            true_events=frame[f"{state}_true"],
+        )
+        parts.append(part[[*_KEY, "replicate", "state", "n_events", "minutes", "true_events"]])
+    long = pd.concat(parts, ignore_index=True)
+    by = ["method", "setting", "state"]
+    intervals = grouped_intervals(
+        long,
+        by,
+        _ratio_of_sums(("n_events", "minutes"), ("true_events", "minutes")),
+        ["rate", "true_rate"],
+        ["n_events", "minutes", "true_events"],
+        n_resamples=n_resamples,
+    )
+    totals = long.groupby(by)[["n_events", "minutes", "true_events"]].sum().reset_index()
+    rates = totals.merge(intervals.drop(columns=["true_rate_low", "true_rate_high"]), on=by)
+    rates = rates.astype({"n_events": int, "true_events": int})
+    rates.insert(3, "scoring", rates["method"].map(scoring_rule))
+    columns = [*by, "scoring", "n_events", "minutes", "rate", "rate_low", "rate_high"]
+    rates = rates[[*columns, "true_events", "true_rate"]]
+    return _in_order(_with_failures(rates, tables), "state", STATES)
+
+
+def _burst_participants(tables: RunTables) -> pd.DataFrame:
+    """Every truth event with a burst: ``session_id``, ``id`` and its latent
+    ``n_participants`` (recruited cells, silent ones included)."""
+    parts = [
+        events.loc[events["expression"] == "burst", ["event_id", "n_participants"]]
+        .drop_duplicates("event_id")
+        .rename(columns={"event_id": "id"})
+        .assign(session_id=session_id)
+        for session_id, (events, _) in tables.truth.items()
+    ]
+    return _concat(parts, ["session_id", "id", "n_participants"])
+
+
+def _ratio_of_means(
+    codes: np.ndarray[Any, Any], frame: pd.DataFrame, n_groups: int
+) -> np.ndarray[Any, Any]:
+    """Per group, the mean of the matched events' participants over the
+    mean of all events'."""
+    sums = {
+        column: np.bincount(codes, weights=frame[column].to_numpy(float), minlength=n_groups)
+        for column in ("matched_sum", "matched_n", "all_sum", "all_n")
+    }
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ratio = (sums["matched_sum"] / sums["matched_n"]) / (sums["all_sum"] / sums["all_n"])
+    return ratio[np.newaxis]
+
+
+def participation_bias(
+    tables: RunTables, matches: Matches, *, n_resamples: int = N_RESAMPLES
+) -> pd.DataFrame:
+    """Which true events each method finds, by their recruited cells.
+
+    Among the truth events with a burst, the latent ``n_participants``
+    (recruited cells, some of which fire no spike) of those the method
+    matched against its primary expression (IoU 0), against those of all
+    of them. Reported on its own, never subtracted from an observed count.
+    Interval methods only.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+    n_resamples : int, optional
+
+    Returns
+    -------
+    bias : pandas.DataFrame
+        One row per interval method and setting: ``n_matched_events`` and
+        ``n_events`` (truth events with a burst, over the sessions it has
+        scores on), ``mean_matched`` and ``mean_all`` (their mean
+        ``n_participants``), ``ratio_of_means`` with ``_low`` and ``_high``,
+        ``ks_statistic`` (``scipy.stats.ks_2samp`` of the matched events'
+        against all events' counts, pooled), ``primary_expression``,
+        ``n_sessions``, ``n_failures``.
+    """
+    from scipy.stats import ks_2samp
+
+    bursts = _burst_participants(tables)
+    pairs = _primary_pairs(tables, matches)
+    windows = matches.windows[["session_id", "expression", "row", "id"]]
+    found = pairs.merge(
+        windows,
+        left_on=["session_id", "expression", "truth_row"],
+        right_on=["session_id", "expression", "row"],
+    )[[*_KEY, "id"]].drop_duplicates()
+    found = found.merge(bursts, on=["session_id", "id"])
+    matched = found.groupby(_KEY)["n_participants"].agg(matched_sum="sum", matched_n="size")
+    every = bursts.groupby("session_id")["n_participants"].agg(all_sum="sum", all_n="size")
+    frame = (
+        _by_intervals(main_rows(tables.ran))
+        .join(matched, on=_KEY)
+        .join(every, on="session_id")
+    )
+    frame = _with_replicate(frame.fillna(0.0), tables)
+    by = ["method", "setting"]
+    intervals = grouped_intervals(
+        frame,
+        by,
+        _ratio_of_means,
+        ["ratio_of_means"],
+        ["matched_sum", "matched_n", "all_sum", "all_n"],
+        n_resamples=n_resamples,
+    )
+    rows = []
+    for (method, setting), group in frame.groupby(by, sort=True):
+        sessions = set(group["session_id"])
+        own = found[(found["method"] == method) & (found["setting"] == setting)]
+        every_count = bursts.loc[bursts["session_id"].isin(sessions), "n_participants"]
+        mine = own.loc[own["session_id"].isin(sessions), "n_participants"]
+        rows.append(
+            {
+                "method": method,
+                "setting": setting,
+                "n_matched_events": len(mine),
+                "n_events": len(every_count),
+                "mean_matched": mine.mean() if len(mine) else np.nan,
+                "mean_all": every_count.mean() if len(every_count) else np.nan,
+                "ks_statistic": (
+                    float(ks_2samp(mine, every_count).statistic)
+                    if len(mine) and len(every_count)
+                    else np.nan
+                ),
+            }
+        )
+    bias = pd.DataFrame(rows).merge(intervals, on=by)
+    columns = [
+        *by,
+        "n_matched_events",
+        "n_events",
+        "mean_matched",
+        "mean_all",
+        "ratio_of_means",
+        "ratio_of_means_low",
+        "ratio_of_means_high",
+        "ks_statistic",
+    ]
+    return _with_failures(bias[columns], tables)
+
+
+def boundary_effect(
+    tables: RunTables, matches: Matches, *, n_resamples: int = N_RESAMPLES
+) -> pd.DataFrame:
+    """What a method's bounds do to the units counted active in its events.
+
+    For each pair matched against the method's primary expression (IoU 0):
+    the units with a spike within the detected bounds minus those within the
+    matched truth window of that expression at 10 % (``truth_counts.csv``),
+    both counted by ``count_spikes_in_events`` over the same units. Silent
+    recruits, interneurons and background spikes count on both sides, so a
+    difference is the bounds' alone: zero when they agree.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+    n_resamples : int, optional
+
+    Returns
+    -------
+    effect : pandas.DataFrame
+        One row per interval method, setting and ``selection`` (``"all"``
+        units; ``"principal"``, place and pyramidal): ``n_pairs``,
+        ``mean_difference`` with ``_low`` and ``_high``,
+        ``median_difference``, ``mean_detected`` and ``mean_truth`` (the
+        counts), ``primary_expression``, ``n_sessions``, ``n_failures``.
+    """
+    pairs = _primary_pairs(tables, matches)
+    detected = tables.events[[*_KEY, "event_index", *SELECTIONS.values()]]
+    pairs = pairs.merge(detected, on=[*_KEY, "event_index"])
+    truth = tables.truth_counts.rename(
+        columns={column: f"truth_{column}" for column in SELECTIONS.values()}
+    )
+    pairs = pairs.merge(
+        truth,
+        left_on=["session_id", "expression", "truth_row"],
+        right_on=["session_id", "expression", "row"],
+    )
+    parts = [
+        pairs[[*_KEY]].assign(
+            selection=selection,
+            detected=pairs[column].to_numpy(float),
+            truth=pairs[f"truth_{column}"].to_numpy(float),
+            difference=(pairs[column] - pairs[f"truth_{column}"]).to_numpy(float),
+        )
+        for selection, column in SELECTIONS.items()
+    ]
+    long = _with_replicate(
+        _concat(parts, [*_KEY, "selection", "detected", "truth", "difference"]), tables
+    )
+    by = ["method", "setting", "selection"]
+    intervals = grouped_intervals(
+        long,
+        by,
+        _means("difference"),
+        ["mean_difference"],
+        ["difference"],
+        n_resamples=n_resamples,
+    )
+    summary = long.groupby(by).agg(
+        n_pairs=("difference", "size"),
+        median_difference=("difference", "median"),
+        mean_detected=("detected", "mean"),
+        mean_truth=("truth", "mean"),
+    )
+    effect = intervals.join(summary, on=by)
+    columns = [
+        *by,
+        "n_pairs",
+        "mean_difference",
+        "mean_difference_low",
+        "mean_difference_high",
+        "median_difference",
+        "mean_detected",
+        "mean_truth",
+    ]
+    return _in_order(_with_failures(effect[columns], tables), "selection", tuple(SELECTIONS))
 
 
 # Figures (matplotlib is imported only inside them)

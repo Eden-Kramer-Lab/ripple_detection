@@ -79,9 +79,11 @@ def _write_run(run, root, sessions, condition_id="reference"):
     """A finished run of one condition in the runner's schema, combined.
 
     Each session is a dict: its ``events`` and ``non_events`` tables,
-    ``duration`` in seconds, and ``detected``, each (method, setting)'s
-    ``[start, end]`` rows, None for a call that failed. Scores come from the
-    runner's own ``score_events``."""
+    ``duration`` in seconds, ``detected``, each (method, setting)'s
+    ``[start, end]`` rows, None for a call that failed, and optionally
+    ``spikes`` (``time``, ``multiunit``, ``unit_types``), from which the
+    runner's own counters count the active units of every event and truth
+    window. Scores come from the runner's own ``score_events``."""
     outputs = []
     for replicate, spec in enumerate(sessions):
         session_id = f"{condition_id}/{replicate}"
@@ -103,13 +105,16 @@ def _write_run(run, root, sessions, condition_id="reference"):
             detected = pd.DataFrame(
                 np.reshape(bounds, (-1, 2)), columns=["start_time", "end_time"]
             )
+            active = (0, 0)
+            if "spikes" in spec:
+                active = run.active_counts(np.reshape(bounds, (-1, 2)), spec["spikes"])
             events.append(
                 detected.assign(
                     **key,
                     event_index=np.arange(len(detected)),
                     peak_time=detected.mean(axis=1),
-                    n_active_units=0,
-                    n_active_principal=0,
+                    n_active_units=active[0],
+                    n_active_principal=active[1],
                 )[list(run.EVENT_COLUMNS)]
             )
             scores = run.score_events(windows, detected, minutes_outside)
@@ -123,9 +128,23 @@ def _write_run(run, root, sessions, condition_id="reference"):
                     SimpleNamespace(events=spec["events"], non_events=spec["non_events"]),
                     session_id,
                 ),
-                truth_counts=pd.DataFrame(columns=list(run.TRUTH_COUNT_COLUMNS)),
+                truth_counts=(
+                    run._truth_counts(windows, spec["spikes"], session_id)
+                    if "spikes" in spec
+                    else pd.DataFrame(columns=list(run.TRUTH_COUNT_COLUMNS))
+                ),
                 ripple_channels=pd.DataFrame(columns=list(run.RIPPLE_CHANNEL_COLUMNS)),
-                units=pd.DataFrame(columns=list(run.UNIT_COLUMNS)),
+                units=pd.DataFrame(
+                    {
+                        "session_id": session_id,
+                        "unit": np.arange(len(spec["spikes"].unit_types)),
+                        "unit_type": spec["spikes"].unit_types,
+                        "baseline_rate": 0.0,
+                    }
+                    if "spikes" in spec
+                    else {},
+                    columns=list(run.UNIT_COLUMNS),
+                ),
                 methods=pd.DataFrame(records, columns=list(run.METHOD_COLUMNS)),
                 events=run._concat(events, run.EVENT_COLUMNS),
                 metrics=run._concat(metrics, run.METRIC_COLUMNS),
@@ -1098,6 +1117,106 @@ def test_robustness_crossed_cells(analyze):
         ["ripple_snr,participation", "reference", "high"],
     ]
     assert recall.change.tolist() == pytest.approx([-0.2, -0.3, 0.0, 0.1])
+
+
+def _spiking_session(run, origin):
+    """The tiny session's events, recruited cells (10 in the swr's burst, 2,
+    6 and 4 in the others'), and three units: a recruited pyramidal cell that
+    stays silent, an interneuron firing at the swr's peak and a place cell
+    firing inside its network window but past its ripple's. Kay's events
+    are the swr ripple's window and the doublet's first; Karlsson's is the
+    swr ripple's, stretched to the place cell's spike."""
+    session = _tiny_session(run, origin)
+    events = session["events"]
+    recruited = {0: 10, 1: 2, 2: 6, 3: 4}
+    burst = events.expression == "burst"
+    events.loc[burst, "n_participants"] = events.loc[burst, "event_id"].map(recruited)
+    time = origin + np.arange(0, 20.0, 0.001)
+    multiunit = np.zeros((len(time), 3))
+    multiunit[np.searchsorted(time, origin + 2.0), 1] = 1
+    multiunit[np.searchsorted(time, origin + 2.055), 2] = 1
+    ripples = rd.truth_windows(events, 0.1, "ripple")[["start_time", "end_time"]].to_numpy()
+    session["spikes"] = SimpleNamespace(
+        time=time,
+        multiunit=multiunit,
+        unit_types=np.array(["pyramidal", "interneuron", "place"]),
+    )
+    session["detected"] = {
+        KAY: ripples[[0, 2]],
+        KARLSSON: np.array([[ripples[0, 0], origin + 2.056]]),
+    }
+    return session
+
+
+@pytest.fixture(scope="module")
+def spiking_run(run, tmp_path_factory):
+    sessions = [_spiking_session(run, 0.0), _spiking_session(run, UNIX_ORIGIN)]
+    return _write_run(run, tmp_path_factory.mktemp("spiking"), sessions)
+
+
+def test_boundary_effect_is_zero_for_equal_bounds(analyze, spiking_run):
+    tables = analyze.load_run(spiking_run)
+    matches = analyze.match_run(tables)
+    effect = _by(
+        analyze.boundary_effect(tables, matches, n_resamples=FEW), "method", "selection"
+    )
+    # Kay's bounds are the truth's: the same units either way, although the
+    # recruited pyramidal cell was silent, the interneuron fired and the
+    # network window is wider
+    for selection in ("all", "principal"):
+        row = effect.loc[(KAY[0], selection)]
+        assert (row.n_pairs, row.mean_difference, row.median_difference) == (4, 0.0, 0.0)
+    assert effect.loc[(KAY[0], "all"), ["mean_detected", "mean_truth"]].tolist() == [0.5, 0.5]
+    # Karlsson's longer event also holds the place cell's spike
+    for selection in ("all", "principal"):
+        row = effect.loc[(KARLSSON[0], selection)]
+        assert (row.n_pairs, row.mean_difference) == (2, 1.0)
+        assert row.mean_difference_low == row.mean_difference_high == 1.0
+
+
+def test_participation_bias_by_hand(analyze, spiking_run):
+    tables = analyze.load_run(spiking_run)
+    matches = analyze.match_run(tables)
+    bias = _by(analyze.participation_bias(tables, matches, n_resamples=FEW), "method")
+    # every session: bursts of 10, 2, 6 and 4 recruited cells, mean 5.5; Kay
+    # finds the swr (10) and the doublet (4), Karlsson the swr
+    kay = bias.loc[KAY[0]]
+    assert [kay.n_matched_events, kay.n_events] == [4, 8]
+    assert [kay.mean_matched, kay.mean_all] == [7.0, 5.5]
+    assert kay.ratio_of_means == pytest.approx(7 / 5.5)
+    assert kay.ks_statistic == pytest.approx(0.25)
+    assert bias.loc[KARLSSON[0], "ratio_of_means"] == pytest.approx(10 / 5.5)
+
+
+def test_rates_by_state_by_hand(analyze, tiny_tables):
+    bouts = {session: np.array([[10.0, 15.0]]) for session in tiny_tables.truth}
+    bouts["reference/1"] = bouts["reference/1"] + UNIX_ORIGIN
+    rates = _by(
+        analyze.rates_by_state(tiny_tables, bouts=bouts, n_resamples=FEW), "method", "state"
+    )
+    # Kay: one event (12 s) in the 5 s bout, five in the other 15 s, per session
+    kay = rates.loc[KAY[0]]
+    assert kay.n_events.tolist() == [10, 2]
+    assert kay.rate.tolist() == pytest.approx([20.0, 12.0])
+    # five network events per 15 s of rest, no theta burst in the bout
+    assert kay.true_rate.tolist() == pytest.approx([20.0, 0.0])
+    # Mallory, on its one session: the EMG burst (14 s) in the bout
+    assert rates.loc[MALLORY[0], "n_events"].tolist() == [4, 1]
+    assert rates.loc[MALLORY[0], "minutes"].tolist() == pytest.approx([0.25, 5 / 60])
+
+
+def test_session_bouts_are_the_simulated_schedule(analyze, benchmark_import):
+    conditions = benchmark_import("conditions")
+    rng = np.random.default_rng(conditions.stage_seeds(3)[0])
+    expected = conditions.running_schedule(200.0, rng)
+    rest = 200.0 - np.diff(expected, axis=1).sum()
+    sessions = pd.DataFrame(
+        {"session_id": ["x/3"], "replicate": [3], "duration_s": [200.0], "rest_s": [rest]}
+    )
+    assert len(expected)
+    assert np.array_equal(analyze.session_bouts(sessions)["x/3"], expected)
+    with pytest.raises(ValueError, match="x/3: the running schedule drawn again"):
+        analyze.session_bouts(sessions.assign(rest_s=rest - 1))
 
 
 def test_the_command_writes_every_table_and_the_summary(analyze, tiny_run, tmp_path):
