@@ -374,12 +374,23 @@ def sign_flip_test(
         return float("nan")
     observed = abs(d.mean())
     if d.size <= _EXACT_UP_TO:
-        signs = np.array(list(itertools.product((-1.0, 1.0), repeat=d.size)))
-        null = np.abs((signs * d).mean(axis=1))
+        null = np.abs((_sign_vectors(d.size, 0, 0) * d).mean(axis=1))
         return float((null >= observed - _TIE).mean())
-    signs = np.random.default_rng(seed).choice((-1.0, 1.0), size=(n_resamples, d.size))
-    null = np.abs((signs * d).mean(axis=1))
+    null = np.abs((_sign_vectors(d.size, n_resamples, seed) * d).mean(axis=1))
     return float(((null >= observed - _TIE).sum() + 1) / (n_resamples + 1))
+
+
+@functools.cache
+def _sign_vectors(n_units: int, n_resamples: int, seed: int) -> np.ndarray[Any, Any]:
+    """``sign_flip_test``'s sign vectors, shape (n_flips, n_units): every one
+    for up to 16 units (``n_resamples`` and ``seed`` 0), else ``n_resamples``
+    drawn with ``seed``. Kept for the next call of the same size, read-only."""
+    if n_units <= _EXACT_UP_TO:
+        signs = np.array(list(itertools.product((-1.0, 1.0), repeat=n_units)))
+    else:
+        signs = np.random.default_rng(seed).choice((-1.0, 1.0), size=(n_resamples, n_units))
+    signs.flags.writeable = False
+    return signs
 
 
 def is_held_out(replicate: int) -> bool:
