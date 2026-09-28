@@ -152,8 +152,9 @@ universal one-sample agreement. Truth at any fraction retains the same component
 
 Phase 4 adds `examples/benchmark/validate_simulator.py`, using `conditions.py` and the public
 simulator only. It does not import detector/recipe APIs or execute detection. Its CLI accepts the same condition
-selection and duration overrides as `run.py`; by default it validates all 43 conditions on five
-replicates (10000–10004), separate from benchmark replicates. Process sessions one at a time and
+selection and duration overrides as `run.py`; by default it validates all 43 conditions on twenty
+replicates (10000–10019; five until the maintainer raised it on 2026-09-27, see designs.md
+"As implemented in phase 4"), separate from benchmark replicates. Process sessions one at a time and
 retain summaries, not full arrays. Use matched noise-only renders and isolated components when
 needed; fixed renderer random substreams keep the underlying noise and unit draws comparable.
 

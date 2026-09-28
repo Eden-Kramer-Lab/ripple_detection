@@ -770,6 +770,44 @@ output size for the full grid at the requested worker count. Decision rules:
   metrics only elsewhere;
 - workers = min(requested, free cores − 1, ⌊0.7 × available memory / peak memory per session⌋).
 
+As implemented in phase 4 (2026-09-27), where the plan left a choice open or the maintainer
+decided during the phase:
+
+- **Seeding.** `default_rng(session_seed(k))` draws four int64 seeds at once, one per stage
+  (schedule, events, non-events, render; `conditions.stage_seeds`), so a factor that changes
+  one stage's draw count leaves the others' streams alone (`event_rate=0.6` keeps the
+  reference's schedule, rates and non-events). The coupled-strength alternative redraws each
+  burst's participation by design, so "the reference's burst participants" holds for the other
+  five alternatives only; coupled shares the per-unit draws, and the test checks that.
+- **Reference revisions**, both chosen by the maintainer after the first validation report and
+  recorded in `conditions.REFERENCE_REVISIONS` (the report lists them): the ripple span range
+  from (0.03, 0.15) to (0.042, 0.21) s (the smallest 0.1-step scale, 1.4, whose calibrated swr
+  RMS-duration median lies inside the 40-60 ms target by two standard errors; 33.3 ms at 1.0,
+  42.7 at 1.4), then the burst gain from 40 to 34 (the whole gain whose reference
+  pyramidal-rate ratio is closest to Csicsvari et al. 1999's 8.6; 8.64 at 34), since the
+  longer bursts had put that ratio at the target's upper bound. Calibrations used replicates
+  20000-20019, never the report's, and no detector. The package defaults are unchanged; the
+  `draw_network_events` docstring says the benchmark's reference differs.
+- **Validation.** 20 replicates (10000-10019) per condition, not 5 (the maintainer's decision:
+  with 5, the pyramidal gain under coupling failed by sampling noise); a report with fewer
+  cannot back a run. `measurements.csv` (37 MB) is git-ignored: its hash stays in spec.json, a
+  present copy must match, none is required. The report also records the validator's source
+  hash, per-session runtime and memory, and the revisions; rendering checks carry explicit
+  applicability, and a check that measured nothing fails. Report v1: ready.
+- **Runner.** Only the method call is guarded: benchmark input preparation and scoring raise.
+  Warnings are recorded in `warnings.csv`. Condition ids are parsed by longest known id
+  (crossed ids contain a comma) and then looked up, never re-joined: a first full run lost
+  `ripple_snr=high` and `participation=low` that way and was discarded. The git commit carries
+  a dirty flag; resume refuses a dirty or unknown commit. `--combine` stages `combined/` and
+  records included and missing conditions. Recipe recordings take an int16 copy of the counts
+  (identical results, 7 s less per session).
+- **Measured** (reference session, 600 s, a machine shared with other work): 74 s and 3.56 GiB
+  per session, the heaviest condition 5.0 GB; validation 11 s per session; the full run
+  (43 conditions, 440 sessions, 5 workers) 2 h 23 min wall, 8.9 CPU hours, 2.3 GB
+  written; 135 explicit failures (single-channel condition, Yu under brown noise).
+- **Not changed, noted:** sharing each detector's threshold-independent trace across its sweep
+  points would save about 20% of detection time but needs a package API.
+
 ## Operating curves
 
 Per detector, condition, expression and `minimum_iou`, pooled over sessions: at each setting,
