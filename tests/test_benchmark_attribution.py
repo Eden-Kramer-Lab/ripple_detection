@@ -1275,7 +1275,7 @@ def test_smoke(attribution, recipes, short_run, monkeypatch):
     d = len(attribution.factor_space(recipes, "lfp"))
     assert report["d"] == d
     assert report["n_in_space"] == 4
-    assert report["configurations_timed"] == attribution.SMOKE_CONFIGURATIONS
+    assert report["configurations_timed"] == attribution.SMOKE_ROWS * (d + 2)
     assert report["configurations"]["sobol_128"] == 128 * (d + 2)
     # every subset each represented template's pair with the reference asks for
     reference = attribution.reference_template("lfp")

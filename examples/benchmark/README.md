@@ -679,12 +679,13 @@ order). Below the eight-method minimum (next section), `sobol` or `shapley` alon
 refused before anything runs, and `all` writes the one-at-a-time results and then stops
 at Sobol, unless `--below-minimum` is given, when all three run and every output is
 labelled. `--smoke` checks the run's validation report, simulates and checks reference
-session 0 as below, times 20 configurations of the Sobol design on it and prints the
-seconds per configuration, the peak memory and each analysis's configurations and hours
-at `--workers`, writing nothing. `--sobol-n` is the rows of each Sobol sample matrix, 256
-by default or 128 when the smoke test puts 256 past four hours on the workers there are
-(the tables' `sobol_n` column says which). `--run-directory` and `--results-directory`
-read and write elsewhere. Before anything
+session 0 as below, times the first two rows of every Sobol sample matrix on it,
+evaluated as the analyses evaluate them (grouped by trace and threshold core, sharing the
+session's caches), and prints the seconds per configuration, the peak memory and each
+analysis's configurations and hours at `--workers`, writing nothing. `--sobol-n` is the
+rows of each Sobol sample matrix, 256 by default or 128 when the smoke test puts 256 past
+four hours on the workers there are (the tables' `sobol_n` column says which).
+`--run-directory` and `--results-directory` read and write elsewhere. Before anything
 runs, the command checks the run's validation report (ready, and the one the run
 recorded), simulates the reference condition's first five sessions again from the saved
 parameters in `conditions.csv` (a run with a halved `duration_s` gives halved sessions)

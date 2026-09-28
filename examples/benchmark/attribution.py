@@ -57,8 +57,8 @@ family with fewer than ``MINIMUM_IN_SPACE`` represented methods (identical
 templates once) runs no Sobol or Shapley analysis: the command stops and says
 so, unless ``--below-minimum`` is given, when it runs them and every output of
 the family carries ``family_caveat``'s label (a ``caveat`` column, and the figures' titles).
-``--smoke`` evaluates ``SMOKE_CONFIGURATIONS`` configurations on one session and
-prints the cost of each analysis, writing nothing.
+``--smoke`` evaluates a slice of the Sobol design (``SMOKE_ROWS`` rows of each
+matrix) on one session and prints the cost of each analysis, writing nothing.
 
 Outputs: ``output/<run_name>/attribution/<family>_<analysis>.csv.gz`` (one row
 per configuration and ``Y``: its factors, the ``Y``, the mean and each
@@ -176,7 +176,8 @@ PERTURBATION = (0.9, 1.1)
 SHAPLEY_EXACT_UP_TO = 8
 SHAPLEY_PERMUTATIONS = 128
 N_LOWEST_PAIRS = 10
-SMOKE_CONFIGURATIONS = 20
+# The smoke test times the first this many rows of every Sobol sample matrix.
+SMOKE_ROWS = 2
 # The short session the edge cases are cut from, and the seconds of missing
 # samples its gap case puts in the middle of a sharp-wave ripple.
 EDGE_DURATION = 60.0
@@ -3207,11 +3208,13 @@ def _free_cores() -> float:
 def smoke(
     family: str, run_directory: str | os.PathLike[str], *, workers: int
 ) -> dict[str, Any]:
-    """Time ``SMOKE_CONFIGURATIONS`` configurations on one reference session.
+    """Time a slice of the Sobol design on one reference session.
 
     The run's validation report is checked first (``check_report``), as
-    before every analysis. The configurations are the first rows of ``A`` of
-    the Sobol design at ``SOBOL_N``.
+    before every analysis. The configurations are the first ``SMOKE_ROWS``
+    rows of every sample matrix of the design at ``SOBOL_N``, evaluated as
+    ``evaluate_many`` evaluates them: in ``evaluation_order``, on one
+    session's caches.
 
     Parameters
     ----------
@@ -3233,15 +3236,16 @@ def smoke(
     context_seconds = wall_clock.perf_counter() - started
     factors = factor_space(RECIPES, family)
     reference = reference_template(family)
-    a, _, _ = sobol_design(factors, reference, SOBOL_N)
+    a, b, ab = sobol_design(factors, reference, SOBOL_N)
+    pipelines = [
+        compile(template) for matrix in (a, b, *ab) for template in matrix[:SMOKE_ROWS]
+    ]
     base = compile(reference)
     context.events(base)
-    timings = []
-    for template in a[:SMOKE_CONFIGURATIONS]:
-        begun = wall_clock.perf_counter()
-        evaluate_session(compile(template), context, base)
-        timings.append(wall_clock.perf_counter() - begun)
-    seconds = float(np.mean(timings))
+    begun = wall_clock.perf_counter()
+    for position in evaluation_order(pipelines):
+        evaluate_session(pipelines[position], context, base)
+    seconds = (wall_clock.perf_counter() - begun) / len(pipelines)
     d = len(factors)
     templates = distinct_templates(family_templates(RECIPES, family))
 
@@ -3272,7 +3276,7 @@ def smoke(
         "free_cores": _free_cores(),
         "n_in_space": len(templates),
         "d": d,
-        "configurations_timed": len(timings),
+        "configurations_timed": len(pipelines),
         "seconds_per_configuration": seconds,
         "context_seconds": context_seconds,
         "peak_rss_bytes": peak_rss_bytes(),
