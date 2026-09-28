@@ -6237,6 +6237,48 @@ def _spot(
     }
 
 
+def _trend(
+    kind: str,
+    source: str,
+    statement: str,
+    method: str,
+    scoring: str,
+    condition: str,
+    value: float,
+    spot: Mapping[str, str],
+    low: float = np.nan,
+    high: float = np.nan,
+    p: float = np.nan,
+) -> dict[str, Any]:
+    """One row of ``candidate_trends``, ``spot`` its spot-check columns
+    (``_spot``)."""
+    return {
+        "kind": kind,
+        "statement": statement,
+        "source": source,
+        "method": method,
+        "scoring": scoring,
+        "condition_id": condition,
+        "value": value,
+        "low": low,
+        "high": high,
+        "p": p,
+        **spot,
+    }
+
+
+def _rank_moves(sensitivity: pd.DataFrame) -> pd.DataFrame:
+    """``order_changes``' methods whose rank moves by 3 or more from IoU 0 to
+    the last level: ``rank_0``, ``rank_last`` and ``last_level``."""
+    ranks = order_changes(sensitivity)
+    last = [column for column in ranks.columns if column.startswith("rank_")][-1:]
+    if not last:
+        return ranks.assign(rank_0=0, rank_last=0, last_level="")
+    ranks = ranks.rename(columns={last[0]: "rank_last"})
+    ranks = ranks.assign(last_level=last[0].removeprefix("rank_"))
+    return ranks[(ranks["rank_last"] - ranks["rank_0"]).abs() >= 3]
+
+
 def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     """Candidate trend statements, each with the rows that support it.
 
@@ -6270,14 +6312,21 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
 
     def add(
-        frame: pd.DataFrame,
-        order: pd.Series,
+        source: str,
+        keep: Callable[[pd.DataFrame], pd.DataFrame],
+        order: Callable[[pd.DataFrame], pd.Series],
         make: Callable[[Any], dict[str, Any]],
         per: str | None = None,
     ) -> None:
-        """The largest of ``order`` first; with ``per``, the largest of each
-        value of that column first, so one condition cannot fill the list."""
-        ranked = frame.assign(_order=order.to_numpy()).sort_values(
+        """The rows ``keep`` takes from the ``source`` table (none when it is
+        missing or empty), the largest of ``order`` first; with ``per``, the
+        largest of each value of that column first, so one condition cannot
+        fill the list."""
+        table = results.get(source)
+        if table is None or table.empty:
+            return
+        frame = keep(table)
+        ranked = frame.assign(_order=order(frame).to_numpy()).sort_values(
             "_order", ascending=False, kind="stable"
         )
         if per is not None:
@@ -6287,175 +6336,138 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
             )
         rows.extend(make(row) for row in ranked.head(_TRENDS_PER_KIND).itertuples(index=False))
 
-    robust = results.get(ROBUSTNESS_RECALL, pd.DataFrame())
-    if len(robust):
-        moved = robust[
+    def absolute(column: str) -> Callable[[pd.DataFrame], pd.Series]:
+        return lambda frame: frame[column].abs()
+
+    add(
+        ROBUSTNESS_RECALL,
+        lambda robust: robust[
             (robust["level"] != REFERENCE_LEVEL)
             & _excludes(robust, "change_low", "change_high")
-        ]
-        add(
-            moved,
-            moved["change"].abs(),
-            lambda r: {
-                "kind": "robustness",
-                "statement": (
-                    f"{r.method}'s recall against {r.primary_expression}"
-                    f"{_scored(r.scoring)} changes by {r.change:+.3f} ({r.change_low:+.3f}, "
-                    f"{r.change_high:+.3f}) from the reference to {r.condition_id}."
-                ),
-                "source": ROBUSTNESS_RECALL,
-                "method": r.method,
-                "scoring": r.scoring,
-                "condition_id": r.condition_id,
-                "value": r.change,
-                "low": r.change_low,
-                "high": r.change_high,
-                "p": r.change_p,
-                **_spot(
-                    r.condition_id, "missed" if r.change < 0 else "found", r.method, r.setting
-                ),
-            },
-            per="condition_id",
-        )
-    orders = results.get(MODEL_ORDERS, pd.DataFrame())
-    if len(orders):
-        flipped = orders[orders["supported"] & orders["reversed"]]
-        add(
-            flipped,
+        ],
+        absolute("change"),
+        lambda r: _trend(
+            "robustness",
+            ROBUSTNESS_RECALL,
+            f"{r.method}'s recall against {r.primary_expression}{_scored(r.scoring)} "
+            f"changes by {r.change:+.3f} ({r.change_low:+.3f}, {r.change_high:+.3f}) from "
+            f"the reference to {r.condition_id}.",
+            r.method,
+            r.scoring,
+            r.condition_id,
+            r.change,
+            _spot(r.condition_id, "missed" if r.change < 0 else "found", r.method, r.setting),
+            r.change_low,
+            r.change_high,
+            r.change_p,
+        ),
+        per="condition_id",
+    )
+    add(
+        MODEL_ORDERS,
+        lambda orders: orders[orders["supported"] & orders["reversed"]],
+        lambda flipped: (
             flipped["p_reversed"]
-            + (flipped["alternative_difference"] - flipped["reference_difference"]).abs(),
-            lambda r: {
-                "kind": "model_order_reversal",
-                "statement": (
-                    f"At {r.fp_target:g} false positives a minute, {r.method_a} minus "
-                    f"{r.method_b} in recall is {r.reference_difference:+.3f} in the "
-                    f"reference and {r.alternative_difference:+.3f} under {r.alternative} "
-                    f"(reversed in {r.p_reversed:.0%} of resamples)."
-                ),
-                "source": MODEL_ORDERS,
-                "method": f"{r.method_a} {r.method_b}",
-                "scoring": INTERVAL,
-                "condition_id": r.alternative,
-                "value": r.alternative_difference,
-                "low": r.alternative_low,
-                "high": r.alternative_high,
-                "p": np.nan,
-                **_spot(
-                    r.alternative, "missed", r.method_a, r.setting_a, r.method_b, r.setting_b
-                ),
-            },
-        )
-    model = results.get(MODEL_CHANGES, pd.DataFrame())
-    if len(model):
-        moved = model[
+            + (flipped["alternative_difference"] - flipped["reference_difference"]).abs()
+        ),
+        lambda r: _trend(
+            "model_order_reversal",
+            MODEL_ORDERS,
+            f"At {r.fp_target:g} false positives a minute, {r.method_a} minus "
+            f"{r.method_b} in recall is {r.reference_difference:+.3f} in the reference "
+            f"and {r.alternative_difference:+.3f} under {r.alternative} (reversed in "
+            f"{r.p_reversed:.0%} of resamples).",
+            f"{r.method_a} {r.method_b}",
+            INTERVAL,
+            r.alternative,
+            r.alternative_difference,
+            _spot(r.alternative, "missed", r.method_a, r.setting_a, r.method_b, r.setting_b),
+            r.alternative_low,
+            r.alternative_high,
+        ),
+    )
+    add(
+        MODEL_CHANGES,
+        lambda model: model[
             (model["measure"] == "recall")
             & (model["status"] == "compared")
             & _excludes(model, "change_low", "change_high")
-        ]
-        add(
-            moved,
-            moved["change"].abs(),
-            lambda r: {
-                "kind": "model_change",
-                "statement": (
-                    f"{r.method}'s recall{_scored(r.scoring)} changes by {r.change:+.3f} "
-                    f"({r.change_low:+.3f}, {r.change_high:+.3f}) under {r.alternative}."
-                ),
-                "source": MODEL_CHANGES,
-                "method": r.method,
-                "scoring": r.scoring,
-                "condition_id": r.alternative,
-                "value": r.change,
-                "low": r.change_low,
-                "high": r.change_high,
-                "p": r.change_p,
-                **_spot(
-                    r.alternative, "missed" if r.change < 0 else "found", r.method, r.setting
-                ),
-            },
-            per="alternative",
-        )
-    sensitivity = results.get(MATCHING, pd.DataFrame())
-    if len(sensitivity):
-        ranks = order_changes(sensitivity)
-        last = [column for column in ranks.columns if column.startswith("rank_")][-1:]
-        if last:
-            level = last[0].removeprefix("rank_")
-            ranks = ranks.rename(columns={last[0]: "rank_last"})
-            move = (ranks["rank_last"] - ranks["rank_0"]).abs()
-            moved = ranks[move >= 3]
-            add(
-                moved,
-                move[move >= 3],
-                lambda r: {
-                    "kind": "matching_rank",
-                    "statement": (
-                        f"{r.method}'s rank by recall among {r.primary_expression} methods "
-                        f"moves from {r.rank_0} at IoU 0 to {r.rank_last} at {level} "
-                        "(descriptive: ranks carry no interval or test)."
-                    ),
-                    "source": MATCHING,
-                    "method": r.method,
-                    "scoring": INTERVAL,
-                    "condition_id": REFERENCE_CONDITION,
-                    "value": float(r.rank_last - r.rank_0),
-                    "low": np.nan,
-                    "high": np.nan,
-                    "p": np.nan,
-                    **_spot(REFERENCE_CONDITION, "found", r.method, r.setting),
-                },
-            )
-    bias = results.get(PARTICIPATION_BIAS, pd.DataFrame())
-    if len(bias):
-        biased = bias[_excludes(bias, "ratio_of_means_low", "ratio_of_means_high", 1.0)]
-        add(
-            biased,
-            np.log(biased["ratio_of_means"]).abs(),
-            lambda r: {
-                "kind": "participation_bias",
-                "statement": (
-                    f"The true events {r.method} finds recruit {r.ratio_of_means:.2f} "
-                    f"({r.ratio_of_means_low:.2f}, {r.ratio_of_means_high:.2f}) times as "
-                    "many cells on average as all true events."
-                ),
-                "source": PARTICIPATION_BIAS,
-                "method": r.method,
-                "scoring": INTERVAL,
-                "condition_id": REFERENCE_CONDITION,
-                "value": r.ratio_of_means,
-                "low": r.ratio_of_means_low,
-                "high": r.ratio_of_means_high,
-                "p": np.nan,
-                **_spot(REFERENCE_CONDITION, "missed", r.method, r.setting),
-            },
-        )
-    effect = results.get(BOUNDARY_EFFECT, pd.DataFrame())
-    if len(effect):
-        shifted = effect[
+        ],
+        absolute("change"),
+        lambda r: _trend(
+            "model_change",
+            MODEL_CHANGES,
+            f"{r.method}'s recall{_scored(r.scoring)} changes by {r.change:+.3f} "
+            f"({r.change_low:+.3f}, {r.change_high:+.3f}) under {r.alternative}.",
+            r.method,
+            r.scoring,
+            r.alternative,
+            r.change,
+            _spot(r.alternative, "missed" if r.change < 0 else "found", r.method, r.setting),
+            r.change_low,
+            r.change_high,
+            r.change_p,
+        ),
+        per="alternative",
+    )
+    add(
+        MATCHING,
+        _rank_moves,
+        lambda moved: (moved["rank_last"] - moved["rank_0"]).abs(),
+        lambda r: _trend(
+            "matching_rank",
+            MATCHING,
+            f"{r.method}'s rank by recall among {r.primary_expression} methods moves from "
+            f"{r.rank_0} at IoU 0 to {r.rank_last} at {r.last_level} (descriptive: ranks "
+            "carry no interval or test).",
+            r.method,
+            INTERVAL,
+            REFERENCE_CONDITION,
+            float(r.rank_last - r.rank_0),
+            _spot(REFERENCE_CONDITION, "found", r.method, r.setting),
+        ),
+    )
+    add(
+        PARTICIPATION_BIAS,
+        lambda bias: bias[_excludes(bias, "ratio_of_means_low", "ratio_of_means_high", 1.0)],
+        lambda biased: np.log(biased["ratio_of_means"]).abs(),
+        lambda r: _trend(
+            "participation_bias",
+            PARTICIPATION_BIAS,
+            f"The true events {r.method} finds recruit {r.ratio_of_means:.2f} "
+            f"({r.ratio_of_means_low:.2f}, {r.ratio_of_means_high:.2f}) times as many "
+            "cells on average as all true events.",
+            r.method,
+            INTERVAL,
+            REFERENCE_CONDITION,
+            r.ratio_of_means,
+            _spot(REFERENCE_CONDITION, "missed", r.method, r.setting),
+            r.ratio_of_means_low,
+            r.ratio_of_means_high,
+        ),
+    )
+    add(
+        BOUNDARY_EFFECT,
+        lambda effect: effect[
             (effect["selection"] == "principal")
             & _excludes(effect, "mean_difference_low", "mean_difference_high")
-        ]
-        add(
-            shifted,
-            shifted["mean_difference"].abs(),
-            lambda r: {
-                "kind": "boundary_effect",
-                "statement": (
-                    f"{r.method}'s bounds change the principal units counted active in a "
-                    f"true event by {r.mean_difference:+.2f} ({r.mean_difference_low:+.2f}, "
-                    f"{r.mean_difference_high:+.2f}) on average."
-                ),
-                "source": BOUNDARY_EFFECT,
-                "method": r.method,
-                "scoring": INTERVAL,
-                "condition_id": REFERENCE_CONDITION,
-                "value": r.mean_difference,
-                "low": r.mean_difference_low,
-                "high": r.mean_difference_high,
-                "p": np.nan,
-                **_spot(REFERENCE_CONDITION, "found", r.method, r.setting),
-            },
-        )
+        ],
+        absolute("mean_difference"),
+        lambda r: _trend(
+            "boundary_effect",
+            BOUNDARY_EFFECT,
+            f"{r.method}'s bounds change the principal units counted active in a true "
+            f"event by {r.mean_difference:+.2f} ({r.mean_difference_low:+.2f}, "
+            f"{r.mean_difference_high:+.2f}) on average.",
+            r.method,
+            INTERVAL,
+            REFERENCE_CONDITION,
+            r.mean_difference,
+            _spot(REFERENCE_CONDITION, "found", r.method, r.setting),
+            r.mean_difference_low,
+            r.mean_difference_high,
+        ),
+    )
     points = results.get(OPERATING_POINTS, pd.DataFrame())
     differences = results.get(OPERATING_DIFFERENCES, pd.DataFrame())
     if len(points):
@@ -6503,27 +6515,28 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                 statement += (
                     f" {', '.join(unreached)} {verb} not reach 1 false positive a minute."
                 )
+            spot = _spot(
+                REFERENCE_CONDITION,
+                "missed",
+                first.method,
+                settings[first.method],
+                second.method,
+                settings[second.method],
+            )
             rows.append(
-                {
-                    "kind": "operating_order",
-                    "statement": statement,
-                    "source": OPERATING_DIFFERENCES,
-                    "method": first.method,
-                    "scoring": INTERVAL,
-                    "condition_id": REFERENCE_CONDITION,
-                    "value": value,
-                    "low": low,
-                    "high": high,
-                    "p": p,
-                    **_spot(
-                        REFERENCE_CONDITION,
-                        "missed",
-                        first.method,
-                        settings[first.method],
-                        second.method,
-                        settings[second.method],
-                    ),
-                }
+                _trend(
+                    "operating_order",
+                    OPERATING_DIFFERENCES,
+                    statement,
+                    first.method,
+                    INTERVAL,
+                    REFERENCE_CONDITION,
+                    value,
+                    spot,
+                    low,
+                    high,
+                    p,
+                )
             )
     return pd.DataFrame(rows, columns=list(TREND_COLUMNS))
 
