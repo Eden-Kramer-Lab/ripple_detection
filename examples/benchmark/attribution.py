@@ -585,12 +585,12 @@ class SessionContext:
     The context owns its recording (``Recording.from_arrays`` of the input
     policy's ``CONTEXT_INPUTS``: the session's LFPs, radiatum channel, spike
     counts and speed, and the place and pyramidal selections), whose arrays it
-    makes read-only, so nothing cached from them can go stale. Traces are
-    cached by the immutable parameters that make them (at most
-    ``TRACE_CACHE_SIZE``), a pipeline's events by the pipeline (at most
-    ``EVENT_CACHE_SIZE``), a partner's events by its name; ``release`` empties
-    every cache. Nothing is attached to a recording the package or a caller
-    holds.
+    makes read-only, so nothing cached from them can go stale. The binned
+    population rate is cached by its units, traces by the immutable parameters
+    that make them (at most ``TRACE_CACHE_SIZE``), a pipeline's events by the
+    pipeline (at most ``EVENT_CACHE_SIZE``), a partner's events by its name;
+    ``release`` empties every cache. Nothing is attached to a recording the
+    package or a caller holds.
 
     Parameters
     ----------
@@ -648,12 +648,14 @@ class SessionContext:
             for expression in ("network", *FAMILY_EXPRESSION.values())
         }
         self.n_runs = 0
+        self._rates: dict[str, PopulationTrace] = {}
         self._traces = _Cache(TRACE_CACHE_SIZE)
         self._events = _Cache(EVENT_CACHE_SIZE)
         self._partners: dict[str, FloatArray] = {}
 
     def release(self) -> None:
-        """Empty every cache: traces, events and partners."""
+        """Empty every cache: rates, traces, events and partners."""
+        self._rates.clear()
         self._traces.clear()
         self._events.clear()
         self._partners.clear()
@@ -672,26 +674,28 @@ class SessionContext:
 
     def population(self, units: str, smoothing_sigma: float) -> PopulationTrace:
         """``population_trace`` of ``units`` on ``BIN_WIDTH`` bins, smoothed, its
-        arrays read-only."""
-
-        def compute() -> PopulationTrace:
-            trace = population_trace(
-                self.recording,
-                bin_width=BIN_WIDTH,
-                units=self.units(units),
-                smoothing_sigma=smoothing_sigma,
+        arrays read-only: the binned rate of the units (kept until ``release``)
+        smoothed as ``population_trace`` smooths it."""
+        if units not in self._rates:
+            rate = population_trace(
+                self.recording, bin_width=BIN_WIDTH, units=self.units(units)
             )
             for values in (
-                trace.time,
-                trace.data,
-                trace.speed,
-                trace.first_sample,
-                trace.last_sample,
+                rate.time,
+                rate.data,
+                rate.speed,
+                rate.first_sample,
+                rate.last_sample,
             ):
                 _read_only(values)
-            return trace
-
-        trace: PopulationTrace = self._traces.get(("rate", units, smoothing_sigma), compute)
+            self._rates[units] = rate
+        rate = self._rates[units]
+        if not smoothing_sigma:
+            return rate
+        trace: PopulationTrace = self._traces.get(
+            ("rate", units, smoothing_sigma),
+            lambda: dataclasses.replace(rate, data=_read_only(rate.smooth(smoothing_sigma))),
+        )
         return trace
 
     def mean_envelope(self, band: tuple[float, float], channels: int | None) -> FloatArray:
