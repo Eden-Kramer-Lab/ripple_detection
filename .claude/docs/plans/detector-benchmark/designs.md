@@ -1078,6 +1078,34 @@ checked during planning (the values are in phase 6's test).
 lowest Jaccard at the reference condition. Not all pairs: 300 pairs × 256 subsets × 5 sessions is
 past a workstation.
 
+As implemented in phase 6 (2026-09-28), where the plan left a choice open or the maintainer
+decided during the phase:
+
+- **Coverage.** Templates reproduce a method only when their events equal its public call's
+  exactly (bounds, not only counts) on two 60 s edge sessions (a 20 ms gap cutting a
+  sharp-wave ripple; a Unix clock origin) and the K = 5 reference sessions of run v1, with at
+  least one event found. In-space: `spikes` 15 configurations, 14 distinct templates
+  (`grosmark_2016` equals `yang_2024` and counts once); `lfp` 4; 58 fixed points, each with
+  its reason and public-call Ys. Spike templates use 1 ms population bins and one-sample
+  minimum time above threshold (no factor for either), so other grids and run minima are
+  fixed points.
+- **Sensitivity of the verification** (`<family>_sensitivity.csv`): each template value is
+  perturbed (continuous x0.9/x1.1, other levels, integers +-1); 17 of 116 values are not
+  exercised by the verification sessions, mostly duration limits the simulated events never
+  reach and `liu_2023`'s threshold (decided by its coincidence with Long's sharp-wave
+  ripples). They still set factor ranges and the reference; the table says which.
+- **Maintainer decisions.** The bound is the factor `bound_fraction` (bound / threshold),
+  so every Sobol row and Shapley subset is valid (bound above threshold made 12.5% of Sobol
+  rows and some Shapley subsets invalid). The `lfp` family, below the minimum of eight, runs
+  every analysis anyway under `--below-minimum`, every output labelled "rests on 4 methods,
+  below the design's 8; the maintainer chose to run it".
+- **Run v1.** Sobol at N = 256 (spikes 3584 configurations, lfp 2048); Shapley against the
+  family reference for every distinct template and the ten lowest-agreement pairs; wall 9 min
+  52 s (spikes) and 6 min 42 s (lfp) at 8 workers after caching binned traces and pipeline
+  stages and grouping configurations (0.65 to 0.077 s per spike configuration, outputs
+  identical). At N = 256 the first-order estimates are noisier than the totals (spike
+  first-order estimates sum past 1); indices are read with their intervals.
+
 ## Rates and participation
 
 - **Rates by state.** Per method, events per minute in rest and in running (event assigned by its
