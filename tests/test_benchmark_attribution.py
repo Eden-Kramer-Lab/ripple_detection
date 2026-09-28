@@ -229,7 +229,7 @@ def test_every_configuration_has_a_template_or_a_reason(attribution, recipes):
     stranger = dataclasses.replace(by_id["bendor_2012"], config_id="bendor_2012.other")
     with pytest.raises(KeyError, match="neither"):
         attribution.template_of(stranger)
-    with pytest.raises(KeyError, match="No configuration 'bendor_2012.other'"):
+    with pytest.raises(KeyError, match=r"No configuration 'bendor_2012\.other'"):
         attribution._config("bendor_2012.other")
 
 
