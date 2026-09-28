@@ -616,6 +616,19 @@ class RunTables:
     conditions: tuple[str, ...]
     settings: tuple[str, ...] | None
 
+    @functools.cached_property
+    def intervals(self) -> RunTables:
+        """These tables of the interval methods alone: ``point_methods`` left
+        out of ``methods``, ``ran``, ``failures`` and ``events``, as every
+        table of bounds, overlap, timing or agreement reads them."""
+        return dataclasses.replace(
+            self,
+            methods=_by_intervals(self.methods),
+            ran=_by_intervals(self.ran),
+            failures=_by_intervals(self.failures),
+            events=_by_intervals(self.events),
+        )
+
 
 def _selection(
     frame: pd.DataFrame, sessions: Collection[str], settings: Collection[str] | None
@@ -1493,7 +1506,7 @@ def _per_method(
 def _expected_pairs(tables: RunTables, expression: str | None = None) -> pd.DataFrame:
     """Every pair of main interval methods (of one primary expression when
     given), the first first by name: ``method_a``, ``method_b``."""
-    main = _by_intervals(tables.methods)
+    main = tables.intervals.methods
     if expression is not None:
         main = main[main["primary_expression"] == expression]
     return pd.DataFrame(
@@ -1993,9 +2006,7 @@ def detection_profile(
         right_on=["session_id", "row"],
     )
     n_found = found.groupby([*_KEY, "type"]).size().rename("n_found")
-    frame = _by_intervals(tables.ran).merge(
-        pd.DataFrame({"type": rd.EVENT_TYPES}), how="cross"
-    )
+    frame = tables.intervals.ran.merge(pd.DataFrame({"type": rd.EVENT_TYPES}), how="cross")
     frame = frame.join(n_true, on=["session_id", "type"]).join(n_found, on=[*_KEY, "type"])
     profile = _pooled_ratios(
         frame.fillna({"n_true": 0, "n_found": 0}),
@@ -2004,7 +2015,7 @@ def detection_profile(
         ["n_true", "n_found"],
         n_resamples=n_resamples,
     ).rename(columns={"type": "event_type"})
-    grid = _method_grid(_by_intervals(tables.methods), {"event_type": rd.EVENT_TYPES})
+    grid = _method_grid(tables.intervals.methods, {"event_type": rd.EVENT_TYPES})
     return _per_method(profile, tables, grid, ("n_true", "n_found"))
 
 
@@ -2051,7 +2062,7 @@ def false_positive_classes(
     """
     labels = _false_positive_labels(matches)
     counted = matches.false_positives.groupby([*_KEY, "label"]).size()
-    frame = _by_intervals(tables.ran).merge(pd.DataFrame({"label": labels}), how="cross")
+    frame = tables.intervals.ran.merge(pd.DataFrame({"label": labels}), how="cross")
     frame = frame.join(counted.rename("n_events"), on=[*_KEY, "label"]).fillna({"n_events": 0})
     frame["n_unmatched"] = frame.groupby(list(_KEY))["n_events"].transform("sum")
     counts = ["n_events", "n_unmatched"]
@@ -2062,7 +2073,7 @@ def false_positive_classes(
         counts,
         n_resamples=n_resamples,
     )
-    grid = _method_grid(_by_intervals(tables.methods), {"label": labels})
+    grid = _method_grid(tables.intervals.methods, {"label": labels})
     return _per_method(classes, tables, grid, counts)
 
 
@@ -2115,8 +2126,8 @@ def consensus(tables: RunTables, matches: Matches) -> pd.DataFrame:
         .drop(columns="_rank")
         .reset_index(drop=True)
     )
-    table["n_methods_compared"] = len(_by_intervals(tables.methods))
-    table["n_failed_calls"] = len(_by_intervals(tables.failures))
+    table["n_methods_compared"] = len(tables.intervals.methods)
+    table["n_failed_calls"] = len(tables.intervals.failures)
     return table
 
 
@@ -2165,7 +2176,7 @@ def splits_and_merges(
         "merge_rate_low",
         "merge_rate_high",
     ]
-    grid = _method_grid(_by_intervals(tables.methods), {"subset": ("all", DOUBLET)})
+    grid = _method_grid(tables.intervals.methods, {"subset": ("all", DOUBLET)})
     return _per_method(rates[columns], tables, grid, counts)
 
 
@@ -2343,7 +2354,7 @@ def agreement_dendrogram(tables: RunTables, matches: Matches) -> pd.DataFrame:
         merge (``node`` n, n + 1, ..., ``method`` ``""``, the two nodes it
         joins, their distance and the leaves under it).
     """
-    methods = sorted(_by_intervals(tables.methods)["method"])
+    methods = sorted(tables.intervals.methods["method"])
     network = matches.comparisons[matches.comparisons["truth_expression"] == "network"]
     tree = agreement_linkage(
         methods, network.groupby(["method_a", "method_b"])["jaccard"].mean()
@@ -2456,7 +2467,7 @@ def error_correlations(
         ``n_failures_b``.
     """
     by = ["method_a", "method_b", "truth_expression"]
-    primary = _by_intervals(tables.methods).set_index("method")["primary_expression"]
+    primary = tables.intervals.methods.set_index("method")["primary_expression"]
     expected = _expected_pairs(tables)
     first = expected["method_a"].map(primary).to_numpy()
     shared = first == expected["method_b"].map(primary).to_numpy()
@@ -2529,14 +2540,14 @@ def overlap_quality(
     quality = quality.merge(
         _long_intervals(medians, by, OVERLAP_MEASURES), on=[*by, "measure"]
     )
-    primary = _by_intervals(tables.methods)[
-        ["method", "setting", "primary_expression"]
-    ].rename(columns={"primary_expression": "expression"})
+    primary = tables.intervals.methods[["method", "setting", "primary_expression"]].rename(
+        columns={"primary_expression": "expression"}
+    )
     found = recall(tables, matches, primary, n_resamples=n_resamples)
     quality = quality.merge(
         found[[*by, "recall", "recall_low", "recall_high"]], on=by, how="left"
     )
-    grid = _method_grid(_by_intervals(tables.methods), {"measure": OVERLAP_MEASURES})
+    grid = _method_grid(tables.intervals.methods, {"measure": OVERLAP_MEASURES})
     return _per_method(quality, tables, grid, ("n_pairs",))
 
 
@@ -2609,7 +2620,7 @@ def boundary_errors(
     """
     # each method against its primary expression, the joint event's against its
     # ripple and burst too, in EXPRESSION_ORDER
-    listed = _by_intervals(tables.methods)[["method", "setting", "primary_expression"]]
+    listed = tables.intervals.methods[["method", "setting", "primary_expression"]]
     scored = pd.DataFrame(
         [
             (method, setting, expression)
@@ -2693,7 +2704,7 @@ def paired_timing(
         per-session medians, and ``_n_dropped``, the sessions left out of it
         as not finite; then ``n_failures_a``, ``n_failures_b``.
     """
-    members = _by_intervals(tables.methods)
+    members = tables.intervals.methods
     members = members[members["primary_expression"] == expression]["method"]
     comparisons = matches.comparisons[
         (matches.comparisons["truth_expression"] == expression)
@@ -4629,7 +4640,7 @@ def matching_sensitivity(
         among methods of the same primary expression at that level);
         ``n_sessions``, ``n_failures``.
     """
-    primary = _by_intervals(tables.methods)[["method", "setting", "primary_expression"]]
+    primary = tables.intervals.methods[["method", "setting", "primary_expression"]]
     pairs = matches.pairs.merge(
         primary.rename(columns={"primary_expression": "expression"}),
         on=["method", "setting", "expression"],
@@ -4638,7 +4649,7 @@ def matching_sensitivity(
         matches.windows.groupby(["session_id", "expression"]).size().rename("n_reference")
     )
     n_events = tables.events.groupby(list(_KEY)).size().rename("n_detected")
-    frame = _by_intervals(tables.ran).merge(primary, on=["method", "setting"])
+    frame = tables.intervals.ran.merge(primary, on=["method", "setting"])
     frame = frame.join(n_truth, on=["session_id", "primary_expression"]).join(
         n_events, on=list(_KEY)
     )
@@ -4944,7 +4955,7 @@ def participation_bias(
         matched_sum="sum", matched_n="size"
     )
     every = bursts.groupby("session_id")["n_participants"].agg(all_sum="sum", all_n="size")
-    frame = _by_intervals(tables.ran).join(matched, on=list(_KEY)).join(every, on="session_id")
+    frame = tables.intervals.ran.join(matched, on=list(_KEY)).join(every, on="session_id")
     frame = frame.fillna(0.0)
     by = ["method", "setting"]
     intervals = grouped_intervals(
@@ -4997,7 +5008,7 @@ def participation_bias(
         "ratio_of_means_high",
         "ks_statistic",
     ]
-    grid = _method_grid(_by_intervals(tables.methods))
+    grid = _method_grid(tables.intervals.methods)
     return _per_method(bias[columns], tables, grid, ("n_matched_events", "n_events"))
 
 
@@ -5074,7 +5085,7 @@ def boundary_effect(
         "mean_detected",
         "mean_truth",
     ]
-    grid = _method_grid(_by_intervals(tables.methods), {"selection": tuple(SELECTIONS)})
+    grid = _method_grid(tables.intervals.methods, {"selection": tuple(SELECTIONS)})
     return _per_method(effect[columns], tables, grid, ("n_pairs",))
 
 
@@ -5127,7 +5138,7 @@ def appendix_expressions(
     n_detected = tables.events.groupby(list(_KEY)).size()
     found = matches.pairs[matches.pairs["minimum_iou"] == 0]
     n_matched = found.groupby([*by, "session_id"]).size()
-    frame = _by_intervals(tables.ran).merge(
+    frame = tables.intervals.ran.merge(
         pd.DataFrame({"expression": EXPRESSION_ORDER}), how="cross"
     )
     frame = frame.join(n_reference.rename("n_reference"), on=["session_id", "expression"])
@@ -7080,8 +7091,8 @@ def _point_lines(tables: RunTables) -> list[str]:
     points = sorted(
         set(tables.methods.loc[tables.methods["scoring"] == PEAK_CONTAINMENT, "method"])
     )
-    lengths = tables.events["end_time"] - tables.events["start_time"]
-    single = sorted(set(_by_intervals(tables.events.loc[lengths <= 0]).loc[:, "method"]))
+    events = tables.intervals.events
+    single = sorted(set(events.loc[events["end_time"] <= events["start_time"], "method"]))
     lines = [
         (
             "Point inventories ("
