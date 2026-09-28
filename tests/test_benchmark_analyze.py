@@ -1120,6 +1120,115 @@ def test_robustness_pairs_conditions_by_replicate(analyze):
     assert analyze.recall_changes(table, threshold=0.5).empty
 
 
+def _failed(scores, sessions, method, settings):
+    """``scores`` with ``method``'s rows at ``settings`` on ``sessions`` removed
+    and recorded as failures."""
+    counts, errors = scores.counts, scores.errors
+    drop = (
+        counts.session_id.isin(sessions)
+        & (counts.method == method)
+        & counts.setting.isin(settings)
+    )
+    lost = (
+        errors.session_id.isin(sessions)
+        & (errors.method == method)
+        & errors.setting.isin(settings)
+    )
+    return dataclasses.replace(
+        scores,
+        counts=counts[~drop].reset_index(drop=True),
+        errors=errors[~lost].reset_index(drop=True),
+        failures=pd.concat(
+            [scores.failures, counts.loc[drop, ["session_id", "method", "setting"]]],
+            ignore_index=True,
+        ),
+    )
+
+
+def test_paired_changes_use_only_replicates_run_in_every_condition(analyze):
+    # Kay finds 2 of 10 windows on replicates 0 and 1 and 9 on 2 and 3, in
+    # both conditions alike, but fails on 0 and 1 under low SNR; Roumis runs
+    # everywhere
+    counts = []
+    for condition in ("reference", "ripple_snr=low"):
+        for replicate, found in enumerate((2, 2, 9, 9)):
+            counts.append(_kay(condition, replicate, "default", found, 12))
+            counts.append({**_kay(condition, replicate, "default", 5, 12), "method": "Roumis"})
+    scores = _failed(
+        _hand_scores(analyze, counts),
+        ["ripple_snr=low/0", "ripple_snr=low/1"],
+        KAY[0],
+        ["default"],
+    )
+    changes = analyze.paired_changes(
+        scores,
+        ["reference", "ripple_snr=low"],
+        "reference",
+        measures=("recall",),
+        n_resamples=FEW,
+    ).set_index(["method", "condition_id"])
+    kay = changes.loc[(KAY[0], "ripple_snr=low")]
+    # both values over replicates 2 and 3, never the reference's easy and hard
+    # replicates against the other condition's easy ones alone
+    assert kay.value == pytest.approx(0.9)
+    assert changes.loc[(KAY[0], "reference"), "value"] == pytest.approx(0.9)
+    assert [kay.change, kay.change_low, kay.change_high] == pytest.approx([0.0, 0.0, 0.0])
+    assert (kay.n_replicates, kay.n_dropped, kay.n_paired, kay.n_failures) == (2, 2, 2, 2)
+    roumis = changes.loc[("Roumis", "ripple_snr=low")]
+    assert (roumis.n_replicates, roumis.n_dropped, roumis.n_failures) == (4, 0, 0)
+
+
+def _two_curves(condition, replicate, method=KAY[0]):
+    """Replicates 0 and 1 find 8 and 6 of 10 windows at settings 2.0 and 3.0,
+    the others 4 and 2, at 2 and 0.5 false positives a minute everywhere."""
+    points = ((8, 28), (6, 11)) if replicate < 2 else ((4, 24), (2, 7))
+    return _curve(condition, replicate, method, points)
+
+
+def test_sweep_recalls_use_only_replicates_with_the_whole_sweep(analyze):
+    # the same curves in the reference and under refractory spiking, but
+    # Kay's setting 3.0 fails on replicates 0 and 1 there
+    counts = []
+    for condition in ("reference", "spike_model=refractory"):
+        for replicate in range(4):
+            counts += _two_curves(condition, replicate)
+            counts += [_kay(condition, replicate, "default", 6, 11)]
+    alternative = "spike_model=refractory"
+    scores = _failed(
+        _hand_scores(analyze, counts),
+        [f"{alternative}/0", f"{alternative}/1"],
+        KAY[0],
+        ["3.0"],
+    )
+    changes, _ = analyze.model_sensitivity(scores, n_resamples=FEW)
+    at_one = changes[
+        (changes.alternative == alternative)
+        & (changes.measure == "recall_at_fp")
+        & (changes.fp_target == 1.0)
+    ].iloc[0]
+    # halfway (in log rate) between 0.4 and 0.2, both curves over replicates 2 and 3
+    assert [at_one.reference_value, at_one.value, at_one.change] == pytest.approx(
+        [0.3, 0.3, 0.0]
+    )
+    assert (at_one.status, at_one.n_replicates, at_one.n_dropped) == ("compared", 2, 2)
+
+
+def test_operating_points_pool_the_sessions_with_the_whole_sweep(analyze):
+    counts = [row for replicate in range(4) for row in _two_curves("reference", replicate)]
+    scores = _failed(_hand_scores(analyze, counts), ["reference/0"], KAY[0], ["3.0"])
+    points = analyze.operating_points(scores, n_resamples=FEW)
+    row = points[(points.minimum_iou == 0) & (points.fp_target == 1.0)].iloc[0]
+    # replicates 1, 2 and 3: recall 0.8 / 3 + 0.4 * 2 / 3 at 2 per minute, 0.6 / 3
+    # + 0.2 * 2 / 3 at 0.5, halfway between in log rate
+    assert row.recall == pytest.approx((1.6 / 3 + 1.0 / 3) / 2)
+    assert (row.n_sessions, row.n_dropped, row.n_failures) == (3, 1, 1)
+    curves = analyze.operating_curves(scores)
+    sweep = curves[(curves.minimum_iou == 0)].set_index("setting")
+    assert sweep.n_sessions.to_dict() == {"2.0": 3, "3.0": 3}
+    assert sweep.n_dropped.to_dict() == {"2.0": 1, "3.0": 0}
+    assert sweep.recall.to_dict() == pytest.approx({"2.0": 1.6 / 3, "3.0": 1.0 / 3})
+
+
 def test_robustness_crossed_cells(analyze):
     counts = []
     for condition, found in (
