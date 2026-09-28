@@ -891,6 +891,9 @@ def test_the_command_line(attribution, recipes, short_run, tmp_path, monkeypatch
     listed = [c.config_id for c in kept if c.config_id != "igata_2021"]
     assert in_space["config_id"].tolist() == listed
     assert in_space["in_space"].sum() == 4
+    # below the minimum, every table says so, the override not given
+    assert (in_space["caveat"] == "rests on 4 methods, below the design's 8").all()
+    assert attribution.family_caveat(8, below_minimum=True) == ""
     # every fixed point, scored for the family
     fixed = pd.read_csv(results / "lfp_fixed_points.csv")
     assert fixed[["config_id", "family"]].to_numpy().tolist() == [
@@ -911,3 +914,46 @@ def test_the_command_line(attribution, recipes, short_run, tmp_path, monkeypatch
     for analysis in ("sobol", "shapley"):
         with pytest.raises(SystemExit, match=refused):
             attribution.main([*arguments, "--analysis", analysis])
+
+
+def test_the_override_runs_a_family_below_the_minimum_labelled(
+    attribution, recipes, short_run, tmp_path, monkeypatch, capsys
+):
+    copy = tmp_path / "run"
+    shutil.copytree(short_run, copy)
+    results = tmp_path / "results"
+    kept = [
+        c for c in recipes if c.config_id in ("gupta_2010", *attribution.in_space_ids("lfp"))
+    ]
+    monkeypatch.setattr(attribution, "RECIPES", tuple(kept))
+    monkeypatch.setattr(attribution, "check_report", lambda directory, parameters: None)
+    sobol = attribution.sobol
+    monkeypatch.setattr(
+        attribution,
+        "sobol",
+        lambda family, run_directory, **options: sobol(
+            family, run_directory, **{**options, "n": 4}
+        ),
+    )
+    drawn = []
+    for name in ("plot_sobol", "plot_shapley"):
+        monkeypatch.setattr(
+            attribution, name, lambda *arguments, name=name, **options: (name, options)
+        )
+    monkeypatch.setattr(attribution, "_save_figure", lambda path, figure: drawn.append(figure))
+    arguments = ["--run-name", "x", "--family", "lfp", "--workers", "1"]
+    arguments += ["--run-directory", str(copy), "--results-directory", str(results)]
+    attribution.main([*arguments, "--analysis", "all", "--below-minimum"])
+    caveat = "rests on 4 methods, below the design's 8; the maintainer chose to run it"
+    assert caveat in capsys.readouterr().err
+    written = sorted(path.name for path in results.iterdir())
+    assert [name for name in written if name.endswith(("_sobol.csv", "_shapley.csv"))] == [
+        "lfp_shapley.csv",
+        "lfp_sobol.csv",
+    ]
+    tables = [*results.iterdir(), *(copy / "attribution").iterdir()]
+    assert len(tables) == len(written) + 3
+    for path in tables:
+        assert (pd.read_csv(path)["caveat"] == caveat).all(), path.name
+    assert {name for name, _ in drawn} == {"plot_sobol", "plot_shapley"}
+    assert all(options == {"caveat": caveat} for _, options in drawn)

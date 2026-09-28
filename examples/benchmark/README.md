@@ -670,6 +670,8 @@ two configurations. It reads a finished run's reference condition:
 uv run python examples/benchmark/attribution.py --run-name v1 --family spikes --smoke
 uv run python examples/benchmark/attribution.py --run-name v1 --family spikes \
     --analysis all --workers N
+uv run python examples/benchmark/attribution.py --run-name v1 --family lfp \
+    --analysis all --below-minimum --workers N
 ```
 
 `--analysis` is `oat`, `sobol`, `shapley` or `all` (the default); `--smoke` times 20
@@ -738,8 +740,14 @@ configuration order stands for both), though both are verified and listed:
 `<family>_factor_space.csv` and `<family>_reference.csv` hold both.
 
 Represented on run `v1`: **TBD (measured when the analyses run): the in-space count per
-family and its methods**. A family with fewer than eight represented methods runs no
-Sobol or Shapley analysis; the command refuses it and says so.
+family and its methods**. A family with fewer than eight represented methods (identical
+templates once) runs no Sobol or Shapley analysis: the command refuses it and says so
+unless `--below-minimum` is given. The `lfp` family has four, `pfeiffer_2015`,
+`berners_lee_2021`, `ambrose_2016` and `pfeiffer_2013_ripples`, and the maintainer chose
+to run every analysis on it regardless: each of its outputs says it "rests on 4 methods,
+below the design's 8; the maintainer chose to run it" (a `caveat` column in every table,
+and the figures' titles), and its Sobol indices and Shapley values span only the
+differences among those four.
 
 ### Outputs and how to read them
 

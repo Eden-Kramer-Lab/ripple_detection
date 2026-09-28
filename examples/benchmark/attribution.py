@@ -13,7 +13,8 @@ Usage, from the repository root (see README.md, "Attribution")::
 
     uv run python examples/benchmark/attribution.py --run-name NAME
         --family spikes|lfp [--analysis oat|sobol|shapley|all] [--workers N]
-        [--smoke] [--run-directory PATH] [--results-directory PATH]
+        [--smoke] [--below-minimum] [--run-directory PATH]
+        [--results-directory PATH]
 
 It reads a finished run's reference condition (``conditions.csv``'s saved
 parameters and ``conditions/reference/``), simulates its first ``K`` sessions
@@ -51,10 +52,12 @@ both are empty).
 
 Analyses (``--analysis``): ``oat`` (``one_at_a_time``), ``sobol`` (``sobol``, at
 ``SOBOL_N`` rows) and ``shapley`` (``shapley_pairs``). A family with fewer than
-``MINIMUM_IN_SPACE`` represented methods runs no Sobol or Shapley analysis: the
-command stops and says so. ``--smoke`` evaluates ``SMOKE_CONFIGURATIONS``
-configurations on one session and prints the cost of each analysis, writing
-nothing.
+``MINIMUM_IN_SPACE`` represented methods (identical templates once) runs no Sobol
+or Shapley analysis: the command stops and says so, unless ``--below-minimum``
+is given, when it runs them and every output of the family carries
+``family_caveat``'s label (a ``caveat`` column, and the figures' titles).
+``--smoke`` evaluates ``SMOKE_CONFIGURATIONS`` configurations on one session and
+prints the cost of each analysis, writing nothing.
 
 Outputs: ``output/<run_name>/attribution/<family>_<analysis>.csv.gz`` (one row
 per configuration and ``Y``: its factors, the ``Y``, the mean and each
@@ -2652,7 +2655,7 @@ def fixed_point_outputs(
 # Figures
 
 
-def plot_sobol(indices: pd.DataFrame, family: str) -> Any:
+def plot_sobol(indices: pd.DataFrame, family: str, *, caveat: str = "") -> Any:
     """Bars of first-order and total indices with their intervals, a panel per ``Y``.
 
     Parameters
@@ -2660,6 +2663,8 @@ def plot_sobol(indices: pd.DataFrame, family: str) -> Any:
     indices : pandas.DataFrame
         ``sobol``'s second table.
     family : str
+    caveat : str, optional
+        ``family_caveat``'s, under the title.
 
     Returns
     -------
@@ -2682,12 +2687,12 @@ def plot_sobol(indices: pd.DataFrame, family: str) -> Any:
         axis.axhline(0, color="black", linewidth=0.5)
     axes[-1, 0].set_xticks(np.arange(len(table)), table["factor"], rotation=45, ha="right")
     axes[0, 0].legend(frameon=False)
-    axes[0, 0].set_title(f"Sobol indices, {family}")
+    axes[0, 0].set_title(f"Sobol indices, {family}" + (f"\n{caveat}" if caveat else ""))
     figure.tight_layout()
     return figure
 
 
-def plot_shapley(values: pd.DataFrame, pair: str, y: str) -> Any:
+def plot_shapley(values: pd.DataFrame, pair: str, y: str, *, caveat: str = "") -> Any:
     """A waterfall of one pair's Shapley values for one ``Y``, with standard errors.
 
     Parameters
@@ -2696,6 +2701,8 @@ def plot_shapley(values: pd.DataFrame, pair: str, y: str) -> Any:
         ``shapley_pairs``' second table.
     pair : str
     y : str
+    caveat : str, optional
+        ``family_caveat``'s, under the title.
 
     Returns
     -------
@@ -2714,7 +2721,7 @@ def plot_shapley(values: pd.DataFrame, pair: str, y: str) -> Any:
     axis.axhline(float(table["v_all"].iloc[0]), color="black", linewidth=0.5)
     axis.set_xticks(np.arange(len(phi)), table["factor"], rotation=45, ha="right")
     axis.set_ylabel(y)
-    axis.set_title(pair)
+    axis.set_title(pair + (f"\n{caveat}" if caveat else ""))
     figure.tight_layout()
     return figure
 
@@ -2855,6 +2862,27 @@ def verify_family(family: str, run_directory: str | os.PathLike[str]) -> pd.Data
     return verify_all(recipes, itertools.chain(edges, reference_contexts(run_directory)))
 
 
+def family_caveat(n_distinct: int, *, below_minimum: bool) -> str:
+    """What every output of a family with too few represented methods says.
+
+    Parameters
+    ----------
+    n_distinct : int
+        The family's represented methods, identical templates once.
+    below_minimum : bool
+        Whether the maintainer chose to run Sobol and Shapley regardless.
+
+    Returns
+    -------
+    caveat : str
+        Empty at ``MINIMUM_IN_SPACE`` methods or more.
+    """
+    if n_distinct >= MINIMUM_IN_SPACE:
+        return ""
+    caveat = f"rests on {n_distinct} methods, below the design's {MINIMUM_IN_SPACE}"
+    return f"{caveat}; the maintainer chose to run it" if below_minimum else caveat
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """The command line; see the module docstring."""
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
@@ -2865,6 +2893,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument(
+        "--below-minimum",
+        action="store_true",
+        help=(
+            f"run Sobol and Shapley on a family with fewer than {MINIMUM_IN_SPACE} "
+            "represented methods, every output of the family labelled so"
+        ),
+    )
     parser.add_argument(
         "--run-directory",
         help="the run's directory (default: examples/benchmark/output/<run-name>)",
@@ -2883,12 +2919,17 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     expected = set(in_space_ids(args.family))
     n_distinct = len(distinct_ids(args.family))
+    refused = n_distinct < MINIMUM_IN_SPACE and not args.below_minimum
     refusal = (
         f"The {args.family} family has {n_distinct} represented methods, fewer than "
-        f"{MINIMUM_IN_SPACE}: no Sobol or Shapley analysis is run."
+        f"{MINIMUM_IN_SPACE}: no Sobol or Shapley analysis is run (--below-minimum "
+        "runs them, labelled)."
     )
-    if args.analysis in ("sobol", "shapley") and n_distinct < MINIMUM_IN_SPACE:
+    if args.analysis in ("sobol", "shapley") and refused:
         raise SystemExit(refusal)
+    caveat = family_caveat(n_distinct, below_minimum=args.below_minimum)
+    if caveat:
+        print(f"The {args.family} family {caveat}.", file=sys.stderr)
     verification = verify_family(args.family, run_directory)
     found = set(
         verification.loc[
@@ -2904,10 +2945,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     output = run_directory / "attribution"
     output.mkdir(parents=True, exist_ok=True)
     results.mkdir(parents=True, exist_ok=True)
-    _results_csv(results / f"{args.family}_in_space.csv", verification)
+
+    def write(name: str, frame: pd.DataFrame) -> None:
+        _results_csv(results / f"{args.family}_{name}.csv", frame.assign(caveat=caveat))
+
+    write("in_space", verification)
     space = factor_space(RECIPES, args.family)
-    _results_csv(
-        results / f"{args.family}_factor_space.csv",
+    write(
+        "factor_space",
         pd.DataFrame(
             [
                 {"factor": f.name, "kind": f.kind, "levels": json.dumps(list(f.levels))}
@@ -2915,17 +2960,14 @@ def main(argv: Sequence[str] | None = None) -> None:
             ]
         ),
     )
-    _results_csv(
-        results / f"{args.family}_reference.csv",
-        pd.DataFrame([_key_columns(reference_template(args.family))]),
-    )
-    _results_csv(
-        results / f"{args.family}_fixed_points.csv",
+    write("reference", pd.DataFrame([_key_columns(reference_template(args.family))]))
+    write(
+        "fixed_points",
         fixed_point_outputs(RECIPES, reference_contexts(run_directory), (args.family,)),
     )
     analyses = ("oat", "sobol", "shapley") if args.analysis == "all" else (args.analysis,)
     for analysis in analyses:
-        if analysis != "oat" and n_distinct < MINIMUM_IN_SPACE:
+        if analysis != "oat" and refused:
             raise SystemExit(refusal)
         started = wall_clock.perf_counter()
         if analysis == "oat":
@@ -2933,7 +2975,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         elif analysis == "sobol":
             rows, summary = sobol(args.family, run_directory, workers=args.workers)
             _save_figure(
-                results / f"{args.family}_sobol.png", plot_sobol(summary, args.family)
+                results / f"{args.family}_sobol.png",
+                plot_sobol(summary, args.family, caveat=caveat),
             )
         else:
             rows, summary = shapley_pairs(args.family, run_directory, workers=args.workers)
@@ -2941,10 +2984,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                 slug = pair.replace("|", "__").replace(".", "-")
                 _save_figure(
                     results / f"{args.family}_shapley_{slug}.png",
-                    plot_shapley(summary, pair, "jaccard_reference"),
+                    plot_shapley(summary, pair, "jaccard_reference", caveat=caveat),
                 )
-        _write_table(rows, output / f"{args.family}_{analysis}.csv.gz")
-        _results_csv(results / f"{args.family}_{analysis}.csv", summary)
+        _write_table(rows.assign(caveat=caveat), output / f"{args.family}_{analysis}.csv.gz")
+        write(analysis, summary)
         print(
             f"{args.family} {analysis}: {len(rows) // len(Y_NAMES)} configurations, "
             f"{wall_clock.perf_counter() - started:.0f} s",
