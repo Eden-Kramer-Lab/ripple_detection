@@ -1149,11 +1149,11 @@ def test_shapley_pairs(attribution, recipes, short_run):
     assert dict(zip(empty["y"], empty["value"], strict=True)) == pytest.approx(expected)
 
 
-def test_fixed_point_outputs(attribution, recipes, contexts, monkeypatch, capsys):
+def test_fixed_point_outputs(attribution, run, recipes, contexts, monkeypatch, capsys):
     chosen = [
         c for c in recipes if c.config_id in ("gupta_2010", "mallory_2025", "igata_2021")
     ]
-    original = attribution.run_recipe
+    original = run.run_recipe
 
     def fails_at_the_unix_origin(config, recording, intervals):
         if config.config_id == "mallory_2025" and recording.time[0] > 0:
@@ -1161,7 +1161,7 @@ def test_fixed_point_outputs(attribution, recipes, contexts, monkeypatch, capsys
             raise ValueError(message)
         return original(config, recording, intervals)
 
-    monkeypatch.setattr(attribution, "run_recipe", fails_at_the_unix_origin)
+    monkeypatch.setattr(run, "run_recipe", fails_at_the_unix_origin)
     # a failure the run recorded is kept as data, and printed
     recorded = {("mallory_2025", "edge/unix_origin")}
     table = attribution.fixed_point_outputs(chosen, contexts, recorded=recorded)
@@ -1189,7 +1189,7 @@ def test_fixed_point_outputs(attribution, recipes, contexts, monkeypatch, capsys
         message = "no intervals"
         raise KeyError(message)
 
-    monkeypatch.setattr(attribution, "behavior_intervals", broken_inputs)
+    monkeypatch.setattr(run, "behavior_intervals", broken_inputs)
     with pytest.raises(KeyError, match="no intervals"):
         attribution.fixed_point_outputs(chosen, contexts, recorded=recorded)
 

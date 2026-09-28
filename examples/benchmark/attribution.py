@@ -110,17 +110,15 @@ from recipe_configs import (
     _POLICY,
     RECIPES,
     RecipeConfig,
-    behavior_intervals,
     external_ripples,
-    make_recording,
     rest_intervals,
-    run_recipe,
 )
 from run import (
     _REPORT_IDENTITY,
     OUTPUT,
     RIPPLE_CHANNEL_COLUMNS,
     _integer_counts,
+    _recipe_call,
     _write_table,
     load_truth,
     read_table,
@@ -561,7 +559,10 @@ class _Cache:
 
 def _counted(session: rd.SimulatedSession) -> rd.SimulatedSession:
     """The runner's integer copy of the spike counts where it holds them exactly
-    (``run._integer_counts``); counts with missing (NaN) samples stay float."""
+    (``run._integer_counts``); counts with missing (NaN) samples stay float,
+    and a session counted already (a context's) is returned as it is."""
+    if session.multiunit.dtype == np.int16:
+        return session
     with np.errstate(invalid="ignore"):
         return _integer_counts(session)
 
@@ -1337,11 +1338,10 @@ def recipe_events(config: RecipeConfig, session: rd.SimulatedSession) -> FloatAr
 def _public_call(
     config: RecipeConfig, session: rd.SimulatedSession
 ) -> Callable[[], pd.DataFrame]:
-    """A configuration's public call on a session, its inputs built (an error
-    building them raises here, as in the runner, never as the method's)."""
-    recording = make_recording(_counted(session), config)
-    intervals = behavior_intervals(session, config)
-    return lambda: run_recipe(config, recording, intervals)
+    """A configuration's public call on a session, its inputs built by the
+    runner's ``_recipe_call`` (an error building them raises here, as in the
+    runner, never as the method's)."""
+    return _recipe_call(config, session, lambda: _counted(session))()
 
 
 @dataclasses.dataclass(frozen=True)
