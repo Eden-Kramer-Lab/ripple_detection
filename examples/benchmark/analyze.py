@@ -1387,32 +1387,38 @@ def grouped_intervals(
     return keys
 
 
-def _with_failures(frame: pd.DataFrame, tables: RunTables) -> pd.DataFrame:
-    """A per-method table with each method's ``primary_expression``,
-    ``n_sessions`` and ``n_failures`` (``failure_counts``) added."""
-    counts = failure_counts(tables)[
-        ["method", "setting", "primary_expression", "n_sessions", "n_failures"]
-    ]
-    return frame.merge(counts, on=["method", "setting"], how="left")
-
-
-def _every_method(
-    frame: pd.DataFrame,
-    methods: pd.DataFrame,
-    keys: Mapping[str, Sequence[Any]] | None = None,
-    zero: Sequence[str] = (),
+def _method_grid(
+    methods: pd.DataFrame, keys: Mapping[str, Sequence[Any]] | None = None
 ) -> pd.DataFrame:
-    """``frame`` with a row for every method and setting of ``methods`` and
-    every combination of ``keys``' values, in that order: a method that never
-    ran keeps its rows, its counts (``zero``) 0 and every other value missing,
-    so a complete failure stays in the table rather than dropping out."""
+    """Every method and setting of ``methods``, in order, with every
+    combination of ``keys``' values, in their order."""
     grid = methods[["method", "setting"]].drop_duplicates().reset_index(drop=True)
     for column, values in (keys or {}).items():
         grid = grid.merge(pd.DataFrame({column: list(values)}), how="cross")
-    on = list(grid.columns)
-    full = grid.merge(frame, on=on, how="left")
+    return grid
+
+
+def _on_grid(
+    frame: pd.DataFrame, grid: pd.DataFrame, zero: Sequence[str] = ()
+) -> pd.DataFrame:
+    """``frame``'s columns on every row of ``grid``, in its order: a row
+    ``frame`` lacks has its counts (``zero``) 0 and every other value
+    missing, so a method, or a pair, that never ran stays in the table."""
+    full = grid.merge(frame, on=list(grid.columns), how="left")
     full[list(zero)] = full[list(zero)].fillna(0).astype(int)
     return full[list(frame.columns)]
+
+
+def _per_method(
+    frame: pd.DataFrame, tables: RunTables, grid: pd.DataFrame, zero: Sequence[str] = ()
+) -> pd.DataFrame:
+    """A per-method table on every row of ``grid`` (``_on_grid``), with
+    each method's ``primary_expression``, ``n_sessions`` and ``n_failures``
+    (``failure_counts``) last."""
+    counts = failure_counts(tables)[
+        ["method", "setting", "primary_expression", "n_sessions", "n_failures"]
+    ]
+    return _on_grid(frame, grid, zero).merge(counts, on=["method", "setting"], how="left")
 
 
 def _expected_pairs(tables: RunTables, expression: str | None = None) -> pd.DataFrame:
@@ -1424,17 +1430,6 @@ def _expected_pairs(tables: RunTables, expression: str | None = None) -> pd.Data
     return pd.DataFrame(
         list(itertools.combinations(sorted(main["method"]), 2)),
         columns=["method_a", "method_b"],
-    )
-
-
-def _in_order(frame: pd.DataFrame, column: str, order: Sequence[str]) -> pd.DataFrame:
-    """``frame`` sorted by method, setting and then ``column`` in ``order``."""
-    rank = {value: position for position, value in enumerate(order)}
-    return (
-        frame.assign(_rank=frame[column].map(rank))
-        .sort_values(["method", "setting", "_rank"], kind="stable")
-        .drop(columns="_rank")
-        .reset_index(drop=True)
     )
 
 
@@ -1956,13 +1951,8 @@ def detection_profile(
     )
     totals = frame.groupby(by)[["n_true", "n_found"]].sum().astype(int).reset_index()
     profile = totals.merge(intervals, on=by).rename(columns={"type": "event_type"})
-    profile = _every_method(
-        profile,
-        _by_intervals(tables.methods),
-        {"event_type": rd.EVENT_TYPES},
-        ("n_true", "n_found"),
-    )
-    return _in_order(_with_failures(profile, tables), "event_type", rd.EVENT_TYPES)
+    grid = _method_grid(_by_intervals(tables.methods), {"event_type": rd.EVENT_TYPES})
+    return _per_method(profile, tables, grid, ("n_true", "n_found"))
 
 
 def _false_positive_labels(matches: Matches) -> list[str]:
@@ -2020,13 +2010,9 @@ def false_positive_classes(
         n_resamples=n_resamples,
     )
     totals = frame.groupby(by)[["n_events", "n_unmatched"]].sum().astype(int).reset_index()
-    classes = _every_method(
-        totals.merge(intervals, on=by),
-        _by_intervals(tables.methods),
-        {"label": labels},
-        ("n_events", "n_unmatched"),
-    )
-    return _in_order(_with_failures(classes, tables), "label", labels)
+    grid = _method_grid(_by_intervals(tables.methods), {"label": labels})
+    classes = totals.merge(intervals, on=by)
+    return _per_method(classes, tables, grid, ("n_events", "n_unmatched"))
 
 
 def consensus(tables: RunTables, matches: Matches) -> pd.DataFrame:
@@ -2131,10 +2117,8 @@ def splits_and_merges(
         "merge_rate_low",
         "merge_rate_high",
     ]
-    rates = _every_method(
-        rates[columns], _by_intervals(tables.methods), {"subset": ("all", DOUBLET)}, counts
-    )
-    return _in_order(_with_failures(rates, tables), "subset", ("all", DOUBLET))
+    grid = _method_grid(_by_intervals(tables.methods), {"subset": ("all", DOUBLET)})
+    return _per_method(rates[columns], tables, grid, counts)
 
 
 def _minutes_outside(sessions: pd.DataFrame) -> pd.Series:
@@ -2193,10 +2177,10 @@ def point_inventories(
     )
     totals = frame.groupby(by)[[*counts, "minutes"]].sum().reset_index()
     table = totals.astype(dict.fromkeys(counts, int)).merge(intervals, on=by)
-    points = tables.methods[tables.methods["scoring"] == PEAK_CONTAINMENT]
-    table = _every_method(table, points, zero=counts).fillna({"minutes": 0.0})
+    grid = _method_grid(tables.methods[tables.methods["scoring"] == PEAK_CONTAINMENT])
+    table = _per_method(table, tables, grid, counts).fillna({"minutes": 0.0})
     table.insert(2, "scoring", PEAK_CONTAINMENT)
-    return _with_failures(table, tables)
+    return table
 
 
 def _with_pair_failures(frame: pd.DataFrame, tables: RunTables) -> pd.DataFrame:
@@ -2225,25 +2209,22 @@ def _session_means(
     ``expected`` (``method_a``, ``method_b``, ``truth_expression``) has a
     row, a pair never compared its values missing and ``n_sessions`` 0;
     default every pair of main interval methods against the network truth."""
-    frame = comparisons
     by = ["method_a", "method_b", "truth_expression"]
     means = grouped_intervals(
-        frame, by, _means(*columns), list(columns), n_resamples=n_resamples
+        comparisons, by, _means(*columns), list(columns), n_resamples=n_resamples
     )
     counted = [f"{column}_n_sessions" for column in columns]
     finite = pd.DataFrame(
-        np.isfinite(frame[list(columns)].to_numpy(dtype=float)), columns=counted
+        np.isfinite(comparisons[list(columns)].to_numpy(dtype=float)), columns=counted
     )
-    n_finite = finite.groupby([frame[column].to_numpy() for column in by]).sum()
+    n_finite = finite.groupby([comparisons[column].to_numpy() for column in by]).sum()
     n_finite.index.names = by
-    means = means.join(frame.groupby(by).size().rename("n_sessions"), on=by).join(
+    means = means.join(comparisons.groupby(by).size().rename("n_sessions"), on=by).join(
         n_finite, on=by
     )
     if expected is None:
         expected = _expected_pairs(tables).assign(truth_expression="network")
-    means = expected[by].merge(means, on=by, how="left")
-    zero = ["n_sessions", *counted]
-    means[zero] = means[zero].fillna(0).astype(int)
+    means = _on_grid(means, expected[by], ["n_sessions", *counted])
     order = [
         f"{column}{part}"
         for column in columns
@@ -2525,10 +2506,8 @@ def overlap_quality(
     quality = quality.merge(
         found[[*by, "recall", "recall_low", "recall_high"]], on=by, how="left"
     )
-    quality = _every_method(
-        quality, _by_intervals(tables.methods), {"measure": OVERLAP_MEASURES}, ("n_pairs",)
-    )
-    return _in_order(_with_failures(quality, tables), "measure", OVERLAP_MEASURES)
+    grid = _method_grid(_by_intervals(tables.methods), {"measure": OVERLAP_MEASURES})
+    return _per_method(quality, tables, grid, ("n_pairs",))
 
 
 def _long_intervals(
@@ -2562,9 +2541,9 @@ def _errors(pairs: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
 def _split_error_names(frame: pd.DataFrame) -> pd.DataFrame:
     """``measure`` ``<boundary>_<measure>_<percent>`` as ``fraction``,
     ``boundary`` and ``measure`` columns."""
-    parts = frame["measure"].str.split("_", expand=True)
+    parts = frame["measure"].str.split("_")
     return frame.assign(
-        fraction=parts[2].astype(int) / 100, boundary=parts[0], measure=parts[1]
+        fraction=parts.str[2].astype(int) / 100, boundary=parts.str[0], measure=parts.str[1]
     )
 
 
@@ -2598,13 +2577,18 @@ def boundary_errors(
         a method that finds only easy events can time them better;
         ``primary_expression``, ``n_sessions``, ``n_failures``.
     """
-    scored = _by_intervals(tables.methods)[["method", "setting", "primary_expression"]].rename(
-        columns={"primary_expression": "expression"}
-    )
-    joint = scored[scored["expression"] == "network"]
-    scored = pd.concat(
-        [scored, *(joint.assign(expression=expression) for expression in ("ripple", "burst"))],
-        ignore_index=True,
+    # each method against its primary expression, the joint event's against its
+    # ripple and burst too, in EXPRESSION_ORDER
+    listed = _by_intervals(tables.methods)[["method", "setting", "primary_expression"]]
+    scored = pd.DataFrame(
+        [
+            (method, setting, expression)
+            for method, setting, primary in listed.itertuples(index=False)
+            for expression in (
+                (primary, "ripple", "burst") if primary == "network" else (primary,)
+            )
+        ],
+        columns=["method", "setting", "expression"],
     )
     pairs = matches.pairs[matches.pairs["minimum_iou"] == 0].merge(
         scored, on=["method", "setting", "expression"]
@@ -2619,10 +2603,6 @@ def boundary_errors(
     errors = errors.merge(
         found[[*by, "recall", "recall_low", "recall_high"]], on=by, how="left"
     )
-    # every method scored, each expression and measure, whether it ran or not
-    grid = scored.merge(pd.DataFrame({"measure": names}), how="cross")
-    errors = grid.merge(errors, on=[*by, "measure"], how="left").fillna({"n_pairs": 0})
-    errors = _split_error_names(errors.astype({"n_pairs": int}))
     columns = [
         *by,
         "fraction",
@@ -2637,18 +2617,10 @@ def boundary_errors(
         "median_low",
         "median_high",
     ]
-    errors = _with_failures(errors[columns], tables)
-    rank = {expression: position for position, expression in enumerate(EXPRESSION_ORDER)}
-    return (
-        errors.assign(_rank=errors["expression"].map(rank))
-        .sort_values(
-            ["method", "setting", "_rank", "fraction", "boundary", "measure"],
-            ascending=[True, True, True, True, False, False],
-            kind="stable",
-        )
-        .drop(columns="_rank")
-        .reset_index(drop=True)
-    )
+    # every method scored, each expression and measure, whether it ran or not
+    measures = _split_error_names(pd.DataFrame({"measure": names}))
+    grid = scored.merge(measures[["fraction", "boundary", "measure"]], how="cross")
+    return _per_method(_split_error_names(errors)[columns], tables, grid, ("n_pairs",))
 
 
 def paired_timing(
@@ -4661,9 +4633,7 @@ def matching_sensitivity(
         ["recall", "precision", "f1"],
         n_resamples=n_resamples,
     )
-    totals = counted.groupby([*by, "primary_expression"])[
-        ["n_reference", "n_detected", "n_matched"]
-    ].sum()
+    totals = counted.groupby(by)[["n_reference", "n_detected", "n_matched"]].sum()
     table = totals.astype(int).reset_index().merge(intervals, on=by)
     grouped = pairs.assign(
         abs_onset=pairs["onset_error_10"].abs(), abs_offset=pairs["offset_error_10"].abs()
@@ -4707,19 +4677,13 @@ def matching_sensitivity(
                 on=["method", "minimum_iou"],
                 how="left",
             )
-    table = _every_method(
-        table,
-        primary,
-        {"minimum_iou": MATCH_IOU_LEVELS},
-        ("n_reference", "n_detected", "n_matched"),
+    grid = _method_grid(primary, {"minimum_iou": MATCH_IOU_LEVELS})
+    table = _per_method(table, tables, grid, ("n_reference", "n_detected", "n_matched"))
+    rank = table.groupby(["minimum_iou", "primary_expression"])["recall"].rank(
+        ascending=False, method="min"
     )
-    table["rank"] = (
-        table.groupby(["minimum_iou", "primary_expression"])["recall"]
-        .rank(ascending=False, method="min")
-        .astype("Int64")
-    )
-    table = table.drop(columns="primary_expression")
-    return _with_failures(table, tables).sort_values(by, kind="stable").reset_index(drop=True)
+    table.insert(table.columns.get_loc("primary_expression"), "rank", rank.astype("Int64"))
+    return table
 
 
 def order_changes(sensitivity: pd.DataFrame) -> pd.DataFrame:
@@ -4874,13 +4838,16 @@ def rates_by_state(
     )
     totals = long.groupby(by)[["n_events", "minutes", "true_events"]].sum().reset_index()
     rates = totals.merge(intervals.drop(columns=["true_rate_low", "true_rate_high"]), on=by)
-    rates = _every_method(
-        rates, tables.methods, {"state": STATES}, ("n_events", "true_events")
+    columns = [*by, "n_events", "minutes", "rate", "rate_low", "rate_high"]
+    grid = _method_grid(tables.methods, {"state": STATES})
+    rates = _per_method(
+        rates[[*columns, "true_events", "true_rate"]],
+        tables,
+        grid,
+        ("n_events", "true_events"),
     ).fillna({"minutes": 0.0})
     rates.insert(3, "scoring", rates["method"].map(scoring_rule))
-    columns = [*by, "scoring", "n_events", "minutes", "rate", "rate_low", "rate_high"]
-    rates = rates[[*columns, "true_events", "true_rate"]]
-    return _in_order(_with_failures(rates, tables), "state", STATES)
+    return rates
 
 
 def _burst_participants(tables: RunTables) -> pd.DataFrame:
@@ -5007,12 +4974,8 @@ def participation_bias(
         "ratio_of_means_high",
         "ks_statistic",
     ]
-    bias = _every_method(
-        bias[columns],
-        _by_intervals(tables.methods),
-        zero=("n_matched_events", "n_events"),
-    )
-    return _with_failures(bias, tables)
+    grid = _method_grid(_by_intervals(tables.methods))
+    return _per_method(bias[columns], tables, grid, ("n_matched_events", "n_events"))
 
 
 def boundary_effect(
@@ -5088,13 +5051,8 @@ def boundary_effect(
         "mean_detected",
         "mean_truth",
     ]
-    effect = _every_method(
-        effect[columns],
-        _by_intervals(tables.methods),
-        {"selection": tuple(SELECTIONS)},
-        ("n_pairs",),
-    )
-    return _in_order(_with_failures(effect, tables), "selection", tuple(SELECTIONS))
+    grid = _method_grid(_by_intervals(tables.methods), {"selection": tuple(SELECTIONS)})
+    return _per_method(effect[columns], tables, grid, ("n_pairs",))
 
 
 # Appendix: every expression
@@ -5142,7 +5100,6 @@ def appendix_expressions(
     """
     by = ["method", "setting", "expression"]
     counts = ["n_reference", "n_detected", "n_matched"]
-    main = tables.methods
     n_reference = matches.windows.groupby(["session_id", "expression"]).size()
     n_detected = tables.events.groupby(_KEY).size()
     found = matches.pairs[matches.pairs["minimum_iou"] == 0]
@@ -5187,16 +5144,12 @@ def appendix_expressions(
     ordered = ["n_pairs", *(f"{n}{part}" for n in names for part in ("", "_low", "_high"))]
     appendix = appendix.merge(medians[[*by, *ordered]], on=by, how="left")
     appendix["n_pairs"] = appendix["n_pairs"].fillna(0)
-    appendix = _every_method(appendix, main, {"expression": EXPRESSION_ORDER}, counts).fillna(
-        {"minutes": 0.0}
-    )
-    listed = main.set_index(["method", "setting"])["primary_expression"]
-    own = pd.MultiIndex.from_frame(appendix[["method", "setting"]]).map(listed.get)
+    grid = _method_grid(tables.methods, {"expression": EXPRESSION_ORDER})
+    appendix = _per_method(appendix, tables, grid, counts).fillna({"minutes": 0.0})
     appendix.insert(3, "scoring", appendix["method"].map(scoring_rule))
-    appendix.insert(4, "primary", np.asarray(own) == appendix["expression"].to_numpy())
-    points = appendix["scoring"] == PEAK_CONTAINMENT
-    appendix.loc[points, "n_pairs"] = np.nan
-    return _with_failures(appendix, tables)
+    appendix.insert(4, "primary", appendix["primary_expression"] == appendix["expression"])
+    appendix.loc[appendix["scoring"] == PEAK_CONTAINMENT, "n_pairs"] = np.nan
+    return appendix
 
 
 def expression_curves(
