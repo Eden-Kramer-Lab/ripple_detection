@@ -760,6 +760,94 @@ def test_error_correlations_use_the_shared_primary_expression(analyze, correlate
     )
 
 
+def _shifted_session(run, onsets, *, found=None):
+    """Ripples 1 s apart, one per entry of ``onsets``: Kay's and Karlsson's
+    onset errors on each, (kay, karlsson) in seconds, their offsets exact;
+    ``found`` gives each method's ripples (default every one)."""
+    events = _event_table(
+        run, [(k, "swr", "ripple", 0, 1.0 + k, 0.05) for k in range(len(onsets))]
+    )
+    windows = rd.truth_windows(events, 0.1, "ripple")[["start_time", "end_time"]].to_numpy()
+    shifts = np.array(onsets, dtype=float).reshape(-1, 2)
+    kay, karlsson = found or (range(len(onsets)), range(len(onsets)))
+    return {
+        "events": events,
+        "non_events": _non_event_tables(_one_non_event_table("emg", center_time=9.0)),
+        "duration": 10.0,
+        "detected": {
+            KAY: (windows + np.column_stack([shifts[:, 0], np.zeros(len(shifts))]))[list(kay)],
+            KARLSSON: (windows + np.column_stack([shifts[:, 1], np.zeros(len(shifts))]))[
+                list(karlsson)
+            ],
+        },
+    }
+
+
+@pytest.fixture(scope="module")
+def offset_timing_run(run, tmp_path_factory):
+    """Kay starts 5 ms early and Karlsson 10 ms on three ripples of the first
+    session, 5 and 20 ms on the second's one; in the third both run but find
+    different ripples."""
+    sessions = [
+        _shifted_session(run, [(-0.005, -0.010)] * 3),
+        _shifted_session(run, [(-0.005, -0.020)]),
+        _shifted_session(run, [(0.0, 0.0)] * 2, found=([0], [1])),
+    ]
+    return _write_run(run, tmp_path_factory.mktemp("offsets"), sessions)
+
+
+def test_paired_timing_differences_by_hand(analyze, offset_timing_run):
+    tables = analyze.load_run(offset_timing_run)
+    row = analyze.paired_timing(
+        tables, analyze.match_run(tables), "ripple", n_resamples=FEW
+    ).iloc[0]
+    assert (row.method_a, row.method_b) == (KAY[0], KARLSSON[0])
+    assert [row.n_shared, row.n_sessions, row.n_sessions_without] == [4, 2, 1]
+    # A minus B, signed: Kay starts 5 ms later on three events, 15 ms on one
+    assert row.onset_signed_pooled == pytest.approx(0.005)
+    # the estimate is the mean of the two sessions' medians, not the pooled median
+    assert row.onset_signed_estimate == pytest.approx(0.010)
+    # absolute: Kay is closer to the truth, so |A| - |B| is negative
+    assert row.onset_absolute_pooled == pytest.approx(-0.005)
+    assert row.onset_absolute_estimate == pytest.approx(-0.010)
+    # two sessions of one sign: half of the four sign flips are as large
+    assert row.onset_signed_p == 0.5
+    assert row.offset_signed_estimate == row.offset_absolute_estimate == 0.0
+
+
+@pytest.fixture(scope="module")
+def difference_run(run, tmp_path_factory):
+    """Five sessions of one ripple: Kay starts 4 ms after Karlsson in four,
+    4 ms before it in the fifth."""
+    onsets = [(0.004, 0.0)] * 4 + [(-0.004, 0.0)]
+    sessions = [_shifted_session(run, [onset]) for onset in onsets]
+    return _write_run(run, tmp_path_factory.mktemp("differences"), sessions)
+
+
+def test_method_differences_test_the_signed_session_medians(analyze, difference_run):
+    tables = analyze.load_run(difference_run)
+    row = analyze.method_differences(tables, analyze.match_run(tables), n_resamples=FEW).iloc[
+        0
+    ]
+    assert (row.method_a, row.method_b, row.n_sessions) == (KAY[0], KARLSSON[0], 5)
+    # A minus B: positive, Kay later, on the mean of 4, 4, 4, 4 and -4 ms
+    assert row.median_onset_difference == pytest.approx(0.0024)
+    assert row.fraction_a_earlier_onset == pytest.approx(0.2)
+    # of the 32 sign flips, 12 give a mean at least as large: the flips of
+    # all five (2) and those leaving four against one (10)
+    assert row.median_onset_difference_p == pytest.approx(12 / 32)
+    assert row.median_offset_difference == 0.0
+
+
+def test_average_linkage_is_not_single_linkage(analyze):
+    jaccard = pd.Series({("a", "b"): 0.8, ("a", "c"): 0.4, ("b", "c"): 0.1})
+    tree = analyze.agreement_linkage(["a", "b", "c"], jaccard)
+    # a and b join at 0.2; c joins them at the mean of 0.6 and 0.9, where
+    # single linkage would give 0.6 and complete 0.9
+    assert tree[:, 2].tolist() == pytest.approx([0.2, 0.75])
+    assert tree[:, 3].tolist() == [2, 3]
+
+
 def _quick(analysis):
     """``analysis`` with few resamples, where its table takes any."""
     if "n_resamples" not in inspect.signature(analysis.table).parameters:
