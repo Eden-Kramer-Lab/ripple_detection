@@ -585,6 +585,13 @@ level (`n_dropped` counts those a failure left out), with paired intervals and s
 tests. One factor moves at a time (except the two crossed pairs), so the panels do not
 show how factors combine.
 
+`noise_type=brown` is confounded and supports no statement about detectors. Ripples are
+sized against the ripple-band noise, which brown noise makes about 25 times smaller,
+while EMG and spike-leakage artifacts keep their absolute amplitudes, so under brown
+noise they are about ten times the ripples and the LFP detectors' events land on them
+(`results/v1/trends.md`). Sizing those artifacts against the noise, as the gamma bursts
+already are, is a simulator change for a later version with its own validation and run.
+
 ### Rates and participation
 
 `rates_by_state.png` gives each method's events per minute at rest and while running
