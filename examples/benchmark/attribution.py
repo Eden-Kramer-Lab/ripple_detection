@@ -249,8 +249,13 @@ class SpikeTemplate:
         Gaussian SD of the rate, in seconds, on 1 ms bins.
     normalization_period : str
         A key of ``NORMALIZATION``.
-    threshold, bound_threshold : float
+    threshold : float
         In SD.
+    bound_fraction : float
+        The bound as a fraction of the threshold: events extend to where the
+        trace falls below ``bound_fraction * threshold`` SD; 0.0, the mean.
+        Between 0 and 1, so every combination of factors bounds at or below
+        its threshold.
     minimum_event_duration : float
         Seconds; 0.0, none.
     maximum_duration : float or None
@@ -271,7 +276,7 @@ class SpikeTemplate:
     smoothing_sigma: float
     normalization_period: str
     threshold: float
-    bound_threshold: float
+    bound_fraction: float
     minimum_event_duration: float
     maximum_duration: float | None
     merge_gap: float
@@ -298,7 +303,7 @@ class LfpTemplate:
         The mean envelope, or its square.
     smoothing_sigma : float
         Gaussian SD in seconds; 0.0, none.
-    normalization_period, threshold, bound_threshold, minimum_event_duration, \
+    normalization_period, threshold, bound_fraction, minimum_event_duration, \
 maximum_duration, merge_gap, speed, state, coincidence
         As ``SpikeTemplate``'s.
     """
@@ -309,7 +314,7 @@ maximum_duration, merge_gap, speed, state, coincidence
     smoothing_sigma: float
     normalization_period: str
     threshold: float
-    bound_threshold: float
+    bound_fraction: float
     minimum_event_duration: float
     maximum_duration: float | None
     merge_gap: float
@@ -342,7 +347,7 @@ FACTOR_KINDS: dict[str, str] = {
     "smoothing_sigma": "continuous",
     "normalization_period": "categorical",
     "threshold": "continuous",
-    "bound_threshold": "categorical",
+    "bound_fraction": "categorical",
     "minimum_event_duration": "continuous",
     "maximum_duration": "categorical",
     "merge_gap": "continuous",
@@ -476,7 +481,7 @@ def compile(template: Template) -> Pipeline:
         normalization_period=template.normalization_period,
         smoothing_sigma=smoothing,
         threshold=template.threshold,
-        bound_threshold=template.bound_threshold,
+        bound_threshold=template.bound_fraction * template.threshold,
         minimum_event_duration=template.minimum_event_duration,
         maximum_duration=template.maximum_duration,
         speed_rule=speed_rule,
@@ -853,7 +858,7 @@ def run_pipeline(pipeline: Pipeline, context: SessionContext) -> FloatArray:
     ------
     ValueError
         An operation this module does not define, or what the package's
-        functions raise, such as a bound above the threshold.
+        functions raise.
     """
     core = pipeline.core
     operation = core.signal[0].operation
@@ -876,7 +881,7 @@ def _spikes(**values: Any) -> SpikeTemplate:
     """A spike template, a factor the method does not use at its "none" value."""
     defaults: dict[str, Any] = {
         "normalization_period": "session",
-        "bound_threshold": 0.0,
+        "bound_fraction": 0.0,
         "minimum_event_duration": 0.0,
         "maximum_duration": None,
         "merge_gap": 0.0,
@@ -896,7 +901,7 @@ def _lfp(**values: Any) -> LfpTemplate:
         "trace": "amplitude",
         "smoothing_sigma": 0.0,
         "normalization_period": "session",
-        "bound_threshold": 0.0,
+        "bound_fraction": 0.0,
         "minimum_event_duration": 0.0,
         "maximum_duration": None,
         "merge_gap": 0.0,
@@ -972,7 +977,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
             units="pyramidal",
             smoothing_sigma=0.015,
             threshold=2.0,
-            bound_threshold=2.0,
+            bound_fraction=1.0,
             minimum_event_duration=0.1,
             maximum_duration=0.8,
             minimum_active_units=5,
@@ -989,7 +994,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
             units="place",
             smoothing_sigma=0.030,
             threshold=3.0,
-            bound_threshold=1.0,
+            bound_fraction=1 / 3,
             minimum_active_units=5,
             state="inside:rest",
         ),
@@ -1003,7 +1008,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
             units="pyramidal",
             smoothing_sigma=0.010,
             threshold=3.0,
-            bound_threshold=3.0,
+            bound_fraction=1.0,
             minimum_event_duration=0.1,
             maximum_duration=0.75,
             state="inside:rest",
@@ -1076,7 +1081,7 @@ TEMPLATES: dict[str, tuple[Template, str]] = {
             units="all",
             smoothing_sigma=0.015,
             threshold=4.0,
-            bound_threshold=2.0,
+            bound_fraction=0.5,
             minimum_event_duration=0.05,
             merge_gap=0.05,
         ),
@@ -2710,8 +2715,7 @@ def smoke(
     """Time ``SMOKE_CONFIGURATIONS`` configurations on one reference session.
 
     The configurations are the first rows of ``A`` of the Sobol design at
-    ``SOBOL_N``; one that raises (a bound above its threshold, for instance)
-    is counted and left out of the timing.
+    ``SOBOL_N``.
 
     Parameters
     ----------
@@ -2724,7 +2728,7 @@ def smoke(
     -------
     report : dict
         ``seconds_per_configuration``, ``context_seconds`` (simulating and
-        checking the session), ``failed``, ``peak_rss_bytes``, ``d``, the
+        checking the session), ``peak_rss_bytes``, ``d``, the
         configurations and hours of each analysis at ``workers``.
     """
     started = wall_clock.perf_counter()
@@ -2735,16 +2739,12 @@ def smoke(
     a, _, _ = sobol_design(factors, reference, SOBOL_N)
     base = compile(reference)
     context.events(base)
-    timings, failed = [], []
+    timings = []
     for template in a[:SMOKE_CONFIGURATIONS]:
         begun = wall_clock.perf_counter()
-        try:
-            evaluate_session(compile(template), context, base)
-        except ValueError as error:
-            failed.append(f"{error}"[:120])
-            continue
+        evaluate_session(compile(template), context, base)
         timings.append(wall_clock.perf_counter() - begun)
-    seconds = float(np.mean(timings)) if timings else float("nan")
+    seconds = float(np.mean(timings))
     d = len(factors)
     ids = in_space_ids(family)
     oat = 1 + sum(len(factor.points()) for factor in factors)
@@ -2783,7 +2783,6 @@ def smoke(
         "n_in_space": len(ids),
         "d": d,
         "configurations_timed": len(timings),
-        "failed": failed,
         "seconds_per_configuration": seconds,
         "context_seconds": context_seconds,
         "peak_rss_bytes": peak_rss_bytes(),

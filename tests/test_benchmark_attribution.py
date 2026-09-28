@@ -345,7 +345,7 @@ SPIKE_SPACE = [
     ("smoothing_sigma", "continuous", (0.005, 0.08)),
     ("normalization_period", "categorical", ("rest", "session", "speed<5", "speed<4")),
     ("threshold", "continuous", (2.0, 4.0)),
-    ("bound_threshold", "categorical", (0.0, 2.0, 1.0, 3.0)),
+    ("bound_fraction", "categorical", (0.0, 1.0, 1 / 3, 0.5)),
     ("minimum_event_duration", "continuous", (0.0, 0.1)),
     ("maximum_duration", "categorical", (0.5, 2.0, 0.8, None, 0.75)),
     ("merge_gap", "continuous", (0.0, 0.05)),
@@ -386,6 +386,42 @@ def test_factor_space_is_pinned(attribution, recipes, family, space):
         attribution.factor_space(recipes, "sharp_wave")
 
 
+# Each template's bound in SD as its method sets it; the rest bound at the mean.
+METHOD_BOUNDS = {
+    "farooq_2019_neuron": 2.0,
+    "chenani_2019": 1.0,
+    "muessig_2019": 3.0,
+    "bendor_2012": 2.0,
+}
+
+
+def test_bounds_are_fractions_of_the_threshold(attribution, recipes):
+    for config_id, (template, _) in attribution.TEMPLATES.items():
+        core = attribution.compile(template).core
+        # bit for bit the method's bound, so the verification can hold
+        assert core.bound_threshold == METHOD_BOUNDS.get(config_id, 0.0), config_id
+        assert core.bound_threshold == template.bound_fraction * template.threshold
+    # so every configuration a Sobol or Shapley analysis asks for bounds at or
+    # below its threshold
+    for family in attribution.FAMILIES:
+        reference = attribution.reference_template(family)
+        a, b, ab = attribution.sobol_design(
+            attribution.factor_space(recipes, family), reference, 64
+        )
+        pairs = [
+            (attribution.TEMPLATES[config_id][0], reference)
+            for config_id in attribution.in_space_ids(family)
+        ]
+        subsets = [
+            dataclasses.replace(first, **{name: getattr(second, name) for name in subset})
+            for first, second in pairs
+            for subset in attribution.shapley_subsets(attribution._differing(first, second))
+        ]
+        for template in [*a, *b, *(t for column in ab for t in column), *subsets]:
+            core = attribution.compile(template).core
+            assert core.bound_threshold <= core.threshold
+
+
 def test_factor_values(attribution):
     continuous = attribution.Factor("threshold", "continuous", (2.0, 4.0))
     assert continuous.value(0.0) == 2.0
@@ -400,7 +436,7 @@ def test_factor_values(attribution):
 def _spike_template(attribution, **values):
     base = {
         "units": "all", "smoothing_sigma": 0.01, "normalization_period": "session",
-        "threshold": 2.0, "bound_threshold": 0.0, "minimum_event_duration": 0.05,
+        "threshold": 2.0, "bound_fraction": 0.0, "minimum_event_duration": 0.05,
         "maximum_duration": None, "merge_gap": 0.0, "speed": "none",
         "minimum_active_units": 0, "state": "none", "coincidence": "none",
     }  # fmt: skip
@@ -412,13 +448,13 @@ def test_reference_template(attribution):
         _spike_template(attribution),
         _spike_template(
             attribution, units="place", smoothing_sigma=0.02, normalization_period="speed<5",
-            threshold=3.0, bound_threshold=1.0, minimum_event_duration=0.1,
+            threshold=3.0, bound_fraction=0.5, minimum_event_duration=0.1,
             maximum_duration=0.5, merge_gap=0.05, speed="all<=3", minimum_active_units=3,
             state="inside:rest",
         ),
         _spike_template(
             attribution, units="place", smoothing_sigma=0.04, normalization_period="rest",
-            threshold=5.0, bound_threshold=1.0, minimum_event_duration=0.0,
+            threshold=5.0, bound_fraction=0.5, minimum_event_duration=0.0,
             speed="restrict<5", minimum_active_units=4, coincidence="overlap:long_swrs",
         ),
     ]  # fmt: skip
@@ -428,7 +464,7 @@ def test_reference_template(attribution):
         units="place",  # the mode
         smoothing_sigma=0.02,  # medians
         threshold=3.0,
-        bound_threshold=1.0,
+        bound_fraction=0.5,
         minimum_event_duration=0.05,
         minimum_active_units=3,
         # three-way ties go to the first template's value
@@ -765,9 +801,7 @@ def test_smoke(attribution, recipes, short_run):
     d = len(attribution.factor_space(recipes, "lfp"))
     assert report["d"] == d
     assert report["n_in_space"] == 4
-    assert report["configurations_timed"] + len(report["failed"]) == min(
-        attribution.SMOKE_CONFIGURATIONS, attribution.SOBOL_N
-    )
+    assert report["configurations_timed"] == attribution.SMOKE_CONFIGURATIONS
     assert report["configurations"]["sobol_128"] == 128 * (d + 2)
     hours = report["hours"]["sobol_256"]
     per = report["seconds_per_configuration"]

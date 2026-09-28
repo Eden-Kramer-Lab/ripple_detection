@@ -702,7 +702,7 @@ its public call, so no method silently drops out.
 The families, analysed separately because their factors differ:
 
 - `spikes`: a population rate (the units pooled, `all`, `place` or `pyramidal`, and its
-  Gaussian smoothing), the normalization period, threshold, bound, whole-event minimum
+  Gaussian smoothing), the normalization period, threshold, bound fraction, whole-event minimum
   and maximum duration, merge gap, speed rule, active-unit count, state (a restriction of
   the trace to rest, containment in rest, or overlap with running) and coincidence (a
   partner event: a Long SWR, a Muessig ripple window or an external ripple peak).
@@ -711,7 +711,12 @@ The families, analysed separately because their factors differ:
 
 A factor's range is the least to the largest value among the family's templates
 (continuous), its distinct values (categorical) or every whole number between them
-(integer); a factor with one value is not varied. The reference configuration takes each
+(integer); a factor with one value is not varied. The bound is a factor as a fraction of
+the threshold, `bound_fraction` (the method's bound over its threshold: 0 for a bound at
+the mean, 1 for a bound at the threshold), so a configuration's bound is
+`bound_fraction * threshold` SD and moves with its threshold; every combination the
+analyses sample then bounds at or below its threshold, and each template still gives its
+method's bound exactly. The reference configuration takes each
 factor's median (integers rounded down) or mode (ties to the first in configuration
 order):
 
@@ -760,8 +765,9 @@ error of the matched pairs against the windows at 25 % of the peak) and
 Limits. The Sobol indices assume independent factors over the sampled box, while real
 recipes co-vary (a lower threshold usually comes with other changes), so an index says
 what a factor does across the space, not what the literature's choices did. Fixed points
-are not decomposed. The conclusions hold for the reference simulator only. A sampled
-bound above a sampled threshold is not a configuration `detect_events_from_trace` runs.
+are not decomposed. The conclusions hold for the reference simulator only. The bound's
+index is that of its fraction of the threshold: changing the threshold moves the bound
+with it, so the threshold's index includes the bound's shift.
 
 Measured: **TBD: the smoke test's seconds per configuration and memory, the chosen
 Sobol `N`, and each analysis's command and wall time on run `v1`**.
