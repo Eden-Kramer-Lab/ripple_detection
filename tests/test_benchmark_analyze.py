@@ -1219,6 +1219,59 @@ def test_session_bouts_are_the_simulated_schedule(analyze, benchmark_import):
         analyze.session_bouts(sessions.assign(rest_s=rest - 1))
 
 
+@pytest.fixture(scope="module")
+def sliver_run(run, tmp_path_factory):
+    """Two ripples; Kay finds the first at its bounds and the second by a
+    sliver, Karlsson the first alone."""
+    events = _event_table(run, [(k, "swr", "ripple", 0, 2.0 + 2 * k, 0.05) for k in range(2)])
+    windows = rd.truth_windows(events, 0.1, "ripple")[["start_time", "end_time"]].to_numpy()
+    sliver = [windows[1, 1] - 0.005, windows[1, 1] + 0.1]
+    session = {
+        "events": events,
+        "non_events": _non_event_tables(_one_non_event_table("emg", center_time=9.0)),
+        "duration": 10.0,
+        "detected": {KAY: np.array([windows[0], sliver]), KARLSSON: windows[:1]},
+    }
+    return _write_run(run, tmp_path_factory.mktemp("sliver"), [session])
+
+
+def test_matching_sensitivity_levels(analyze, sliver_run):
+    tables = analyze.load_run(sliver_run)
+    matches = analyze.match_run(tables, levels=(0.0, 0.2, 0.5))
+    table = analyze.matching_sensitivity(tables, matches, n_resamples=FEW)
+    kay = _by(table[table.method == KAY[0]], "minimum_iou")
+    assert kay.index.tolist() == [0.0, 0.2, 0.5]
+    # the sliver counts at IoU 0 only
+    assert kay.recall.tolist() == [1.0, 0.5, 0.5]
+    assert kay.n_matched.tolist() == [2, 1, 1]
+    assert kay.precision.tolist() == [1.0, 0.5, 0.5]
+    assert kay.f1.tolist() == pytest.approx([1.0, 0.5, 0.5])
+    # IoU 0.025 (5 of 200 ms) and 1: the IoU distribution behind the headline
+    assert kay.loc[0.0, "median_iou"] == pytest.approx((0.025 + 1) / 2)
+    assert kay.loc[0.2, ["iou_q25", "median_iou"]].tolist() == pytest.approx([1.0, 1.0])
+    assert kay.recall_swr.tolist() == [1.0, 0.5, 0.5]
+    # Karlsson ties Kay once the sliver is gone
+    assert table.set_index(["method", "minimum_iou"])["rank"].to_dict() == {
+        (KARLSSON[0], 0.0): 2,
+        (KARLSSON[0], 0.2): 1,
+        (KARLSSON[0], 0.5): 1,
+        (KAY[0], 0.0): 1,
+        (KAY[0], 0.2): 1,
+        (KAY[0], 0.5): 1,
+    }
+    changes = analyze.order_changes(table)
+    assert changes.to_dict("records") == [
+        {
+            "method": KARLSSON[0],
+            "setting": KARLSSON[1],
+            "primary_expression": "ripple",
+            "rank_0": 2,
+            "rank_0.2": 1,
+            "rank_0.5": 1,
+        }
+    ]
+
+
 def test_the_command_writes_every_table_and_the_summary(analyze, tiny_run, tmp_path):
     results = tmp_path / "results" / "tiny"
     analyses = [_quick(analysis) for analysis in analyze.ANALYSES]

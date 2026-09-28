@@ -3466,6 +3466,172 @@ def recall_changes(table: pd.DataFrame, threshold: float = RECALL_CHANGE) -> pd.
     )
 
 
+# Matching sensitivity
+
+
+def matching_sensitivity(
+    tables: RunTables,
+    matches: Matches,
+    points: pd.DataFrame | None = None,
+    *,
+    n_resamples: int = N_RESAMPLES,
+) -> pd.DataFrame:
+    """The main interval methods' scores at every minimum IoU.
+
+    The headline matches at IoU 0 (any overlap); here the same pairs are
+    formed again requiring IoU 0.2 and 0.5, against each method's primary
+    expression: the counts and their ratios, the IoU distribution behind
+    them, the median absolute errors, recall by event type against the
+    network truth, and each detector's recall at the target false-positive
+    rates. Methods are ranked by recall among those sharing a primary
+    expression, so an order that holds only at IoU 0 shows.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+        Matched at every level of ``MATCH_IOU_LEVELS``.
+    points : pandas.DataFrame, optional
+        ``operating_points``' table, for the recall at each target.
+    n_resamples : int, optional
+
+    Returns
+    -------
+    sensitivity : pandas.DataFrame
+        One row per interval method, setting and ``minimum_iou``:
+        ``primary_expression``, ``n_reference``, ``n_detected``,
+        ``n_matched``; ``recall``, ``precision`` and ``f1`` (pooled:
+        ``2 n_matched / (n_reference + n_detected)``), each with ``_low`` and
+        ``_high``; ``iou_q25``, ``median_iou``, ``iou_q75``;
+        ``median_abs_onset_error`` and ``median_abs_offset_error`` (10 %,
+        seconds); ``recall_<event_type>`` against the network truth;
+        ``recall_at_<target>`` (detectors); ``rank`` (by recall, 1 best,
+        among methods of the same primary expression at that level);
+        ``n_sessions``, ``n_failures``.
+    """
+    primary = _by_intervals(main_rows(tables.methods))[
+        ["method", "setting", "primary_expression"]
+    ]
+    pairs = matches.pairs.merge(
+        primary.rename(columns={"primary_expression": "expression"}),
+        on=["method", "setting", "expression"],
+    )
+    n_truth = (
+        matches.windows.groupby(["session_id", "expression"]).size().rename("n_reference")
+    )
+    n_events = tables.events.groupby(_KEY).size().rename("n_detected")
+    frame = _by_intervals(main_rows(tables.ran)).merge(primary, on=["method", "setting"])
+    frame = frame.join(n_truth, on=["session_id", "primary_expression"]).join(
+        n_events, on=_KEY
+    )
+    frame = frame.fillna({"n_reference": 0, "n_detected": 0})
+    by = ["method", "setting", "minimum_iou"]
+    parts = []
+    for level in MATCH_IOU_LEVELS:
+        at_level = pairs[pairs["minimum_iou"] == level]
+        found = at_level.groupby(_KEY).size().rename("n_matched")
+        counted = frame.join(found, on=_KEY).fillna({"n_matched": 0}).assign(minimum_iou=level)
+        parts.append(counted)
+    counted = _with_replicate(pd.concat(parts, ignore_index=True), tables)
+    counted = counted.assign(
+        twice_matched=2 * counted["n_matched"],
+        n_either=counted["n_reference"] + counted["n_detected"],
+    )
+    intervals = grouped_intervals(
+        counted,
+        by,
+        _ratio_of_sums(
+            ("n_matched", "n_reference"),
+            ("n_matched", "n_detected"),
+            ("twice_matched", "n_either"),
+        ),
+        ["recall", "precision", "f1"],
+        ["n_matched", "n_reference", "n_detected", "twice_matched", "n_either"],
+        n_resamples=n_resamples,
+    )
+    totals = counted.groupby([*by, "primary_expression"])[
+        ["n_reference", "n_detected", "n_matched"]
+    ].sum()
+    table = totals.astype(int).reset_index().merge(intervals, on=by)
+    grouped = pairs.assign(
+        abs_onset=pairs["onset_error_10"].abs(), abs_offset=pairs["offset_error_10"].abs()
+    ).groupby(by)
+    table = table.join(
+        pd.DataFrame(
+            {
+                "iou_q25": grouped["iou"].quantile(0.25),
+                "median_iou": grouped["iou"].median(),
+                "iou_q75": grouped["iou"].quantile(0.75),
+                "median_abs_onset_error": grouped["abs_onset"].median(),
+                "median_abs_offset_error": grouped["abs_offset"].median(),
+            }
+        ),
+        on=by,
+    )
+    network = matches.windows[matches.windows["expression"] == "network"]
+    typed = matches.pairs[matches.pairs["expression"] == "network"].merge(
+        network[["session_id", "row", "type"]],
+        left_on=["session_id", "truth_row"],
+        right_on=["session_id", "row"],
+    )
+    n_true = network.groupby(["session_id", "type"]).size().rename("n_true").reset_index()
+    for kind in rd.EVENT_TYPES:
+        exists = n_true[n_true["type"] == kind].set_index("session_id")["n_true"]
+        found = typed[typed["type"] == kind].groupby([*_KEY, "minimum_iou"]).size()
+        rows = counted[[*_KEY, "minimum_iou"]].assign(
+            n_true=counted["session_id"].map(exists).fillna(0).to_numpy(),
+            n_found=found.reindex(pd.MultiIndex.from_frame(counted[[*_KEY, "minimum_iou"]]))
+            .fillna(0)
+            .to_numpy(),
+        )
+        sums = rows.groupby(by)[["n_found", "n_true"]].sum()
+        ratio = _ratio(sums["n_found"].to_numpy(float), sums["n_true"].to_numpy(float))
+        table = table.join(pd.Series(ratio, index=sums.index, name=f"recall_{kind}"), on=by)
+    if points is not None and len(points):
+        for target in FP_TARGETS:
+            at = points.loc[points["fp_target"] == target, ["method", "minimum_iou", "recall"]]
+            table = table.merge(
+                at.rename(columns={"recall": f"recall_at_{target:g}"}),
+                on=["method", "minimum_iou"],
+                how="left",
+            )
+    table["rank"] = (
+        table.groupby(["minimum_iou", "primary_expression"])["recall"]
+        .rank(ascending=False, method="min")
+        .astype("Int64")
+    )
+    table = table.drop(columns="primary_expression")
+    return _with_failures(table, tables).sort_values(by, kind="stable").reset_index(drop=True)
+
+
+def order_changes(sensitivity: pd.DataFrame) -> pd.DataFrame:
+    """The methods whose rank by recall moves away from IoU 0.
+
+    Parameters
+    ----------
+    sensitivity : pandas.DataFrame
+        ``matching_sensitivity``' table.
+
+    Returns
+    -------
+    changes : pandas.DataFrame
+        One row per method whose rank at some other level differs from its
+        rank at IoU 0: ``method``, ``setting``, ``primary_expression``, then
+        ``rank_<level>`` at each level.
+    """
+    ranks = sensitivity.pivot_table(
+        index=["method", "setting", "primary_expression"],
+        columns="minimum_iou",
+        values="rank",
+        aggfunc="first",
+    )
+    if ranks.empty:
+        return pd.DataFrame(columns=["method", "setting", "primary_expression"])
+    moved = (ranks.ne(ranks[0.0], axis=0)).any(axis=1)
+    ranks.columns = [f"rank_{level:g}" for level in ranks.columns]
+    return ranks[moved].reset_index()
+
+
 # Rates and participation
 
 STATES = ("rest", "running")
