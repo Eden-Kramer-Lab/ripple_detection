@@ -4321,8 +4321,10 @@ def model_sensitivity(
         recall differences (A minus B) in the reference and in the
         alternative with intervals;
         ``supported``, the reference interval excludes 0; ``reversed``, a
-        supported order the alternative reverses: the estimates have opposite
-        signs and the alternative's interval excludes 0; ``point_reversed``,
+        supported order the alternative reverses: the alternative's interval
+        lies on the other side of 0 from the reference's estimate (an order
+        whose alternative interval lies on the same side survives, whatever
+        its point estimate); ``point_reversed``,
         the estimates have opposite signs but the alternative's interval holds
         0 (supported or not: only the point estimate reverses); ``p_reversed``,
         the fraction of resamples (where both are defined) in which the signs
@@ -4462,9 +4464,13 @@ def _orders(
         resampled = found.draws[:, :, 0] - found.draws[:, :, 1]
         low, high = _conditional_intervals(observed, resampled)
         supported = (low[0] > 0) | (high[0] < 0)
+        # reversed: the alternative's interval on the other side of 0 from the
+        # reference's estimate, so no order both survives and reverses
+        reversed_ = supported & (
+            ((observed[0] > 0) & (high[1] < 0)) | ((observed[0] < 0) & (low[1] > 0))
+        )
         opposite = observed[0] * observed[1] < 0
         holds_zero = (low[1] <= 0) & (high[1] >= 0)
-        excludes_zero = (low[1] > 0) | (high[1] < 0)
         for t, target in enumerate(targets):
             both = np.isfinite(resampled[:, 0, t]) & np.isfinite(resampled[:, 1, t])
             flips = np.sign(resampled[both, 0, t]) * np.sign(resampled[both, 1, t]) < 0
@@ -4492,7 +4498,7 @@ def _orders(
                     "alternative_low": low[1, t],
                     "alternative_high": high[1, t],
                     "supported": bool(supported[t]),
-                    "reversed": bool(supported[t] & opposite[t] & excludes_zero[t]),
+                    "reversed": bool(reversed_[t]),
                     "point_reversed": bool(opposite[t] & holds_zero[t]),
                     "p_reversed": flips.mean() if both.any() else np.nan,
                 }

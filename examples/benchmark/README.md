@@ -638,10 +638,11 @@ how much or how surely.
 recall (the alternative minus the reference, paired by replicate) and each detector's
 change at 1 false positive per minute as a triangle. `model_sensitivity_orders.csv`
 orders detectors of one primary expression by recall at each common target in both
-conditions, with the share of resamples in which the order reverses. An order
-`reversed` is supported in the reference and ordered the other way under the alternative
-by an interval excluding 0; opposite point estimates whose alternative interval holds 0
-are `point_reversed`, an order that loses its support, not a reversal. `summary.md` says
+conditions, with the share of resamples in which the order reverses. An order is
+`reversed` when it is supported in the reference and the alternative's interval lies on
+the other side of 0 (on the same side it survives, whatever the point estimate);
+opposite point estimates whose alternative interval holds 0 are `point_reversed`, an
+order that loses its support, not a reversal. `summary.md` says
 per alternative which supported reference orders survive, lose their support (the point
 reversals among them named) or reverse, and how many cannot be compared because a target
 is out of reach there or a detector failed (`status` `unattainable` or `failed`, never

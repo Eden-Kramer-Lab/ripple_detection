@@ -2437,15 +2437,19 @@ def test_model_sensitivity_keeps_failures_apart_from_unreachable_targets(analyze
 # Per target, A minus B in the reference and in the alternative, each as its
 # estimate and the range its resamples span evenly: a supported order the
 # alternative reverses with an interval excluding 0, one whose point estimate
-# alone reverses, an unsupported one the alternative orders the other way, and
-# one that keeps its support.
+# alone reverses, an unsupported one the alternative orders the other way, one
+# that keeps its support, one whose alternative point estimate lies below 0 but
+# its interval above (the order survives, not reversed), and an unsupported one
+# whose point estimates alone have opposite signs.
 _HAND_ORDERS = (
     ((0.1, 0.05, 0.15), (-0.1, -0.15, -0.05)),
     ((0.1, 0.05, 0.15), (-0.02, -0.1, 0.05)),
     ((0.02, -0.05, 0.1), (-0.1, -0.15, -0.05)),
     ((0.1, 0.05, 0.15), (0.08, 0.03, 0.12)),
+    ((0.1, 0.05, 0.15), (-0.01, 0.021, 0.049)),
+    ((0.02, -0.05, 0.1), (-0.02, -0.1, 0.05)),
 )
-_HAND_TARGETS = (0.5, 1.0, 2.0, 5.0)
+_HAND_TARGETS = (0.5, 1.0, 2.0, 5.0, 10.0, 20.0)
 
 
 def _hand_orders(analyze, alternative="spike_model=refractory"):
@@ -2482,11 +2486,12 @@ def test_a_reversal_needs_the_alternative_interval_to_exclude_zero(analyze):
     orders = _hand_orders(analyze)
     assert list(orders.columns) == list(analyze.ORDER_COLUMNS)
     orders = orders.set_index("fp_target")
-    assert orders.supported.tolist() == [True, True, False, True]
-    # opposite signs with the alternative's interval on the other side of 0
-    assert orders.reversed.tolist() == [True, False, False, False]
-    # opposite point estimates, the alternative's interval holding 0
-    assert orders.point_reversed.tolist() == [False, True, False, False]
+    assert orders.supported.tolist() == [True, True, False, True, True, False]
+    # a supported order whose alternative interval lies on the other side of 0
+    assert orders.reversed.tolist() == [True, False, False, False, False, False]
+    # opposite point estimates, the alternative's interval holding 0,
+    # supported or not
+    assert orders.point_reversed.tolist() == [False, True, False, False, False, True]
     assert orders.loc[1.0, "alternative_low"] < 0 < orders.loc[1.0, "alternative_high"]
 
 
@@ -2509,8 +2514,8 @@ def test_statements_count_point_reversals_as_lost_support(analyze):
     lines = analyze.model_sensitivity_statements(changes, orders)
     mine = [line for line in lines if alternative in line or line.startswith("  - ")]
     assert (
-        "of 3 reference orders of detectors by recall at a common false-positive rate that "
-        "their intervals support, 1 keep that support, 1 lose it (1 of them with the point "
+        "of 4 reference orders of detectors by recall at a common false-positive rate that "
+        "their intervals support, 2 keep that support, 1 lose it (1 of them with the point "
         "estimates reversed), 1 reverse and 0 cannot be compared here" in mine[0]
     )
     assert mine[1].startswith(
