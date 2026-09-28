@@ -81,7 +81,7 @@ import operator
 import os
 import shutil
 import time as wall_clock
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -3087,31 +3087,59 @@ def _complete_units(
 
 
 def _only_complete(
-    frame: pd.DataFrame, unit: str, complete: Collection[Any], settings: Collection[str]
+    frame: pd.DataFrame,
+    unit: str,
+    keys: Sequence[str],
+    complete: Mapping[tuple[Any, ...], Collection[Any]],
 ) -> pd.DataFrame:
-    """``frame``'s rows at ``settings`` of the ``complete`` units, and its
-    rows at any other setting."""
-    keep = ~frame["setting"].astype(object).isin(list(settings)) | frame[unit].astype(
-        object
-    ).isin(list(complete))
-    return frame[keep.to_numpy()]
+    """``frame``'s rows of each cell of ``complete`` (a value of ``keys``, as
+    a tuple) whose ``unit`` is one of that cell's (``_complete_units``), and
+    its rows of any other cell."""
+    columns = [frame[key].astype(object) for key in keys]
+    held = [(*cell, value) for cell, values in complete.items() for value in values]
+    keep = ~pd.MultiIndex.from_arrays(columns).isin(list(complete))
+    if held:
+        rows = pd.MultiIndex.from_arrays([*columns, frame[unit].astype(object)])
+        keep |= rows.isin(held)
+    return frame[keep]
 
 
-def _curve_values(
-    pooled: Mapping[str, np.ndarray[Any, Any]], targets: Sequence[float]
+def _sweep_inputs(
+    counts: Mapping[str, pd.DataFrame],
+    errors: Mapping[str, pd.DataFrame],
+    method: str,
+    settings: Sequence[str],
+) -> tuple[set[Any], pd.DataFrame, pd.DataFrame]:
+    """The sessions on which every one of a method's ``settings`` ran, and
+    its counts and errors (``_by_method``'s) with those settings' rows of
+    those sessions alone, so that every setting is pooled over the same."""
+    mine = counts.get(method, _NO_COUNTS)
+    complete = _complete_units(mine, "session_id", ["setting"], settings)
+    cells = {(setting,): complete for setting in settings}
+    return (
+        complete,
+        _only_complete(mine, "session_id", ["setting"], cells),
+        _only_complete(errors.get(method, _NO_ERRORS), "session_id", ["setting"], cells),
+    )
+
+
+def _read_off(
+    pooled: Mapping[str, np.ndarray[Any, Any]],
+    targets: Sequence[float],
+    columns: Sequence[str],
 ) -> np.ndarray[Any, Any]:
-    """A pooled curve's ``AT_TARGET`` at each target, shape (n_targets, 3),
-    over the settings with scores (weight); the floor is half of 1 / the
-    most minutes of any setting."""
+    """A pooled curve's ``columns`` (``recall`` or the pool's) at each target
+    (``at_fp_rate``), shape (n_targets, n_columns), over the settings with
+    scores; the floor is half of 1 / the most minutes of any of them."""
     held = pooled["ran"] > 0
     if not held.any():
-        return np.full((len(targets), len(AT_TARGET)), np.nan)
+        return np.full((len(targets), len(columns)), np.nan)
     rates = _rates(pooled)
-    values = np.column_stack([rates["recall"], pooled["onset_error"], pooled["offset_error"]])
+    values = np.column_stack([{**pooled, **rates}[column][held] for column in columns])
     return _at_fp_rates(
         rates["fp_rate"][held],
         rates["recall"][held],
-        values[held],
+        values,
         targets,
         0.5 / pooled["minutes"][held].max(),
     )
@@ -3123,10 +3151,30 @@ def _condition_sessions(scores: ConditionScores, condition: str) -> list[str]:
     )
 
 
-def _failures_by_method(scores: ConditionScores, sessions: Collection[str]) -> pd.Series:
-    """Failures of each method and setting on some sessions."""
+def _detectors(scores: ConditionScores) -> list[str]:
+    """The detectors swept in the run, by name."""
+    return sorted(set(THRESHOLD_SWEEPS) & set(scores.methods["method"]))
+
+
+def _primary_of(scores: ConditionScores) -> pd.Series:
+    """Each method's primary expression, by ``method``."""
+    return scores.methods.drop_duplicates("method").set_index("method")["primary_expression"]
+
+
+def _failure_counts(
+    scores: ConditionScores, sessions: Collection[str], by: Sequence[str]
+) -> pd.Series:
+    """The failed calls on ``sessions``, counted by ``by``: of ``method``,
+    ``setting`` and ``condition_id``."""
     failed = scores.failures[scores.failures["session_id"].isin(sessions)]
-    return failed.groupby(["method", "setting"]).size().rename("n_failures")
+    conditions = scores.sessions.set_index("session_id")["condition_id"]
+    failed = failed.assign(condition_id=failed["session_id"].map(conditions).to_numpy())
+    return failed.groupby(list(by)).size().rename("n_failures")
+
+
+def _sweep_failures(failed: pd.Series, method: str, settings: Sequence[str]) -> int:
+    """A sweep's failed calls, of ``_failure_counts`` by method and setting."""
+    return int(sum(failed.get((method, setting), 0) for setting in settings))
 
 
 def operating_curves(
@@ -3175,14 +3223,9 @@ def operating_curves(
             settings = [*sweep, *sorted(set(own["setting"]) - set(sweep))]
             mine = counts.get(method, _NO_COUNTS)
             ran = mine.groupby(mine["setting"].astype(object)).size()
-            complete = _complete_units(mine, "session_id", ["setting"], sweep)
+            _, own_counts, own_errors = _sweep_inputs(counts, errors, method, sweep)
             pooled = _curve_pool(
-                _only_complete(mine, "session_id", complete, sweep),
-                _only_complete(errors.get(method, _NO_ERRORS), "session_id", complete, sweep),
-                "session_id",
-                sessions,
-                settings,
-                _ERROR_MEASURES,
+                own_counts, own_errors, "session_id", sessions, settings, _ERROR_MEASURES
             )(np.ones(len(sessions)))
             rates = _rates(pooled)
             for position, setting in enumerate(settings):
@@ -3216,9 +3259,8 @@ def operating_curves(
     curves = pd.DataFrame(rows)
     if curves.empty:
         return curves
-    primary = methods.drop_duplicates("method").set_index("method")["primary_expression"]
-    curves.insert(5, "primary_expression", curves["method"].map(primary))
-    failed = _failures_by_method(scores, sessions)
+    curves.insert(5, "primary_expression", curves["method"].map(_primary_of(scores)))
+    failed = _failure_counts(scores, sessions, ["method", "setting"])
     curves = curves.join(failed, on=["method", "setting"]).fillna({"n_failures": 0})
     return curves.astype({"n_failures": int})
 
@@ -3263,32 +3305,23 @@ def operating_points(
     """
     sessions = _condition_sessions(scores, condition)
     weights = resample_weights(len(sessions), n_resamples=n_resamples)
-    primary = scores.methods.drop_duplicates("method").set_index("method")[
-        "primary_expression"
-    ]
-    failed = _failures_by_method(scores, sessions)
+    primary = _primary_of(scores)
+    failed = _failure_counts(scores, sessions, ["method", "setting"])
+    # the pool's columns read off, in AT_TARGET's order
+    columns = ("recall", "onset_error", "offset_error")
     rows = []
     for level in MATCH_IOU_LEVELS:
         counts = _by_method(_session_counts(scores, level, sessions))
         errors = _by_method(_session_errors(scores, level, sessions))
-        for method in sorted(set(THRESHOLD_SWEEPS) & set(scores.methods["method"])):
+        for method in _detectors(scores):
             settings = _sweep_settings(method, scores.methods)
-            mine = counts.get(method, _NO_COUNTS)
-            complete = _complete_units(mine, "session_id", ["setting"], settings)
-            pool = _curve_pool(
-                _only_complete(mine, "session_id", complete, settings),
-                _only_complete(
-                    errors.get(method, _NO_ERRORS), "session_id", complete, settings
-                ),
-                "session_id",
-                sessions,
-                settings,
-            )
-            estimate = _curve_values(pool(np.ones(len(sessions))), targets)
-            draws = np.array([_curve_values(pool(w), targets) for w in weights])
+            complete, own_counts, own_errors = _sweep_inputs(counts, errors, method, settings)
+            pool = _curve_pool(own_counts, own_errors, "session_id", sessions, settings)
+            estimate = _read_off(pool(np.ones(len(sessions))), targets, columns)
+            draws = np.array([_read_off(pool(w), targets, columns) for w in weights])
             low, high = _conditional_intervals(estimate, draws)
             attained = np.isfinite(draws[:, :, 0]).mean(axis=0)
-            n_failures = int(sum(failed.get((method, setting), 0) for setting in settings))
+            n_failures = _sweep_failures(failed, method, settings)
             for position, target in enumerate(targets):
                 row: dict[str, Any] = {
                     "method": method,
@@ -3390,10 +3423,8 @@ def held_out_thresholds(
     weights = resample_weights(len(held_out), n_resamples=n_resamples)
     counts = _by_method(_session_counts(scores, 0.0, listed["session_id"]))
     errors = _by_method(_session_errors(scores, 0.0, listed["session_id"]))
-    primary = scores.methods.drop_duplicates("method").set_index("method")[
-        "primary_expression"
-    ]
-    failed = _failures_by_method(scores, list(listed["session_id"]))
+    primary = _primary_of(scores)
+    failed = _failure_counts(scores, list(listed["session_id"]), ["method", "setting"])
     measures = (
         "recall",
         "false_positives_per_minute",
@@ -3401,18 +3432,12 @@ def held_out_thresholds(
         "median_offset_error",
     )
     rows = []
-    for method in sorted(set(THRESHOLD_SWEEPS) & set(scores.methods["method"])):
+    for method in _detectors(scores):
         settings = _sweep_settings(method, scores.methods)
-        mine = counts.get(method, _NO_COUNTS)
-        complete = _complete_units(mine, "session_id", ["setting"], settings)
-        own = (
-            _only_complete(mine, "session_id", complete, settings),
-            _only_complete(errors.get(method, _NO_ERRORS), "session_id", complete, settings),
-        )
-        chosen = _rates(
-            _curve_pool(*own, "session_id", calibration, settings)(np.ones(len(calibration)))
-        )
-        judged = _curve_pool(*own, "session_id", held_out, settings)
+        complete, own_counts, own_errors = _sweep_inputs(counts, errors, method, settings)
+        calibrated = _curve_pool(own_counts, own_errors, "session_id", calibration, settings)
+        chosen = _rates(calibrated(np.ones(len(calibration))))
+        judged = _curve_pool(own_counts, own_errors, "session_id", held_out, settings)
 
         def measured(pooled: Mapping[str, np.ndarray[Any, Any]], position: int) -> list[float]:
             rates = _rates(pooled)
@@ -3453,7 +3478,7 @@ def held_out_thresholds(
             row["n_held_out_sessions"] = len(pooled)
             row["held_out_replicates"] = " ".join(str(r) for r in pooled["replicate"])
             row["n_dropped"] = len(listed) - len(complete)
-            row["n_failures"] = int(sum(failed.get((method, s), 0) for s in settings))
+            row["n_failures"] = _sweep_failures(failed, method, settings)
             rows.append(row)
     return pd.DataFrame(rows)
 
@@ -3589,22 +3614,10 @@ def condition_pool(
         dtype=int,
     )
 
-    kept = pd.MultiIndex.from_tuples(
-        [(m, s, int(r)) for (m, s), held in complete.items() for r in held],
-        names=["method", "setting", "replicate"],
-    )
-
-    def only_complete(frame: pd.DataFrame) -> pd.DataFrame:
-        keys = pd.MultiIndex.from_arrays(
-            [
-                frame["method"].astype(object),
-                frame["setting"].astype(object),
-                frame["replicate"].astype(int),
-            ]
-        )
-        return frame[keys.isin(kept)]
-
-    counts, errors = only_complete(counts), only_complete(errors)
+    # each main setting's rows of its complete replicates alone
+    kept = {**dict.fromkeys(paired.index, ()), **complete}
+    counts = _only_complete(counts, "replicate", ["method", "setting"], kept)
+    errors = _only_complete(errors, "replicate", ["method", "setting"], kept)
     units = pd.Index(replicates)
     keys = ["condition_id", "method", "setting"]
     pool = Pool(
@@ -3667,10 +3680,7 @@ def paired_changes(
         active in the method's events.
     """
     listed = scores.sessions[scores.sessions["condition_id"].isin(condition_ids)]
-    shared = set.intersection(
-        *(set(rows["replicate"]) for _, rows in listed.groupby("condition_id"))
-    )
-    replicates = sorted(shared)
+    replicates = _shared_replicates(scores, condition_ids)
     medians = [_MEDIAN_OF[name] for name in measures if name in _MEDIAN_OF]
     pool, groups, paired = condition_pool(scores, condition_ids, replicates, medians)
     base = groups.get_indexer(
@@ -3695,11 +3705,7 @@ def paired_changes(
     alone = np.array([statistic(w) for w in np.eye(len(replicates))])[:, 1]
     main = _main_methods(scores).set_index(["method", "setting"])
     kept = listed[listed["replicate"].isin(replicates)]["session_id"]
-    failed = scores.failures[scores.failures["session_id"].isin(kept)]
-    failed = failed.assign(
-        condition_id=failed["session_id"].map(listed.set_index("session_id")["condition_id"])
-    )
-    n_failed = failed.groupby(["condition_id", "method", "setting"]).size()
+    n_failed = _failure_counts(scores, kept, ["condition_id", "method", "setting"])
     rows = []
     for position, (condition, method, setting) in enumerate(groups):
         scoring = main.loc[(method, setting), "scoring"]
@@ -3979,24 +3985,6 @@ ORDER_COLUMNS = (
 _RELATIVE_ROOM, _ABSOLUTE_ROOM = 0.01, 0.001
 
 
-def _recall_at(
-    pool: Pool, weights: np.ndarray[Any, Any], targets: Sequence[float]
-) -> np.ndarray[Any, Any]:
-    """A sweep pool's recall at each target, shape (n_targets,)."""
-    pooled = pool(weights)
-    held = pooled["ran"] > 0
-    if not held.any():
-        return np.full(len(targets), np.nan)
-    rates = _rates(pooled)
-    return _at_fp_rates(
-        rates["fp_rate"][held],
-        rates["recall"][held],
-        rates["recall"][held],
-        targets,
-        0.5 / pooled["minutes"][held].max(),
-    )[:, 0]
-
-
 @dataclasses.dataclass(frozen=True)
 class SweepRecalls:
     """Detectors' recalls at target false-positive rates, read off their sweeps.
@@ -4083,7 +4071,10 @@ def _sweep_recalls(
 
     def statistic(weights: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
         return np.array(
-            [[_recall_at(pool, weights, targets) for pool in row] for row in pools]
+            [
+                [_read_off(pool(weights), targets, ["recall"])[:, 0] for pool in row]
+                for row in pools
+            ]
         )
 
     weights = resample_weights(len(replicates), n_resamples=n_resamples)
@@ -4096,26 +4087,64 @@ def _sweep_recalls(
     )
 
 
-def _pair_recalls(
+def _same_primary_pairs(
     scores: ConditionScores,
     conditions: Sequence[str],
     detectors: Sequence[str],
-    pair: tuple[int, int],
     found: SweepRecalls,
     targets: Sequence[float],
     n_resamples: int,
-) -> SweepRecalls:
-    """Two detectors' recalls at the targets over the replicates both were
+) -> Iterator[tuple[int, int, SweepRecalls]]:
+    """Each pair of ``detectors`` sharing a primary expression, A first by
+    name, and their recalls at the targets over the replicates both were
     pooled over: ``found`` (``_sweep_recalls`` of every detector) sliced when
-    each detector's replicates are the same, else pooled again over those
-    the two share, so a difference between them is paired."""
-    a, b = pair
-    if found.replicates[a] == found.replicates[b]:
-        return found.pair(a, b)
-    shared = sorted(found.replicates[a] & found.replicates[b])
-    return _sweep_recalls(
-        scores, conditions, shared, [detectors[a], detectors[b]], targets, n_resamples
-    )
+    their replicates are the same, else pooled again over those the two
+    share, so a difference between them is paired."""
+    primary = _primary_of(scores)
+    for a, b in itertools.combinations(range(len(detectors)), 2):
+        if primary[detectors[a]] != primary[detectors[b]]:
+            continue
+        if found.replicates[a] == found.replicates[b]:
+            yield a, b, found.pair(a, b)
+            continue
+        shared = sorted(found.replicates[a] & found.replicates[b])
+        pair = [detectors[a], detectors[b]]
+        yield a, b, _sweep_recalls(scores, conditions, shared, pair, targets, n_resamples)
+
+
+def _paired_test(
+    difference: np.ndarray[Any, Any], draws: np.ndarray[Any, Any], alone: np.ndarray[Any, Any]
+) -> tuple[
+    np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]
+]:
+    """A paired difference's interval and test.
+
+    Parameters
+    ----------
+    difference : ndarray, any shape
+    draws : ndarray, shape (n_resamples, *difference.shape)
+        Its resampled values.
+    alone : ndarray, shape (n_units, *difference.shape)
+        Each unit's own.
+
+    Returns
+    -------
+    low, high : ndarray, shaped as ``difference``
+        ``_conditional_intervals``'.
+    p : ndarray, shaped as ``difference``
+        ``sign_flip_test`` over the units whose own difference is finite;
+        NaN where ``difference`` is not.
+    n_paired : ndarray of int, shaped as ``difference``
+        Those units; 0 where ``difference`` is not finite.
+    """
+    low, high = _conditional_intervals(difference, draws)
+    p = np.full(difference.shape, np.nan)
+    n_paired = np.zeros(difference.shape, dtype=int)
+    for index in zip(*np.nonzero(np.isfinite(difference)), strict=True):
+        own = alone[(slice(None), *index)]
+        finite = own[np.isfinite(own)]
+        p[index], n_paired[index] = sign_flip_test(finite), len(finite)
+    return low, high, p, n_paired
 
 
 def _status(value: ArrayLike, n_failures: ArrayLike, otherwise: str) -> Any:
@@ -4198,8 +4227,8 @@ def model_sensitivity(
         resamples (where both are defined) in which they do.
     """
     main = _main_methods(scores)
-    detectors = sorted(set(THRESHOLD_SWEEPS) & set(scores.methods["method"]))
-    primary = main.drop_duplicates("method").set_index("method")["primary_expression"]
+    detectors = _detectors(scores)
+    primary = _primary_of(scores)
     present = set(scores.sessions["condition_id"])
     changes, orders = [], []
     for _, _, alternative in MODEL_ALTERNATIVES:
@@ -4242,13 +4271,10 @@ def model_sensitivity(
             scores.sessions["condition_id"].isin(pair)
             & scores.sessions["replicate"].isin(replicates)
         ]
-        failed = _failures_by_method(scores, listed["session_id"])
+        failed = _failure_counts(scores, listed["session_id"], ["method", "setting"])
         sweep_failures = {
-            detector: int(
-                sum(
-                    failed.get((detector, s), 0)
-                    for s in _sweep_settings(detector, scores.methods)
-                )
+            detector: _sweep_failures(
+                failed, detector, _sweep_settings(detector, scores.methods)
             )
             for detector in detectors
         }
@@ -4256,13 +4282,12 @@ def model_sensitivity(
         estimate, draws, alone = found.estimate, found.draws, found.alone
         complete = found.replicates
         difference = estimate[1] - estimate[0]
-        low, high = _conditional_intervals(difference, draws[:, 1] - draws[:, 0])
-        per_replicate = alone[:, 1] - alone[:, 0]
+        low, high, p, n_paired = _paired_test(
+            difference, draws[:, 1] - draws[:, 0], alone[:, 1] - alone[:, 0]
+        )
         rows = []
         for d, detector in enumerate(detectors):
             for t, target in enumerate(targets):
-                finite = per_replicate[:, d, t][np.isfinite(per_replicate[:, d, t])]
-                attained = np.isfinite(difference[d, t])
                 rows.append(
                     {
                         "alternative": alternative,
@@ -4281,17 +4306,18 @@ def model_sensitivity(
                         "change": difference[d, t],
                         "change_low": low[d, t],
                         "change_high": high[d, t],
-                        "change_p": sign_flip_test(finite) if attained else np.nan,
-                        "n_paired": len(finite) if attained else 0,
+                        "change_p": p[d, t],
+                        "n_paired": n_paired[d, t],
                         "n_dropped": len(replicates) - len(complete[d]),
                         "n_failures": sweep_failures[detector],
                     }
                 )
         changes.append(pd.DataFrame(rows, columns=list(SENSITIVITY_COLUMNS)))
         pairs = {
-            (a, b): _pair_recalls(scores, pair, detectors, (a, b), found, targets, n_resamples)
-            for a, b in itertools.combinations(range(len(detectors)), 2)
-            if primary[detectors[a]] == primary[detectors[b]]
+            (a, b): recalls
+            for a, b, recalls in _same_primary_pairs(
+                scores, pair, detectors, found, targets, n_resamples
+            )
         }
         orders.append(
             _orders(
@@ -4421,27 +4447,22 @@ def operating_differences(
         curves both reach it), ``n_replicates`` (sessions pooled) and
         ``n_dropped`` (the condition's other sessions).
     """
-    detectors = sorted(set(THRESHOLD_SWEEPS) & set(scores.methods["method"]))
-    primary = scores.methods.drop_duplicates("method").set_index("method")[
-        "primary_expression"
-    ]
+    detectors = _detectors(scores)
+    primary = _primary_of(scores)
     replicates = sorted(
         scores.sessions.loc[scores.sessions["condition_id"] == condition, "replicate"]
     )
     found = _sweep_recalls(scores, [condition], replicates, detectors, targets, n_resamples)
     rows = []
-    for a, b in itertools.combinations(range(len(detectors)), 2):
-        if primary[detectors[a]] != primary[detectors[b]]:
-            continue
-        own = _pair_recalls(
-            scores, [condition], detectors, (a, b), found, targets, n_resamples
-        )
+    for a, b, own in _same_primary_pairs(
+        scores, [condition], detectors, found, targets, n_resamples
+    ):
         estimate, draws, alone, paired = own.estimate, own.draws, own.alone, own.replicates[0]
         difference = estimate[0, 0] - estimate[0, 1]
-        low, high = _conditional_intervals(difference, draws[:, 0, 0] - draws[:, 0, 1])
-        per_session = alone[:, 0, 0] - alone[:, 0, 1]
+        low, high, p, n_paired = _paired_test(
+            difference, draws[:, 0, 0] - draws[:, 0, 1], alone[:, 0, 0] - alone[:, 0, 1]
+        )
         for t, target in enumerate(targets):
-            finite = per_session[:, t][np.isfinite(per_session[:, t])]
             rows.append(
                 {
                     "primary_expression": primary[detectors[a]],
@@ -4457,10 +4478,8 @@ def operating_differences(
                     "difference": difference[t],
                     "difference_low": low[t],
                     "difference_high": high[t],
-                    "difference_p": (
-                        sign_flip_test(finite) if np.isfinite(difference[t]) else np.nan
-                    ),
-                    "n_paired": len(finite) if np.isfinite(difference[t]) else 0,
+                    "difference_p": p[t],
+                    "n_paired": n_paired[t],
                     "n_replicates": len(paired),
                     "n_dropped": len(replicates) - len(paired),
                 }
@@ -7187,14 +7206,13 @@ def _summary(
             for row in failed.itertuples()
         ]
     if scores is not None:
-        everywhere = scores.failures.merge(
-            scores.sessions[["session_id", "condition_id"]], on="session_id"
+        grouped = _failure_counts(
+            scores, scores.sessions["session_id"], ["method", "setting", "condition_id"]
         )
-        grouped = everywhere.groupby(["method", "setting", "condition_id"]).size()
         lines += [
             "",
             (
-                f"Across every condition, {len(everywhere)} calls failed (sweeps included), "
+                f"Across every condition, {grouped.sum()} calls failed (sweeps included), "
                 "by method, setting and condition:"
             ),
             "",
