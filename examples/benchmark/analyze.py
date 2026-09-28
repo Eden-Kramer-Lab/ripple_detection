@@ -3497,7 +3497,13 @@ MEASURES = (
 )
 # The measures a point method has: no pair has bounds.
 POINT_MEASURES = ("recall", "precision", "false_positives_per_minute")
-ROBUSTNESS_MEASURES = ("recall", "precision", "median_onset_error")
+# The measures robustness reports, by the name of their files.
+_ROBUSTNESS_NAMES = {
+    "recall": "recall",
+    "precision": "precision",
+    "median_onset_error": "onset",
+}
+ROBUSTNESS_MEASURES = tuple(_ROBUSTNESS_NAMES)
 CHANGE_COLUMNS = (
     "condition_id",
     "method",
@@ -3801,22 +3807,18 @@ def robustness(
         for factor in dict.fromkeys(scores.conditions["factor"])
         if factor != REFERENCE_CONDITION and "," not in factor
     ]
-    parts = []
-    for factor in factors:
-        levels = _level_conditions(scores, factor)
-        if len(levels) < 2 or REFERENCE_CONDITION not in dict(levels).values():
-            continue
-        changes = paired_changes(
+    parts = [
+        _labelled_changes(
             scores,
-            [condition for _, condition in levels],
-            REFERENCE_CONDITION,
+            {
+                condition: {"factor": factor, "level": level}
+                for level, condition in _level_conditions(scores, factor)
+            },
             measures=measures,
             n_resamples=n_resamples,
         )
-        level_of = {condition: level for level, condition in levels}
-        changes.insert(0, "level", changes["condition_id"].map(level_of))
-        changes.insert(0, "factor", factor)
-        parts.append(changes)
+        for factor in factors
+    ]
     return _concat(parts, ["factor", "level", *CHANGE_COLUMNS])
 
 
@@ -3854,23 +3856,34 @@ def robustness_crossed(
         for levels in itertools.product(*(factor_levels(factor) for factor in factors)):
             cell = _cell(factors, levels)
             if cell in ids:
-                cells[ids[cell]] = levels
-        if REFERENCE_CONDITION not in cells or len(cells) < 2:
-            continue
-        changes = paired_changes(
-            scores,
-            list(cells),
-            REFERENCE_CONDITION,
-            measures=measures,
-            n_resamples=n_resamples,
+                cells[ids[cell]] = {
+                    "factors": pair,
+                    "level_1": levels[0],
+                    "level_2": levels[1],
+                }
+        parts.append(
+            _labelled_changes(scores, cells, measures=measures, n_resamples=n_resamples)
         )
-        firsts = {condition: levels[0] for condition, levels in cells.items()}
-        seconds = {condition: levels[1] for condition, levels in cells.items()}
-        changes.insert(0, "level_2", changes["condition_id"].map(seconds))
-        changes.insert(0, "level_1", changes["condition_id"].map(firsts))
-        changes.insert(0, "factors", pair)
-        parts.append(changes)
     return _concat(parts, ["factors", "level_1", "level_2", *CHANGE_COLUMNS])
+
+
+def _labelled_changes(
+    scores: ConditionScores,
+    labels: Mapping[str, Mapping[str, str]],
+    *,
+    measures: Sequence[str],
+    n_resamples: int,
+) -> pd.DataFrame:
+    """``paired_changes`` over the conditions of ``labels``, from the
+    reference, each row led by its condition's ``labels``; empty unless the
+    reference and another condition are among them."""
+    if REFERENCE_CONDITION not in labels or len(labels) < 2:
+        return pd.DataFrame()
+    changes = paired_changes(
+        scores, list(labels), REFERENCE_CONDITION, measures=measures, n_resamples=n_resamples
+    )
+    named = pd.DataFrame.from_dict(labels, orient="index").loc[changes["condition_id"]]
+    return named.reset_index(drop=True).join(changes)
 
 
 def recall_changes(table: pd.DataFrame, threshold: float = RECALL_CHANGE) -> pd.DataFrame:
@@ -6857,12 +6870,6 @@ class Analysis:
             msg = f"{self.name}: a figure description without a figure."
             raise ValueError(msg)
 
-
-_ROBUSTNESS_NAMES = {
-    "recall": "recall",
-    "precision": "precision",
-    "median_onset_error": "onset",
-}
 
 ANALYSES: tuple[Analysis, ...] = (
     Analysis(
