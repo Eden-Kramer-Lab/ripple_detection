@@ -5813,6 +5813,33 @@ def plot_model_sensitivity(changes: pd.DataFrame) -> Figure:
 
 # Candidate trends
 
+# The tables candidate_trends and summary.md read, by name.
+ROBUSTNESS_RECALL = "robustness_recall"
+MODEL_CHANGES = "model_sensitivity"
+MODEL_ORDERS = "model_sensitivity_orders"
+MATCHING = "matching_sensitivity"
+PARTICIPATION_BIAS = "participation_bias"
+BOUNDARY_EFFECT = "boundary_effect"
+OPERATING_POINTS = "operating_points"
+OPERATING_DIFFERENCES = "operating_differences"
+READ_TABLES = (
+    ROBUSTNESS_RECALL,
+    MODEL_CHANGES,
+    MODEL_ORDERS,
+    MATCHING,
+    PARTICIPATION_BIAS,
+    BOUNDARY_EFFECT,
+    OPERATING_POINTS,
+    OPERATING_DIFFERENCES,
+)
+# The candidates' file stem, and what is written by hand in a results
+# directory, kept when it is rebuilt.
+CANDIDATES = "candidate_trends"
+TRENDS = "trends.md"
+SPOT_CHECKS = "spot_checks"
+# Names no analysis may take: the command's own steps and files.
+RESERVED = ("load", "match", "scores", CANDIDATES)
+
 TREND_COLUMNS = (
     "kind",
     "statement",
@@ -5915,7 +5942,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
             )
         rows.extend(make(row) for row in ranked.head(_TRENDS_PER_KIND).itertuples(index=False))
 
-    robust = results.get("robustness_recall", pd.DataFrame())
+    robust = results.get(ROBUSTNESS_RECALL, pd.DataFrame())
     if len(robust):
         moved = robust[
             (robust["level"] != REFERENCE_LEVEL)
@@ -5931,7 +5958,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                     f"{_scored(r.scoring)} changes by {r.change:+.3f} ({r.change_low:+.3f}, "
                     f"{r.change_high:+.3f}) from the reference to {r.condition_id}."
                 ),
-                "source": "robustness_recall",
+                "source": ROBUSTNESS_RECALL,
                 "method": r.method,
                 "scoring": r.scoring,
                 "condition_id": r.condition_id,
@@ -5945,7 +5972,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
             },
             per="condition_id",
         )
-    orders = results.get("model_sensitivity_orders", pd.DataFrame())
+    orders = results.get(MODEL_ORDERS, pd.DataFrame())
     if len(orders):
         flipped = orders[orders["supported"] & orders["reversed"]]
         add(
@@ -5960,7 +5987,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                     f"reference and {r.alternative_difference:+.3f} under {r.alternative} "
                     f"(reversed in {r.p_reversed:.0%} of resamples)."
                 ),
-                "source": "model_sensitivity_orders",
+                "source": MODEL_ORDERS,
                 "method": f"{r.method_a} {r.method_b}",
                 "scoring": INTERVAL,
                 "condition_id": r.alternative,
@@ -5973,7 +6000,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                 ),
             },
         )
-    model = results.get("model_sensitivity", pd.DataFrame())
+    model = results.get(MODEL_CHANGES, pd.DataFrame())
     if len(model):
         moved = model[
             (model["measure"] == "recall")
@@ -5989,7 +6016,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                     f"{r.method}'s recall{_scored(r.scoring)} changes by {r.change:+.3f} "
                     f"({r.change_low:+.3f}, {r.change_high:+.3f}) under {r.alternative}."
                 ),
-                "source": "model_sensitivity",
+                "source": MODEL_CHANGES,
                 "method": r.method,
                 "scoring": r.scoring,
                 "condition_id": r.alternative,
@@ -6003,7 +6030,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
             },
             per="alternative",
         )
-    sensitivity = results.get("matching_sensitivity", pd.DataFrame())
+    sensitivity = results.get(MATCHING, pd.DataFrame())
     if len(sensitivity):
         ranks = order_changes(sensitivity)
         last = [column for column in ranks.columns if column.startswith("rank_")][-1:]
@@ -6022,7 +6049,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                         f"moves from {r.rank_0} at IoU 0 to {r.rank_last} at {level} "
                         "(descriptive: ranks carry no interval or test)."
                     ),
-                    "source": "matching_sensitivity",
+                    "source": MATCHING,
                     "method": r.method,
                     "scoring": INTERVAL,
                     "condition_id": REFERENCE_CONDITION,
@@ -6033,7 +6060,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                     **_spot(REFERENCE_CONDITION, "found", r.method, r.setting),
                 },
             )
-    bias = results.get("participation_bias", pd.DataFrame())
+    bias = results.get(PARTICIPATION_BIAS, pd.DataFrame())
     if len(bias):
         biased = bias[_excludes(bias, "ratio_of_means_low", "ratio_of_means_high", 1.0)]
         add(
@@ -6046,7 +6073,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                     f"({r.ratio_of_means_low:.2f}, {r.ratio_of_means_high:.2f}) times as "
                     "many cells on average as all true events."
                 ),
-                "source": "participation_bias",
+                "source": PARTICIPATION_BIAS,
                 "method": r.method,
                 "scoring": INTERVAL,
                 "condition_id": REFERENCE_CONDITION,
@@ -6057,7 +6084,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                 **_spot(REFERENCE_CONDITION, "missed", r.method, r.setting),
             },
         )
-    effect = results.get("boundary_effect", pd.DataFrame())
+    effect = results.get(BOUNDARY_EFFECT, pd.DataFrame())
     if len(effect):
         shifted = effect[
             (effect["selection"] == "principal")
@@ -6073,7 +6100,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                     f"true event by {r.mean_difference:+.2f} ({r.mean_difference_low:+.2f}, "
                     f"{r.mean_difference_high:+.2f}) on average."
                 ),
-                "source": "boundary_effect",
+                "source": BOUNDARY_EFFECT,
                 "method": r.method,
                 "scoring": INTERVAL,
                 "condition_id": REFERENCE_CONDITION,
@@ -6084,8 +6111,8 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                 **_spot(REFERENCE_CONDITION, "found", r.method, r.setting),
             },
         )
-    points = results.get("operating_points", pd.DataFrame())
-    differences = results.get("operating_differences", pd.DataFrame())
+    points = results.get(OPERATING_POINTS, pd.DataFrame())
+    differences = results.get(OPERATING_DIFFERENCES, pd.DataFrame())
     if len(points):
         at_one = points[(points["minimum_iou"] == 0) & (points["fp_target"] == 1.0)]
         for expression, own in at_one.groupby("primary_expression", sort=True):
@@ -6135,7 +6162,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                 {
                     "kind": "operating_order",
                     "statement": statement,
-                    "source": "operating_differences",
+                    "source": OPERATING_DIFFERENCES,
                     "method": first.method,
                     "scoring": INTERVAL,
                     "condition_id": REFERENCE_CONDITION,
@@ -6502,7 +6529,15 @@ class Analysis:
     figure : callable or None
         ``figure(table)``: a matplotlib Figure; None for no figure.
     figure_description : str
-        One sentence on what the figure shows.
+        One sentence on what the figure shows; given exactly when ``figure``
+        is.
+
+    Raises
+    ------
+    ValueError
+        A name in ``RESERVED``, or a figure without its description (or a
+        description without a figure). ``analyze_run`` refuses two analyses
+        of one name.
     """
 
     name: str
@@ -6510,6 +6545,19 @@ class Analysis:
     description: str
     figure: Callable[[pd.DataFrame], Figure] | None = None
     figure_description: str = ""
+
+    def __post_init__(self) -> None:
+        """Refuse a name the command uses itself, and a figure without its
+        sentence for ``summary.md`` (or a sentence without a figure)."""
+        if self.name in RESERVED:
+            msg = f"{self.name!r} is reserved: the command's own steps are {RESERVED}."
+            raise ValueError(msg)
+        if self.figure is not None and not self.figure_description:
+            msg = f"{self.name}: a figure needs its description for summary.md."
+            raise ValueError(msg)
+        if self.figure is None and self.figure_description:
+            msg = f"{self.name}: a figure description without a figure."
+            raise ValueError(msg)
 
 
 _ROBUSTNESS_NAMES = {
@@ -6634,7 +6682,7 @@ ANALYSES: tuple[Analysis, ...] = (
         "The curves at IoU 0 by primary expression, recipes as grey points on them.",
     ),
     Analysis(
-        "operating_points",
+        OPERATING_POINTS,
         _operating_points,
         "Each detector's recall and median onset and offset errors read off its sweep at "
         "0.5, 1, 2 and 5 false positives per minute, with intervals; missing where the "
@@ -6643,7 +6691,7 @@ ANALYSES: tuple[Analysis, ...] = (
         "Recall at each target, per minimum IoU.",
     ),
     Analysis(
-        "operating_differences",
+        OPERATING_DIFFERENCES,
         _operating_differences,
         "For each pair of detectors sharing a primary expression, the difference in recall "
         "(A minus B) at each target rate, paired by session, with its interval and "
@@ -6688,7 +6736,7 @@ ANALYSES: tuple[Analysis, ...] = (
         "Both rates per method, the true rates marked.",
     ),
     Analysis(
-        "participation_bias",
+        PARTICIPATION_BIAS,
         _of_reference(participation_bias),
         "The recruited cells of the true events each method finds against those of all "
         "true events with a burst: ratio of means and KS statistic.",
@@ -6696,7 +6744,7 @@ ANALYSES: tuple[Analysis, ...] = (
         "The ratios with their intervals.",
     ),
     Analysis(
-        "boundary_effect",
+        BOUNDARY_EFFECT,
         _of_reference(boundary_effect),
         "Units active within the detected bounds minus within the matched truth window, "
         "for all units and principal ones.",
@@ -6704,7 +6752,7 @@ ANALYSES: tuple[Analysis, ...] = (
         "The mean differences with their intervals.",
     ),
     Analysis(
-        "matching_sensitivity",
+        MATCHING,
         _matching,
         "Recall, precision, F1, the IoU distribution, median absolute errors, recall by "
         "event type and at the target rates, and ranks, at minimum IoU 0, 0.2 and 0.5.",
@@ -6730,7 +6778,7 @@ ANALYSES: tuple[Analysis, ...] = (
         for expression in EXPRESSION_ORDER
     ),
     Analysis(
-        "model_sensitivity",
+        MODEL_CHANGES,
         _model(0),
         "Each result's change under each of the simulator's six alternative models, "
         "paired with the reference by replicate; unreachable targets stay missing.",
@@ -6738,7 +6786,7 @@ ANALYSES: tuple[Analysis, ...] = (
         "Recall changes per alternative, detectors at 1 per minute as triangles.",
     ),
     Analysis(
-        "model_sensitivity_orders",
+        MODEL_ORDERS,
         _model(1),
         "Orders of detectors by recall at common false-positive rates in the reference and "
         "under each alternative model, with intervals and the share of resamples reversed.",
@@ -6747,10 +6795,6 @@ ANALYSES: tuple[Analysis, ...] = (
 # Figures are saved at this resolution.
 _DPI = 100
 FLOAT_FORMAT = "%.6g"
-CANDIDATES = "candidate_trends"
-# What is written by hand in a results directory, kept when it is rebuilt.
-TRENDS = "trends.md"
-SPOT_CHECKS = "spot_checks"
 
 
 def _png(figure: Figure) -> bytes:
@@ -6873,7 +6917,7 @@ def _summary(
             f"- `{method}` ({setting}), `{condition}`: {count} sessions"
             for (method, setting, condition), count in grouped.items()
         ] or ["None."]
-    robust = results.get("robustness_recall")
+    robust = results.get(ROBUSTNESS_RECALL)
     if robust is not None:
         moved = recall_changes(robust)
         lines += [
@@ -6892,7 +6936,7 @@ def _summary(
             f"{row.lowest} to {row.recall_highest:.3f} at {row.highest}"
             for row in moved.itertuples(index=False)
         ] or ["None."]
-    sensitivity = results.get("matching_sensitivity")
+    sensitivity = results.get(MATCHING)
     if sensitivity is not None:
         ranks = order_changes(sensitivity)
         levels = [column for column in ranks.columns if column.startswith("rank_")]
@@ -6911,8 +6955,8 @@ def _summary(
             + ", ".join(str(row[level]) for level in levels)
             for row in ranks.to_dict("records")
         ] or ["None."]
-    changes = results.get("model_sensitivity")
-    orders = results.get("model_sensitivity_orders")
+    changes = results.get(MODEL_CHANGES)
+    orders = results.get(MODEL_ORDERS)
     if changes is not None and orders is not None:
         lines += [
             "",
@@ -7065,8 +7109,14 @@ def analyze_run(
     Raises
     ------
     ValueError
-        A file would be over ``SIZE_LIMIT``: nothing is written in place.
+        Two analyses share a name, or a file would be over ``SIZE_LIMIT``:
+        nothing is written in place.
     """
+    names = [analysis.name for analysis in analyses]
+    repeated = sorted({name for name in names if names.count(name) > 1})
+    if repeated:
+        msg = f"The analysis names repeat: {repeated}."
+        raise ValueError(msg)
     root = Path(run_directory)
     seconds = {}
     started = wall_clock.perf_counter()

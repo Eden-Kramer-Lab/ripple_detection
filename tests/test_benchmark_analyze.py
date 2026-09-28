@@ -2106,6 +2106,31 @@ def test_the_command_keeps_the_hand_written_spot_checks(analyze, tiny_run, tmp_p
     assert "No `trends.md` has been written yet" in (fresh / "summary.md").read_text()
 
 
+def test_the_analysis_registry_is_checked(analyze, tiny_run, tmp_path):
+    def table(inputs):
+        return pd.DataFrame()
+
+    def figure(table):
+        raise AssertionError  # never drawn here
+
+    with pytest.raises(ValueError, match="a figure needs its description"):
+        analyze.Analysis("x", table, "A table.", figure)
+    with pytest.raises(ValueError, match="a figure description without a figure"):
+        analyze.Analysis("x", table, "A table.", None, "A figure.")
+    for reserved in ("load", "match", "scores", "candidate_trends"):
+        with pytest.raises(ValueError, match=f"'{reserved}' is reserved"):
+            analyze.Analysis(reserved, table, "A table.")
+    twice = [analyze.Analysis("x", table, "A table.")] * 2
+    results = tmp_path / "results"
+    with pytest.raises(ValueError, match=r"The analysis names repeat: \['x'\]"):
+        analyze.analyze_run(tiny_run.parent, results, figures=False, analyses=twice)
+    assert not results.exists()
+    # the tables the trends and the summary read are ones the command writes
+    names = {analysis.name for analysis in analyze.ANALYSES}
+    assert set(analyze.READ_TABLES) <= names
+    assert len(names) == len(analyze.ANALYSES)
+
+
 def test_a_file_over_the_limit_stops_the_command(analyze, tiny_run, tmp_path):
     results = tmp_path / "results"
     results.mkdir()
