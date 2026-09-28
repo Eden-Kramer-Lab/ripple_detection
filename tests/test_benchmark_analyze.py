@@ -1798,6 +1798,56 @@ def test_validation_changes_list_moved_statistics(analyze):
     assert any("(validation: rate 11.81 to 11.57)" in line for line in lines)
 
 
+ROUMIS = "Roumis_ripple_detector"
+
+
+def _operating_run(analyze):
+    """Four reference replicates: Kay's recall at 1 false positive a minute
+    is 0.7, Karlsson's 0.6, and Roumis's curve (3 and 5 per minute) never
+    comes down to it."""
+    counts = []
+    for replicate in range(4):
+        counts += _curve("reference", replicate, KAY[0], ((8, 28), (6, 11)))
+        counts += _curve("reference", replicate, SWEPT_KARLSSON, ((7, 27), (5, 10)))
+        counts += _curve("reference", replicate, ROUMIS, ((8, 58), (6, 36)))
+    return _hand_scores(analyze, counts)
+
+
+def test_operating_differences_are_paired_by_session(analyze):
+    table = analyze.operating_differences(_operating_run(analyze), n_resamples=FEW)
+    at_one = table[table.fp_target == 1.0].set_index(["method_a", "method_b"])
+    # Karlsson first by name: its recall minus Kay's
+    row = at_one.loc[(SWEPT_KARLSSON, KAY[0])]
+    assert [row.recall_a, row.recall_b] == pytest.approx([0.6, 0.7])
+    # every session's curve gives the same difference, so every resample does
+    assert [row.difference, row.difference_low, row.difference_high] == pytest.approx(
+        [-0.1, -0.1, -0.1]
+    )
+    assert (row.difference_p, row.n_paired, row.n_replicates) == (2 / 16, 4, 4)
+    unreached = at_one.loc[(KAY[0], ROUMIS)]
+    assert (unreached.reached_a, unreached.reached_b) == (True, False)
+    assert np.isnan(unreached.difference)
+
+
+def test_operating_order_trend_is_the_paired_difference(analyze):
+    scores = _operating_run(analyze)
+    trends = analyze.candidate_trends(
+        {
+            "operating_points": analyze.operating_points(scores, n_resamples=FEW),
+            "operating_differences": analyze.operating_differences(scores, n_resamples=FEW),
+        }
+    )
+    row = trends[trends.kind == "operating_order"].iloc[0]
+    # the leader is the detector with the best recall, the difference paired
+    assert row.method == KAY[0]
+    assert [row.value, row.low, row.high, row.p] == pytest.approx([0.1, 0.1, 0.1, 2 / 16])
+    assert f"{KAY[0]} minus {SWEPT_KARLSSON} +0.100 (+0.100, +0.100), sign-flip p 0.125" in (
+        row.statement
+    )
+    # a detector whose curve does not reach the target is named, not dropped
+    assert f"{ROUMIS} does not reach 1 false positive a minute" in row.statement
+
+
 def test_candidate_trends_carry_their_evidence(analyze):
     robustness = analyze.robustness(_snr_run(analyze), n_resamples=FEW)
     changes, orders = analyze.model_sensitivity(
@@ -1821,7 +1871,10 @@ def test_candidate_trends_carry_their_evidence(analyze):
         }
     )
     assert trends[trends.kind == "matching_rank"].statement.tolist() == [
-        f"{KAY[0]}'s rank by recall among ripple methods moves from 1 at IoU 0 to 5 at 0.5."
+        (
+            f"{KAY[0]}'s rank by recall among ripple methods moves from 1 at IoU 0 to 5 at "
+            "0.5 (descriptive: ranks carry no interval or test)."
+        )
     ]
     robust = trends[trends.kind == "robustness"]
     # the two levels whose change excludes 0, the reference level never

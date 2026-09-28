@@ -4126,6 +4126,103 @@ def _orders(
     return pd.DataFrame(rows, columns=list(ORDER_COLUMNS))
 
 
+DIFFERENCE_COLUMNS = (
+    "primary_expression",
+    "fp_target",
+    "method_a",
+    "method_b",
+    "recall_a",
+    "recall_b",
+    "reached_a",
+    "reached_b",
+    "difference",
+    "difference_low",
+    "difference_high",
+    "difference_p",
+    "n_paired",
+    "n_replicates",
+    "n_dropped",
+)
+
+
+def operating_differences(
+    scores: ConditionScores,
+    *,
+    condition: str = REFERENCE_CONDITION,
+    targets: Sequence[float] = FP_TARGETS,
+    n_resamples: int = N_RESAMPLES,
+) -> pd.DataFrame:
+    """Paired differences in recall at the targets between detectors sharing
+    a primary expression.
+
+    Each detector's recall is read off its sweep (``at_fp_rate``, IoU 0),
+    pooled over the condition's sessions both detectors ran every setting
+    on; the interval is from the same resamples of sessions for both
+    (``resample_weights``), the p-value ``sign_flip_test``'s over each
+    session's difference, its own curves read off alone.
+
+    Parameters
+    ----------
+    scores : ConditionScores
+    condition : str, optional
+    targets : sequence of float, optional
+    n_resamples : int, optional
+
+    Returns
+    -------
+    differences : pandas.DataFrame
+        ``DIFFERENCE_COLUMNS``: per pair (A first by name) and target,
+        ``recall_a`` and ``recall_b``, ``reached_a`` and ``reached_b``
+        (whether each curve reaches the target; a recall it does not reach
+        is NaN, never the curve's end), ``difference`` (A minus B) with
+        ``_low``, ``_high`` and ``_p``, ``n_paired`` (sessions whose own
+        curves both reach it), ``n_replicates`` (sessions pooled) and
+        ``n_dropped`` (the condition's other sessions).
+    """
+    detectors = sorted(set(THRESHOLD_SWEEPS) & set(scores.methods["method"]))
+    primary = scores.methods.drop_duplicates("method").set_index("method")[
+        "primary_expression"
+    ]
+    replicates = sorted(
+        scores.sessions.loc[scores.sessions["condition_id"] == condition, "replicate"]
+    )
+    found = _sweep_recalls(scores, [condition], replicates, detectors, targets, n_resamples)
+    rows = []
+    for a, b in itertools.combinations(range(len(detectors)), 2):
+        if primary[detectors[a]] != primary[detectors[b]]:
+            continue
+        estimate, draws, alone, paired = _pair_recalls(
+            scores, [condition], detectors, (a, b), found, targets, n_resamples
+        )
+        difference = estimate[0, 0] - estimate[0, 1]
+        low, high = _conditional_intervals(difference, draws[:, 0, 0] - draws[:, 0, 1])
+        per_session = alone[:, 0, 0] - alone[:, 0, 1]
+        for t, target in enumerate(targets):
+            finite = per_session[:, t][np.isfinite(per_session[:, t])]
+            rows.append(
+                {
+                    "primary_expression": primary[detectors[a]],
+                    "fp_target": target,
+                    "method_a": detectors[a],
+                    "method_b": detectors[b],
+                    "recall_a": estimate[0, 0, t],
+                    "recall_b": estimate[0, 1, t],
+                    "reached_a": bool(np.isfinite(estimate[0, 0, t])),
+                    "reached_b": bool(np.isfinite(estimate[0, 1, t])),
+                    "difference": difference[t],
+                    "difference_low": low[t],
+                    "difference_high": high[t],
+                    "difference_p": (
+                        sign_flip_test(finite) if np.isfinite(difference[t]) else np.nan
+                    ),
+                    "n_paired": len(finite) if np.isfinite(difference[t]) else 0,
+                    "n_replicates": len(paired),
+                    "n_dropped": len(replicates) - len(paired),
+                }
+            )
+    return pd.DataFrame(rows, columns=list(DIFFERENCE_COLUMNS))
+
+
 def validation_changes(checks: pd.DataFrame) -> pd.DataFrame:
     """The validation report's target statistics each alternative model moves.
 
@@ -5650,7 +5747,8 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                     "kind": "matching_rank",
                     "statement": (
                         f"{r.method}'s rank by recall among {r.primary_expression} methods "
-                        f"moves from {r.rank_0} at IoU 0 to {r.rank_last} at {level}."
+                        f"moves from {r.rank_0} at IoU 0 to {r.rank_last} at {level} "
+                        "(descriptive: ranks carry no interval or test)."
                     ),
                     "source": "matching_sensitivity",
                     "method": r.method,
@@ -5718,37 +5816,63 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
             },
         )
     points = results.get("operating_points", pd.DataFrame())
+    differences = results.get("operating_differences", pd.DataFrame())
     if len(points):
-        at_one = points[(points["minimum_iou"] == 0) & (points["fp_target"] == 1.0)].dropna(
-            subset=["recall"]
-        )
-        leaders = []
+        at_one = points[(points["minimum_iou"] == 0) & (points["fp_target"] == 1.0)]
         for expression, own in at_one.groupby("primary_expression", sort=True):
-            if len(own) < 2:
+            reached = own.dropna(subset=["recall"]).sort_values(
+                "recall", ascending=False, kind="stable"
+            )
+            if len(reached) < 2:
                 continue
-            first, second = own.sort_values("recall", ascending=False).iloc[:2].itertuples()
-            leaders.append(
+            first, second = reached.iloc[0], reached.iloc[1]
+            unreached = sorted(own.loc[own["recall"].isna(), "method"])
+            value = low = high = p = np.nan
+            n_paired = 0
+            if len(differences):
+                pair = differences[
+                    (differences["fp_target"] == 1.0)
+                    & differences["method_a"].isin([first.method, second.method])
+                    & differences["method_b"].isin([first.method, second.method])
+                ]
+                if len(pair):
+                    found = pair.iloc[0]
+                    # the leader minus the next, whichever is first by name
+                    sign = 1.0 if found.method_a == first.method else -1.0
+                    value = sign * found.difference
+                    low, high = sorted(
+                        (sign * found.difference_low, sign * found.difference_high)
+                    )
+                    p, n_paired = found.difference_p, int(found.n_paired)
+            statement = (
+                f"At 1 false positive a minute against {expression}, {first.method} has "
+                f"the highest recall, {first.recall:.3f} ({first.recall_low:.3f}, "
+                f"{first.recall_high:.3f}); next {second.method}, {second.recall:.3f} "
+                f"({second.recall_low:.3f}, {second.recall_high:.3f}); {first.method} "
+                f"minus {second.method} {value:+.3f} ({low:+.3f}, {high:+.3f}), sign-flip "
+                f"p {p:.3g} over {n_paired} sessions, paired."
+            )
+            if unreached:
+                verb = "does" if len(unreached) == 1 else "do"
+                statement += (
+                    f" {', '.join(unreached)} {verb} not reach 1 false positive a minute."
+                )
+            rows.append(
                 {
                     "kind": "operating_order",
-                    "statement": (
-                        f"At 1 false positive a minute against {expression}, {first.method} "
-                        f"has the highest recall, {first.recall:.3f} ({first.recall_low:.3f}, "
-                        f"{first.recall_high:.3f}); next {second.method}, {second.recall:.3f} "
-                        f"({second.recall_low:.3f}, {second.recall_high:.3f})."
-                    ),
-                    "source": "operating_points",
+                    "statement": statement,
+                    "source": "operating_differences",
                     "method": first.method,
                     "condition_id": REFERENCE_CONDITION,
-                    "value": first.recall - second.recall,
-                    "low": np.nan,
-                    "high": np.nan,
-                    "p": np.nan,
+                    "value": value,
+                    "low": low,
+                    "high": high,
+                    "p": p,
                     "spot_condition": REFERENCE_CONDITION,
                     "spot_methods": f"{first.method} {second.method}",
                     "spot_selection": "missed",
                 }
             )
-        rows.extend(leaders)
     return pd.DataFrame(rows, columns=list(TREND_COLUMNS)).fillna({"spot_event_type": ""})
 
 
@@ -6024,6 +6148,10 @@ def _operating_points(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.D
     )
 
 
+def _operating_differences(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
+    return operating_differences(inputs.scores, n_resamples=n_resamples)
+
+
 def _held_out_thresholds(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
     return held_out_thresholds(inputs.scores, n_resamples=n_resamples)
 
@@ -6222,6 +6350,13 @@ ANALYSES: tuple[Analysis, ...] = (
         "curve does not reach the target.",
         plot_operating_points,
         "Recall at each target, per minimum IoU.",
+    ),
+    Analysis(
+        "operating_differences",
+        _operating_differences,
+        "For each pair of detectors sharing a primary expression, the difference in recall "
+        "(A minus B) at each target rate, paired by session, with its interval and "
+        "sign-flip test; missing where a curve does not reach the target.",
     ),
     Analysis(
         "held_out_thresholds",
