@@ -5,8 +5,9 @@ packaged literature methods on simulated sessions whose events are known. None o
 part of the installed package. It holds `simulator_targets.csv`, the measurements the
 network simulator is validated against, the simulation conditions and the configurations
 of the literature methods below, the runner that simulates the conditions, runs every
-method and scores it (see Running the benchmark), and the analyses of a run (see
-Analysing a run).
+method and scores it (see Running the benchmark), the analyses of a run (see Analysing
+a run) and the attribution of the methods' differences to the components of their rules
+(see Attribution).
 
 ## Simulation conditions
 
@@ -657,3 +658,110 @@ analyze.spot_check(
     [("Kay_ripple_detector", "default"), ("Karlsson_ripple_detector", "default")],
 )
 ```
+
+## Attribution
+
+Recipes differ in many components at once. `attribution.py` measures how much each
+component matters: one factor at a time from a reference configuration, Sobol indices
+over the space the literature spans, and Shapley decompositions of the difference between
+two configurations. It reads a finished run's reference condition:
+
+```bash
+uv run python examples/benchmark/attribution.py --run-name v1 --family spikes --smoke
+uv run python examples/benchmark/attribution.py --run-name v1 --family spikes \
+    --analysis all --workers N
+```
+
+`--analysis` is `oat`, `sobol`, `shapley` or `all` (the default); `--smoke` times 20
+configurations on one session and prints each analysis's cost, writing nothing;
+`--run-directory` and `--results-directory` read and write elsewhere. Before anything
+runs, the command checks the run's validation report (ready, and the one the run
+recorded), simulates the reference condition's first five sessions again from the saved
+parameters in `conditions.csv` (a run with a halved `duration_s` gives halved sessions)
+and stops unless each has the run's seed, duration, latent events, non-events and ripple
+channels.
+
+### Templates and fixed points
+
+A template is one flat set of factor values (`SpikeTemplate`, `LfpTemplate`), compiled
+into a pipeline of the package's public primitives: a threshold core
+(`detect_events_from_trace`, on `population_trace`'s 1 ms bins for spikes) and post steps
+(`require_active_units`, `require_inside`, `require_overlap`, `require_times_inside`).
+`TEMPLATES` maps a configuration to the template written after reading its method's body
+in `literature_methods`, with the source of every value; `FIXED_POINTS` gives every
+other configuration and why it has no template (a whole detector such as Karlsson's or
+Kay's, silence-bounded windows, custom peak merging, finite kernels, other grids, FFT or
+wavelet power, adaptive thresholds, active-fraction rules, a minimum time above
+threshold). A template stands for its method only when its events equal the public
+call's, bound for bound, on a session with a gap of missing samples, one at a Unix clock
+origin and the five reference sessions, with some event found; `in_space.csv` lists every
+configuration and the outcome. The public call stays the only source of a method's
+events everywhere else: `fixed_points.csv` gives each fixed point's `Y`s (below) from
+its public call, so no method silently drops out.
+
+The families, analysed separately because their factors differ:
+
+- `spikes`: a population rate (the units pooled, `all`, `place` or `pyramidal`, and its
+  Gaussian smoothing), the normalization period, threshold, bound, whole-event minimum
+  and maximum duration, merge gap, speed rule, active-unit count, state (a restriction of
+  the trace to rest, containment in rest, or overlap with running) and coincidence (a
+  partner event: a Long SWR, a Muessig ripple window or an external ripple peak).
+- `lfp`: the mean ripple-band envelope of the first channels (band, channel count, the
+  envelope or its square) and the same rules, without participation.
+
+A factor's range is the least to the largest value among the family's templates
+(continuous), its distinct values (categorical) or every whole number between them
+(integer); a factor with one value is not varied. The reference configuration takes each
+factor's median (integers rounded down) or mode (ties to the first in configuration
+order):
+
+| Factor | `spikes` reference | `lfp` reference |
+| --- | --- | --- |
+| signal | pyramidal cells, 15 ms Gaussian | 150-250 Hz, every channel, envelope |
+| smoothing (LFP) | | 12.5 ms |
+| normalization period | the whole session | speed below 5 cm/s |
+| threshold, bound | 3 SD, the mean | 3 SD, the mean |
+| minimum, maximum duration | 50 ms, none | 25 ms, 2 s |
+| merge gap | none | none |
+| speed rule | none | speed at most 5 cm/s at both ends |
+| active units, state, coincidence | none | none |
+
+`<family>_factor_space.csv` and `<family>_reference.csv` hold both.
+
+Represented on run `v1`: **TBD (measured when the analyses run): the in-space count per
+family and its methods**. A family with fewer than eight represented methods runs no
+Sobol or Shapley analysis; the command refuses it and says so.
+
+### Outputs and how to read them
+
+Every configuration is scored on the five reference sessions, each `Y` the mean over them
+(`Y_NAMES`): `f1` against the family's expression (burst truth for `spikes`, ripple truth
+for `lfp`), `f1_network`, `events_per_minute`, `onset_error_25` (the median signed onset
+error of the matched pairs against the windows at 25 % of the peak) and
+`jaccard_reference` (events matched to the reference configuration's over their union).
+
+- `<family>_oat.csv`: each factor at each of its values (five evenly spaced over a
+  continuous range), every other at the reference; `change` is the value minus the
+  reference's, with a 95 % paired bootstrap interval over the five sessions.
+- `<family>_sobol.csv` and `.png`: first-order and total Sobol indices of each `Y`, with
+  95 % bootstrap intervals over the sample rows. A first-order index is the share of the
+  output's variance a factor explains alone; the total index adds every interaction it
+  takes part in, so total much above first-order means the factor matters through other
+  factors' settings.
+- `<family>_shapley.csv` and one waterfall per pair: for two configurations `a` and `b`,
+  how much of the change from `a` to `b` each differing factor carries, in `Y`, with the
+  Jaccard against `b` (from `J(a, b)` to 1) and with `f1`. The values sum to the whole
+  change; with more than eight differing factors they are Monte Carlo estimates, each
+  beside its standard error. The pairs: each represented configuration against the
+  family's reference, and the ten pairs of represented configurations that agree least.
+- `output/<run_name>/attribution/<family>_<analysis>.csv.gz`: one row per configuration
+  and `Y`, its factors, the mean and each session's value.
+
+Limits. The Sobol indices assume independent factors over the sampled box, while real
+recipes co-vary (a lower threshold usually comes with other changes), so an index says
+what a factor does across the space, not what the literature's choices did. Fixed points
+are not decomposed. The conclusions hold for the reference simulator only. A sampled
+bound above a sampled threshold is not a configuration `detect_events_from_trace` runs.
+
+Measured: **TBD: the smoke test's seconds per configuration and memory, the chosen
+Sobol `N`, and each analysis's command and wall time on run `v1`**.
