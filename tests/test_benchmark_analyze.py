@@ -2563,6 +2563,8 @@ def test_the_command_writes_every_table_and_the_summary(analyze, two_condition_r
     for analysis in analyze.ANALYSES:
         assert f"- `{analysis.name}.csv`: {analysis.description}" in summary
     assert "2 sessions of reference, 2 methods" in summary
+    # the run directory read, wherever it is
+    assert f"on `{two_condition_run.resolve().as_posix()}/`: 2 sessions" in summary
     for heading in (
         "## Recall changing by more than 0.1 across a factor",
         "## Order changes with the minimum IoU",

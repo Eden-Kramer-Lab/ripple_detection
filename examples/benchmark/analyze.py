@@ -6876,6 +6876,7 @@ def _summary(
     scores: ConditionScores | None = None,
     validation_problem: str = "",
     trends_written: bool = False,
+    run_directory: str | None = None,
 ) -> str:
     """``summary.md``: what was analysed, the conventions, each file with
     its sentence, the failures (of the reference, and of every condition
@@ -6888,10 +6889,12 @@ def _summary(
         f"# Benchmark results: {run_name}",
         "",
         (
-            f"`analyze.py` on `output/{run_name}/combined/`: {len(tables.sessions)} "
-            f"sessions of {conditions}, {len(main)} methods (detectors at their defaults, "
-            "every recipe), unless a file says otherwise (the operating curves read the "
-            "sweeps; robustness and model sensitivity every condition)."
+            f"`analyze.py` on `{run_directory or f'examples/benchmark/output/{run_name}'}"
+            f"/combined/`: {len(tables.sessions)} sessions of {conditions}, {len(main)} "
+            "methods (detectors at their defaults, every recipe), unless a file says "
+            "otherwise (the operating curves, points, differences and thresholds and the "
+            "appendix curves read the reference's sweeps; robustness and model sensitivity "
+            "every condition)."
         ),
         "",
         (
@@ -7057,6 +7060,14 @@ def _summary(
     return "\n".join(lines) + "\n"
 
 
+def _shown(path: Path) -> str:
+    """``path`` from the repository's root when it is inside it, else whole."""
+    resolved = path.resolve()
+    if resolved.is_relative_to(REPOSITORY):
+        return resolved.relative_to(REPOSITORY).as_posix()
+    return resolved.as_posix()
+
+
 def _validation(run_directory: Path) -> tuple[pd.DataFrame | None, str]:
     """``validation_changes`` of the report the run was checked against.
 
@@ -7207,6 +7218,7 @@ def analyze_run(
             scores,
             inputs.validation_problem,
             (partial / TRENDS).is_file(),
+            _shown(root),
         )
         write_result(partial / "summary.md", summary.encode())
     return seconds
@@ -7223,10 +7235,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         help="processes matching sessions again (default: one fewer than the cores)",
     )
     parser.add_argument(
-        "--run-directory", help="the run's directory (default: output/<run-name>)"
+        "--run-directory",
+        help="the run's directory (default: examples/benchmark/output/<run-name>)",
     )
     parser.add_argument(
-        "--results-directory", help="where to write (default: results/<run-name>)"
+        "--results-directory",
+        help="where to write (default: examples/benchmark/results/<run-name>)",
     )
     args = parser.parse_args(argv)
     if args.workers < 1:
