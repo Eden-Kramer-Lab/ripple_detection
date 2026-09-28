@@ -1297,9 +1297,19 @@ def test_the_command_line(attribution, recipes, short_run, tmp_path, monkeypatch
     )
     arguments = ["--run-name", "x", "--family", "lfp", "--workers", "1"]
     arguments += ["--run-directory", str(copy), "--results-directory", str(results)]
+    original = attribution.check_regenerated
+    regenerated = []
+
+    def check_regenerated(run_directory, replicate, session):
+        regenerated.append(replicate)
+        original(run_directory, replicate, session)
+
+    monkeypatch.setattr(attribution, "check_regenerated", check_regenerated)
     attribution.main([*arguments, "--analysis", "oat"])
-    # the run's validation report is checked, once, before anything runs
+    # the run's validation report is checked, once, before anything runs, and
+    # each reference session once, in the one pass over the sessions
     assert checked == [copy]
+    assert regenerated == list(range(attribution.K))
     written = sorted(path.name for path in results.iterdir())
     assert written == [
         "lfp_factor_space.csv",

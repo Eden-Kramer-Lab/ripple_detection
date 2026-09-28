@@ -100,7 +100,7 @@ from collections.abc import (
 )
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Protocol, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -1392,6 +1392,73 @@ class Verification:
     n_events: int
 
 
+class Visitor(Protocol):
+    """What the verification pass takes: a table built one session at a time."""
+
+    def visit(self, context: SessionContext) -> None:
+        """Take one session's part."""
+
+
+def _visit(contexts: Iterable[SessionContext], visitors: Sequence[Visitor]) -> None:
+    """Each visitor visits each context in turn, which is then released."""
+    for context in contexts:
+        for visitor in visitors:
+            visitor.visit(context)
+        context.release()
+
+
+class _Verification:
+    """``verify_all``'s comparison, built one session at a time."""
+
+    def __init__(self, recipes: Sequence[RecipeConfig]) -> None:
+        self.recipes = list(recipes)
+        self.found = {
+            config.config_id: Verification(
+                config.config_id,
+                "" if config.config_id in FIXED_POINTS else family_of(template_of(config)),
+                config.config_id not in FIXED_POINTS,
+                FIXED_POINTS.get(config.config_id, ""),
+                0,
+            )
+            for config in self.recipes
+        }
+
+    def visit(self, context: SessionContext) -> None:
+        for config in self.recipes:
+            verification = self.found[config.config_id]
+            if not verification.in_space:
+                continue
+            expected = recipe_events(config, context.session)
+            events = context.events(compile(template_of(config)))
+            n_events = verification.n_events + len(expected)
+            if not np.array_equal(expected, events):
+                reason = (
+                    f"events differ on {context.label}: {len(events)} from the template, "
+                    f"{len(expected)} from the public call"
+                )
+                verification = dataclasses.replace(
+                    verification, in_space=False, reason=reason, n_events=n_events
+                )
+            else:
+                verification = dataclasses.replace(verification, n_events=n_events)
+            self.found[config.config_id] = verification
+
+    def table(self) -> pd.DataFrame:
+        rows = []
+        for config in self.recipes:
+            verification = self.found[config.config_id]
+            if verification.in_space and verification.n_events == 0:
+                verification = dataclasses.replace(
+                    verification,
+                    in_space=False,
+                    reason="no event on the sessions checked, so equality verifies nothing",
+                )
+            rows.append(dataclasses.asdict(verification))
+        return pd.DataFrame(
+            rows, columns=[field.name for field in dataclasses.fields(Verification)]
+        )
+
+
 def verify_all(
     recipes: Sequence[RecipeConfig], contexts: Iterable[SessionContext]
 ) -> pd.DataFrame:
@@ -1412,46 +1479,9 @@ def verify_all(
         call found an event on some session (equal empty results verify
         nothing).
     """
-    found = {
-        config.config_id: Verification(
-            config.config_id,
-            "" if config.config_id in FIXED_POINTS else family_of(template_of(config)),
-            config.config_id not in FIXED_POINTS,
-            FIXED_POINTS.get(config.config_id, ""),
-            0,
-        )
-        for config in recipes
-    }
-    for context in contexts:
-        for config in recipes:
-            verification = found[config.config_id]
-            if not verification.in_space:
-                continue
-            expected = recipe_events(config, context.session)
-            events = context.events(compile(template_of(config)))
-            n_events = verification.n_events + len(expected)
-            if not np.array_equal(expected, events):
-                reason = (
-                    f"events differ on {context.label}: {len(events)} from the template, "
-                    f"{len(expected)} from the public call"
-                )
-                found[config.config_id] = dataclasses.replace(
-                    verification, in_space=False, reason=reason, n_events=n_events
-                )
-            else:
-                found[config.config_id] = dataclasses.replace(verification, n_events=n_events)
-        context.release()
-    for config_id, verification in found.items():
-        if verification.in_space and verification.n_events == 0:
-            found[config_id] = dataclasses.replace(
-                verification,
-                in_space=False,
-                reason="no event on the sessions checked, so equality verifies nothing",
-            )
-    return pd.DataFrame(
-        [dataclasses.asdict(found[config.config_id]) for config in recipes],
-        columns=[field.name for field in dataclasses.fields(Verification)],
-    )
+    verification = _Verification(recipes)
+    _visit(contexts, [verification])
+    return verification.table()
 
 
 def in_space(config: RecipeConfig, contexts: Iterable[SessionContext]) -> bool:
@@ -1504,6 +1534,47 @@ def perturbations(template: Template, space: Mapping[str, Factor]) -> list[tuple
     return changes
 
 
+class _Sensitivity:
+    """``sensitivity``'s table, built one session at a time."""
+
+    def __init__(self, recipes: Sequence[RecipeConfig], family: str) -> None:
+        space = {factor.name: factor for factor in factor_space(recipes, family)}
+        self.cases = []
+        for config_id, template in family_templates(recipes, family).items():
+            right = compile(template)
+            for name, value in perturbations(template, space):
+                changed = compile(dataclasses.replace(template, **{name: value}))
+                self.cases.append(
+                    (config_id, name, getattr(template, name), value, changed, right)
+                )
+        self.first: dict[int, str] = {}
+
+    def visit(self, context: SessionContext) -> None:
+        for i, (*_, changed, right) in enumerate(self.cases):
+            if i not in self.first and not np.array_equal(
+                context.events(changed), context.events(right)
+            ):
+                self.first[i] = context.label
+
+    def table(self) -> pd.DataFrame:
+        table = pd.DataFrame(
+            [
+                {
+                    "config_id": config_id,
+                    "factor": name,
+                    "value": _as_text(value),
+                    "perturbed": _as_text(perturbed),
+                    "told_apart": i in self.first,
+                    "session": self.first.get(i, ""),
+                }
+                for i, (config_id, name, value, perturbed, _, _) in enumerate(self.cases)
+            ],
+            columns=["config_id", "factor", "value", "perturbed", "told_apart", "session"],
+        )
+        exercised = table.groupby(["config_id", "factor"])["told_apart"].transform("any")
+        return table.assign(exercised=exercised.astype(bool))
+
+
 def sensitivity(
     recipes: Sequence[RecipeConfig], contexts: Iterable[SessionContext], family: str
 ) -> pd.DataFrame:
@@ -1532,37 +1603,9 @@ def sensitivity(
         ``session`` (the first such, ``""`` for none) and ``exercised``
         (some change of that factor of that template is told apart).
     """
-    space = {factor.name: factor for factor in factor_space(recipes, family)}
-    cases = []
-    for config_id, template in family_templates(recipes, family).items():
-        right = compile(template)
-        for name, value in perturbations(template, space):
-            changed = compile(dataclasses.replace(template, **{name: value}))
-            cases.append((config_id, name, getattr(template, name), value, changed, right))
-    first: dict[int, str] = {}
-    for context in contexts:
-        for i, (*_, changed, right) in enumerate(cases):
-            if i not in first and not np.array_equal(
-                context.events(changed), context.events(right)
-            ):
-                first[i] = context.label
-        context.release()
-    table = pd.DataFrame(
-        [
-            {
-                "config_id": config_id,
-                "factor": name,
-                "value": _as_text(value),
-                "perturbed": _as_text(perturbed),
-                "told_apart": i in first,
-                "session": first.get(i, ""),
-            }
-            for i, (config_id, name, value, perturbed, _, _) in enumerate(cases)
-        ],
-        columns=["config_id", "factor", "value", "perturbed", "told_apart", "session"],
-    )
-    exercised = table.groupby(["config_id", "factor"])["told_apart"].transform("any")
-    return table.assign(exercised=exercised.astype(bool))
+    perturbed = _Sensitivity(recipes, family)
+    _visit(contexts, [perturbed])
+    return perturbed.table()
 
 
 # Reference sessions
@@ -2907,57 +2950,83 @@ def fixed_point_outputs(
     Exception
         Whatever building a call's inputs raises.
     """
-    fixed = [config for config in recipes if config.config_id in FIXED_POINTS]
-    references = {family: compile(reference_template(family)) for family in families}
-    per_session: dict[tuple[str, str], list[dict[str, float]]] = {}
-    errors: dict[str, str] = {}
-    for context in contexts:
-        for config in fixed:
-            if config.config_id in errors:
+    fixed = _FixedPoints(recipes, families, recorded)
+    _visit(contexts, [fixed])
+    return fixed.table()
+
+
+class _FixedPoints:
+    """``fixed_point_outputs``' table, built one session at a time; a failure
+    the run did not record is raised by ``table``."""
+
+    def __init__(
+        self,
+        recipes: Sequence[RecipeConfig],
+        families: Sequence[str],
+        recorded: Collection[tuple[str, str]],
+    ) -> None:
+        self.fixed = [config for config in recipes if config.config_id in FIXED_POINTS]
+        self.references = {family: compile(reference_template(family)) for family in families}
+        self.recorded = recorded
+        self.per_session: dict[tuple[str, str], list[dict[str, float]]] = {}
+        self.errors: dict[str, str] = {}
+        # the first failure the run did not record: the message and the error
+        self.unrecorded: tuple[str, Exception] | None = None
+
+    def visit(self, context: SessionContext) -> None:
+        if self.unrecorded is not None:
+            return
+        for config in self.fixed:
+            if config.config_id in self.errors:
                 continue
             call = _public_call(config, context.session)
             try:
                 events = bounds(call())
             except Exception as error:  # a failure the run recorded is data
                 text = f"{type(error).__name__}: {error}"[:200]
-                if (config.config_id, context.label) not in recorded:
+                if (config.config_id, context.label) not in self.recorded:
                     msg = (
                         f"{config.config_id} raised on {context.label} ({text}), but the "
                         "run recorded no such failure."
                     )
-                    raise RuntimeError(msg) from error
+                    self.unrecorded = (msg, error)
+                    return
                 print(
                     f"{config.config_id} failed on {context.label}, as the run recorded: "
                     f"{text}",
                     file=sys.stderr,
                 )
-                errors[config.config_id] = text
+                self.errors[config.config_id] = text
                 continue
-            for family, reference in references.items():
-                per_session.setdefault((config.config_id, family), []).append(
+            for family, reference in self.references.items():
+                self.per_session.setdefault((config.config_id, family), []).append(
                     session_outputs(events, context.events(reference), context, family)
                 )
-        context.release()
-    rows = []
-    for config in fixed:
-        for family in families:
-            found = per_session.get((config.config_id, family), [])
-            failed = config.config_id in errors
-            rows.append(
-                {
-                    "config_id": config.config_id,
-                    "family": family,
-                    "reason": FIXED_POINTS[config.config_id],
-                    **{
-                        name: float("nan")
-                        if failed
-                        else _mean([outputs[name] for outputs in found])
-                        for name in Y_NAMES
-                    },
-                    "error": errors.get(config.config_id, ""),
-                }
-            )
-    return pd.DataFrame(rows)
+
+    def table(self) -> pd.DataFrame:
+        if self.unrecorded is not None:
+            msg, error = self.unrecorded
+            raise RuntimeError(msg) from error
+        rows = []
+        for config in self.fixed:
+            for family in self.references:
+                found = self.per_session.get((config.config_id, family), [])
+                failed = config.config_id in self.errors
+                rows.append(
+                    {
+                        "config_id": config.config_id,
+                        "family": family,
+                        "reason": FIXED_POINTS[config.config_id],
+                        **{
+                            name: float("nan")
+                            if failed
+                            else _mean([outputs[name] for outputs in found])
+                            for name in Y_NAMES
+                        },
+                        "error": self.errors.get(config.config_id, ""),
+                    }
+                )
+        return pd.DataFrame(rows)
 
 
 # Figures
@@ -3143,14 +3212,27 @@ def smoke(
     }
 
 
-def verify_family(family: str, run_directory: str | os.PathLike[str]) -> pd.DataFrame:
+def verify_family(
+    family: str,
+    run_directory: str | os.PathLike[str],
+    *,
+    also: Sequence[Visitor] = (),
+    on_reference: Sequence[Visitor] = (),
+) -> pd.DataFrame:
     """``verify_all`` on the edge sessions and the ``K`` reference sessions.
+
+    One pass over the sessions, each simulated and checked once: other tables
+    built from them are built in the same pass.
 
     Parameters
     ----------
     family : {"spikes", "lfp"}
         The family whose templates are checked; every fixed point is listed.
     run_directory : str or path-like
+    also : sequence of Visitor, optional
+        Visit every session after the verification.
+    on_reference : sequence of Visitor, optional
+        Visit the reference sessions after those.
 
     Returns
     -------
@@ -3159,12 +3241,20 @@ def verify_family(family: str, run_directory: str | os.PathLike[str]) -> pd.Data
     """
     check_report(run_directory, reference_parameters(run_directory))
     templates = family_templates(RECIPES, family)
-    recipes = [
-        config
-        for config in RECIPES
-        if config.config_id in FIXED_POINTS or config.config_id in templates
-    ]
-    return verify_all(recipes, verification_contexts(run_directory))
+    verification = _Verification(
+        [
+            config
+            for config in RECIPES
+            if config.config_id in FIXED_POINTS or config.config_id in templates
+        ]
+    )
+    reference = f"{REFERENCE_CONDITION}/"
+    for context in verification_contexts(run_directory):
+        on_context = [verification, *also]
+        if context.label.startswith(reference):
+            on_context += on_reference
+        _visit([context], on_context)
+    return verification.table()
 
 
 def verification_contexts(run_directory: str | os.PathLike[str]) -> Iterator[SessionContext]:
@@ -3277,7 +3367,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     caveat = family_caveat(n_distinct, below_minimum=args.below_minimum)
     if caveat:
         print(f"The {args.family} family {caveat}.", file=sys.stderr)
-    verification = verify_family(args.family, run_directory)
+    analyses = ("oat", "sobol", "shapley") if args.analysis == "all" else (args.analysis,)
+    # the sensitivity and the fixed points are built in the verification's
+    # pass over the sessions
+    perturbed = _Sensitivity(RECIPES, args.family)
+    fixed = _FixedPoints(RECIPES, (args.family,), recorded_failures(run_directory))
+    verification = verify_family(
+        args.family, run_directory, also=[perturbed], on_reference=[fixed]
+    )
     found = set(
         verification.loc[
             verification["in_space"] & (verification["family"] == args.family), "config_id"
@@ -3297,9 +3394,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         _results_csv(results / f"{args.family}_{name}.csv", frame.assign(caveat=caveat))
 
     write("in_space", verification)
-    perturbed = sensitivity(RECIPES, verification_contexts(run_directory), args.family)
-    write("sensitivity", perturbed)
-    blind = perturbed.loc[~perturbed["exercised"]].drop_duplicates(["config_id", "factor"])
+    sensitive = perturbed.table()
+    write("sensitivity", sensitive)
+    blind = sensitive.loc[~sensitive["exercised"]].drop_duplicates(["config_id", "factor"])
     print(
         f"{args.family}: {len(blind)} template values no perturbation changes on the "
         f"verification sessions: {blind['factor'].value_counts().to_dict()}",
@@ -3316,16 +3413,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         ),
     )
     write("reference", pd.DataFrame([_key_columns(reference_template(args.family))]))
-    write(
-        "fixed_points",
-        fixed_point_outputs(
-            RECIPES,
-            reference_contexts(run_directory),
-            (args.family,),
-            recorded_failures(run_directory),
-        ),
-    )
-    analyses = ("oat", "sobol", "shapley") if args.analysis == "all" else (args.analysis,)
+    write("fixed_points", fixed.table())
     for analysis in analyses:
         if analysis != "oat" and refused:
             raise SystemExit(refusal)
