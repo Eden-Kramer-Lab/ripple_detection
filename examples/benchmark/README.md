@@ -674,12 +674,17 @@ uv run python examples/benchmark/attribution.py --run-name v1 --family lfp \
     --analysis all --below-minimum --workers N
 ```
 
-`--analysis` is `oat`, `sobol`, `shapley` or `all` (the default); `--smoke` times 20
-configurations on one session and prints each analysis's cost, writing nothing;
-`--sobol-n` is the rows of each Sobol sample matrix, 256 by default or 128 when the smoke
-test puts 256 past four hours on the workers there are (the tables' `sobol_n` column says
-which);
-`--run-directory` and `--results-directory` read and write elsewhere. Before anything
+`--analysis` is `oat`, `sobol`, `shapley` or `all` (the default, the three in that
+order). Below the eight-method minimum (next section), `sobol` or `shapley` alone is
+refused before anything runs, and `all` writes the one-at-a-time results and then stops
+at Sobol, unless `--below-minimum` is given, when all three run and every output is
+labelled. `--smoke` checks the run's validation report, simulates and checks reference
+session 0 as below, times 20 configurations of the Sobol design on it and prints the
+seconds per configuration, the peak memory and each analysis's configurations and hours
+at `--workers`, writing nothing. `--sobol-n` is the rows of each Sobol sample matrix, 256
+by default or 128 when the smoke test puts 256 past four hours on the workers there are
+(the tables' `sobol_n` column says which). `--run-directory` and `--results-directory`
+read and write elsewhere. Before anything
 runs, the command checks the run's validation report (ready, and the one the run
 recorded), simulates the reference condition's first five sessions again from the saved
 parameters in `conditions.csv` (a run with a halved `duration_s` gives halved sessions)
@@ -767,7 +772,8 @@ differences among those four.
 Every configuration is scored on the five reference sessions, each `Y` the mean over them
 (`Y_NAMES`): `f1` against the family's expression (burst truth for `spikes`, ripple truth
 for `lfp`), `f1_network`, `events_per_minute`, `onset_error_25` (the median signed onset
-error of the matched pairs against the windows at 25 % of the peak) and
+error of the matched pairs against the windows at 25 % of the peak, detected minus
+truth, so positive is a late onset; the mean over the sessions with a matched pair) and
 `jaccard_reference` (events matched to the reference configuration's over their union).
 
 - `<family>_oat.csv`: each factor at each of its values (five evenly spaced over a
@@ -798,7 +804,13 @@ recipes co-vary (a lower threshold usually comes with other changes), so an inde
 what a factor does across the space, not what the literature's choices did. Fixed points
 are not decomposed. The conclusions hold for the reference simulator only. The bound's
 index is that of its fraction of the threshold: changing the threshold moves the bound
-with it, so the threshold's index includes the bound's shift.
+with it, so the threshold's index includes the bound's shift. Some levels mask the
+normalization period by construction: with the speed rule `restrict<5` the trace is
+missing wherever speed is 5 cm/s or more, so the statistics come from slow samples
+whatever the period, and `session` and `speed<5` give the same configuration; with the
+state `restrict:rest` the trace is missing outside rest, so `session` and `rest` do (for
+the spikes family, up to a bin at the edge of a rest interval). The
+normalization period's indices then carry those interactions, not an effect of its own.
 
 Measured: **TBD: the smoke test's seconds per configuration and memory, the chosen
 Sobol `N`, and each analysis's command and wall time on run `v1`**.
