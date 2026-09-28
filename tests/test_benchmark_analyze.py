@@ -398,3 +398,49 @@ def test_loading_reads_back_what_the_run_wrote(analyze, run, tiny_run, tiny_tabl
 def test_loading_an_unknown_condition_raises(analyze, tiny_run):
     with pytest.raises(ValueError, match=r"no session of the conditions \['ripple_snr=low'\]"):
         analyze.load_run(tiny_run, conditions=["reference", "ripple_snr=low"])
+
+
+@pytest.fixture(scope="module")
+def tiny_matches(analyze, tiny_tables):
+    return analyze.match_run(tiny_tables)
+
+
+def test_matching_again_gives_the_runner_scores(analyze, tiny_tables, tiny_matches):
+    pairs = tiny_matches.pairs
+    reference = tiny_matches.windows.groupby(["session_id", "expression"]).size()
+    metrics = tiny_tables.metrics[tiny_tables.metrics.minimum_iou == 0]
+    for row in metrics.itertuples():
+        found = pairs[
+            (pairs.session_id == row.session_id)
+            & (pairs.method == row.method)
+            & (pairs.expression == row.expression)
+        ]
+        assert len(found) == row.n_matched
+        assert reference[row.session_id, row.expression] == row.n_reference
+        for column in analyze.ERROR_COLUMNS:
+            median = found[column].median() if len(found) else np.nan
+            assert median == pytest.approx(getattr(row, f"median_{column}"), nan_ok=True)
+    assert len(metrics) == 3 * 4  # Kay twice, Mallory once; four expressions
+
+
+def test_false_positive_labels(tiny_matches):
+    labels = tiny_matches.false_positives.groupby(["session_id", "method"])["label"]
+    assert labels.apply(sorted).to_dict() == {
+        ("reference/0", KAY[0]): ["background", "burst_only:burst", "spike_leakage"],
+        ("reference/0", MALLORY[0]): ["background", "emg"],
+        ("reference/1", KAY[0]): ["background", "burst_only:burst", "spike_leakage"],
+    }
+
+
+def test_splits_and_merges_count_the_doublet(tiny_matches):
+    kay = tiny_matches.overlaps[tiny_matches.overlaps.method == KAY[0]]
+    counts = kay.groupby("subset")[["n_truth", "n_split", "n_detected", "n_merged"]].sum()
+    # the doublet's two ripples found as one event, in each session
+    assert counts.loc["all"].tolist() == [8, 0, 12, 2]
+    assert counts.loc["ripple_doublet"].tolist() == [4, 0, 2, 2]
+
+
+def test_matching_in_parallel_matches_in_order(analyze, tiny_tables, tiny_matches):
+    parallel = analyze.match_run(tiny_tables, workers=2)
+    for name in analyze._MATCH_COLUMNS:
+        pd.testing.assert_frame_equal(getattr(parallel, name), getattr(tiny_matches, name))

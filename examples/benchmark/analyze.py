@@ -14,15 +14,22 @@ refuses a larger one before writing anything.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import itertools
 import os
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping, Sequence
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
+from conditions import TRUTH_FRACTIONS
 from numpy.typing import ArrayLike
-from run import TABLES, load_truth, read_table
+from run import TABLES, _concat, load_truth, read_table, truth_window_sets
+
+import ripple_detection as rd
+from ripple_detection.evaluate import COMPARISON_COLUMNS
 
 HERE = Path(__file__).resolve().parent
 RESULTS = HERE / "results"
@@ -35,14 +42,60 @@ LEVEL = 0.95
 # Differences within this of the observed statistic count as at least as
 # large, so an exact tie is not lost to rounding.
 _TIE = 1e-12
+# Up to this many sessions the sign-flip null is enumerated.
+_EXACT_UP_TO = 16
+
 # The settings of the main analyses: detectors at their defaults, and recipes.
 MAIN_SETTINGS = ("default", "literature")
 REFERENCE_CONDITION = "reference"
 _KEY = ["session_id", "method", "setting"]
 # Rows of a large table read at once.
 _CHUNK_ROWS = 1_000_000
-# Up to this many sessions the sign-flip null is enumerated.
-_EXACT_UP_TO = 16
+
+PERCENTS = tuple(round(100 * fraction) for fraction in TRUTH_FRACTIONS)
+# The label of a false positive that overlaps no truth window.
+BACKGROUND = "background"
+# The type that has two or three ripples, for split and merge rates.
+DOUBLET = "ripple_doublet"
+WINDOW_COLUMNS = ("session_id", "expression", "row", "id", "type", "start_time", "end_time")
+ERROR_COLUMNS = tuple(
+    f"{kind}_error_{percent}" for percent in PERCENTS for kind in ("onset", "offset")
+)
+PAIR_COLUMNS = (
+    "session_id",
+    "method",
+    "setting",
+    "expression",
+    "minimum_iou",
+    "truth_row",
+    "event_index",
+    "iou",
+    "coverage",
+    "temporal_precision",
+    *ERROR_COLUMNS,
+)
+OVERLAP_COLUMNS = (
+    "session_id",
+    "method",
+    "setting",
+    "subset",
+    "n_truth",
+    "n_split",
+    "n_detected",
+    "n_merged",
+)
+FALSE_POSITIVE_COLUMNS = (
+    "session_id",
+    "method",
+    "setting",
+    "event_index",
+    "start_time",
+    "end_time",
+    "label",
+)
+SESSION_COMPARISON_COLUMNS = ("session_id", "truth_expression", *COMPARISON_COLUMNS)
+CONSENSUS_COLUMNS = ("session_id", "row", "type", "n_methods", "n_methods_run")
+GROUP_COLUMNS = ("session_id", "n_methods", "n_events", "start_time", "end_time")
 
 
 def paired_bootstrap(
@@ -396,4 +449,380 @@ def failure_counts(tables: RunTables) -> pd.DataFrame:
     counts = counts.join(failed["error"].first(), on=["method", "setting"])
     return counts.fillna({"n_sessions": 0, "n_failures": 0, "error": ""}).astype(
         {"n_sessions": int, "n_failures": int}
+    )
+
+
+# Matching every session again
+
+
+@dataclasses.dataclass(frozen=True)
+class Matches:
+    """Each session's events matched to its truth again, as the runner did.
+
+    Every table has ``session_id`` first. Matching is one-to-one
+    (``match_events``) against the truth windows at 10 % of the peak;
+    errors are against the windows at each of ``TRUTH_FRACTIONS``, detected
+    minus truth, in seconds.
+
+    Attributes
+    ----------
+    windows : pandas.DataFrame
+        One row per truth window of each expression (``EXPRESSIONS``) at 10 %:
+        ``expression``, ``row`` (its position, as ``truth_row`` gives it),
+        ``id`` (the latent event), ``type`` (its event type), ``start_time``,
+        ``end_time``.
+    pairs : pandas.DataFrame
+        One row per matched pair of each method and setting, expression and
+        ``minimum_iou``: ``truth_row``, ``event_index`` (``events.csv``'s),
+        ``iou``, ``coverage``, ``temporal_precision`` and
+        ``{onset,offset}_error_{10,25,50}``.
+    overlaps : pandas.DataFrame
+        Split and merge counts against each method's primary expression, any
+        overlap counting, for ``subset`` ``"all"`` and ``"ripple_doublet"``:
+        ``n_truth`` windows, ``n_split`` of them overlapped by two or more
+        events; ``n_detected`` events (for the doublets, those overlapping a
+        doublet's window), ``n_merged`` of them overlapping two or more
+        windows.
+    false_positives : pandas.DataFrame
+        One row per event matching no window of its method's primary
+        expression at ``minimum_iou`` 0: ``event_index``, ``start_time``,
+        ``end_time`` and ``label``, the window it overlaps longest
+        (``label_by_overlap``) among every event component's,
+        ``"<event_type>:<expression>"``, and every non-event's, its type;
+        ``"background"`` for none.
+    comparisons : pandas.DataFrame
+        ``compare_detectors`` on the main methods (one setting each, the
+        first method of a pair first by name), ``truth_expression``
+        ``"network"`` for every pair, and each primary expression but network
+        for the pairs sharing it.
+    consensus : pandas.DataFrame
+        One row per network window: ``row``, ``type``, ``n_methods`` (main
+        methods that matched it) and ``n_methods_run`` (main methods with
+        scores on the session).
+    false_positive_groups : pandas.DataFrame
+        The main methods' false positives joined by overlap into connected
+        groups, one row per group: ``n_methods`` it spans, ``n_events``,
+        ``start_time``, ``end_time``.
+    """
+
+    windows: pd.DataFrame
+    pairs: pd.DataFrame
+    overlaps: pd.DataFrame
+    false_positives: pd.DataFrame
+    comparisons: pd.DataFrame
+    consensus: pd.DataFrame
+    false_positive_groups: pd.DataFrame
+
+
+_MATCH_COLUMNS = {
+    "windows": WINDOW_COLUMNS,
+    "pairs": PAIR_COLUMNS,
+    "overlaps": OVERLAP_COLUMNS,
+    "false_positives": FALSE_POSITIVE_COLUMNS,
+    "comparisons": SESSION_COMPARISON_COLUMNS,
+    "consensus": CONSENSUS_COLUMNS,
+    "false_positive_groups": GROUP_COLUMNS,
+}
+
+
+def _bounds(frame: pd.DataFrame) -> np.ndarray[Any, Any]:
+    return np.asarray(frame[["start_time", "end_time"]], dtype=float).reshape(-1, 2)
+
+
+def label_windows(events: pd.DataFrame, non_events: pd.DataFrame) -> pd.DataFrame:
+    """Every truth window a false positive can be labelled by, at 10 % of the peak.
+
+    Parameters
+    ----------
+    events, non_events : pandas.DataFrame
+        A session's latent event and non-event tables.
+
+    Returns
+    -------
+    windows : pandas.DataFrame
+        ``start_time``, ``end_time`` and ``label``: each event component's
+        window labelled ``"<event_type>:<expression>"``, by expression
+        (``ripple``, ``sharp_wave``, ``burst``), then each non-event's
+        labelled by its type.
+    """
+    fraction = TRUTH_FRACTIONS[0]
+    parts = []
+    for expression in rd.EXPRESSIONS:
+        windows = rd.truth_windows(events, fraction, expression)
+        parts.append(windows.assign(label=windows["type"].astype(str) + f":{expression}"))
+    windows = rd.truth_windows(non_events, fraction)
+    parts.append(windows.assign(label=windows["type"].astype(str)))
+    return _concat(parts, ("start_time", "end_time", "label"))
+
+
+def _connected_groups(bounds: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
+    """Each interval's connected group under positive-length overlap, in
+    order of the groups' starts; shape (n,)."""
+    order = np.argsort(bounds[:, 0], kind="stable")
+    start, end = bounds[order, 0], bounds[order, 1]
+    new = np.ones(len(order), dtype=bool)
+    new[1:] = start[1:] >= np.maximum.accumulate(end)[:-1]
+    groups = np.empty(len(order), dtype=int)
+    groups[order] = np.cumsum(new) - 1
+    return groups
+
+
+def match_session(
+    session_id: str,
+    events: pd.DataFrame,
+    truth: tuple[pd.DataFrame, pd.DataFrame],
+    ran: Sequence[tuple[str, str]],
+    primary: Mapping[tuple[str, str], str],
+    levels: Sequence[float] = (0.0,),
+) -> Matches:
+    """Match one session's events to its truth again.
+
+    Parameters
+    ----------
+    session_id : str
+    events : pandas.DataFrame
+        The session's ``events.csv`` rows.
+    truth : (pandas.DataFrame, pandas.DataFrame)
+        Its latent event and non-event tables.
+    ran : sequence of (method, setting)
+        The methods and settings with scores on the session, events or not.
+    primary : mapping of (method, setting) to str
+        Each one's primary expression.
+    levels : sequence of float, optional
+        The ``minimum_iou`` levels of ``pairs``; 0 is always among them.
+
+    Returns
+    -------
+    matches : Matches
+        The session's rows.
+
+    Raises
+    ------
+    ValueError
+        A method has two main settings, so the main methods cannot be
+        compared by name.
+    """
+    event_table, non_event_table = truth
+    levels = tuple(dict.fromkeys((0.0, *levels)))
+    sets = truth_window_sets(event_table)
+    truth_bounds = {
+        expression: [_bounds(frame) for frame in frames] for expression, frames in sets.items()
+    }
+    windows = _concat(
+        [
+            frames[0].assign(
+                session_id=session_id, expression=expression, row=np.arange(len(frames[0]))
+            )
+            for expression, frames in sets.items()
+        ],
+        WINDOW_COLUMNS,
+    )
+    labels = label_windows(event_table, non_event_table)
+    by_method = dict(tuple(events.groupby(["method", "setting"], sort=False)))
+    pairs, overlaps, false_positives = [], [], []
+    detected = {}
+    for method, setting in ran:
+        rows = by_method.get((method, setting), events.iloc[:0]).sort_values("event_index")
+        bounds, index = _bounds(rows), rows["event_index"].to_numpy()
+        detected[method, setting] = bounds
+        key = {"session_id": session_id, "method": method, "setting": setting}
+        for expression, references in truth_bounds.items():
+            for level in levels:
+                matching = rd.match_events(references[0], bounds, minimum_iou=level)
+                found = matching.pairs
+                errors = {
+                    f"{kind}_error_{percent}": (
+                        found
+                        if position == 0
+                        else matching.boundary_errors(references[position])
+                    )[f"{kind}_error"].to_numpy()
+                    for position, percent in enumerate(PERCENTS)
+                    for kind in ("onset", "offset")
+                }
+                pairs.append(
+                    pd.DataFrame(
+                        {
+                            **key,
+                            "expression": expression,
+                            "minimum_iou": level,
+                            "truth_row": found["reference_index"].to_numpy(),
+                            "event_index": index[found["detected_index"].to_numpy()],
+                            "iou": found["iou"].to_numpy(),
+                            "coverage": found["coverage"].to_numpy(),
+                            "temporal_precision": found["temporal_precision"].to_numpy(),
+                            **errors,
+                        },
+                        columns=list(PAIR_COLUMNS),
+                    )
+                )
+        expression = primary[method, setting]
+        reference = truth_bounds[expression][0]
+        matching = rd.match_events(reference, bounds)
+        unmatched = matching.unmatched_detected
+        false_positives.append(
+            pd.DataFrame(
+                {
+                    **key,
+                    "event_index": index[unmatched],
+                    "start_time": bounds[unmatched, 0],
+                    "end_time": bounds[unmatched, 1],
+                    "label": rd.label_by_overlap(bounds[unmatched], labels).to_numpy(),
+                },
+                columns=list(FALSE_POSITIVE_COLUMNS),
+            )
+        )
+        doublet = (sets[expression][0]["type"] == DOUBLET).to_numpy()
+        # the events overlapping a doublet's window
+        near = rd.match_events(reference[doublet], bounds).detected_overlaps > 0
+        overlaps.append(
+            pd.DataFrame(
+                [
+                    {
+                        **key,
+                        "subset": "all",
+                        "n_truth": len(reference),
+                        "n_split": int((matching.reference_overlaps >= 2).sum()),
+                        "n_detected": len(bounds),
+                        "n_merged": int((matching.detected_overlaps >= 2).sum()),
+                    },
+                    {
+                        **key,
+                        "subset": DOUBLET,
+                        "n_truth": int(doublet.sum()),
+                        "n_split": int((matching.reference_overlaps[doublet] >= 2).sum()),
+                        "n_detected": int(near.sum()),
+                        "n_merged": int((matching.detected_overlaps[near] >= 2).sum()),
+                    },
+                ],
+                columns=list(OVERLAP_COLUMNS),
+            )
+        )
+    comparisons, consensus, groups = _compare_main(
+        session_id,
+        detected,
+        primary,
+        truth_bounds,
+        sets["network"][0]["type"].to_numpy(),
+        _concat(false_positives, FALSE_POSITIVE_COLUMNS),
+    )
+    return Matches(
+        windows=windows,
+        pairs=_concat(pairs, PAIR_COLUMNS),
+        overlaps=_concat(overlaps, OVERLAP_COLUMNS),
+        false_positives=_concat(false_positives, FALSE_POSITIVE_COLUMNS),
+        comparisons=comparisons,
+        consensus=consensus,
+        false_positive_groups=groups,
+    )
+
+
+def _compare_main(
+    session_id: str,
+    detected: Mapping[tuple[str, str], np.ndarray[Any, Any]],
+    primary: Mapping[tuple[str, str], str],
+    truth_bounds: Mapping[str, Sequence[np.ndarray[Any, Any]]],
+    network_types: np.ndarray[Any, Any],
+    false_positives: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """The main methods compared with each other on one session: their
+    ``compare_detectors`` rows, which of them found each network event, and
+    their false positives' connected groups."""
+    main = sorted(key for key in detected if key[1] in MAIN_SETTINGS)
+    names = [method for method, _ in main]
+    if len(set(names)) < len(names):
+        msg = f"A method has two main settings on {session_id}: {main}."
+        raise ValueError(msg)
+    events = {method: detected[method, setting] for method, setting in main}
+    expressions = {method: primary[method, setting] for method, setting in main}
+    parts = [
+        rd.compare_detectors(events, truth=truth_bounds["network"][0]).assign(
+            truth_expression="network"
+        )
+    ]
+    for expression in sorted(set(expressions.values()) - {"network"}):
+        group = {
+            method: events[method] for method in names if expressions[method] == expression
+        }
+        parts.append(
+            rd.compare_detectors(group, truth=truth_bounds[expression][0]).assign(
+                truth_expression=expression
+            )
+        )
+    comparisons = _concat(
+        [part.assign(session_id=session_id) for part in parts], SESSION_COMPARISON_COLUMNS
+    )
+    found = rd.consensus_counts(events, truth_bounds["network"][0])
+    consensus = pd.DataFrame(
+        {
+            "session_id": session_id,
+            "row": np.arange(len(found)),
+            "type": network_types,
+            "n_methods": found["n_methods"].to_numpy(),
+            "n_methods_run": len(events),
+        },
+        columns=list(CONSENSUS_COLUMNS),
+    )
+    shown = false_positives[false_positives["setting"].isin(MAIN_SETTINGS)]
+    labels = _connected_groups(_bounds(shown))
+    groups = (
+        shown.assign(group=labels)
+        .groupby("group")
+        .agg(
+            n_methods=("method", "nunique"),
+            n_events=("method", "size"),
+            start_time=("start_time", "min"),
+            end_time=("end_time", "max"),
+        )
+        .assign(session_id=session_id)
+    )
+    return comparisons, consensus, groups.reset_index(drop=True)[list(GROUP_COLUMNS)]
+
+
+def match_run(
+    tables: RunTables, *, workers: int = 1, levels: Sequence[float] = (0.0,)
+) -> Matches:
+    """Match every session of a run again, one process per session.
+
+    Parameters
+    ----------
+    tables : RunTables
+    workers : int, optional
+        Processes; 1 matches in this one.
+    levels : sequence of float, optional
+        ``minimum_iou`` levels of the pairs; 0 is always among them.
+
+    Returns
+    -------
+    matches : Matches
+        Every session's rows, in ``tables.sessions``' order.
+    """
+    primary = {
+        (method, setting): expression
+        for method, setting, expression in tables.methods[
+            ["method", "setting", "primary_expression"]
+        ].itertuples(index=False)
+    }
+    events = dict(tuple(tables.events.groupby("session_id", sort=False)))
+    ran = {
+        session_id: list(rows[["method", "setting"]].itertuples(index=False, name=None))
+        for session_id, rows in tables.ran.groupby("session_id", sort=False)
+    }
+    session_ids = list(tables.sessions["session_id"])
+    arguments = (
+        session_ids,
+        [events.get(session_id, tables.events.iloc[:0]) for session_id in session_ids],
+        [tables.truth[session_id] for session_id in session_ids],
+        [ran.get(session_id, []) for session_id in session_ids],
+    )
+    match = functools.partial(match_session, primary=primary, levels=levels)
+    if workers == 1:
+        sessions = list(map(match, *arguments))
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            sessions = list(pool.map(match, *arguments))
+    return Matches(
+        **{
+            name: _concat([getattr(session, name) for session in sessions], columns)
+            for name, columns in _MATCH_COLUMNS.items()
+        }
     )
