@@ -1057,11 +1057,12 @@ def sobol_indices(y_a, y_b, y_ab):
     return first, total
 ```
 
-The first-order product is of centred outputs. Uncentred, adding a constant `c` to every output
-adds `c mean(y_ab - y_a) / variance` to each first-order index, a term zero only in expectation,
-so the estimate moves with the outputs' origin (an F1 near 0.5 is far from 0) and its interval
-widens with it. Each bootstrap resample is centred on its own mean; the total is a difference of
-outputs and needs none. (This design first had the uncentred product; see the note on run v1.)
+The first-order product is of centred outputs. Uncentred, adding a constant `c` to every
+output adds `c mean(y_ab - y_a) / variance` to each first-order index, a term zero only in
+expectation, so the estimate moves with the outputs' origin (an F1 near 0.5 is far from 0) and
+its interval widens with it. Each bootstrap resample is centred on its own mean; the total is a
+difference of outputs and needs none. (This design first had the uncentred product; see the
+note on run v1.)
 
 Intervals: bootstrap over the `N` sample rows (1000 resamples, percentile), not over sessions:
 each `Y` already averages the `K` sessions. Cost `N (d + 2)` configs × `K` sessions; phase 6

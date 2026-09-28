@@ -224,7 +224,9 @@ def test_sobol_intervals_with_missing_outputs(attribution):
     assert table["finite_rows"].tolist() == [n - 1, n - 2, n - 1]
     # an output never defined: every index and interval missing, without a warning
     missing = np.full(n, np.nan)
-    table = attribution.sobol_intervals(missing, missing, np.full((3, n), np.nan), n_resamples=10)
+    table = attribution.sobol_intervals(
+        missing, missing, np.full((3, n), np.nan), n_resamples=10
+    )
     assert table[["first", "first_low", "total", "total_high"]].isna().all().all()
     assert (table[["finite_rows", "first_finite_draws"]] == 0).all().all()
 
