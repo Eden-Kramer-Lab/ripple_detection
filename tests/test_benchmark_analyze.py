@@ -1585,9 +1585,16 @@ def test_model_sensitivity_includes_all_variants(analyze):
     # the main settings' measures, paired the same way
     recall = changes[(changes.measure == "recall") & (changes.method == KAY[0])]
     assert recall.change.dropna().tolist() == [0.0] * 5
-    lines = analyze.model_sensitivity_statements(changes, orders)
+    nothing_moved = analyze.validation_changes(_checks().iloc[:0])
+    lines = analyze.model_sensitivity_statements(changes, orders, nothing_moved)
     assert lines[0].startswith("- `strength_correlation=coupled` (validation: no target")
     assert "not in this run" in lines[-1]
+    # a report never read is not a report where nothing moved
+    unread = analyze.model_sensitivity_statements(changes, orders)
+    assert unread[0].startswith(
+        "- `strength_correlation=coupled` (validation: the report was not read, so what "
+        "this alternative changes in it is unknown)"
+    )
     refractory_lines = [
         line for line in lines if "refractory" in line or "reversed at" in line
     ]
@@ -1659,8 +1666,10 @@ def test_model_sensitivity_keeps_failures_apart_from_unreachable_targets(analyze
     assert "1 detector targets are out of reach in one condition and 4 missing" in spiking
 
 
-def test_validation_changes_list_moved_statistics(analyze):
-    checks = pd.DataFrame(
+def _checks():
+    """A validation report's checks: the refractory model moves the rate by
+    2 % and the width by less than 1 %."""
+    return pd.DataFrame(
         {
             "check": ["rate", "rate", "rate", "width", "width", "noise"],
             "kind": ["target"] * 5 + ["rendering"],
@@ -1676,7 +1685,58 @@ def test_validation_changes_list_moved_statistics(analyze):
             "observed": [11.81, 11.57, 11.81, 44.0, 44.2, 3.0],
         }
     )
-    changed = analyze.validation_changes(checks)
+
+
+def _report(root, checks, *, spec_hash=None, checks_hash=None):
+    """A run directory whose ``run_spec.json`` names a validation report
+    written beside it (by absolute path), with the hashes given or the files'
+    own."""
+    import hashlib
+    import json
+
+    report = root / "validation"
+    report.mkdir(parents=True)
+    checks.to_csv(report / "checks.csv", index=False)
+    digest = hashlib.sha256((report / "checks.csv").read_bytes()).hexdigest()
+    spec = {"artifacts": {"checks.csv": checks_hash or digest}}
+    (report / "spec.json").write_text(json.dumps(spec))
+    identity = {
+        "path": str(report / "spec.json"),
+        "sha256": spec_hash or hashlib.sha256((report / "spec.json").read_bytes()).hexdigest(),
+    }
+    run_directory = root / "run"
+    run_directory.mkdir()
+    (run_directory / "run_spec.json").write_text(json.dumps({"validation_report": identity}))
+    return run_directory
+
+
+def test_the_validation_report_is_read_from_the_run_spec(analyze, tmp_path):
+    changed, problem = analyze._validation(_report(tmp_path / "good", _checks()))
+    assert problem == ""
+    assert changed[["alternative", "check"]].to_numpy().tolist() == [
+        ["spike_model=refractory", "rate"]
+    ]
+    # every way a report can be missing or not the one the run used says so
+    cases = {
+        "no run_spec.json": tmp_path / "nowhere",
+        "differs from the one the run was checked against": _report(
+            tmp_path / "spec", _checks(), spec_hash="0" * 64
+        ),
+        "checks.csv differs from the one its spec.json lists": _report(
+            tmp_path / "checks", _checks(), checks_hash="0" * 64
+        ),
+    }
+    missing = _report(tmp_path / "missing", _checks())
+    (missing.parent / "validation" / "checks.csv").unlink()
+    cases["checks.csv is missing"] = missing
+    for reason, run_directory in cases.items():
+        changed, problem = analyze._validation(run_directory)
+        assert changed is None
+        assert reason in problem
+
+
+def test_validation_changes_list_moved_statistics(analyze):
+    changed = analyze.validation_changes(_checks())
     assert changed.to_dict("records") == [
         {
             "alternative": "spike_model=refractory",
@@ -1805,7 +1865,9 @@ def test_the_command_writes_every_table_and_the_summary(analyze, two_condition_r
         "Across every condition, 1 calls failed (sweeps included), by method, setting and "
         f"condition:\n\n- `{MALLORY[0]}` (literature), `reference`: 1 sessions" in summary
     )
-    assert "- `spike_model=refractory` (validation: no target statistic" in summary
+    # the run has no validation report: the summary says so, never "nothing moved"
+    assert "- `spike_model=refractory` (validation: the report was not read" in summary
+    assert "The validation report was not read (" in summary
     assert "- `envelope_power=quartic`: not in this run" in summary
     # the tables across conditions hold the second condition
     robust = pd.read_csv(results / "robustness_recall.csv")

@@ -4155,7 +4155,8 @@ def model_sensitivity_statements(
     changes, orders : pandas.DataFrame
         ``model_sensitivity``'s tables.
     validation : pandas.DataFrame, optional
-        ``validation_changes``' table.
+        ``validation_changes``' table; None (the default) for a report not
+        read, which each line says rather than reading it as nothing moved.
 
     Returns
     -------
@@ -4171,8 +4172,9 @@ def model_sensitivity_statements(
                 "the reference's results say nothing about it."
             )
             continue
-        observed = "no target statistic moved by more than 1 %"
+        observed = "the report was not read, so what this alternative changes in it is unknown"
         if validation is not None:
+            observed = "no target statistic moved by more than 1 %"
             moved = validation[validation["alternative"] == alternative]
             if len(moved):
                 observed = "; ".join(
@@ -5944,9 +5946,11 @@ class Inputs:
         Its sessions matched again at every level of ``MATCH_IOU_LEVELS``.
     scores : ConditionScores
         Every condition, against the primary expressions.
-    validation : pandas.DataFrame
-        ``validation_changes`` of the run's simulator validation report
-        (empty when the report is not found).
+    validation : pandas.DataFrame or None
+        ``validation_changes`` of the run's simulator validation report;
+        None when it could not be read.
+    validation_problem : str
+        Why it could not be read (``_validation``), ``""`` when it was.
     cache : dict
         Tables several analyses share, computed once.
     """
@@ -5954,7 +5958,8 @@ class Inputs:
     tables: RunTables
     matches: Matches
     scores: ConditionScores
-    validation: pd.DataFrame
+    validation: pd.DataFrame | None
+    validation_problem: str = ""
     cache: dict[Any, Any] = dataclasses.field(default_factory=dict)
 
 
@@ -6320,8 +6325,9 @@ def _summary(
     tables: RunTables,
     files: Sequence[tuple[str, str]],
     results: Mapping[str, pd.DataFrame],
-    validation: pd.DataFrame,
+    validation: pd.DataFrame | None,
     scores: ConditionScores | None = None,
+    validation_problem: str = "",
 ) -> str:
     """``summary.md``: what was analysed, the conventions, each file with
     its sentence, the failures (of the reference, and of every condition
@@ -6448,6 +6454,17 @@ def _summary(
                 "validation report's changed target statistics are listed beside each."
             ),
             "",
+            *(
+                [
+                    (
+                        f"The validation report was not read ({validation_problem}): which "
+                        "target statistics each alternative moves is unknown, not unchanged."
+                    ),
+                    "",
+                ]
+                if validation is None
+                else []
+            ),
             *model_sensitivity_statements(changes, orders, validation),
             "",
             (
@@ -6482,20 +6499,49 @@ def _summary(
     return "\n".join(lines) + "\n"
 
 
-def _validation(run_directory: Path) -> pd.DataFrame:
-    """``validation_changes`` of the report the run was checked against
-    (``run_spec.json``), read from the repository; empty when not found."""
-    spec = run_directory / "run_spec.json"
-    empty = pd.DataFrame(
-        columns=["alternative", "check", "statistic", "reference", "observed"]
-    )
-    if not spec.exists():
-        return empty
-    report = json.loads(spec.read_text()).get("validation_report") or {}
-    checks = REPOSITORY / str(report.get("path", "")) if report.get("path") else None
-    if checks is None or not checks.with_name("checks.csv").exists():
-        return empty
-    return validation_changes(pd.read_csv(checks.with_name("checks.csv")))
+def _validation(run_directory: Path) -> tuple[pd.DataFrame | None, str]:
+    """``validation_changes`` of the report the run was checked against.
+
+    ``run_spec.json`` names the report's ``spec.json`` (a path from the
+    repository, or absolute) and its SHA-256; the spec lists its
+    ``checks.csv``'s. Both files must be there and be those files.
+
+    Parameters
+    ----------
+    run_directory : pathlib.Path
+
+    Returns
+    -------
+    changes : pandas.DataFrame or None
+        None when the report cannot be read: then nothing is known about
+        what the alternatives change in it, which is not the same as nothing
+        changing.
+    problem : str
+        Why it was not read; ``""`` when it was.
+    """
+    from validate_simulator import file_sha256
+
+    run_spec = run_directory / "run_spec.json"
+    if not run_spec.exists():
+        return None, f"no run_spec.json in {run_directory}"
+    try:
+        identity = json.loads(run_spec.read_text()).get("validation_report") or {}
+        if not identity.get("path"):
+            return None, "run_spec.json names no validation report"
+        spec = REPOSITORY / str(identity["path"])
+        if not spec.exists():
+            return None, f"{spec} is missing"
+        if file_sha256(spec) != identity.get("sha256"):
+            return None, f"{spec} differs from the one the run was checked against"
+        checks = spec.with_name("checks.csv")
+        if not checks.exists():
+            return None, f"{checks} is missing"
+        listed = json.loads(spec.read_text()).get("artifacts", {}).get("checks.csv")
+        if file_sha256(checks) != listed:
+            return None, f"{checks} differs from the one its spec.json lists"
+        return validation_changes(pd.read_csv(checks)), ""
+    except (OSError, ValueError, KeyError) as error:
+        return None, f"the report could not be read: {type(error).__name__}: {error}"
 
 
 def analyze_run(
@@ -6547,7 +6593,7 @@ def analyze_run(
     started = wall_clock.perf_counter()
     scores = load_scores(root, workers=workers)
     seconds["scores"] = wall_clock.perf_counter() - started
-    inputs = Inputs(tables, matches, scores, _validation(root))
+    inputs = Inputs(tables, matches, scores, *_validation(root))
     if figures:
         import matplotlib as mpl
 
@@ -6580,7 +6626,15 @@ def analyze_run(
                 ),
             )
         )
-        summary = _summary(root.name, tables, files, results, inputs.validation, scores)
+        summary = _summary(
+            root.name,
+            tables,
+            files,
+            results,
+            inputs.validation,
+            scores,
+            inputs.validation_problem,
+        )
         write_result(partial / "summary.md", summary.encode())
     return seconds
 
