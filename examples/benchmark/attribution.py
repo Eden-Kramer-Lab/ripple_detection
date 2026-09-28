@@ -607,8 +607,8 @@ class SessionContext:
     that make them (at most ``TRACE_CACHE_SIZE``), the events of each stage of
     a pipeline (its core, then each post step) by the core and the steps so far
     (at most ``EVENT_CACHE_SIZE``), a partner's events by its name; ``release``
-    empties every cache. Nothing is attached to a recording the
-    package or a caller holds.
+    empties every cache. Nothing is attached to a recording the package or a
+    caller holds.
 
     Parameters
     ----------
@@ -631,7 +631,8 @@ class SessionContext:
         By expression and fraction (0.1, 0.25), the truth windows' bounds,
         each shape (n_windows, 2).
     n_runs : int
-        How many pipelines this context has run, a cache miss each.
+        How many pipelines this context has run: those whose events it did not
+        hold (a pipeline sharing cached stages runs only the others).
     """
 
     def __init__(self, session: rd.SimulatedSession, label: str) -> None:
