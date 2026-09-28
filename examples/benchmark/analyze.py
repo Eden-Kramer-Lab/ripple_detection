@@ -3541,17 +3541,25 @@ CHANGE_COLUMNS = (
 RECALL_CHANGE = 0.1
 
 
-def _measured(pooled: Mapping[str, np.ndarray[Any, Any]]) -> dict[str, np.ndarray[Any, Any]]:
-    """Every one of ``MEASURES`` of pooled counts and errors."""
+# The error column each median measure is of.
+_MEDIAN_OF = {"median_onset_error": "onset_error", "median_offset_error": "offset_error"}
+
+
+def _measured(
+    pooled: Mapping[str, np.ndarray[Any, Any]], measures: Sequence[str]
+) -> np.ndarray[Any, Any]:
+    """Some of ``MEASURES`` of pooled counts and errors, shape (n_measures,
+    n_groups); ``pooled`` holds the medians they need."""
     rates = _rates(pooled)
-    return {
+    rates = {
         "recall": rates["recall"],
         "precision": rates["precision"],
         "false_positives_per_minute": rates["fp_rate"],
-        "median_onset_error": pooled["onset_error"],
-        "median_offset_error": pooled["offset_error"],
         "participation": _ratio(pooled["principal_fraction"], pooled["n_events"]),
     }
+    return np.array(
+        [pooled[_MEDIAN_OF[name]] if name in _MEDIAN_OF else rates[name] for name in measures]
+    )
 
 
 def _main_methods(scores: ConditionScores) -> pd.DataFrame:
@@ -3561,7 +3569,10 @@ def _main_methods(scores: ConditionScores) -> pd.DataFrame:
 
 
 def condition_pool(
-    scores: ConditionScores, condition_ids: Sequence[str], replicates: Sequence[int]
+    scores: ConditionScores,
+    condition_ids: Sequence[str],
+    replicates: Sequence[int],
+    medians: Sequence[str] = ("onset_error", "offset_error"),
 ) -> tuple[Pool, pd.MultiIndex, pd.Series]:
     """The main settings in some conditions, pooled over shared replicates.
 
@@ -3576,12 +3587,15 @@ def condition_pool(
     replicates : sequence of int
         The units: a replicate's session in every condition shares its seed,
         so drawing it keeps the conditions paired.
+    medians : sequence of str, optional
+        The errors whose medians the pool takes, of ``onset_error`` and
+        ``offset_error`` (signed, at IoU 0).
 
     Returns
     -------
     pool : Pool
-        Counts (with participation), and signed onset and offset errors at
-        IoU 0, of each group.
+        Counts (with participation), and the ``medians``' errors, of each
+        group.
     groups : pandas.MultiIndex
         ``(condition_id, method, setting)``, every condition with every main
         setting.
@@ -3648,7 +3662,7 @@ def condition_pool(
         len(units),
         len(groups),
         (*_COUNTED, "n_events", "principal_fraction"),
-        ("onset_error", "offset_error"),
+        medians,
     )
     return pool, groups, paired
 
@@ -3702,7 +3716,8 @@ def paired_changes(
         *(set(rows["replicate"]) for _, rows in listed.groupby("condition_id"))
     )
     replicates = sorted(shared)
-    pool, groups, paired = condition_pool(scores, condition_ids, replicates)
+    medians = [_MEDIAN_OF[name] for name in measures if name in _MEDIAN_OF]
+    pool, groups, paired = condition_pool(scores, condition_ids, replicates, medians)
     base = groups.get_indexer(
         pd.MultiIndex.from_arrays(
             [
@@ -3714,8 +3729,7 @@ def paired_changes(
     )
 
     def statistic(weights: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
-        found = _measured(pool(weights))
-        values = np.array([found[name] for name in measures])
+        values = _measured(pool(weights), measures)
         return np.stack([values, values - values[:, base]])
 
     estimate = statistic(np.ones(len(replicates)))
