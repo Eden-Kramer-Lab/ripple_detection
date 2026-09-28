@@ -171,6 +171,8 @@ SMOKE_CONFIGURATIONS = 20
 EDGE_DURATION = 60.0
 GAP_WIDTH = 0.02
 UNIX_ORIGIN = 1_700_000_000.0
+# The input policy's inputs a session context's recording holds.
+CONTEXT_INPUTS = ("lfps", "sharp_wave_lfp", "multiunit", "speed", "place_cells", "pyramidal")
 # Pipelines' events kept per session, and traces (large arrays) per session.
 EVENT_CACHE_SIZE = 4096
 TRACE_CACHE_SIZE = 8
@@ -580,14 +582,15 @@ def _read_only(values: ArrayT) -> ArrayT:
 class SessionContext:
     """One session's inputs for running pipelines, and what they have computed.
 
-    The context owns its recording (``Recording.from_arrays`` of the session's
-    LFPs, radiatum channel, speed and spike counts, with the input policy's
-    place and pyramidal selections), whose arrays it makes read-only, so
-    nothing cached from them can go stale. Traces are cached by the immutable
-    parameters that make them (at most ``TRACE_CACHE_SIZE``), a pipeline's
-    events by the pipeline (at most ``EVENT_CACHE_SIZE``), a partner's events by
-    its name; ``release`` empties every cache. Nothing is attached to a
-    recording the package or a caller holds.
+    The context owns its recording (``Recording.from_arrays`` of the input
+    policy's ``CONTEXT_INPUTS``: the session's LFPs, radiatum channel, spike
+    counts and speed, and the place and pyramidal selections), whose arrays it
+    makes read-only, so nothing cached from them can go stale. Traces are
+    cached by the immutable parameters that make them (at most
+    ``TRACE_CACHE_SIZE``), a pipeline's events by the pipeline (at most
+    ``EVENT_CACHE_SIZE``), a partner's events by its name; ``release`` empties
+    every cache. Nothing is attached to a recording the package or a caller
+    holds.
 
     Parameters
     ----------
@@ -619,12 +622,7 @@ class SessionContext:
         self.recording: Recording = Recording.from_arrays(
             session.time,
             session.sampling_frequency,
-            lfps=session.lfps,
-            multiunit=self.session.multiunit,
-            speed=session.speed,
-            sharp_wave_lfp=session.sharp_wave_lfp,
-            place_cells=_POLICY["place_cells"].get(session),
-            pyramidal=_POLICY["pyramidal"].get(session),
+            **{name: _POLICY[name].get(self.session) for name in CONTEXT_INPUTS},
         )
         signals = self.recording.session
         for values in (
