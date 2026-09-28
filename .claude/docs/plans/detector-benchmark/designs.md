@@ -908,6 +908,39 @@ Settings: 2000 resamples, seed 0, 95% percentile intervals. Across conditions (r
 resampling unit is the replicate, shared by the conditions compared (common random numbers).
 Mixed models are not used (overview Open Question 1).
 
+As implemented in phase 5 (2026-09-28), where the plan left a choice open or the maintainer
+decided during the phase:
+
+- **Point inventories.** `davidson_2009_ripples` and `wu_2014_ripples` return ripple peaks (the
+  catalog's output "ripple peaks"), which interval matching can never credit. The maintainer
+  chose to score them by one-to-one peak containment in the method's primary-expression windows
+  (windows by end, earliest unused peak: optimal; checked against a brute force), recall,
+  precision and false positives per minute only, in their own rows, excluded from every interval
+  analysis. `lee_2002`'s single-sample events keep the interval rule.
+- **Statistics.** Intervals within a condition come from the replicate-weighted bootstrap
+  (`resample_weights`), identical draw for draw to `paired_bootstrap`, which stays public and
+  now refuses a statistic indexed by the draws. Comparisons across conditions use only the
+  replicates on which a method ran in every condition compared (`n_dropped`). Paired timing and
+  method differences carry the interval and sign-flip test of per-session values beside the
+  pooled median. Error correlations use the pair's shared primary expression, network beside.
+  Every "A differs from B" statement carries a paired interval and sign-flip p; rank moves are
+  labelled descriptive.
+- **Failures.** A method that never ran keeps a row with its failures in every per-method table;
+  model sensitivity separates "failed" from "unattainable"; finite counts are reported per
+  statistic.
+- **Additions.** `appendix_expressions` and `appendix_curves_<expression>` score every method
+  against every expression; `operating_differences` gives paired detector differences at the
+  targets; files are split to stay under 1 MB. `trends.md` and `spot_checks/` are hand-written and
+  survive rebuilds.
+- **Run v1** (analysis 3.1 min, 3.95 GB): the maintainer chose five stated trends (local-ripple
+  order reversals; Carey's dependence on unit count and slow field; long-event recipes; the
+  participation selection effect; no supported Kay-Roumis order), no results summary in the
+  package README, and to keep `noise_type=brown` but flag it as confounded: ripples are sized to
+  the ripple-band noise, brown noise makes that 25 times smaller, and EMG and spike-leakage
+  artifacts keep absolute amplitudes, so they dominate every LFP detector there. **Follow-up for
+  a later simulator version:** size EMG and spike leakage against the noise, as fast gamma is,
+  then revalidate and rerun.
+
 ## Attribution
 
 Module `examples/benchmark/attribution.py`. This phase defines experimental `Step`,
