@@ -7,13 +7,13 @@ context; reference sessions simulated again from a run's saved parameters and
 checked against what it saved. No test draws a figure."""
 
 import dataclasses
-import gzip
 import itertools
 import json
 import math
 import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -54,6 +54,11 @@ def recipes(benchmark_import):
     return benchmark_import("recipe_configs").RECIPES
 
 
+@pytest.fixture(scope="module")
+def by_id(recipes):
+    return {config.config_id: config for config in recipes}
+
+
 def _write_run(run, conditions, root, duration, replicates, overrides=None):
     """A run of the reference condition at ``duration`` seconds, written by
     the runner's own functions, with only the methods whose saved events the
@@ -80,6 +85,14 @@ def _write_run(run, conditions, root, duration, replicates, overrides=None):
 def short_run(run, conditions, tmp_path_factory):
     """Five 30 s reference sessions: a run whose duration_s was halved."""
     return _write_run(run, conditions, tmp_path_factory.mktemp("short"), SHORT, N_REPLICATES)
+
+
+@pytest.fixture
+def run_copy(short_run, tmp_path):
+    """A copy of the short run to change."""
+    copy = tmp_path / "run"
+    shutil.copytree(short_run, copy)
+    return copy
 
 
 @pytest.fixture(scope="module")
@@ -247,13 +260,12 @@ def test_shapley_asks_only_the_subsets_listed(attribution, n_factors):
 # Templates and pipelines
 
 
-def test_every_configuration_has_a_template_or_a_reason(attribution, recipes):
+def test_every_configuration_has_a_template_or_a_reason(attribution, recipes, by_id):
     ids = [config.config_id for config in recipes]
     assert set(attribution.TEMPLATES).isdisjoint(attribution.FIXED_POINTS)
     assert set(attribution.TEMPLATES) | set(attribution.FIXED_POINTS) == set(ids)
     assert all(reason for reason in attribution.FIXED_POINTS.values())
     assert all(source for _, source in attribution.TEMPLATES.values())
-    by_id = {config.config_id: config for config in recipes}
     with pytest.raises(ValueError, match="custom peak merging"):
         attribution.template_of(by_id["mallory_2025"])
     assert attribution.template_of(by_id["bendor_2012"]).merge_gap == 0.05
@@ -341,16 +353,16 @@ def test_in_space_recipes(attribution, recipes, verified):
     assert (fixed["reason"] == fixed["config_id"].map(attribution.FIXED_POINTS)).all()
 
 
-def test_a_session_with_running_verifies_davidson(attribution, recipes, long_context):
-    config = next(c for c in recipes if c.config_id == "davidson_2009")
+def test_a_session_with_running_verifies_davidson(attribution, by_id, long_context):
+    config = by_id["davidson_2009"]
     assert len(long_context.session.running_intervals)
     row = attribution.verify_all([config], [long_context]).iloc[0]
     assert row["in_space"]
     assert row["n_events"] > 0
 
 
-def test_a_wrong_template_is_not_in_space(attribution, recipes, contexts, monkeypatch):
-    config = next(c for c in recipes if c.config_id == "igata_2021")
+def test_a_wrong_template_is_not_in_space(attribution, by_id, contexts, monkeypatch):
+    config = by_id["igata_2021"]
     assert attribution.in_space(config, contexts)
     template, source = attribution.TEMPLATES["igata_2021"]
     for change in ({"threshold": 2.5}, {"minimum_active_units": 15}, {"units": "place"}):
@@ -374,10 +386,10 @@ def test_a_wrong_template_is_not_in_space(attribution, recipes, contexts, monkey
     ],
 )
 def test_a_wrong_template_with_the_same_counts_is_not_in_space(
-    attribution, recipes, contexts, monkeypatch, config_id, change
+    attribution, by_id, contexts, monkeypatch, config_id, change
 ):
     """The bounds are compared, not only how many events there are."""
-    config = next(c for c in recipes if c.config_id == config_id)
+    config = by_id[config_id]
     template, source = attribution.TEMPLATES[config_id]
     changed = dataclasses.replace(template, **change)
     for context in contexts:
@@ -456,8 +468,8 @@ def test_sensitivity(attribution, recipes, contexts):
     assert row("pfeiffer_2015", "smoothing_sigma")["exercised"].tolist() == [True, True]
 
 
-def test_equal_empty_results_verify_nothing(attribution, recipes, contexts, monkeypatch):
-    config = next(c for c in recipes if c.config_id == "bendor_2012")
+def test_equal_empty_results_verify_nothing(attribution, by_id, contexts, monkeypatch):
+    config = by_id["bendor_2012"]
     template, source = attribution.TEMPLATES["bendor_2012"]
     # neither finds an event: a rate never 1000 SD up, and no public call
     unreachable = dataclasses.replace(template, threshold=1000.0)
@@ -675,7 +687,6 @@ def test_reference_template(attribution):
         normalization_period="session",
         speed="none",
     )
-    # an integer median is rounded down
     # an integer median is rounded down, not to the nearest: 3.5 gives 3
     pair = [templates[0], _spike_template(attribution, minimum_active_units=7)]
     assert attribution.reference_template("spikes", pair).minimum_active_units == 3
@@ -868,11 +879,10 @@ def test_a_halved_run_regenerates_its_halved_sessions(attribution, conditions, s
     assert labels == ["reference/1", "reference/4"]
 
 
-def _rewrite(path, change):
+def _rewrite(run, path, change):
     """Rewrite a gzipped table with one value changed, the rest as written."""
     frame = pd.read_csv(path, float_precision="round_trip", dtype=str, keep_default_na=False)
-    with gzip.open(path, "wt", newline="") as handle:
-        change(frame).to_csv(handle, index=False)
+    run._write_table(change(frame), path)
 
 
 def _set_first(column, value, table=None):
@@ -897,26 +907,25 @@ def _set_first(column, value, table=None):
         ("sessions.csv.gz", _set_first("duration_s", "60.0"), "duration 60.0 s"),
         ("ripple_channels.csv.gz", _set_first("gain", "0.5"), "its ripple channels"),
         ("events.csv.gz", _set_first("start_time", "0.5"), r"its recipe:\w+ events"),
+        (
+            "truth.csv.gz",
+            lambda frame: frame[frame["session_id"] != "reference/0"],
+            "no truth rows",
+        ),
     ],
 )
-def test_a_session_unlike_the_runs_raises(
-    attribution, short_run, tmp_path, table, change, names
-):
-    copy = tmp_path / "run"
-    shutil.copytree(short_run, copy)
-    _rewrite(copy / "conditions" / "reference" / table, change)
+def test_a_session_unlike_the_runs_raises(attribution, run, run_copy, table, change, names):
+    _rewrite(run, run_copy / "conditions" / "reference" / table, change)
     with pytest.raises(ValueError, match=f"reference/0 is not the run's: .*{names}"):
-        attribution.reference_session(copy, 0)
+        attribution.reference_session(run_copy, 0)
 
 
-def test_the_saved_events_checked(attribution, run, short_run, tmp_path):
+def test_the_saved_events_checked(attribution, run, run_copy):
     assert attribution.SAVED_EVENT_CHECKS == SAVED_EVENT_CHECKS
-    events = run.read_table(short_run / "conditions" / "reference" / "events.csv.gz")
+    events = run.read_table(run_copy / "conditions" / "reference" / "events.csv.gz")
     # the checks compare real inventories: each method found events
     assert set(events["method"]) == {f"recipe:{c}" for c in SAVED_EVENT_CHECKS}
-    copy = tmp_path / "run"
-    shutil.copytree(short_run, copy)
-    path = copy / "conditions" / "reference" / "methods.csv"
+    path = run_copy / "conditions" / "reference" / "methods.csv"
     methods = run.read_table(path)
     kept = (methods["session_id"] != "reference/0") | (
         methods["method"] != "recipe:bendor_2012"
@@ -925,25 +934,17 @@ def test_the_saved_events_checked(attribution, run, short_run, tmp_path):
     with pytest.raises(
         ValueError, match="reference/0 is not the run's: no recipe:bendor_2012"
     ):
-        attribution.reference_session(copy, 0)
-    attribution.reference_session(copy, 1)
+        attribution.reference_session(run_copy, 0)
+    attribution.reference_session(run_copy, 1)
 
 
-def test_a_run_without_the_session_or_reference_raises(attribution, run, short_run, tmp_path):
+def test_a_run_without_the_session_or_reference_raises(attribution, run, run_copy):
     with pytest.raises(ValueError, match="holds no session reference/7"):
-        attribution.reference_session(short_run, 7)
-    copy = tmp_path / "run"
-    shutil.copytree(short_run, copy)
-    table = run.read_table(copy / "conditions.csv").assign(condition_id="emg_rate=0")
-    run._write_table(table, copy / "conditions.csv")
+        attribution.reference_session(run_copy, 7)
+    table = run.read_table(run_copy / "conditions.csv").assign(condition_id="emg_rate=0")
+    run._write_table(table, run_copy / "conditions.csv")
     with pytest.raises(ValueError, match="0 reference rows"):
-        attribution.reference_parameters(copy)
-    copy = tmp_path / "no_truth"
-    shutil.copytree(short_run, copy)
-    truth = copy / "conditions" / "reference" / "truth.csv.gz"
-    _rewrite(truth, lambda frame: frame[frame["session_id"] != "reference/0"])
-    with pytest.raises(ValueError, match="reference/0 is not the run's: no truth rows"):
-        attribution.reference_session(copy, 0)
+        attribution.reference_parameters(run_copy)
 
 
 def test_regeneration_uses_every_saved_parameter(attribution, run, conditions, tmp_path):
@@ -1243,10 +1244,8 @@ def test_fixed_point_outputs(attribution, run, recipes, contexts, monkeypatch, c
         attribution.fixed_point_outputs(chosen, contexts, recorded=recorded)
 
 
-def test_recorded_failures(attribution, run, short_run, tmp_path):
-    copy = tmp_path / "run"
-    shutil.copytree(short_run, copy)
-    assert attribution.recorded_failures(copy) == set()
+def test_recorded_failures(attribution, run, run_copy):
+    assert attribution.recorded_failures(run_copy) == set()
     failures = pd.DataFrame(
         {
             "session_id": ["reference/1", "reference/2", "reference/3"],
@@ -1255,8 +1254,8 @@ def test_recorded_failures(attribution, run, short_run, tmp_path):
             "error": ["ValueError: a", "ValueError: b", "ValueError: c"],
         }
     )
-    run._write_table(failures, copy / "conditions" / "reference" / "failures.csv")
-    assert attribution.recorded_failures(copy) == {
+    run._write_table(failures, run_copy / "conditions" / "reference" / "failures.csv")
+    assert attribution.recorded_failures(run_copy) == {
         ("mallory_2025", "reference/1"),
         ("gupta_2010", "reference/3"),
     }
@@ -1290,25 +1289,38 @@ def test_smoke(attribution, recipes, short_run, monkeypatch):
     assert hours == pytest.approx(256 * (d + 2) * attribution.K * per / 4 / 3600)
 
 
-def test_the_command_line(attribution, recipes, short_run, tmp_path, monkeypatch, capsys):
-    with pytest.raises(SystemExit):
-        attribution.main(["--run-name", "x", "--family", "lfp", "--workers", "0"])
-    assert "--workers must be at least 1" in capsys.readouterr().err
-    with pytest.raises(SystemExit):
-        attribution.main(["--run-name", "x", "--family", "sharp_wave"])
-    copy = tmp_path / "run"
-    shutil.copytree(short_run, copy)
-    results = tmp_path / "results"
-    lfp = attribution.family_templates(recipes, "lfp")
-    names = ("gupta_2010", "karlsson_2009", "igata_2021", *lfp)
+@pytest.fixture
+def command(attribution, recipes, run_copy, tmp_path, monkeypatch):
+    """The command on a copy of the short run, with two fixed points, the LFP
+    templates and a spikes one, its report check recorded rather than made."""
+    names = (
+        "gupta_2010",
+        "karlsson_2009",
+        "igata_2021",
+        *attribution.family_templates(recipes, "lfp"),
+    )
     kept = [c for c in recipes if c.config_id in names]
     monkeypatch.setattr(attribution, "RECIPES", tuple(kept))
     checked = []
     monkeypatch.setattr(
         attribution, "check_report", lambda directory, parameters: checked.append(directory)
     )
+    results = tmp_path / "results"
     arguments = ["--run-name", "x", "--family", "lfp", "--workers", "1"]
-    arguments += ["--run-directory", str(copy), "--results-directory", str(results)]
+    arguments += ["--run-directory", str(run_copy), "--results-directory", str(results)]
+    return SimpleNamespace(
+        arguments=arguments, results=results, run=run_copy, kept=kept, checked=checked
+    )
+
+
+def test_the_command_line(attribution, recipes, command, monkeypatch, capsys):
+    with pytest.raises(SystemExit):
+        attribution.main(["--run-name", "x", "--family", "lfp", "--workers", "0"])
+    assert "--workers must be at least 1" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        attribution.main(["--run-name", "x", "--family", "sharp_wave"])
+    arguments, results, kept = command.arguments, command.results, command.kept
+    lfp = attribution.family_templates(recipes, "lfp")
     original = attribution.check_regenerated
     regenerated = []
 
@@ -1320,7 +1332,7 @@ def test_the_command_line(attribution, recipes, short_run, tmp_path, monkeypatch
     attribution.main([*arguments, "--analysis", "oat"])
     # the run's validation report is checked, once, before anything runs, and
     # each reference session once, in the one pass over the sessions
-    assert checked == [copy]
+    assert command.checked == [command.run]
     assert regenerated == list(range(attribution.K))
     written = sorted(path.name for path in results.iterdir())
     assert written == [
@@ -1348,7 +1360,7 @@ def test_the_command_line(attribution, recipes, short_run, tmp_path, monkeypatch
     perturbed = pd.read_csv(results / "lfp_sensitivity.csv")
     assert set(perturbed["config_id"]) == set(lfp)
     assert "template values no perturbation changes" in capsys.readouterr().err
-    rows = pd.read_csv(copy / "attribution" / "lfp_oat.csv.gz")
+    rows = pd.read_csv(command.run / "attribution" / "lfp_oat.csv.gz")
     assert set(rows["y"]) == set(attribution.Y_NAMES)
     # four represented LFP methods: no Sobol or Shapley analysis; all runs the
     # one-at-a-time analysis first, and a named one is refused at once
@@ -1365,18 +1377,8 @@ def test_the_command_line(attribution, recipes, short_run, tmp_path, monkeypatch
 
 
 def test_the_override_runs_a_family_below_the_minimum_labelled(
-    attribution, recipes, short_run, tmp_path, monkeypatch, capsys
+    attribution, command, monkeypatch, capsys
 ):
-    copy = tmp_path / "run"
-    shutil.copytree(short_run, copy)
-    results = tmp_path / "results"
-    kept = [
-        c
-        for c in recipes
-        if c.config_id in ("gupta_2010", *attribution.family_templates(recipes, "lfp"))
-    ]
-    monkeypatch.setattr(attribution, "RECIPES", tuple(kept))
-    monkeypatch.setattr(attribution, "check_report", lambda directory, parameters: None)
     sobol = attribution.sobol
     asked = []
 
@@ -1393,18 +1395,24 @@ def test_the_override_runs_a_family_below_the_minimum_labelled(
     monkeypatch.setattr(
         attribution.FamilyOutput, "figure", lambda self, name, figure: drawn.append(figure)
     )
-    arguments = ["--run-name", "x", "--family", "lfp", "--workers", "1"]
-    arguments += ["--run-directory", str(copy), "--results-directory", str(results)]
-    attribution.main([*arguments, "--analysis", "all", "--below-minimum", "--sobol-n", "128"])
+    arguments = [
+        *command.arguments,
+        "--analysis",
+        "all",
+        "--below-minimum",
+        "--sobol-n",
+        "128",
+    ]
+    attribution.main(arguments)
     assert asked == [128]
     caveat = "rests on 4 methods, below the design's 8; the maintainer chose to run it"
     assert caveat in capsys.readouterr().err
-    written = sorted(path.name for path in results.iterdir())
+    written = sorted(path.name for path in command.results.iterdir())
     assert [name for name in written if name.endswith(("_sobol.csv", "_shapley.csv"))] == [
         "lfp_shapley.csv",
         "lfp_sobol.csv",
     ]
-    tables = [*results.iterdir(), *(copy / "attribution").iterdir()]
+    tables = [*command.results.iterdir(), *(command.run / "attribution").iterdir()]
     assert len(tables) == len(written) + 3
     for path in tables:
         assert (pd.read_csv(path)["caveat"] == caveat).all(), path.name
