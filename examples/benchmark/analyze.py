@@ -4838,9 +4838,9 @@ def rates_by_state(
 
     An event is placed by its ``peak_time``, else its bounds' midpoint
     (``event_times``); one on a bout's start or end, to the timestamps'
-    rounding, is running (``intervals_to_mask``). Beside each rate, the true rate in that state: network
-    events per minute of rest (they occur at rest only), and theta bursts, the
-    non-events of running, per minute of running.
+    rounding, is running (``intervals_to_mask``). Beside each rate, the true
+    rate in that state: network events per minute of rest (they occur at rest
+    only), and theta bursts, the non-events of running, per minute of running.
 
     Parameters
     ----------
