@@ -2521,6 +2521,26 @@ def _rows(
     return pd.DataFrame(rows)
 
 
+def _evaluate(
+    analysis: str,
+    keys: Sequence[Mapping[str, Any]],
+    templates: Sequence[Template],
+    references: Sequence[Template],
+    run_directory: str | os.PathLike[str],
+    workers: int,
+) -> tuple[pd.DataFrame, list[dict[str, list[float]]]]:
+    """An analysis's configurations on the reference sessions (``evaluate_many``),
+    each against its reference: ``_rows``' table and the outputs."""
+    compiled = {template: compile(template) for template in dict.fromkeys(references)}
+    outputs = evaluate_many(
+        [compile(template) for template in templates],
+        [compiled[template] for template in references],
+        run_directory,
+        workers=workers,
+    )
+    return _rows(analysis, keys, templates, outputs), outputs
+
+
 def one_at_a_time(
     family: str, run_directory: str | os.PathLike[str], *, workers: int = 1
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -2549,27 +2569,15 @@ def one_at_a_time(
         interval from one).
     """
     reference = reference_template(family)
-    configurations: list[tuple[dict[str, Any], Template]] = [
-        ({"factor": "reference", "level": ""}, reference),
-        *(
-            (
-                {"factor": factor.name, "level": _as_text(level)},
-                dataclasses.replace(reference, **{factor.name: level}),
-            )
-            for factor in factor_space(RECIPES, family)
-            for level in factor.points()
-        ),
-    ]
-    keys = [key for key, _ in configurations]
-    templates = [template for _, template in configurations]
-    base = compile(reference)
-    outputs = evaluate_many(
-        [compile(template) for template in templates],
-        [base] * len(templates),
-        run_directory,
-        workers=workers,
+    keys: list[dict[str, Any]] = [{"factor": "reference", "level": ""}]
+    templates: list[Template] = [reference]
+    for factor in factor_space(RECIPES, family):
+        for level in factor.points():
+            keys.append({"factor": factor.name, "level": _as_text(level)})
+            templates.append(dataclasses.replace(reference, **{factor.name: level}))
+    rows, outputs = _evaluate(
+        "oat", keys, templates, [reference] * len(templates), run_directory, workers
     )
-    rows = _rows("oat", keys, templates, outputs)
     changes = [
         {
             **key,
@@ -2708,12 +2716,8 @@ def sobol(
     for factor, mixed in zip(factors, ab, strict=True):
         keys += [{"matrix": "AB", "column": factor.name, "row": r} for r in range(n)]
         templates += mixed
-    base = compile(reference)
-    outputs = evaluate_many(
-        [compile(template) for template in templates],
-        [base] * len(templates),
-        run_directory,
-        workers=workers,
+    rows, outputs = _evaluate(
+        "sobol", keys, templates, [reference] * len(templates), run_directory, workers
     )
     tables = []
     d = len(factors)
@@ -2723,8 +2727,7 @@ def sobol(
         tables.append(table.assign(y=name, factor=[f.name for f in factors]))
     indices = pd.concat(tables, ignore_index=True)
     columns = ["y", "factor", *[c for c in indices.columns if c not in ("y", "factor")]]
-    rows = _rows("sobol", keys, templates, outputs).assign(sobol_n=n)
-    return rows, indices[columns].assign(sobol_n=n)
+    return rows.assign(sobol_n=n), indices[columns].assign(sobol_n=n)
 
 
 def _differing(first: Template, second: Template) -> tuple[str, ...]:
@@ -2800,7 +2803,9 @@ def shapley_pairs(
     reference = reference_template(family)
     templates = {**family_templates(RECIPES, family), REFERENCE_CONDITION: reference}
     pairs = shapley_pair_list(family, run_directory, workers=workers)
-    keys, configurations, references = [], [], []
+    keys: list[dict[str, Any]] = []
+    configurations: list[Template] = []
+    references: list[Template] = []
     for a, b in pairs:
         first, second = templates[a], templates[b]
         for subset in shapley_subsets(_differing(first, second)):
@@ -2808,12 +2813,9 @@ def shapley_pairs(
             configurations.append(
                 dataclasses.replace(first, **{name: getattr(second, name) for name in subset})
             )
-            references.append(compile(second))
-    outputs = evaluate_many(
-        [compile(template) for template in configurations],
-        references,
-        run_directory,
-        workers=workers,
+            references.append(second)
+    rows, outputs = _evaluate(
+        "shapley", keys, configurations, references, run_directory, workers
     )
     found = {
         (key["pair"], key["subset"]): output for key, output in zip(keys, outputs, strict=True)
@@ -2841,7 +2843,7 @@ def shapley_pairs(
                 }
                 for factor in differing
             )
-    return _rows("shapley", keys, configurations, outputs), pd.DataFrame(values)
+    return rows, pd.DataFrame(values)
 
 
 def recorded_failures(run_directory: str | os.PathLike[str]) -> set[tuple[str, str]]:
