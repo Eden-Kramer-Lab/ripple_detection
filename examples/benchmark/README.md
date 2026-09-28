@@ -4,8 +4,9 @@ Code and tables for a benchmark, in progress, of the package's detectors and the
 packaged literature methods on simulated sessions whose events are known. None of it is
 part of the installed package. It holds `simulator_targets.csv`, the measurements the
 network simulator is validated against, the simulation conditions and the configurations
-of the literature methods below, and the runner that simulates the conditions, runs every
-method and scores it (see Running the benchmark).
+of the literature methods below, the runner that simulates the conditions, runs every
+method and scores it (see Running the benchmark), and the analyses of a run (see
+Analysing a run).
 
 ## Simulation conditions
 
@@ -364,3 +365,61 @@ uv run python examples/benchmark/run.py --run-name v2 --conditions all --workers
 
 A change confined to the detectors or the literature methods leaves the report valid,
 but the git commit in `run_spec.json` changes, so it is a new run, not a resumed one.
+
+## Analysing a run
+
+`analyze.py` turns a finished run's `combined/` into small tables and figures:
+
+```bash
+uv run python examples/benchmark/analyze.py --run-name v1 --workers N
+```
+
+It reads the reference condition's sessions and the main methods, each detector at its
+defaults and every recipe (`setting` `default` or `literature`; the sweeps are left
+out), and matches every session again, one process per session, since the runner keeps
+events, not pairs. It rebuilds `examples/benchmark/results/<run_name>/`: one CSV and
+one PNG per analysis, and `summary.md`, which names each file with one sentence on what
+it shows and lists every method that failed on some session. No file may pass 1 MB: the
+command stops before writing one and leaves the previous results in place.
+`--run-directory` and `--results-directory` read and write elsewhere.
+
+- `failures`: each method's sessions with scores and without. A session without a
+  method's scores is a failure, never zero events; every table carries each method's
+  `n_sessions` (the sessions its numbers pool) and `n_failures`.
+- `detection_profile`: recall per event type against the network truth.
+- `false_positive_classes`: what each method's false positives (its events matching no
+  window of its primary expression) overlap longest: an event type's component
+  (`swr:ripple`, `burst_only:burst`, ...), a non-event (`emg`, ...) or nothing
+  (`background`).
+- `pairwise_agreement` and `agreement_dendrogram`: Jaccard indices of every pair of
+  methods against the network truth, the one every method is scored on (of all their
+  events, of those matching a true event, of those matching none, and of the true
+  events found), and the methods clustered by average linkage on `1 - jaccard`.
+- `consensus`: how many methods found each true event, by type, and how many methods
+  each group of overlapping false positives spans.
+- `overlap_quality`: IoU, coverage and temporal precision of the matched pairs.
+- `boundary_errors`: signed and absolute onset and offset errors against the truth at
+  10, 25 and 50 % of the peak, each median beside its pair count and the method's
+  recall, since a method that finds only easy events can time them better; a method
+  whose primary expression is the network event is also timed against the ripple and
+  the burst windows.
+- `paired_timing_<expression>`: for two methods with the same primary expression, their
+  error differences on the true events both found, which removes the difference in
+  which events each found.
+- `method_differences` and `error_correlations`: how every pair of methods' matched
+  events differ in start and end, and whether their errors on the same true events
+  are correlated.
+- `splits_and_merges`: how often a method splits a true event or merges several,
+  overall and on ripple doublets.
+
+Signs: an error is detected minus truth (negative: early); a difference between two
+methods is A minus B, A the method named first. Every interval is a 95 % paired
+bootstrap over sessions, every session drawn for all methods at once; a difference
+between two methods is summarized per session, and its interval and two-sided
+sign-flip p-value are over those per-session values. What each column means is in
+the docstring of the function of the table's name in `analyze.py`.
+
+On the reference condition of run `v1` (20 sessions, 86 methods; the shared 18-core
+machine), with `--workers 6`: loading took 11 s, matching again 28 s, the tables 2.5
+minutes (`boundary_errors` 59 s, `method_differences` 21 s, `overlap_quality` 18 s,
+the others under 15 s each) and the figures 7 s.

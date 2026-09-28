@@ -61,6 +61,9 @@ uv run python examples/benchmark/run.py --run-name smoke --smoke \
     --validation-report examples/benchmark/validation/v1/spec.json
 uv run python examples/benchmark/run.py --run-name v1 --conditions all --workers N \
     --validation-report examples/benchmark/validation/v1/spec.json
+# Analyse a finished run's combined/ into examples/benchmark/results/<run_name>/ (CSV and
+# PNG per analysis, each under 1 MB, and summary.md; a few minutes)
+uv run python examples/benchmark/analyze.py --run-name v1 --workers N
 
 # Run every surveyed paper's packaged method on a simulated session (seconds;
 # overwrites examples/literature_recipes_results.csv). Widloski 2022 has none:
