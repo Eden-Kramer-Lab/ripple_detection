@@ -3730,13 +3730,15 @@ def recall_changes(table: pd.DataFrame, threshold: float = RECALL_CHANGE) -> pd.
     changes : pandas.DataFrame
         One row per factor and main setting whose pooled recall, over the
         factor's levels, spans more than ``threshold``: ``factor``,
-        ``method``, ``setting``, ``lowest`` and ``highest`` (the levels),
-        ``recall_lowest``, ``recall_highest``, ``span``; largest span first.
+        ``method``, ``setting``, ``scoring``, ``lowest`` and ``highest`` (the
+        levels), ``recall_lowest``, ``recall_highest``, ``span``; largest span
+        first.
     """
     columns = [
         "factor",
         "method",
         "setting",
+        "scoring",
         "lowest",
         "highest",
         "recall_lowest",
@@ -3756,6 +3758,7 @@ def recall_changes(table: pd.DataFrame, threshold: float = RECALL_CHANGE) -> pd.
                     factor,
                     method,
                     setting,
+                    scoring_rule(str(method)),
                     low["level"],
                     high["level"],
                     low["value"],
@@ -6959,6 +6962,7 @@ def _summary(
         lines += [
             f"- `{row.factor}`: `{row.method}` ({row.setting}) {row.recall_lowest:.3f} at "
             f"{row.lowest} to {row.recall_highest:.3f} at {row.highest}"
+            + ("," + _scored(row.scoring) if row.scoring == PEAK_CONTAINMENT else "")
             for row in moved.itertuples(index=False)
         ] or ["None."]
     sensitivity = results.get(MATCHING)

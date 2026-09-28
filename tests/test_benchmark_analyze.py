@@ -1695,8 +1695,15 @@ def test_recall_changes_are_listed_past_the_threshold_only(analyze, tiny_tables)
     # a span of exactly the threshold is not more than it
     assert analyze.recall_changes(table, threshold=0.5).empty
     assert analyze.recall_changes(table, threshold=0.49).span.tolist() == [0.5]
-    summary = analyze._summary("x", tiny_tables, [], {"robustness_recall": table}, None)
-    assert f"- `ripple_snr`: `{KAY[0]}` (default) 0.250 at low to 0.750 at high" in summary
+    points = table.assign(method=DAVIDSON[0], setting=DAVIDSON[1], scoring="peak_containment")
+    both = pd.concat([table.assign(scoring="interval"), points], ignore_index=True)
+    summary = analyze._summary("x", tiny_tables, [], {"robustness_recall": both}, None)
+    assert f"- `ripple_snr`: `{KAY[0]}` (default) 0.250 at low to 0.750 at high\n" in summary
+    # a point method's recall is by peak containment, and says so
+    assert (
+        f"- `ripple_snr`: `{DAVIDSON[0]}` (literature) 0.250 at low to 0.750 at high, by "
+        "peak containment\n" in summary
+    )
 
 
 def _participation_run(analyze):
