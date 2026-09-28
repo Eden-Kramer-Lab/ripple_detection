@@ -871,7 +871,7 @@ def test_the_command_line(attribution, recipes, short_run, tmp_path, monkeypatch
     copy = tmp_path / "run"
     shutil.copytree(short_run, copy)
     results = tmp_path / "results"
-    names = ("gupta_2010", "igata_2021", *attribution.in_space_ids("lfp"))
+    names = ("gupta_2010", "karlsson_2009", "igata_2021", *attribution.in_space_ids("lfp"))
     kept = [c for c in recipes if c.config_id in names]
     monkeypatch.setattr(attribution, "RECIPES", tuple(kept))
     monkeypatch.setattr(attribution, "check_report", lambda directory, parameters: None)
@@ -880,17 +880,23 @@ def test_the_command_line(attribution, recipes, short_run, tmp_path, monkeypatch
     attribution.main([*arguments, "--analysis", "oat"])
     written = sorted(path.name for path in results.iterdir())
     assert written == [
-        "fixed_points.csv",
-        "in_space.csv",
         "lfp_factor_space.csv",
+        "lfp_fixed_points.csv",
+        "lfp_in_space.csv",
         "lfp_oat.csv",
         "lfp_reference.csv",
     ]
-    in_space = pd.read_csv(results / "in_space.csv")
+    in_space = pd.read_csv(results / "lfp_in_space.csv")
     # the fixed points and the family's templates, not the other family's
     listed = [c.config_id for c in kept if c.config_id != "igata_2021"]
     assert in_space["config_id"].tolist() == listed
     assert in_space["in_space"].sum() == 4
+    # every fixed point, scored for the family
+    fixed = pd.read_csv(results / "lfp_fixed_points.csv")
+    assert fixed[["config_id", "family"]].to_numpy().tolist() == [
+        [c.config_id, "lfp"] for c in kept if c.config_id in attribution.FIXED_POINTS
+    ]
+    assert fixed[list(attribution.Y_NAMES[:3])].notna().all().all()
     rows = pd.read_csv(copy / "attribution" / "lfp_oat.csv.gz")
     assert set(rows["y"]) == set(attribution.Y_NAMES)
     # four represented LFP methods: no Sobol or Shapley analysis; all runs the

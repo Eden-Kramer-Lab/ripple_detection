@@ -58,10 +58,12 @@ nothing.
 
 Outputs: ``output/<run_name>/attribution/<family>_<analysis>.csv.gz`` (one row
 per configuration and ``Y``: its factors, the ``Y``, the mean and each
-session's value) and ``results/<run_name>/attribution/``: ``in_space.csv``
-(every configuration, represented or not, and why), ``fixed_points.csv`` (every
-configuration without a verified template, with its public-call ``Y`` in each
-family), ``<family>_factor_space.csv``, ``<family>_reference.csv``,
+session's value) and ``results/<run_name>/attribution/``:
+``<family>_in_space.csv`` (the family's templates, every one verified, since the
+command stops otherwise, and every fixed point with its reason),
+``<family>_fixed_points.csv`` (every configuration without a template, with its
+public-call ``Y``s against the family's expression and reference),
+``<family>_factor_space.csv``, ``<family>_reference.csv``,
 ``<family>_oat.csv`` (each level's change in each ``Y``, with a 95 % paired
 bootstrap interval over the sessions), ``<family>_sobol.csv`` (first-order and
 total indices with 95 % bootstrap intervals over the rows) and
@@ -2584,7 +2586,9 @@ def shapley_pairs(
 
 
 def fixed_point_outputs(
-    recipes: Sequence[RecipeConfig], contexts: Iterable[SessionContext]
+    recipes: Sequence[RecipeConfig],
+    contexts: Iterable[SessionContext],
+    families: Sequence[str] = FAMILIES,
 ) -> pd.DataFrame:
     """Every configuration without a template, its reason and its public-call ``Y``s.
 
@@ -2593,6 +2597,8 @@ def fixed_point_outputs(
     recipes : sequence of RecipeConfig
     contexts : iterable of SessionContext
         The ``K`` reference sessions, taken one at a time and released after.
+    families : sequence of {"spikes", "lfp"}, optional
+        The families whose expression and reference the ``Y``s are against.
 
     Returns
     -------
@@ -2604,7 +2610,7 @@ def fixed_point_outputs(
         error in ``error`` and its ``Y``s missing.
     """
     fixed = [config for config in recipes if config.config_id in FIXED_POINTS]
-    references = {family: compile(reference_template(family)) for family in FAMILIES}
+    references = {family: compile(reference_template(family)) for family in families}
     per_session: dict[tuple[str, str], list[dict[str, float]]] = {}
     errors: dict[str, str] = {}
     for context in contexts:
@@ -2623,7 +2629,7 @@ def fixed_point_outputs(
         context.release()
     rows = []
     for config in fixed:
-        for family in FAMILIES:
+        for family in families:
             found = per_session.get((config.config_id, family), [])
             failed = config.config_id in errors
             rows.append(
@@ -2898,7 +2904,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     output = run_directory / "attribution"
     output.mkdir(parents=True, exist_ok=True)
     results.mkdir(parents=True, exist_ok=True)
-    _results_csv(results / "in_space.csv", verification)
+    _results_csv(results / f"{args.family}_in_space.csv", verification)
     space = factor_space(RECIPES, args.family)
     _results_csv(
         results / f"{args.family}_factor_space.csv",
@@ -2914,8 +2920,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         pd.DataFrame([_key_columns(reference_template(args.family))]),
     )
     _results_csv(
-        results / "fixed_points.csv",
-        fixed_point_outputs(RECIPES, reference_contexts(run_directory)),
+        results / f"{args.family}_fixed_points.csv",
+        fixed_point_outputs(RECIPES, reference_contexts(run_directory), (args.family,)),
     )
     analyses = ("oat", "sobol", "shapley") if args.analysis == "all" else (args.analysis,)
     for analysis in analyses:

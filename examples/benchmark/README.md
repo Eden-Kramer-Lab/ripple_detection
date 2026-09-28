@@ -694,10 +694,12 @@ Kay's, silence-bounded windows, custom peak merging, finite kernels, other grids
 wavelet power, adaptive thresholds, active-fraction rules, a minimum time above
 threshold). A template stands for its method only when its events equal the public
 call's, bound for bound, on a session with a gap of missing samples, one at a Unix clock
-origin and the five reference sessions, with some event found; `in_space.csv` lists every
-configuration and the outcome. The public call stays the only source of a method's
-events everywhere else: `fixed_points.csv` gives each fixed point's `Y`s (below) from
-its public call, so no method silently drops out.
+origin and the five reference sessions, with some event found. `<family>_in_space.csv`
+lists the family's templates, every one verified (the command stops, naming the others
+and why, before any analysis otherwise), and every fixed point with its reason. The
+public call stays the only source of a method's events everywhere else:
+`<family>_fixed_points.csv` gives each fixed point's `Y`s (below) from its public call,
+against the family's expression and reference, so no method silently drops out.
 
 The families, analysed separately because their factors differ:
 
