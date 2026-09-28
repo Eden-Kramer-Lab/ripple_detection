@@ -1681,6 +1681,98 @@ def test_operating_points_pool_the_sessions_with_the_whole_sweep(analyze):
     assert sweep.recall.to_dict() == pytest.approx({"2.0": 1.6 / 3, "3.0": 1.0 / 3})
 
 
+def test_recall_changes_are_listed_past_the_threshold_only(analyze, tiny_tables):
+    table = pd.DataFrame(
+        {
+            "factor": "ripple_snr",
+            "level": ["low", "reference", "high"],
+            "method": KAY[0],
+            "setting": KAY[1],
+            "measure": "recall",
+            "value": [0.25, 0.5, 0.75],
+        }
+    )
+    # a span of exactly the threshold is not more than it
+    assert analyze.recall_changes(table, threshold=0.5).empty
+    assert analyze.recall_changes(table, threshold=0.49).span.tolist() == [0.5]
+    summary = analyze._summary("x", tiny_tables, [], {"robustness_recall": table}, None)
+    assert f"- `ripple_snr`: `{KAY[0]}` (default) 0.250 at low to 0.750 at high" in summary
+
+
+def _participation_run(analyze):
+    """Kay's default on four replicates of the reference and of refractory
+    spiking: onsets 10 ms early in both, offsets 20 ms late in the reference
+    and 30 ms under refractory spiking; 11 events a session, half of the
+    principal units active in each in the reference and 0.3 under
+    refractory spiking."""
+    counts, errors, participation = [], [], []
+    for condition, offset, active in (
+        ("reference", 0.02, 0.5),
+        ("spike_model=refractory", 0.03, 0.3),
+    ):
+        for replicate in range(4):
+            counts.append(_kay(condition, replicate, "default", 6, 11))
+            errors.append(_error(condition, replicate, "default", -0.01, offset=offset))
+            participation.append(
+                {
+                    "session_id": f"{condition}/{replicate}",
+                    "method": KAY[0],
+                    "setting": "default",
+                    "n_events": 11,
+                    "principal_fraction": 11 * active,
+                }
+            )
+    scores = _hand_scores(analyze, counts, errors)
+    return dataclasses.replace(scores, participation=pd.DataFrame(participation))
+
+
+def test_model_sensitivity_of_participation_and_errors(analyze):
+    changes, _ = analyze.model_sensitivity(_participation_run(analyze), n_resamples=FEW)
+    mine = changes[
+        (changes.alternative == "spike_model=refractory") & (changes.method == KAY[0])
+    ].set_index("measure")
+    # the mean fraction of principal units active per event, not its sum
+    assert [
+        mine.loc["participation", "reference_value"],
+        mine.loc["participation", "value"],
+    ] == pytest.approx([0.5, 0.3])
+    assert mine.loc["participation", "change"] == pytest.approx(-0.2)
+    # offsets from the offsets, onsets from the onsets
+    assert mine.loc["median_offset_error", "change"] == pytest.approx(0.01)
+    assert mine.loc["median_onset_error", "change"] == pytest.approx(0.0)
+
+
+def test_participation_is_the_principal_fraction_of_each_event(analyze):
+    events = pd.DataFrame(
+        {
+            "session_id": "reference/0",
+            "method": [KAY[0], KAY[0], KAY[0], DAVIDSON[0]],
+            "setting": ["default", "default", "3.0", "literature"],
+            "event_index": [0, 1, 0, 0],
+            "n_active_principal": [3, 1, 2, 3],
+        }
+    )
+    ran = pd.DataFrame(
+        {
+            "session_id": "reference/0",
+            "method": [KAY[0], KARLSSON[0], KAY[0], DAVIDSON[0]],
+            "setting": ["default", "literature", "3.0", "literature"],
+        }
+    )
+    # three principal units (place and pyramidal) and an interneuron
+    units = pd.DataFrame(
+        {
+            "session_id": "reference/0",
+            "unit": range(4),
+            "unit_type": ["place", "pyramidal", "interneuron", "pyramidal"],
+        }
+    )
+    table = analyze._participation(events, ran, units)
+    # main interval settings only; Karlsson ran and found nothing
+    assert table[["method", "n_events"]].to_numpy().tolist() == [[KAY[0], 2], [KARLSSON[0], 0]]
+    assert table.principal_fraction.tolist() == pytest.approx([3 / 3 + 1 / 3, 0.0])
+
+
 def test_robustness_crossed_cells(analyze):
     counts = []
     for condition, found in (
