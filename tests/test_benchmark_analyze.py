@@ -505,6 +505,36 @@ def test_splits_and_merges_count_the_doublet(tiny_matches):
     assert counts.loc["ripple_doublet"].tolist() == [4, 0, 2, 2]
 
 
+def test_an_event_over_one_doublet_ripple_is_not_merged(analyze, run):
+    session = _tiny_session(run, 0.0)
+    # one event over the doublet's first ripple alone, one over both
+    events = pd.DataFrame(
+        {
+            "method": KAY[0],
+            "setting": KAY[1],
+            "event_index": [0, 1],
+            "start_time": [7.97, 7.97],
+            "end_time": [8.03, 8.13],
+        }
+    )
+    for bounds, merged in (([0], 0), ([1], 1)):
+        matches = analyze.match_session(
+            "reference/0",
+            events.iloc[bounds],
+            (session["events"], session["non_events"]),
+            [KAY],
+            {KAY: "ripple"},
+        )
+        doublet = matches.overlaps.set_index("subset").loc["ripple_doublet"]
+        assert [doublet.n_truth, doublet.n_detected, doublet.n_merged] == [2, 1, merged]
+
+
+def test_touching_false_positives_are_separate_groups(analyze):
+    bounds = np.array([[0.0, 1.0], [1.0, 2.0], [3.0, 4.0], [3.5, 5.0], [4.0, 4.5]])
+    # sharing a bound is not overlapping; overlapping by any length joins
+    assert analyze._connected_groups(bounds).tolist() == [0, 1, 2, 2, 2]
+
+
 def test_matching_in_parallel_matches_in_order(analyze, tiny_tables, tiny_matches):
     parallel = analyze.match_run(tiny_tables, workers=2)
     for name in analyze._MATCH_COLUMNS:
@@ -682,6 +712,56 @@ def timing_run(run, tmp_path_factory):
         "detected": {KAY: windows[:3], KARLSSON: late},
     }
     return _write_run(run, tmp_path_factory.mktemp("timing"), [session])
+
+
+CAREY = ("Carey_candidate_detector", "default")
+
+
+@pytest.fixture(scope="module")
+def network_run(run, tmp_path_factory):
+    """Three swr events (ripple and burst about one centre); Carey's events
+    are their network windows, starting 30 ms early and 10 and 20 ms late."""
+    components = []
+    for k in range(3):
+        components += [
+            (k, "swr", "ripple", 0, 1.0 + k, 0.05),
+            (k, "swr", "burst", 0, 1.0 + k, 0.06),
+        ]
+    events = _event_table(run, components)
+    network = rd.truth_windows(events, 0.1, "network")[["start_time", "end_time"]].to_numpy()
+    onsets = np.array([-0.03, 0.01, 0.02])
+    session = {
+        "events": events,
+        "non_events": _non_event_tables(_one_non_event_table("emg", center_time=9.0)),
+        "duration": 10.0,
+        "detected": {CAREY: network + np.column_stack([onsets, np.zeros(3)])},
+    }
+    return _write_run(run, tmp_path_factory.mktemp("network"), [session]), events
+
+
+def test_boundary_errors_of_a_network_method(analyze, network_run):
+    root, events = network_run
+    tables = analyze.load_run(root)
+    errors = analyze.boundary_errors(tables, analyze.match_run(tables), n_resamples=FEW)
+    carey = errors[errors.method == CAREY[0]]
+    # its primary expression, and the ripple and the burst windows as well
+    assert carey.expression.drop_duplicates().tolist() == ["network", "ripple", "burst"]
+    onset = _by(
+        carey[(carey.boundary == "onset") & (carey.expression == "network")],
+        "fraction",
+        "measure",
+    )
+    assert onset.loc[(0.1, "signed"), "median"] == pytest.approx(0.01)
+    # absolute: the median of 30, 10 and 20 ms
+    assert onset.loc[(0.1, "absolute"), "median"] == pytest.approx(0.02)
+    # at 25 % of the peak each error is against that fraction's window
+    starts = {
+        fraction: rd.truth_windows(events, fraction, "network").start_time.to_numpy()
+        for fraction in (0.1, 0.25)
+    }
+    later = np.median(starts[0.1] + np.array([-0.03, 0.01, 0.02]) - starts[0.25])
+    assert onset.loc[(0.25, "signed"), "median"] == pytest.approx(later)
+    assert (carey.n_pairs == 3).all()
 
 
 def test_paired_timing_uses_shared_truth_only(analyze, timing_run):
@@ -1683,6 +1763,51 @@ def sliver_run(run, tmp_path_factory):
         "detected": {KAY: np.array([windows[0], sliver]), KARLSSON: windows[:1]},
     }
     return _write_run(run, tmp_path_factory.mktemp("sliver"), [session])
+
+
+@pytest.fixture(scope="module")
+def mixed_error_run(run, tmp_path_factory):
+    """Three ripples Kay finds starting 20 ms early and 5 and 10 ms late, and
+    one false positive."""
+    events = _event_table(run, [(k, "swr", "ripple", 0, 1.0 + k, 0.05) for k in range(3)])
+    windows = rd.truth_windows(events, 0.1, "ripple")[["start_time", "end_time"]].to_numpy()
+    onsets = np.array([-0.02, 0.005, 0.01])
+    kay = np.vstack([windows + np.column_stack([onsets, np.zeros(3)]), [[6.0, 6.1]]])
+    session = {
+        "events": events,
+        "non_events": _non_event_tables(_one_non_event_table("emg", center_time=9.0)),
+        "duration": 10.0,
+        "detected": {KAY: kay},
+    }
+    return _write_run(run, tmp_path_factory.mktemp("mixed"), [session])
+
+
+def test_matching_sensitivity_by_hand(analyze, mixed_error_run):
+    tables = analyze.load_run(mixed_error_run)
+    matches = analyze.match_run(tables, levels=(0.0, 0.2, 0.5))
+    points = pd.DataFrame(
+        {
+            "method": KAY[0],
+            "minimum_iou": 0.0,
+            "fp_target": analyze.FP_TARGETS,
+            "recall": [0.1, 0.2, 0.3, 0.4],
+        }
+    )
+    table = analyze.matching_sensitivity(tables, matches, points, n_resamples=FEW)
+    row = table[table.minimum_iou == 0].iloc[0]
+    # three of three found, three of four events true: F1 is 2 * 3 / (3 + 4)
+    assert [row.recall, row.precision, row.f1] == pytest.approx([1.0, 0.75, 6 / 7])
+    # the median of |-20|, 5 and 10 ms, not of the signed errors
+    assert row.median_abs_onset_error == pytest.approx(0.01)
+    assert row.median_abs_offset_error == pytest.approx(0.0, abs=1e-12)
+    # each detector's recall at the target rates, from operating_points
+    assert [row[f"recall_at_{target:g}"] for target in analyze.FP_TARGETS] == [
+        0.1,
+        0.2,
+        0.3,
+        0.4,
+    ]
+    assert np.isnan(table[table.minimum_iou == 0.5].iloc[0]["recall_at_1"])
 
 
 def test_matching_sensitivity_levels(analyze, sliver_run):
