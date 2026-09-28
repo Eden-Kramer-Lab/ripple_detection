@@ -64,8 +64,9 @@ import resource
 import shutil
 import sys
 import time as clock
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from functools import partial
 from pathlib import Path
@@ -426,14 +427,10 @@ def simulation_fingerprint() -> str:
     return digest.hexdigest()
 
 
-def _file_hash(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def validator_hash() -> str:
     """SHA-256 of this script's source: a report's measurements and checks
     are this code's."""
-    return _file_hash(Path(__file__))
+    return file_sha256(Path(__file__))
 
 
 def target_table_hash(path: Path = TARGETS) -> str:
@@ -448,7 +445,103 @@ def target_table_hash(path: Path = TARGETS) -> str:
     -------
     digest : str
     """
-    return _file_hash(Path(path))
+    return file_sha256(Path(path))
+
+
+# ---------------------------------------------------------------------------
+# Files, shared with the benchmark runner
+
+
+def file_sha256(path: Path) -> str:
+    """SHA-256 of a file's bytes, read a megabyte at a time."""
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for block in iter(lambda: file.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def hash_files(directory: Path, exclude: Collection[str] = ()) -> dict[str, str]:
+    """SHA-256 of every file under ``directory``, by its path relative to it
+    (``"results/a.json"``), sorted; the paths in ``exclude`` left out."""
+    return {
+        name: file_sha256(path)
+        for path in sorted(directory.rglob("*"))
+        if path.is_file() and (name := path.relative_to(directory).as_posix()) not in exclude
+    }
+
+
+def manifest_problems(
+    directory: Path, hashes: Mapping[str, str], optional: Collection[str] = ()
+) -> list[str]:
+    """What stops ``directory`` from matching the hashes recorded for it.
+
+    Parameters
+    ----------
+    directory : pathlib.Path
+    hashes : mapping of str to str
+        SHA-256 by path relative to ``directory``, as ``hash_files`` gives.
+    optional : collection of str, optional
+        Paths that may be missing; one present must still match.
+
+    Returns
+    -------
+    problems : list of str
+        A listed file missing (not optional) or not matching its hash, in
+        path order; files not listed are not looked at.
+    """
+    problems = []
+    for name, digest in sorted(hashes.items()):
+        path = directory / name
+        if not path.is_file():
+            if name not in optional:
+                problems.append(f"artifact {name} is missing")
+        elif file_sha256(path) != digest:
+            problems.append(f"artifact {name} does not match its recorded hash")
+    return problems
+
+
+@contextmanager
+def replace_directory(directory: Path) -> Iterator[Path]:
+    """Build a directory in ``<name>.partial`` beside it, then rename it into
+    place, replacing any directory there.
+
+    A ``.partial`` left by an interrupted build is deleted first; if the
+    build raises, the new one stays as ``.partial`` and ``directory`` is
+    untouched.
+
+    Parameters
+    ----------
+    directory : pathlib.Path
+
+    Yields
+    ------
+    partial : pathlib.Path
+        The directory to build in, created empty.
+    """
+    partial = directory.with_name(directory.name + ".partial")
+    shutil.rmtree(partial, ignore_errors=True)
+    partial.mkdir(parents=True)
+    yield partial
+    shutil.rmtree(directory, ignore_errors=True)
+    partial.rename(directory)
+
+
+def peak_rss_bytes() -> int:
+    """This process's peak resident memory in bytes."""
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return int(usage if sys.platform == "darwin" else usage * 1024)
+
+
+def versions() -> dict[str, str]:
+    """The versions of Python and the packages a session's values depend on."""
+    return {
+        "python": platform.python_version(),
+        "numpy": np.__version__,
+        "scipy": scipy.__version__,
+        "pandas": pd.__version__,
+        "ripple_detection": rd.__version__,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -758,11 +851,6 @@ class _Render(Protocol):
     ) -> rd.SimulatedSession: ...
 
 
-def _peak_rss_bytes() -> int:
-    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return int(usage if sys.platform == "darwin" else usage * 1024)
-
-
 class _Collector:
     """Accumulates a session's sample, measurement and check rows."""
 
@@ -985,7 +1073,7 @@ def measure_session(
         checks=pd.DataFrame(out.checks, columns=["check", "observed", "n", "note"]),
         traces={**traces, "examples": snippets} if keep_traces else {},
         seconds=clock.perf_counter() - started,
-        peak_rss_bytes=_peak_rss_bytes(),
+        peak_rss_bytes=peak_rss_bytes(),
     )
 
 
@@ -2049,16 +2137,6 @@ def _revision_lines(revisions: Sequence[ReferenceRevision]) -> list[str]:
     return lines
 
 
-def _versions() -> dict[str, str]:
-    return {
-        "python": platform.python_version(),
-        "numpy": np.__version__,
-        "scipy": scipy.__version__,
-        "pandas": pd.__version__,
-        "ripple_detection": rd.__version__,
-    }
-
-
 def validate(
     validation_id: str,
     selected: Sequence[Condition],
@@ -2145,47 +2223,52 @@ def write_report(
     checks = build_checks(results, selected, parameters, targets)
     measurements = build_measurements(results)
     reasons = readiness(checks, targets)
-    partial_directory = directory.with_name(directory.name + ".partial")
-    shutil.rmtree(partial_directory, ignore_errors=True)
-    partial_directory.mkdir(parents=True)
-    measurements.to_csv(partial_directory / "measurements.csv", index=False)
-    checks.to_csv(partial_directory / "checks.csv", index=False)
-    pictures = _figures(partial_directory, results, checks, selected) if figures else []
-    (partial_directory / "report.md").write_text(
-        _report_text(
-            validation_id, checks, reasons, selected, replicates, overrides, pictures, results
+    with replace_directory(directory) as partial_directory:
+        measurements.to_csv(partial_directory / "measurements.csv", index=False)
+        checks.to_csv(partial_directory / "checks.csv", index=False)
+        pictures = _figures(partial_directory, results, checks, selected) if figures else []
+        (partial_directory / "report.md").write_text(
+            _report_text(
+                validation_id,
+                checks,
+                reasons,
+                selected,
+                replicates,
+                overrides,
+                pictures,
+                results,
+            )
         )
-    )
-    artifacts = {path.name: _file_hash(path) for path in sorted(partial_directory.iterdir())}
-    spec = {
-        "validation_id": validation_id,
-        "status": "not_ready" if reasons else "ready",
-        "reasons": reasons,
-        "simulation_fingerprint": simulation_fingerprint(),
-        "target_table_hash": target_table_hash(),
-        "first_replicate": replicates[0],
-        "replicates": list(replicates),
-        "seeds": {str(r): session_seed(r) for r in replicates},
-        "overrides": dict(overrides),
-        "conditions": {cid: _canonical(value) for cid, value in parameters.items()},
-        "reference_revisions": revision_records(REFERENCE_REVISIONS),
-        "versions": _versions(),
-        "validator_hash": validator_hash(),
-        "runtime_s": runtime,
-        "sessions": [
-            {
-                "condition_id": r.condition_id,
-                "replicate": r.replicate,
-                "seconds": r.seconds,
-                "peak_rss_bytes": r.peak_rss_bytes,
-            }
-            for r in results
-        ],
-        "artifacts": artifacts,
-    }
-    (partial_directory / "spec.json").write_text(json.dumps(spec, indent=2, allow_nan=False))
-    shutil.rmtree(directory, ignore_errors=True)
-    partial_directory.rename(directory)
+        artifacts = hash_files(partial_directory)
+        spec = {
+            "validation_id": validation_id,
+            "status": "not_ready" if reasons else "ready",
+            "reasons": reasons,
+            "simulation_fingerprint": simulation_fingerprint(),
+            "target_table_hash": target_table_hash(),
+            "first_replicate": replicates[0],
+            "replicates": list(replicates),
+            "seeds": {str(r): session_seed(r) for r in replicates},
+            "overrides": dict(overrides),
+            "conditions": {cid: _canonical(value) for cid, value in parameters.items()},
+            "reference_revisions": revision_records(REFERENCE_REVISIONS),
+            "versions": versions(),
+            "validator_hash": validator_hash(),
+            "runtime_s": runtime,
+            "sessions": [
+                {
+                    "condition_id": r.condition_id,
+                    "replicate": r.replicate,
+                    "seconds": r.seconds,
+                    "peak_rss_bytes": r.peak_rss_bytes,
+                }
+                for r in results
+            ],
+            "artifacts": artifacts,
+        }
+        (partial_directory / "spec.json").write_text(
+            json.dumps(spec, indent=2, allow_nan=False)
+        )
     return directory / "spec.json"
 
 
@@ -2256,13 +2339,7 @@ def require_ready_report(
     artifacts = spec.get("artifacts") or {}
     if not artifacts:
         problems.append("it records no artifact hashes")
-    for name, digest in sorted(artifacts.items()):
-        artifact = path.parent / name
-        if not artifact.is_file():
-            if name not in UNCOMMITTED_ARTIFACTS:
-                problems.append(f"artifact {name} is missing")
-        elif _file_hash(artifact) != digest:
-            problems.append(f"artifact {name} does not match its recorded hash")
+    problems += manifest_problems(path.parent, artifacts, optional=UNCOMMITTED_ARTIFACTS)
     covered = spec.get("conditions") or {}
     for condition_id, parameters in resolved.items():
         if condition_id not in covered:
@@ -2282,7 +2359,7 @@ def require_ready_report(
         raise ReportNotReady(msg)
     return {
         "path": str(spec_path),
-        "sha256": _file_hash(path),
+        "sha256": file_sha256(path),
         "simulation_fingerprint": spec["simulation_fingerprint"],
         "target_table_hash": spec["target_table_hash"],
         "sessions": spec["sessions"],

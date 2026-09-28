@@ -125,11 +125,9 @@ import dataclasses
 import datetime
 import functools
 import gzip
-import hashlib
 import json
 import os
 import platform
-import resource
 import shlex
 import shutil
 import subprocess
@@ -143,7 +141,6 @@ from typing import Any, cast
 
 import numpy as np
 import pandas as pd
-import scipy
 from conditions import (
     TRUTH_FRACTIONS,
     Condition,
@@ -163,7 +160,14 @@ from recipe_configs import (
     method_record,
     run_recipe,
 )
-from validate_simulator import DEFAULT_REPLICATES, ReportNotReady
+from validate_simulator import (
+    DEFAULT_REPLICATES,
+    ReportNotReady,
+    hash_files,
+    peak_rss_bytes,
+    replace_directory,
+    versions,
+)
 from validate_simulator import require_ready_report as _require_report
 
 import ripple_detection as rd
@@ -388,6 +392,12 @@ class SessionOutput:
     warnings: pd.DataFrame
     results: dict[tuple[str, str], pd.DataFrame]
     runtimes: dict[tuple[str, str], float]
+
+
+def default_replicates(condition_id: str) -> int:
+    """A condition's replicates unless ``--replicates`` says otherwise:
+    ``REFERENCE_REPLICATES`` for the reference, ``REPLICATES`` for every other."""
+    return REFERENCE_REPLICATES if condition_id == "reference" else REPLICATES
 
 
 def setting_label(value: Any) -> str:
@@ -1141,21 +1151,6 @@ def load_truth(path: str | os.PathLike[str]) -> dict[str, tuple[pd.DataFrame, pd
     return tables
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as file:
-        for block in iter(lambda: file.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def _files(directory: Path) -> list[Path]:
-    """Every file under ``directory`` but ``done.json``, sorted."""
-    return sorted(
-        path for path in directory.rglob("*") if path.is_file() and path.name != "done.json"
-    )
-
-
 def write_condition(
     directory: str | os.PathLike[str], outputs: Sequence[SessionOutput]
 ) -> None:
@@ -1184,11 +1179,8 @@ def write_condition(
         written = _write_results(root / "results", method, setting, found)
         rows.update({f"results/{name}": count for name, count in written.items()})
     files = {
-        path.relative_to(root).as_posix(): {
-            "rows": rows[path.relative_to(root).as_posix()],
-            "sha256": _sha256(path),
-        }
-        for path in _files(root)
+        name: {"rows": rows[name], "sha256": digest}
+        for name, digest in hash_files(root).items()
     }
     (root / "done.json").write_text(json.dumps({"files": files}, indent=2, sort_keys=True))
 
@@ -1209,23 +1201,18 @@ def condition_is_finished(directory: str | os.PathLike[str]) -> bool:
     root = Path(directory)
     try:
         files = json.loads((root / "done.json").read_text())["files"]
-    except (OSError, ValueError, KeyError, TypeError):
+        recorded = {name: entry["sha256"] for name, entry in files.items()}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return False
-    found = {path.relative_to(root).as_posix(): path for path in _files(root)}
-    return set(found) == set(files) and all(
-        _sha256(path) == files[name]["sha256"] for name, path in found.items()
-    )
+    return hash_files(root, exclude={"done.json"}) == recorded
 
 
 def _finish_condition(
     conditions_directory: Path, condition_id: str, outputs: Sequence[SessionOutput]
 ) -> None:
     """Write a condition into its ``.partial`` directory and rename it into place."""
-    partial = conditions_directory / f"{condition_id}.partial"
-    if partial.exists():
-        shutil.rmtree(partial)
-    write_condition(partial, outputs)
-    partial.rename(conditions_directory / condition_id)
+    with replace_directory(conditions_directory / condition_id) as partial:
+        write_condition(partial, outputs)
 
 
 def _concat_csv(sources: Sequence[Path], target: Path) -> None:
@@ -1295,23 +1282,19 @@ def combine(run_directory: str | os.PathLike[str]) -> Path:
             f"combined/ leaves out {len(missing)} of the run's {len(listed)} conditions, "
             f"not finished: {', '.join(missing)}"
         )
-    partial = root / "combined.partial"
-    if partial.exists():
-        shutil.rmtree(partial)
-    (partial / "results").mkdir(parents=True)
-    for name in TABLES:
-        _concat_csv([root / "conditions" / c / name for c in finished], partial / name)
-    for condition_id in finished:
-        shutil.copytree(
-            root / "conditions" / condition_id / "results", partial / "results" / condition_id
-        )
-    (partial / "manifest.json").write_text(
-        json.dumps({"included": finished, "missing": missing}, indent=2)
-    )
     combined = root / "combined"
-    if combined.exists():
-        shutil.rmtree(combined)
-    partial.rename(combined)
+    with replace_directory(combined) as partial:
+        (partial / "results").mkdir()
+        for name in TABLES:
+            _concat_csv([root / "conditions" / c / name for c in finished], partial / name)
+        for condition_id in finished:
+            shutil.copytree(
+                root / "conditions" / condition_id / "results",
+                partial / "results" / condition_id,
+            )
+        (partial / "manifest.json").write_text(
+            json.dumps({"included": finished, "missing": missing}, indent=2)
+        )
     return combined
 
 
@@ -1420,12 +1403,6 @@ def _run_one(
     )
 
 
-def _peak_memory() -> int:
-    """This process's peak resident memory in bytes."""
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return int(peak) if platform.system() == "Darwin" else int(peak) * 1024
-
-
 def _available_memory() -> int | None:
     """Memory available to new processes in bytes, None where unknown."""
     try:
@@ -1467,7 +1444,7 @@ def _smoke_report(
     ]
     session = output.sessions.iloc[0]
     session_s = float(session["simulate_s"] + session["detect_s"])
-    peak = _peak_memory()
+    peak = peak_rss_bytes()
     lines += [
         (
             f"Simulate: {session['simulate_s']:.1f} s; detect and score: "
@@ -1486,10 +1463,7 @@ def _smoke_report(
     results_bytes = sum(size for name, size in sizes.items() if name.startswith("results/"))
     n_results = sum(1 for name in done if name.startswith("results/") and name.endswith(".gz"))
     lines.append(f"  results/: {n_results} tables and their sidecars, {results_bytes} bytes")
-    n_sessions = sum(
-        REFERENCE_REPLICATES if c.condition_id == "reference" else REPLICATES
-        for c in conditions()
-    )
+    n_sessions = sum(default_replicates(c.condition_id) for c in conditions())
     total_bytes = n_sessions * sum(sizes.values())
     events_bytes = n_sessions * sizes["events.csv.gz"]
     cpu_hours = n_sessions * session_s / 3600
@@ -1615,9 +1589,7 @@ def run_benchmark(
     except ValueError as error:
         raise SystemExit(str(error)) from None
     counts = {
-        c.condition_id: replicates
-        or (REFERENCE_REPLICATES if c.condition_id == "reference" else REPLICATES)
-        for c in selected
+        c.condition_id: replicates or default_replicates(c.condition_id) for c in selected
     }
     overrides = {} if duration is None else {"session.duration_s": float(duration)}
     resolved = {c.condition_id: resolve(c, overrides) for c in selected}
@@ -1658,12 +1630,13 @@ def run_benchmark(
             msg = f"{root} exists; pass --resume to continue it, or another --run-name."
             raise SystemExit(msg)
         conditions_directory.mkdir(parents=True)
+        found = versions()
         manifest = {
             "run_name": run_name,
             "git_commit": spec["git_commit"],
-            "package_version": rd.__version__,
-            "numpy_version": np.__version__,
-            "scipy_version": scipy.__version__,
+            "package_version": found["ripple_detection"],
+            "numpy_version": found["numpy"],
+            "scipy_version": found["scipy"],
             "command": command,
             "started": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "finished": None,
