@@ -77,6 +77,7 @@ import functools
 import io
 import itertools
 import json
+import operator
 import os
 import shutil
 import time as wall_clock
@@ -6770,6 +6771,8 @@ class Inputs:
         None when it could not be read.
     validation_problem : str
         Why it could not be read (``_validation``), ``""`` when it was.
+    n_resamples : int
+        The bootstrap resamples of every interval.
     cache : dict
         Tables several analyses share, computed once.
     """
@@ -6779,6 +6782,7 @@ class Inputs:
     scores: ConditionScores
     validation: pd.DataFrame | None
     validation_problem: str = ""
+    n_resamples: int = N_RESAMPLES
     cache: dict[Any, Any] = dataclasses.field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -6798,94 +6802,46 @@ class Inputs:
             raise ValueError(msg)
 
 
-def _cached(inputs: Inputs, key: Any, compute: Callable[[], Any]) -> Any:
-    if key not in inputs.cache:
-        inputs.cache[key] = compute()
-    return inputs.cache[key]
+AnalysisTable = Callable[[Inputs], pd.DataFrame]
 
 
-AnalysisTable = Callable[..., pd.DataFrame]
-
-
-def _of_reference(
-    function: Callable[..., pd.DataFrame], *, resampled: bool = True
-) -> AnalysisTable:
+def _of_reference(function: Callable[..., pd.DataFrame]) -> AnalysisTable:
     """An analysis of the reference condition's tables and matches."""
-    if not resampled:
-
-        def plain(inputs: Inputs) -> pd.DataFrame:
-            return function(inputs.tables, inputs.matches)
-
-        return plain
-
-    def table(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
-        return function(inputs.tables, inputs.matches, n_resamples=n_resamples)
-
-    return table
-
-
-def _operating_points(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
-    return _cached(
-        inputs,
-        ("operating_points", n_resamples),
-        lambda: operating_points(inputs.scores, n_resamples=n_resamples),
+    return lambda inputs: function(
+        inputs.tables, inputs.matches, n_resamples=inputs.n_resamples
     )
 
 
-def _operating_differences(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
-    return operating_differences(inputs.scores, n_resamples=n_resamples)
+def _of_scores(
+    function: Callable[..., Any], select: Callable[[Any], pd.DataFrame] | None = None
+) -> AnalysisTable:
+    """An analysis of every condition's scores, computed once for the
+    tables read from it (``select``: default the result itself)."""
 
-
-def _held_out_thresholds(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
-    return held_out_thresholds(inputs.scores, n_resamples=n_resamples)
-
-
-def _robustness_of(measure: str, crossed: bool = False) -> AnalysisTable:
-    """One measure's rows of ``robustness`` (or ``robustness_crossed``),
-    computed once for all three."""
-    compute = robustness_crossed if crossed else robustness
-
-    def table(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
-        found = _cached(
-            inputs,
-            (compute.__name__, n_resamples),
-            lambda: compute(inputs.scores, n_resamples=n_resamples),
-        )
-        return found[found["measure"] == measure].reset_index(drop=True)
+    def table(inputs: Inputs) -> pd.DataFrame:
+        if function not in inputs.cache:
+            inputs.cache[function] = function(inputs.scores, n_resamples=inputs.n_resamples)
+        found = inputs.cache[function]
+        return found if select is None else select(found)
 
     return table
+
+
+def _measure_rows(measure: str) -> Callable[[pd.DataFrame], pd.DataFrame]:
+    """A table's rows of one ``measure``."""
+    return lambda table: table[table["measure"] == measure].reset_index(drop=True)
 
 
 def _expression_curves(expression: str) -> AnalysisTable:
     """``expression_curves`` against one expression, of the reference."""
-
-    def table(inputs: Inputs) -> pd.DataFrame:
-        return expression_curves(inputs.scores, expression)
-
-    return table
+    return lambda inputs: expression_curves(inputs.scores, expression)
 
 
-def _rates_by_state(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
-    return rates_by_state(inputs.tables, n_resamples=n_resamples)
-
-
-def _matching(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
-    points = _operating_points(inputs, n_resamples=n_resamples)
-    return matching_sensitivity(inputs.tables, inputs.matches, points, n_resamples=n_resamples)
-
-
-def _model(part: int) -> AnalysisTable:
-    """``model_sensitivity``'s changes (0) or orders (1), computed once."""
-
-    def table(inputs: Inputs, *, n_resamples: int = N_RESAMPLES) -> pd.DataFrame:
-        found = _cached(
-            inputs,
-            ("model_sensitivity", n_resamples),
-            lambda: model_sensitivity(inputs.scores, n_resamples=n_resamples),
-        )
-        return found[part]
-
-    return table
+def _matching(inputs: Inputs) -> pd.DataFrame:
+    points = _of_scores(operating_points)(inputs)
+    return matching_sensitivity(
+        inputs.tables, inputs.matches, points, n_resamples=inputs.n_resamples
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -6897,8 +6853,7 @@ class Analysis:
     name : str
         The files' stem: ``<name>.csv`` and ``<name>.png``.
     table : callable
-        ``table(inputs)``: the analysis's table from an ``Inputs``; one that
-        resamples takes ``n_resamples`` by keyword.
+        ``table(inputs)``: the analysis's table from an ``Inputs``.
     description : str
         One sentence on what the table shows, for ``summary.md``.
     figure : callable or None
@@ -6981,14 +6936,14 @@ ANALYSES: tuple[Analysis, ...] = (
     ),
     Analysis(
         "agreement_dendrogram",
-        _of_reference(agreement_dendrogram, resampled=False),
+        lambda inputs: agreement_dendrogram(inputs.tables, inputs.matches),
         "Methods clustered by average linkage on 1 - Jaccard.",
         plot_agreement_dendrogram,
         "The dendrogram.",
     ),
     Analysis(
         "consensus",
-        _of_reference(consensus, resampled=False),
+        lambda inputs: consensus(inputs.tables, inputs.matches),
         "How many methods found each true event, by type, and how many methods each "
         "group of overlapping false positives spans.",
         plot_consensus,
@@ -7058,7 +7013,7 @@ ANALYSES: tuple[Analysis, ...] = (
     ),
     Analysis(
         OPERATING_POINTS,
-        _operating_points,
+        _of_scores(operating_points),
         "Each detector's recall and median onset and offset errors read off its sweep at "
         "0.5, 1, 2 and 5 false positives per minute, with intervals; missing where the "
         "curve does not reach the target.",
@@ -7067,14 +7022,14 @@ ANALYSES: tuple[Analysis, ...] = (
     ),
     Analysis(
         OPERATING_DIFFERENCES,
-        _operating_differences,
+        _of_scores(operating_differences),
         "For each pair of detectors sharing a primary expression, the difference in recall "
         "(A minus B) at each target rate, paired by session, with its interval and "
         "sign-flip test; missing where a curve does not reach the target.",
     ),
     Analysis(
         "held_out_thresholds",
-        _held_out_thresholds,
+        _of_scores(held_out_thresholds),
         "Per detector and target, the setting chosen on the even replicates and its "
         "recall, false positives and errors on the odd (held-out) replicates alone.",
         plot_held_out_thresholds,
@@ -7083,7 +7038,7 @@ ANALYSES: tuple[Analysis, ...] = (
     *(
         Analysis(
             f"robustness_{name}",
-            _robustness_of(measure),
+            _of_scores(robustness, _measure_rows(measure)),
             f"Each method's {measure.replace('_', ' ')} at every level of each factor, "
             "and its change from the reference level, paired by replicate.",
             plot_robustness,
@@ -7094,7 +7049,7 @@ ANALYSES: tuple[Analysis, ...] = (
     *(
         Analysis(
             f"robustness_crossed_{name}",
-            _robustness_of(measure, crossed=True),
+            _of_scores(robustness_crossed, _measure_rows(measure)),
             f"Each method's {measure.replace('_', ' ')} in every cell of the two crossed "
             "pairs of factors, and its change from the reference, paired by replicate.",
             plot_robustness_crossed,
@@ -7104,7 +7059,7 @@ ANALYSES: tuple[Analysis, ...] = (
     ),
     Analysis(
         "rates_by_state",
-        _rates_by_state,
+        lambda inputs: rates_by_state(inputs.tables, n_resamples=inputs.n_resamples),
         "Each method's events per minute at rest and while running, beside the true "
         "rates (network events at rest, theta bursts while running).",
         plot_rates_by_state,
@@ -7154,7 +7109,7 @@ ANALYSES: tuple[Analysis, ...] = (
     ),
     Analysis(
         MODEL_CHANGES,
-        _model(0),
+        _of_scores(model_sensitivity, operator.itemgetter(0)),
         "Each result's change under each of the simulator's six alternative models, "
         "paired with the reference by replicate; unreachable targets stay missing.",
         plot_model_sensitivity,
@@ -7162,7 +7117,7 @@ ANALYSES: tuple[Analysis, ...] = (
     ),
     Analysis(
         MODEL_ORDERS,
-        _model(1),
+        _of_scores(model_sensitivity, operator.itemgetter(1)),
         "Orders of detectors by recall at common false-positive rates in the reference and "
         "under each alternative model, with intervals and the share of resamples reversed.",
     ),
@@ -7471,6 +7426,7 @@ def analyze_run(
     workers: int = 1,
     figures: bool = True,
     analyses: Sequence[Analysis] = ANALYSES,
+    n_resamples: int = N_RESAMPLES,
 ) -> dict[str, float]:
     """Run every analysis on a run and write its results.
 
@@ -7490,6 +7446,8 @@ def analyze_run(
     figures : bool, optional
         Draw the figures (needs matplotlib).
     analyses : sequence of Analysis, optional
+    n_resamples : int, optional
+        The bootstrap resamples of every interval.
 
     Returns
     -------
@@ -7521,7 +7479,7 @@ def analyze_run(
     started = wall_clock.perf_counter()
     scores = load_scores(root, workers=workers)
     seconds["scores"] = wall_clock.perf_counter() - started
-    inputs = Inputs(tables, matches, scores, *_validation(root))
+    inputs = Inputs(tables, matches, scores, *_validation(root), n_resamples=n_resamples)
     if figures:
         import matplotlib as mpl
 

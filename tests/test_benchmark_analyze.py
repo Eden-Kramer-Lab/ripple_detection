@@ -6,7 +6,6 @@ No test draws a figure."""
 
 import dataclasses
 import functools
-import inspect
 from types import SimpleNamespace
 
 import numpy as np
@@ -942,15 +941,6 @@ def test_average_linkage_is_not_single_linkage(analyze):
     # single linkage would give 0.6 and complete 0.9
     assert tree[:, 2].tolist() == pytest.approx([0.2, 0.75])
     assert tree[:, 3].tolist() == [2, 3]
-
-
-def _quick(analysis):
-    """``analysis`` with few resamples, where its table takes any."""
-    if "n_resamples" not in inspect.signature(analysis.table).parameters:
-        return analysis
-    return dataclasses.replace(
-        analysis, table=functools.partial(analysis.table, n_resamples=FEW)
-    )
 
 
 DAVIDSON = ("recipe:davidson_2009_ripples", "literature")
@@ -2319,12 +2309,12 @@ def test_the_command_reads_the_run_s_validation_report(analyze, two_condition_ru
     shutil.copytree(two_condition_run.parent, run_directory)
     shutil.copy(report / "run_spec.json", run_directory / "run_spec.json")
     model = [
-        _quick(analysis)
+        analysis
         for analysis in analyze.ANALYSES
         if analysis.name in ("model_sensitivity", "model_sensitivity_orders")
     ]
     results = tmp_path / "results"
-    analyze.analyze_run(run_directory, results, figures=False, analyses=model)
+    analyze.analyze_run(run_directory, results, figures=False, analyses=model, n_resamples=FEW)
     summary = (results / "summary.md").read_text()
     assert "- `spike_model=refractory` (validation: rate 11.81 to 11.57)" in summary
     assert "The validation report was not read" not in summary
@@ -2626,9 +2616,8 @@ def two_condition_run(run, tmp_path_factory):
 
 def test_the_command_writes_every_table_and_the_summary(analyze, two_condition_run, tmp_path):
     results = tmp_path / "results" / "tiny"
-    analyses = [_quick(analysis) for analysis in analyze.ANALYSES]
     seconds = analyze.analyze_run(
-        two_condition_run.parent, results, figures=False, analyses=analyses
+        two_condition_run.parent, results, figures=False, n_resamples=FEW
     )
     names = [analysis.name for analysis in analyze.ANALYSES]
     assert list(seconds) == ["load", "match", "scores", *names]
