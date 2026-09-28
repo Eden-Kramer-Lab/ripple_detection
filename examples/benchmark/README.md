@@ -695,7 +695,8 @@ other configuration and why it has no template (a whole detector such as Karlsso
 Kay's, silence-bounded windows, custom peak merging, finite kernels, other grids, FFT or
 wavelet power, adaptive thresholds, active-fraction rules, a minimum time above
 threshold). A template stands for its method only when its events equal the public
-call's, bound for bound, on a session with a gap of missing samples, one at a Unix clock
+call's, bound for bound, on a session with 20 ms of missing samples in the middle of a
+sharp-wave ripple at rest (so events of both families are cut there), one at a Unix clock
 origin and the five reference sessions, with some event found. `<family>_in_space.csv`
 lists the family's templates, every one verified (the command stops, naming the others
 and why, before any analysis otherwise), and every fixed point with its reason. The

@@ -308,15 +308,40 @@ def test_equal_empty_results_verify_nothing(attribution, recipes, contexts, monk
     assert row["reason"].startswith("no event")
 
 
-def test_edge_sessions(attribution, short_run, contexts):
+def test_edge_sessions(attribution, recipes, short_run, contexts):
     parameters = attribution.reference_parameters(short_run)
     edges = attribution.edge_sessions(parameters, SHORT)
     gap, moved = edges["gap"], edges["unix_origin"]
-    missing = (gap.time >= attribution.GAP[0]) & (gap.time < attribution.GAP[1])
+    start, end = attribution.gap_interval(gap)
+    assert end - start == pytest.approx(attribution.GAP_WIDTH)
+    # the gap lies inside a sharp-wave ripple's truth window, at rest
+    windows = rd.truth_windows(gap.events, 0.1, "network")
+    inside = (windows["start_time"] < start) & (windows["end_time"] > end)
+    assert (windows.loc[inside, "type"] == "swr").any()
+    no_swr = dataclasses.replace(gap, events=gap.events[gap.events["event_type"] != "swr"])
+    with pytest.raises(ValueError, match="no sharp-wave ripple at rest"):
+        attribution.gap_interval(no_swr)
+    missing = (gap.time >= start) & (gap.time < end)
+    assert missing.any()
     assert np.isnan(gap.lfps[missing]).all()
     assert np.isfinite(gap.lfps[~missing]).all()
     assert np.isnan(gap.multiunit[missing]).all()
     assert np.isnan(gap.sharp_wave_lfp[missing]).all()
+    # events of each family are cut at the gap, and their templates still verify
+    before = gap.time[np.flatnonzero(missing)[0] - 1]
+    after = gap.time[np.flatnonzero(missing)[-1] + 1]
+    reach = 2 * attribution.BIN_WIDTH
+    for family in attribution.FAMILIES:
+        cut = []
+        for config in recipes:
+            if config.config_id not in attribution.in_space_ids(family):
+                continue
+            events = attribution.recipe_events(config, gap)
+            ends = (events[:, 1] <= before) & (events[:, 1] > before - reach)
+            starts = (events[:, 0] >= after) & (events[:, 0] < after + reach)
+            if (ends | starts).any():
+                cut.append(config.config_id)
+        assert cut, family
     assert moved.time[0] == attribution.UNIX_ORIGIN
     np.testing.assert_array_equal(
         moved.running_intervals - attribution.UNIX_ORIGIN, gap.running_intervals
@@ -334,7 +359,7 @@ def test_edge_sessions(attribution, short_run, contexts):
     )
     # nothing spans the gap
     blocked = contexts[-2].events(attribution.compile(attribution.TEMPLATES["igata_2021"][0]))
-    spans = (blocked[:, 0] < attribution.GAP[1]) & (blocked[:, 1] >= attribution.GAP[0])
+    spans = (blocked[:, 0] < end) & (blocked[:, 1] >= start)
     assert not spans.any()
 
 

@@ -28,7 +28,8 @@ that on a session's ``SessionContext``. ``TEMPLATES`` maps a configuration of
 body, with the source of each value; ``FIXED_POINTS`` gives every other
 configuration and why it has none. A template stands for its method only when
 ``in_space`` finds identical events from both on the sessions checked:
-positive controls (some event must be found), a gap of missing samples, a Unix
+positive controls (some event must be found), a gap of missing samples cutting
+a sharp-wave ripple, a Unix
 clock origin and the ``K`` reference sessions. The configuration's public call
 (``recipe_configs.run_recipe``) stays the only source of its events in every
 other analysis; a template never replaces it.
@@ -151,9 +152,10 @@ SHAPLEY_EXACT_UP_TO = 8
 SHAPLEY_PERMUTATIONS = 128
 N_LOWEST_PAIRS = 10
 SMOKE_CONFIGURATIONS = 20
-# The short session the edge cases are cut from, and where its gap lies.
+# The short session the edge cases are cut from, and the seconds of missing
+# samples its gap case puts in the middle of a sharp-wave ripple.
 EDGE_DURATION = 60.0
-GAP = (20.0, 21.0)
+GAP_WIDTH = 0.02
 UNIX_ORIGIN = 1_700_000_000.0
 # Pipelines' events kept per session, and traces (large arrays) per session.
 EVENT_CACHE_SIZE = 4096
@@ -1616,6 +1618,36 @@ def reference_contexts(
         yield context
 
 
+def gap_interval(session: rd.SimulatedSession) -> tuple[float, float]:
+    """Where the gap edge case removes samples: inside a real event.
+
+    Parameters
+    ----------
+    session : SimulatedSession
+
+    Returns
+    -------
+    start, end : float
+        The middle ``GAP_WIDTH`` seconds of the first sharp-wave ripple (its
+        network truth window at 10 % of the peak) that lies at rest, so that
+        events of both families, rest-restricted ones included, are cut by
+        it; samples at or after ``start`` and before ``end`` go missing.
+
+    Raises
+    ------
+    ValueError
+        The session has no sharp-wave ripple at rest.
+    """
+    windows = rd.truth_windows(session.events, 0.1, "network")
+    rest = rest_intervals(session)
+    for row in windows[windows["type"] == "swr"].itertuples():
+        if np.any((rest[:, 0] <= row.start_time) & (row.end_time <= rest[:, 1])):
+            middle = (row.start_time + row.end_time) / 2
+            return middle - GAP_WIDTH / 2, middle + GAP_WIDTH / 2
+    msg = "The session has no sharp-wave ripple at rest to put the gap in."
+    raise ValueError(msg)
+
+
 def edge_sessions(
     parameters: Mapping[str, Mapping[str, Any]], duration: float = EDGE_DURATION
 ) -> dict[str, rd.SimulatedSession]:
@@ -1633,14 +1665,15 @@ def edge_sessions(
     -------
     sessions : dict of str to SimulatedSession
         ``"gap"``: every LFP channel, the radiatum and the spike counts missing
-        from ``GAP[0]`` up to ``GAP[1]`` s (NaN), which splits every block;
-        ``"unix_origin"``: its timestamps and running bouts moved to start at
-        ``UNIX_ORIGIN``.
+        (NaN) over ``gap_interval``, which splits every block and cuts the
+        events of both families there; ``"unix_origin"``: its timestamps and
+        running bouts moved to start at ``UNIX_ORIGIN``.
     """
     changed = {section: dict(values) for section, values in parameters.items()}
     changed["session"]["duration_s"] = duration
     session = simulate_parameters(changed, 0)
-    missing = (session.time >= GAP[0]) & (session.time < GAP[1])
+    start, end = gap_interval(session)
+    missing = (session.time >= start) & (session.time < end)
     lfps = session.lfps.copy()
     lfps[missing] = np.nan
     sharp_wave = session.sharp_wave_lfp.copy()
