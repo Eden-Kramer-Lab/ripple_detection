@@ -540,6 +540,20 @@ def event_times(events: pd.DataFrame) -> np.ndarray[Any, Any]:
     return times
 
 
+def _matched_rows(
+    windows: np.ndarray[Any, Any], rows: pd.DataFrame, point: bool
+) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+    """Each pair of a truth window, shape (n_windows, 2), and one of a
+    method's events (``events.csv`` rows, in order) at IoU 0: by peak
+    containment (``match_peaks``) for a ``point`` method, else one to one
+    by overlap (``match_events``). The window rows and event positions."""
+    if point:
+        pairs = match_peaks(windows, event_times(rows))
+        return pairs[:, 0], pairs[:, 1]
+    found = rd.match_events(windows, _bounds(rows)).pairs
+    return found["reference_index"].to_numpy(), found["detected_index"].to_numpy()
+
+
 # Loading a run
 
 
@@ -924,7 +938,6 @@ def match_session(
         bounds, index = _bounds(rows), rows["event_index"].to_numpy()
         key = {"session_id": session_id, "method": method, "setting": setting}
         if method in points:
-            times = event_times(rows)
             for expression, references in truth_bounds.items():
                 peaks.append(
                     {
@@ -932,7 +945,7 @@ def match_session(
                         "expression": expression,
                         "n_reference": len(references[0]),
                         "n_detected": len(rows),
-                        "n_matched": len(match_peaks(references[0], times)),
+                        "n_matched": len(_matched_rows(references[0], rows, point=True)[0]),
                     }
                 )
             continue
@@ -1667,7 +1680,6 @@ def score_primary(
         rows = by_method.get((method, setting), events.iloc[:0]).sort_values("event_index")
         reference = windows[expression]
         if method in point_methods():
-            found = match_peaks(reference, event_times(rows))
             points.append(
                 {
                     "session_id": session_id,
@@ -1676,7 +1688,7 @@ def score_primary(
                     "minimum_iou": np.nan,
                     "n_reference": len(reference),
                     "n_detected": len(rows),
-                    "n_matched": len(found),
+                    "n_matched": len(_matched_rows(reference, rows, point=True)[0]),
                 }
             )
             continue
@@ -6537,13 +6549,9 @@ def select_from(
         event_table, non_event_table = tables.truth[session_id]
         truth = rd.truth_windows(event_table, TRUTH_FRACTIONS[0], expression)
         rows = by_session.get(session_id, events.iloc[:0]).sort_values("event_index")
-        if method in point_methods():
-            pairs = match_peaks(_bounds(truth), event_times(rows))
-            matched_truth, matched_events = pairs[:, 0], pairs[:, 1]
-        else:
-            found = rd.match_events(_bounds(truth), _bounds(rows)).pairs
-            matched_truth = found["reference_index"].to_numpy()
-            matched_events = found["detected_index"].to_numpy()
+        matched_truth, matched_events = _matched_rows(
+            _bounds(truth), rows, method in point_methods()
+        )
         if selection == "false_positive":
             unmatched = np.setdiff1d(np.arange(len(rows)), matched_events)
             bounds = _bounds(rows)[unmatched]
