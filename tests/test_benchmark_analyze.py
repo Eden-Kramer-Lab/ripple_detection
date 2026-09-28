@@ -831,6 +831,204 @@ def test_scores_count_point_inventories_by_containment(analyze, point_run):
     assert DAVIDSON[0] not in set(scores.participation.method)
 
 
+def _design_at_fp_rate(curve, target, floor, columns):
+    """``at_fp_rate`` as the benchmark's design writes it, in pandas."""
+    x = np.log(np.maximum(curve.fp_rate.to_numpy(float), floor))
+    ranked = curve.assign(_x=x, _order=np.arange(len(curve)))
+    ranked = ranked.sort_values(["_x", "recall", "_order"], ascending=[True, False, True])
+    points = ranked.drop_duplicates("_x", keep="first")
+    xs, t = points._x.to_numpy(), np.log(target)
+    if not (xs[0] <= t <= xs[-1]):
+        return pd.Series(np.nan, index=list(columns))
+    return pd.Series({c: float(np.interp(t, xs, points[c].to_numpy(float))) for c in columns})
+
+
+def test_at_fp_rate_interpolates_in_log_rate(analyze):
+    curve = pd.DataFrame(
+        {
+            "fp_rate": [8.0, 2.0, 0.5, 0.0],
+            "recall": [0.9, 0.6, 0.4, 0.2],
+            "onset": [0.04, 0.02, 0.0, -0.02],
+        }
+    )
+    columns = ["recall", "onset"]
+    at = functools.partial(analyze.at_fp_rate, curve, floor=0.25, columns=columns)
+    # halfway between 0.5 and 2 per minute in log rate, and between 2 and 8
+    assert at(1.0).tolist() == pytest.approx([0.5, 0.01])
+    assert at(4.0).tolist() == pytest.approx([0.75, 0.03])
+    # a rate of 0 counts as the floor, and below it or past the end is NaN
+    assert at(0.25).tolist() == pytest.approx([0.2, -0.02])
+    assert at(0.2).isna().all()
+    assert at(9.0).isna().all()
+
+
+def test_at_fp_rate_keeps_one_setting(analyze):
+    curve = pd.DataFrame(
+        {
+            "fp_rate": [2.0, 1.0, 1.0, 0.5],
+            "recall": [0.9, 0.6, 0.8, 0.5],
+            "onset": [0.03, 0.02, -0.01, 0.0],
+        }
+    )
+    found = analyze.at_fp_rate(curve, 1.0, 0.1, ["recall", "onset"])
+    # the better setting at that rate, whole: its own onset, not the other's
+    assert found.tolist() == pytest.approx([0.8, -0.01])
+
+
+def test_at_fp_rate_is_the_design(analyze):
+    rng = np.random.default_rng(3)
+    for _ in range(200):
+        n = int(rng.integers(1, 7))
+        curve = pd.DataFrame(
+            {
+                "fp_rate": rng.choice([0.0, 0.0, 0.5, 1.0, 2.0, 4.0], size=n),
+                "recall": rng.choice([0.2, 0.5, 0.5, 0.9], size=n),
+                "onset": rng.normal(size=n),
+            }
+        )
+        for target in (0.1, 0.5, 1.5, 4.0):
+            np.testing.assert_array_equal(
+                analyze.at_fp_rate(curve, target, 0.2, ["recall", "onset"]),
+                _design_at_fp_rate(curve, target, 0.2, ["recall", "onset"]),
+            )
+
+
+def _hand_scores(analyze, counts, errors=(), minutes=10.0):
+    """ConditionScores built by hand: ``counts`` and ``errors`` are dicts
+    with ``condition_id`` and ``replicate`` in place of a session, every
+    session ``minutes`` long outside the network windows, every method's
+    primary expression ripple but Mallory's (burst)."""
+    counts = pd.DataFrame(list(counts)).assign(
+        session_id=lambda f: f.condition_id + "/" + f.replicate.astype(str)
+    )
+    counts = (
+        counts.fillna({"minimum_iou": 0.0})
+        if "minimum_iou" in counts
+        else counts.assign(minimum_iou=0.0)
+    )
+    sessions = counts[["session_id", "condition_id", "replicate"]].drop_duplicates()
+    sessions = sessions.assign(
+        duration_s=600.0 + 60 * minutes, rest_s=600.0, event_time_s=600.0, minutes=minutes
+    ).reset_index(drop=True)
+    methods = counts[["method", "setting"]].drop_duplicates().reset_index(drop=True)
+    methods["primary_expression"] = np.where(methods.method == MALLORY[0], "burst", "ripple")
+    methods["scoring"] = methods.method.map(analyze.scoring_rule)
+    conditions = pd.DataFrame(
+        [
+            {
+                "condition_id": c,
+                "factor": c.split("=")[0] if "=" in c else "reference",
+                "level": c.split("=")[1] if "=" in c else "reference",
+            }
+            for c in sessions.condition_id.unique()
+        ]
+    )
+    errors = pd.DataFrame(
+        list(errors), columns=[*analyze.ERROR_ROW_COLUMNS, "condition_id", "replicate"]
+    )
+    errors["session_id"] = errors.condition_id + "/" + errors.replicate.astype(str)
+    errors = errors.fillna({"minimum_iou": 0.0})
+    return analyze.ConditionScores(
+        sessions=sessions,
+        conditions=conditions,
+        methods=methods,
+        counts=counts[list(analyze.COUNT_COLUMNS)],
+        errors=errors[list(analyze.ERROR_ROW_COLUMNS)],
+        participation=pd.DataFrame(columns=list(analyze.PARTICIPATION_COLUMNS)),
+        failures=pd.DataFrame(columns=["session_id", "method", "setting"]),
+    )
+
+
+def _kay(condition, replicate, setting, matched, detected, reference=10, **extra):
+    return {
+        "condition_id": condition, "replicate": replicate, "method": KAY[0],
+        "setting": setting, "n_reference": reference, "n_detected": detected,
+        "n_matched": matched, **extra,
+    }  # fmt: skip
+
+
+def _error(condition, replicate, setting, onset, method=KAY[0], offset=0.0, level=0.0):
+    return {
+        "condition_id": condition, "replicate": replicate, "method": method,
+        "setting": setting, "minimum_iou": level, "onset_error": onset,
+        "offset_error": offset,
+    }  # fmt: skip
+
+
+def test_operating_curves_and_points_by_hand(analyze):
+    # two sessions; per session 10 truth windows and 10 minutes outside them
+    counts, errors = [], []
+    for replicate in (0, 1):
+        for setting, matched, detected in (("2.0", 8, 28), ("3.0", 6, 11), ("4.0", 3, 3)):
+            counts.append(_kay("reference", replicate, setting, matched, detected))
+        errors += [_error("reference", replicate, "3.0", onset) for onset in (-0.01, 0.01)]
+        errors += [_error("reference", replicate, "2.0", -0.03)]
+    scores = _hand_scores(analyze, counts, errors)
+    curves = analyze.operating_curves(scores)
+    at_zero = curves[curves.minimum_iou == 0].set_index("setting")
+    assert at_zero.recall.to_dict() == {"2.0": 0.8, "3.0": 0.6, "4.0": 0.3}
+    assert at_zero.false_positives_per_minute.to_dict() == {"2.0": 2.0, "3.0": 0.5, "4.0": 0.0}
+    assert at_zero.loc["3.0", ["median_onset_error", "median_abs_onset_error"]].tolist() == [
+        0.0,
+        0.01,
+    ]
+    assert (at_zero.kind == "sweep").all()
+    assert at_zero.threshold.tolist() == [2.0, 3.0, 4.0]
+    points = analyze.operating_points(scores, n_resamples=FEW)
+    points = points[points.minimum_iou == 0].set_index("fp_target")
+    curve = at_zero.rename(columns={"false_positives_per_minute": "fp_rate"})
+    for target in (0.5, 1.0, 2.0):
+        expected = analyze.at_fp_rate(
+            curve, target, 0.5 / 20, ["recall", "median_onset_error", "median_offset_error"]
+        )
+        assert points.loc[target, list(analyze.AT_TARGET)].tolist() == pytest.approx(
+            expected.tolist()
+        )
+    # the two sessions are alike: every resample reads the same values off
+    assert points.loc[1.0, "recall_low"] == pytest.approx(points.loc[1.0, "recall"])
+    # 5 per minute is past the curve's end: missing, not its last point
+    assert points.loc[5.0, ["recall", "recall_low", "recall_high"]].isna().all()
+    assert points.attained.tolist() == [1.0, 1.0, 1.0, 0.0]
+
+
+def test_held_out_threshold_reports_held_out_replicates(analyze):
+    counts, errors = [], []
+    for replicate in range(10):
+        if analyze.is_held_out(replicate):
+            counts += [
+                _kay("x=y", replicate, "2.0", 10, 11),
+                _kay("x=y", replicate, "3.0", 4, 10),
+            ]
+            errors += [_error("x=y", replicate, "3.0", 0.01, offset=0.02)]
+        else:
+            counts += [
+                _kay("x=y", replicate, "2.0", 9, 30),
+                _kay("x=y", replicate, "3.0", 8, 12),
+            ]
+            errors += [_error("x=y", replicate, "3.0", -0.02)]
+    scores = _hand_scores(analyze, counts, errors)
+    table = analyze.held_out_thresholds(scores, condition="x=y", n_resamples=FEW)
+    row = table.set_index("fp_target").loc[1.0]
+    # chosen on the even replicates: 3.0 keeps 0.4 false positives per minute
+    # there, 2.0 has 2.1; the odd ones would have chosen 2.0
+    assert row.setting == "3.0"
+    assert [row.calibration_recall, row.calibration_fp_rate] == pytest.approx([0.8, 0.4])
+    # reported on the odd replicates alone
+    assert [row.recall, row.false_positives_per_minute] == pytest.approx([0.4, 0.6])
+    assert [row.median_onset_error, row.median_offset_error] == [0.01, 0.02]
+    assert row.recall_low == row.recall_high == pytest.approx(0.4)
+    assert (row.n_calibration_sessions, row.n_held_out_sessions) == (5, 5)
+    assert row.held_out_replicates == "1 3 5 7 9"
+    # no setting keeps 0.2 per minute on the calibration replicates: nothing chosen
+    none = analyze.held_out_thresholds(
+        scores, condition="x=y", targets=(0.2,), n_resamples=FEW
+    ).iloc[0]
+    assert none.setting == ""
+    assert (
+        none[["calibration_recall", "recall", "recall_low", "median_onset_error"]].isna().all()
+    )
+
+
 def test_the_command_writes_every_table_and_the_summary(analyze, tiny_run, tmp_path):
     results = tmp_path / "results" / "tiny"
     analyses = [_quick(analysis) for analysis in analyze.ANALYSES]

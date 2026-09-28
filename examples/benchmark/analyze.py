@@ -72,9 +72,11 @@ from run import (
     MATCH_IOU_LEVELS,
     OUTPUT,
     TABLES,
+    THRESHOLD_SWEEPS,
     _concat,
     load_truth,
     read_table,
+    setting_label,
     truth_window_sets,
 )
 from scipy.cluster.hierarchy import linkage
@@ -1678,7 +1680,8 @@ def percentile_intervals(
     """
     alpha = (1 - level) / 2
     quantiles = pd.DataFrame(np.asarray(draws, dtype=float)).quantile([alpha, 1 - alpha])
-    return quantiles.to_numpy()[0], quantiles.to_numpy()[1]
+    low, high = quantiles.to_numpy(dtype=float, copy=True)
+    return low, high
 
 
 # The analyses
@@ -2460,6 +2463,612 @@ def paired_timing(
                     row[f"{stem}_p"] = tests.loc[(a, b), f"{name}_p"] if known else np.nan
             rows.append(row)
     return _with_pair_failures(pd.DataFrame(rows, columns=PAIRED_TIMING_COLUMNS), tables)
+
+
+# Operating curves
+
+# False positives per minute at which recall and errors are read off a curve.
+FP_TARGETS = (0.5, 1.0, 2.0, 5.0)
+# What a curve gives at a target, in this order.
+AT_TARGET = ("recall", "median_onset_error", "median_offset_error")
+
+
+def _at_fp_rates(
+    fp_rate: ArrayLike,
+    recall: ArrayLike,
+    values: ArrayLike,
+    targets: ArrayLike,
+    floor: float,
+) -> np.ndarray[Any, Any]:
+    """``at_fp_rate`` on arrays, every target at once.
+
+    Parameters
+    ----------
+    fp_rate, recall : array_like, shape (n_settings,)
+        In threshold order.
+    values : array_like, shape (n_settings, n_columns)
+        The columns to read off.
+    targets : array_like, shape (n_targets,)
+    floor : float
+
+    Returns
+    -------
+    found : ndarray, shape (n_targets, n_columns)
+    """
+    fp_rate = np.asarray(fp_rate, dtype=float)
+    recall = np.asarray(recall, dtype=float)
+    values = np.asarray(values, dtype=float).reshape(len(fp_rate), -1)
+    targets = np.log(np.asarray(targets, dtype=float))
+    found = np.full((len(targets), values.shape[1]), np.nan)
+    if not len(fp_rate):
+        return found
+    x = np.log(np.maximum(fp_rate, floor))
+    # FP rate up, then recall down (NaN last), then threshold order
+    order = np.lexsort((np.arange(len(x)), -recall, x))
+    ranked = x[order]
+    repeated = (ranked[1:] == ranked[:-1]) | (np.isnan(ranked[1:]) & np.isnan(ranked[:-1]))
+    kept = order[np.concatenate([[True], ~repeated])]
+    xs = x[kept]
+    inside = (xs[0] <= targets) & (targets <= xs[-1])
+    for column in range(values.shape[1]):
+        found[inside, column] = np.interp(targets[inside], xs, values[kept, column])
+    return found
+
+
+def at_fp_rate(
+    curve: pd.DataFrame, target: float, floor: float, columns: Sequence[str]
+) -> pd.Series:
+    """Read a curve's columns off at a false-positive rate.
+
+    Settings with the same floored false-positive rate keep one row, the best
+    recall (ties: the first in threshold order), whole; every column is then
+    interpolated linearly in log false-positive rate between the same two
+    bracketing rows, so recall and the boundary errors describe the same
+    settings.
+
+    Parameters
+    ----------
+    curve : pandas.DataFrame
+        One row per setting of one method, condition, expression and minimum
+        IoU, in threshold order, with ``fp_rate``, ``recall`` and ``columns``.
+    target : float
+        False positives per minute.
+    floor : float
+        Half of 1 / the total non-event minutes, the estimate's resolution:
+        a rate of 0 counts as this.
+    columns : sequence of str
+
+    Returns
+    -------
+    found : pandas.Series
+        Indexed by ``columns``; NaN outside the curve's range of rates.
+    """
+    found = _at_fp_rates(
+        curve["fp_rate"], curve["recall"], curve[list(columns)], [target], floor
+    )
+    return pd.Series(found[0], index=list(columns))
+
+
+class Pool:
+    """Counts and errors of some groups over some units, pooled with weights.
+
+    A unit is what a bootstrap resamples (a session, or a replicate across
+    conditions); a group is what a statistic is of (a method and setting,
+    say). ``pool(weights)`` sums each count column over the units, each unit
+    counted its weight, and takes each error column's median over the pairs
+    of the units, each pair counted its unit's weight: with weights of 1 the
+    plain pooled values, with ``resample_weights``' rows ``paired_bootstrap``'s
+    resamples.
+
+    Parameters
+    ----------
+    counts : pandas.DataFrame
+        One row per unit and group at most, with the count columns.
+    count_units, count_groups : array_like of int, shape (n_count_rows,)
+        Each row's unit and group, -1 for a row left out.
+    errors : pandas.DataFrame
+        One row per pair, with the error columns.
+    error_units, error_groups : array_like of int, shape (n_error_rows,)
+    n_units, n_groups : int
+    sums : sequence of str
+        Count columns.
+    medians : sequence of str
+        Error columns.
+    """
+
+    def __init__(
+        self,
+        counts: pd.DataFrame,
+        count_units: ArrayLike,
+        count_groups: ArrayLike,
+        errors: pd.DataFrame,
+        error_units: ArrayLike,
+        error_groups: ArrayLike,
+        n_units: int,
+        n_groups: int,
+        sums: Sequence[str],
+        medians: Sequence[str] = (),
+    ) -> None:
+        units, groups = np.asarray(count_units), np.asarray(count_groups)
+        keep = (units >= 0) & (groups >= 0)
+        self.sums = {}
+        for column in sums:
+            dense = np.zeros((n_units, n_groups))
+            np.add.at(dense, (units[keep], groups[keep]), counts[column].to_numpy(float)[keep])
+            self.sums[column] = dense
+        units, groups = np.asarray(error_units), np.asarray(error_groups)
+        keep = (units >= 0) & (groups >= 0)
+        self.error_units = units[keep]
+        self.medians = {
+            column: WeightedMedians(
+                errors[column].to_numpy(float)[keep], groups[keep], n_groups
+            )
+            for column in medians
+        }
+
+    def __call__(self, weights: ArrayLike) -> dict[str, np.ndarray[Any, Any]]:
+        """Each column pooled, shape (n_groups,), for weights of shape (n_units,)."""
+        weights = np.asarray(weights, dtype=float)
+        found = {column: weights @ dense for column, dense in self.sums.items()}
+        for column, median in self.medians.items():
+            found[column] = median(weights[self.error_units])
+        return found
+
+
+def _ratio(top: np.ndarray[Any, Any], bottom: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
+    """``top / bottom``, NaN where ``bottom`` is 0."""
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(bottom > 0, top / np.where(bottom > 0, bottom, 1.0), np.nan)
+
+
+def _rates(pooled: Mapping[str, np.ndarray[Any, Any]]) -> dict[str, np.ndarray[Any, Any]]:
+    """Recall, precision and false positives per minute of pooled counts."""
+    matched = pooled["n_matched"]
+    return {
+        "recall": _ratio(matched, pooled["n_reference"]),
+        "precision": _ratio(matched, pooled["n_detected"]),
+        "fp_rate": _ratio(pooled["n_detected"] - matched, pooled["minutes"]),
+    }
+
+
+_COUNTED = ("n_reference", "n_detected", "n_matched", "minutes", "ran")
+_ERROR_MEASURES = ("onset_error", "offset_error", "abs_onset_error", "abs_offset_error")
+# A method without rows: counts and errors as the pools read them.
+_NO_COUNTS = pd.DataFrame(
+    columns=["session_id", "setting", "replicate", "condition_id", *_COUNTED], dtype=float
+)
+_NO_ERRORS = pd.DataFrame(
+    columns=["session_id", "setting", "replicate", "condition_id", *_ERROR_MEASURES],
+    dtype=float,
+)
+
+
+def _codes(
+    frame: pd.DataFrame, columns: Sequence[str], index: pd.Index
+) -> np.ndarray[Any, Any]:
+    """Each row's position in ``index`` by ``columns``, -1 where absent."""
+    if len(columns) == 1:
+        return np.asarray(index.get_indexer(frame[columns[0]].astype(object)))
+    keys = pd.MultiIndex.from_arrays([frame[column].astype(object) for column in columns])
+    return np.asarray(index.get_indexer(keys))
+
+
+def _session_counts(
+    scores: ConditionScores, level: float | None, sessions: Collection[str] | None = None
+) -> pd.DataFrame:
+    """``scores.counts`` at one ``minimum_iou`` (point methods at every
+    level: they have none), of some sessions (default all), with each
+    session's ``condition_id``, ``replicate``, ``minutes`` and ``ran`` (1)."""
+    counts = scores.counts
+    if sessions is not None:
+        counts = counts[counts["session_id"].isin(sessions)]
+    if level is not None:
+        counts = counts[(counts["minimum_iou"] == level) | counts["minimum_iou"].isna()]
+    listed = scores.sessions.set_index("session_id")
+    return counts.assign(
+        condition_id=counts["session_id"].map(listed["condition_id"]),
+        replicate=counts["session_id"].map(listed["replicate"]),
+        minutes=counts["session_id"].map(listed["minutes"]),
+        ran=1.0,
+    )
+
+
+def _session_errors(
+    scores: ConditionScores, level: float, sessions: Collection[str] | None = None
+) -> pd.DataFrame:
+    """``scores.errors`` at one ``minimum_iou``, of some sessions (default
+    all), with each session's ``condition_id`` and ``replicate``, and
+    absolute errors."""
+    errors = scores.errors
+    if sessions is not None:
+        errors = errors[errors["session_id"].isin(sessions)]
+    errors = errors[errors["minimum_iou"] == level]
+    listed = scores.sessions.set_index("session_id")
+    session_ids = errors["session_id"].astype(object)
+    return errors.assign(
+        condition_id=session_ids.map(listed["condition_id"]).to_numpy(),
+        replicate=session_ids.map(listed["replicate"]).to_numpy(),
+        abs_onset_error=errors["onset_error"].abs(),
+        abs_offset_error=errors["offset_error"].abs(),
+    )
+
+
+def _sweep_settings(method: str) -> list[str]:
+    """A detector's swept settings in threshold order; none for a recipe."""
+    if method not in THRESHOLD_SWEEPS:
+        return []
+    return [setting_label(value) for value in THRESHOLD_SWEEPS[method][1]]
+
+
+def _by_method(frame: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """A frame's rows by ``method``."""
+    return {
+        str(method): rows
+        for method, rows in frame.groupby(frame["method"].astype(object), sort=False)
+    }
+
+
+def _curve_pool(
+    counts: pd.DataFrame,
+    errors: pd.DataFrame,
+    unit: str,
+    units: Sequence[Any],
+    settings: Sequence[str],
+    medians: Sequence[str] = ("onset_error", "offset_error"),
+) -> Pool:
+    """A ``Pool`` of one method's settings (the groups, in order) over units
+    named by the ``unit`` column, from that method's counts and errors."""
+    unit_index, setting_index = pd.Index(units), pd.Index(settings)
+    return Pool(
+        counts,
+        _codes(counts, [unit], unit_index),
+        _codes(counts, ["setting"], setting_index),
+        errors,
+        _codes(errors, [unit], unit_index),
+        _codes(errors, ["setting"], setting_index),
+        len(unit_index),
+        len(setting_index),
+        _COUNTED,
+        medians,
+    )
+
+
+def _curve_values(
+    pooled: Mapping[str, np.ndarray[Any, Any]], targets: Sequence[float]
+) -> np.ndarray[Any, Any]:
+    """A pooled curve's ``AT_TARGET`` at each target, shape (n_targets, 3),
+    over the settings with scores (weight); the floor is half of 1 / the
+    most minutes of any setting."""
+    held = pooled["ran"] > 0
+    if not held.any():
+        return np.full((len(targets), len(AT_TARGET)), np.nan)
+    rates = _rates(pooled)
+    values = np.column_stack([rates["recall"], pooled["onset_error"], pooled["offset_error"]])
+    return _at_fp_rates(
+        rates["fp_rate"][held],
+        rates["recall"][held],
+        values[held],
+        targets,
+        0.5 / pooled["minutes"][held].max(),
+    )
+
+
+def _condition_sessions(scores: ConditionScores, condition: str) -> list[str]:
+    return list(
+        scores.sessions.loc[scores.sessions["condition_id"] == condition, "session_id"]
+    )
+
+
+def _failures_by_method(scores: ConditionScores, sessions: Collection[str]) -> pd.Series:
+    """Failures of each method and setting on some sessions."""
+    failed = scores.failures[scores.failures["session_id"].isin(sessions)]
+    return failed.groupby(["method", "setting"]).size().rename("n_failures")
+
+
+def operating_curves(
+    scores: ConditionScores, *, condition: str = REFERENCE_CONDITION
+) -> pd.DataFrame:
+    """Recall against false positives per minute along each detector's sweep.
+
+    Against each method's primary expression, pooled over the condition's
+    sessions: at each setting, ``recall`` is the matched truth windows over
+    all, and ``false_positives_per_minute`` the unmatched events over the
+    minutes outside every network window. Every interval method's main
+    setting is a point too: a detector's default, each recipe's own. Point
+    methods have no interval score and are not here.
+
+    Parameters
+    ----------
+    scores : ConditionScores
+    condition : str, optional
+
+    Returns
+    -------
+    curves : pandas.DataFrame
+        One row per interval method, setting and ``minimum_iou``, by method,
+        level, then ``kind`` (``"sweep"`` in threshold order, ``"default"``,
+        ``"recipe"``): ``method``, ``setting``, ``kind``, ``threshold`` (the
+        swept value; NaN for a main setting), ``minimum_iou``,
+        ``primary_expression``, ``n_sessions``, ``n_reference``,
+        ``n_detected``, ``n_matched``, ``minutes``, ``recall``,
+        ``false_positives_per_minute``, ``median_onset_error``,
+        ``median_offset_error``, ``median_abs_onset_error``,
+        ``median_abs_offset_error`` (the matched pairs', detected minus truth
+        at 10 % of the peak, seconds) and ``n_failures``.
+    """
+    sessions = _condition_sessions(scores, condition)
+    methods = _by_intervals(scores.methods)
+    rows = []
+    for level in MATCH_IOU_LEVELS:
+        counts = _by_method(_session_counts(scores, level, sessions))
+        errors = _by_method(_session_errors(scores, level, sessions))
+        for method, own in methods.groupby("method", sort=True):
+            sweep = _sweep_settings(method)
+            settings = [*sweep, *sorted(set(own["setting"]) - set(sweep))]
+            pooled = _curve_pool(
+                counts.get(method, _NO_COUNTS),
+                errors.get(method, _NO_ERRORS),
+                "session_id",
+                sessions,
+                settings,
+                _ERROR_MEASURES,
+            )(np.ones(len(sessions)))
+            rates = _rates(pooled)
+            for position, setting in enumerate(settings):
+                if not pooled["ran"][position]:
+                    continue
+                swept = setting in sweep
+                rows.append(
+                    {
+                        "method": method,
+                        "setting": setting,
+                        "kind": "sweep"
+                        if swept
+                        else ("default" if setting == "default" else "recipe"),
+                        "threshold": float(setting) if swept else np.nan,
+                        "minimum_iou": level,
+                        "n_sessions": int(pooled["ran"][position]),
+                        **{
+                            column: int(pooled[column][position])
+                            for column in ("n_reference", "n_detected", "n_matched")
+                        },
+                        "minutes": pooled["minutes"][position],
+                        "recall": rates["recall"][position],
+                        "false_positives_per_minute": rates["fp_rate"][position],
+                        **{
+                            f"median_{column}": pooled[column][position]
+                            for column in _ERROR_MEASURES
+                        },
+                    }
+                )
+    curves = pd.DataFrame(rows)
+    if curves.empty:
+        return curves
+    primary = methods.drop_duplicates("method").set_index("method")["primary_expression"]
+    curves.insert(5, "primary_expression", curves["method"].map(primary))
+    failed = _failures_by_method(scores, sessions)
+    curves = curves.join(failed, on=["method", "setting"]).fillna({"n_failures": 0})
+    return curves.astype({"n_failures": int})
+
+
+def operating_points(
+    scores: ConditionScores,
+    *,
+    condition: str = REFERENCE_CONDITION,
+    targets: Sequence[float] = FP_TARGETS,
+    n_resamples: int = N_RESAMPLES,
+) -> pd.DataFrame:
+    """Each detector's recall and errors at target false-positive rates.
+
+    ``at_fp_rate`` on the detector's sweep (``operating_curves``' rows of
+    kind ``"sweep"``) against its primary expression, with 95 % intervals
+    from resampling the condition's sessions (``paired_bootstrap``'s
+    draws): each resample pools its sessions into a curve and reads it off
+    again, the setting chosen afresh. A target outside a curve's range of
+    rates is NaN, never the nearest end.
+
+    Parameters
+    ----------
+    scores : ConditionScores
+    condition : str, optional
+    targets : sequence of float, optional
+        False positives per minute.
+    n_resamples : int, optional
+
+    Returns
+    -------
+    points : pandas.DataFrame
+        One row per detector, ``minimum_iou`` and target: ``method``,
+        ``primary_expression``, ``minimum_iou``, ``fp_target``, then for
+        ``recall``, ``median_onset_error`` and ``median_offset_error``
+        (seconds, detected minus truth at 10 %) the estimate, ``_low`` and
+        ``_high`` (over the resamples whose curve reaches the target; none
+        where the estimate is NaN); ``attained``, the fraction of resamples
+        whose curve reaches it; ``n_sessions`` (the condition's),
+        ``n_failures`` (the sweep's failed calls).
+    """
+    sessions = _condition_sessions(scores, condition)
+    weights = resample_weights(len(sessions), n_resamples=n_resamples)
+    primary = scores.methods.drop_duplicates("method").set_index("method")[
+        "primary_expression"
+    ]
+    failed = _failures_by_method(scores, sessions)
+    rows = []
+    for level in MATCH_IOU_LEVELS:
+        counts = _by_method(_session_counts(scores, level, sessions))
+        errors = _by_method(_session_errors(scores, level, sessions))
+        for method in sorted(set(THRESHOLD_SWEEPS) & set(scores.methods["method"])):
+            settings = _sweep_settings(method)
+            pool = _curve_pool(
+                counts.get(method, _NO_COUNTS),
+                errors.get(method, _NO_ERRORS),
+                "session_id",
+                sessions,
+                settings,
+            )
+            estimate = _curve_values(pool(np.ones(len(sessions))), targets)
+            draws = np.array([_curve_values(pool(w), targets) for w in weights])
+            low, high = _conditional_intervals(estimate, draws)
+            attained = np.isfinite(draws[:, :, 0]).mean(axis=0)
+            n_failures = int(sum(failed.get((method, setting), 0) for setting in settings))
+            for position, target in enumerate(targets):
+                row: dict[str, Any] = {
+                    "method": method,
+                    "primary_expression": primary[method],
+                    "minimum_iou": level,
+                    "fp_target": target,
+                }
+                for column, name in enumerate(AT_TARGET):
+                    row[name] = estimate[position, column]
+                    row[f"{name}_low"] = low[position, column]
+                    row[f"{name}_high"] = high[position, column]
+                row["attained"] = attained[position]
+                row["n_sessions"] = len(sessions)
+                row["n_failures"] = n_failures
+                rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _conditional_intervals(
+    estimate: np.ndarray[Any, Any], draws: np.ndarray[Any, Any]
+) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+    """Percentile intervals of resampled values shaped like ``estimate``,
+    over the resamples where each is defined; NaN wherever the estimate is
+    (a target the full data cannot reach has no interval)."""
+    low, high = percentile_intervals(draws.reshape(len(draws), -1))
+    low, high = low.reshape(estimate.shape), high.reshape(estimate.shape)
+    missing = ~np.isfinite(estimate)
+    low[missing] = high[missing] = np.nan
+    return low, high
+
+
+def choose_setting(recall: ArrayLike, fp_rate: ArrayLike, target: float) -> int | None:
+    """The setting a threshold recommendation takes at a false-positive rate.
+
+    Parameters
+    ----------
+    recall, fp_rate : array_like, shape (n_settings,)
+        In threshold order.
+    target : float
+
+    Returns
+    -------
+    position : int or None
+        The setting with the best recall among those at or below ``target``
+        (ties: the first in threshold order); None when none is.
+    """
+    recall = np.asarray(recall, dtype=float)
+    allowed = np.asarray(fp_rate, dtype=float) <= target
+    allowed &= np.isfinite(recall)
+    if not allowed.any():
+        return None
+    return int(np.argmax(np.where(allowed, recall, -np.inf)))
+
+
+def held_out_thresholds(
+    scores: ConditionScores,
+    *,
+    condition: str = REFERENCE_CONDITION,
+    targets: Sequence[float] = FP_TARGETS,
+    n_resamples: int = N_RESAMPLES,
+) -> pd.DataFrame:
+    """A threshold per detector and target, chosen and judged on separate replicates.
+
+    On the calibration replicates (``is_held_out`` false: even ids) each
+    detector's sweep is pooled against its primary expression at IoU 0 and
+    ``choose_setting`` picks a setting; its recall, false positives per
+    minute and median errors are reported on the held-out replicates (odd
+    ids) alone, with intervals from resampling those sessions. The curves
+    stay descriptive: this is the number a recommendation may quote.
+
+    Parameters
+    ----------
+    scores : ConditionScores
+    condition : str, optional
+    targets : sequence of float, optional
+    n_resamples : int, optional
+
+    Returns
+    -------
+    thresholds : pandas.DataFrame
+        One row per detector and target: ``method``, ``primary_expression``,
+        ``fp_target``, ``setting`` (``""`` when no setting is at or below the
+        target on the calibration replicates, and every value NaN),
+        ``calibration_recall``, ``calibration_fp_rate``,
+        ``n_calibration_sessions``, then ``recall``,
+        ``false_positives_per_minute``, ``median_onset_error`` and
+        ``median_offset_error`` on the held-out sessions, each with ``_low``
+        and ``_high``; ``n_held_out_sessions``, ``held_out_replicates``
+        (space-separated) and ``n_failures`` (the sweep's, on the condition).
+    """
+    listed = scores.sessions[scores.sessions["condition_id"] == condition]
+    held = listed["replicate"].map(is_held_out).to_numpy(dtype=bool)
+    calibration = list(listed.loc[~held, "session_id"])
+    held_out = list(listed.loc[held, "session_id"])
+    weights = resample_weights(len(held_out), n_resamples=n_resamples)
+    counts = _by_method(_session_counts(scores, 0.0, listed["session_id"]))
+    errors = _by_method(_session_errors(scores, 0.0, listed["session_id"]))
+    primary = scores.methods.drop_duplicates("method").set_index("method")[
+        "primary_expression"
+    ]
+    failed = _failures_by_method(scores, list(listed["session_id"]))
+    measures = (
+        "recall",
+        "false_positives_per_minute",
+        "median_onset_error",
+        "median_offset_error",
+    )
+    rows = []
+    for method in sorted(set(THRESHOLD_SWEEPS) & set(scores.methods["method"])):
+        settings = _sweep_settings(method)
+        own = counts.get(method, _NO_COUNTS), errors.get(method, _NO_ERRORS)
+        chosen = _rates(
+            _curve_pool(*own, "session_id", calibration, settings)(np.ones(len(calibration)))
+        )
+        judged = _curve_pool(*own, "session_id", held_out, settings)
+
+        def measured(pooled: Mapping[str, np.ndarray[Any, Any]], position: int) -> list[float]:
+            rates = _rates(pooled)
+            return [
+                rates["recall"][position],
+                rates["fp_rate"][position],
+                pooled["onset_error"][position],
+                pooled["offset_error"][position],
+            ]
+
+        for target in targets:
+            position = choose_setting(chosen["recall"], chosen["fp_rate"], target)
+            row: dict[str, Any] = {
+                "method": method,
+                "primary_expression": primary[method],
+                "fp_target": target,
+                "setting": "" if position is None else settings[position],
+                "calibration_recall": np.nan
+                if position is None
+                else chosen["recall"][position],
+                "calibration_fp_rate": np.nan
+                if position is None
+                else chosen["fp_rate"][position],
+                "n_calibration_sessions": len(calibration),
+            }
+            if position is None:
+                estimate = low = high = np.full(len(measures), np.nan)
+            else:
+                estimate = np.array(measured(judged(np.ones(len(held_out))), position))
+                low, high = percentile_intervals(
+                    [measured(judged(w), position) for w in weights]
+                )
+            for column, name in enumerate(measures):
+                row[name] = estimate[column]
+                row[f"{name}_low"] = low[column]
+                row[f"{name}_high"] = high[column]
+            row["n_held_out_sessions"] = len(held_out)
+            row["held_out_replicates"] = " ".join(
+                str(replicate) for replicate in listed.loc[held, "replicate"]
+            )
+            row["n_failures"] = int(sum(failed.get((method, s), 0) for s in settings))
+            rows.append(row)
+    return pd.DataFrame(rows)
 
 
 # Figures (matplotlib is imported only inside them)
