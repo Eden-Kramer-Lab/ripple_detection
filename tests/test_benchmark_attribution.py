@@ -438,6 +438,25 @@ def test_equal_empty_results_verify_nothing(attribution, recipes, contexts, monk
     assert row["reason"].startswith("no event")
 
 
+def test_verification_uses_the_edge_sessions(attribution, recipes, short_run, monkeypatch):
+    """A public call that differs from the template on the gap session alone
+    is refused: the edge sessions are among those verified."""
+    kept = [c for c in recipes if c.config_id in ("pfeiffer_2015", "karlsson_2009")]
+    monkeypatch.setattr(attribution, "RECIPES", tuple(kept))
+    monkeypatch.setattr(attribution, "check_report", lambda directory, parameters: None)
+    original = attribution.recipe_events
+
+    def differs_on_the_gap(config, session):
+        events = original(config, session)
+        return events[1:] if np.isnan(session.lfps).any() else events
+
+    monkeypatch.setattr(attribution, "recipe_events", differs_on_the_gap)
+    table = attribution.verify_family("lfp", short_run).set_index("config_id")
+    assert not table.loc["pfeiffer_2015", "in_space"]
+    assert table.loc["pfeiffer_2015", "reason"].startswith("events differ on edge/gap")
+    assert table.loc["karlsson_2009", "reason"] == attribution.FIXED_POINTS["karlsson_2009"]
+
+
 def test_edge_sessions(attribution, recipes, short_run, contexts):
     parameters = attribution.reference_parameters(short_run)
     edges = attribution.edge_sessions(parameters, SHORT)
@@ -1150,10 +1169,15 @@ def test_the_command_line(attribution, recipes, short_run, tmp_path, monkeypatch
     names = ("gupta_2010", "karlsson_2009", "igata_2021", *attribution.in_space_ids("lfp"))
     kept = [c for c in recipes if c.config_id in names]
     monkeypatch.setattr(attribution, "RECIPES", tuple(kept))
-    monkeypatch.setattr(attribution, "check_report", lambda directory, parameters: None)
+    checked = []
+    monkeypatch.setattr(
+        attribution, "check_report", lambda directory, parameters: checked.append(directory)
+    )
     arguments = ["--run-name", "x", "--family", "lfp", "--workers", "1"]
     arguments += ["--run-directory", str(copy), "--results-directory", str(results)]
     attribution.main([*arguments, "--analysis", "oat"])
+    # the run's validation report is checked, once, before anything runs
+    assert checked == [copy]
     written = sorted(path.name for path in results.iterdir())
     assert written == [
         "lfp_factor_space.csv",
