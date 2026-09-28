@@ -1234,6 +1234,19 @@ def test_grouped_intervals_are_the_paired_bootstrap(
         np.testing.assert_array_equal(got[f"{name}_high"], block.high)
 
 
+def test_a_ratio_over_nothing_is_missing(analyze):
+    frame = pd.DataFrame({"found": [1.0, 0.0, 2.0], "n": [0.0, 0.0, 4.0]})
+    codes = np.arange(3)
+    # one found of none is missing, not infinite, as none of none is
+    np.testing.assert_array_equal(
+        analyze._ratio_of_sums(("found", "n"))(codes, frame, 3), [[np.nan, np.nan, 0.5]]
+    )
+    np.testing.assert_array_equal(
+        analyze._means("found")(codes, frame.assign(found=[np.nan, 1.0, 3.0]), 3),
+        [[np.nan, 1.0, 3.0]],
+    )
+
+
 def test_weighted_medians_count_each_value(analyze):
     rng = np.random.default_rng(2)
     values = rng.normal(size=60).round(1)
@@ -2713,7 +2726,17 @@ def test_the_analysis_registry_is_checked(analyze, tiny_run, tmp_path):
     assert not results.exists()
     # the tables the trends and the summary read are ones the command writes
     names = {analysis.name for analysis in analyze.ANALYSES}
-    assert set(analyze.READ_TABLES) <= names
+    read = {
+        analyze.ROBUSTNESS_RECALL,
+        analyze.MODEL_CHANGES,
+        analyze.MODEL_ORDERS,
+        analyze.MATCHING,
+        analyze.PARTICIPATION_BIAS,
+        analyze.BOUNDARY_EFFECT,
+        analyze.OPERATING_POINTS,
+        analyze.OPERATING_DIFFERENCES,
+    }
+    assert read <= names
     assert len(names) == len(analyze.ANALYSES)
 
 

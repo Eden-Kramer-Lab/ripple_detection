@@ -1301,8 +1301,7 @@ def _ratio_of_sums(*ratios: tuple[str, str]) -> GroupStatistic:
     columns = tuple(dict.fromkeys(itertools.chain.from_iterable(ratios)))
 
     def combine(sums: Mapping[str, np.ndarray[Any, Any]]) -> np.ndarray[Any, Any]:
-        with np.errstate(invalid="ignore", divide="ignore"):
-            return np.array([sums[top] / sums[bottom] for top, bottom in ratios])
+        return np.array([_ratio(sums[top], sums[bottom]) for top, bottom in ratios])
 
     def terms(frame: pd.DataFrame) -> dict[str, np.ndarray[Any, Any]]:
         return {column: frame[column].to_numpy(dtype=float) for column in columns}
@@ -1323,8 +1322,7 @@ def _means(*columns: str) -> GroupStatistic:
         return found
 
     def combine(sums: Mapping[str, np.ndarray[Any, Any]]) -> np.ndarray[Any, Any]:
-        with np.errstate(invalid="ignore", divide="ignore"):
-            return np.array([sums[f"{c} total"] / sums[f"{c} count"] for c in columns])
+        return np.array([_ratio(sums[f"{c} total"], sums[f"{c} count"]) for c in columns])
 
     return _Sums(columns, terms, combine)
 
@@ -2791,21 +2789,9 @@ def _at_fp_rates(
     targets: ArrayLike,
     floor: float,
 ) -> np.ndarray[Any, Any]:
-    """``at_fp_rate`` on arrays, every target at once.
-
-    Parameters
-    ----------
-    fp_rate, recall : array_like, shape (n_settings,)
-        In threshold order.
-    values : array_like, shape (n_settings, n_columns)
-        The columns to read off.
-    targets : array_like, shape (n_targets,)
-    floor : float
-
-    Returns
-    -------
-    found : ndarray, shape (n_targets, n_columns)
-    """
+    """``at_fp_rate`` on arrays, every target at once: ``values``, shape
+    (n_settings, n_columns), read off at each target, shape (n_targets,
+    n_columns)."""
     fp_rate = np.asarray(fp_rate, dtype=float)
     recall = np.asarray(recall, dtype=float)
     values = np.asarray(values, dtype=float).reshape(len(fp_rate), -1)
@@ -2927,7 +2913,7 @@ class Pool:
 
 
 def _ratio(top: np.ndarray[Any, Any], bottom: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
-    """``top / bottom``, NaN where ``bottom`` is 0."""
+    """``top / bottom``, NaN where ``bottom`` is 0 (or NaN)."""
     with np.errstate(invalid="ignore", divide="ignore"):
         return np.where(bottom > 0, top / np.where(bottom > 0, bottom, 1.0), np.nan)
 
@@ -4859,10 +4845,13 @@ def rates_by_state(
     rates = _pooled_ratios(
         long,
         by,
-        {"rate": ("n_events", "minutes"), "true_rate": ("true_events", "minutes")},
+        {"rate": ("n_events", "minutes")},
         ["n_events", "true_events"],
         ["minutes"],
         n_resamples=n_resamples,
+    )
+    rates["true_rate"] = _ratio(
+        rates["true_events"].to_numpy(float), rates["minutes"].to_numpy(float)
     )
     columns = [*by, "n_events", "minutes", "rate", "rate_low", "rate_high"]
     grid = _method_grid(tables.methods, {"state": STATES})
@@ -4898,10 +4887,8 @@ def _ratio_of_means() -> GroupStatistic:
         return {column: frame[column].to_numpy(dtype=float) for column in columns}
 
     def combine(sums: Mapping[str, np.ndarray[Any, Any]]) -> np.ndarray[Any, Any]:
-        with np.errstate(invalid="ignore", divide="ignore"):
-            matched = sums["matched_sum"] / sums["matched_n"]
-            ratio: np.ndarray[Any, Any] = matched / (sums["all_sum"] / sums["all_n"])
-        return ratio[np.newaxis]
+        matched = _ratio(sums["matched_sum"], sums["matched_n"])
+        return _ratio(matched, _ratio(sums["all_sum"], sums["all_n"]))[np.newaxis]
 
     return _Sums(columns, terms, combine)
 
@@ -5198,8 +5185,10 @@ def expression_curves(
     curves = curves.drop(columns=[f"median_{column}" for column in _ERROR_MEASURES])
     curves.insert(6, "expression", expression)
     at = curves.columns.get_loc("false_positives_per_minute")
-    precision = curves["n_matched"] / curves["n_detected"].where(curves["n_detected"] > 0)
-    curves.insert(at + 1, "precision", precision.to_numpy(dtype=float))
+    precision = _ratio(
+        curves["n_matched"].to_numpy(float), curves["n_detected"].to_numpy(float)
+    )
+    curves.insert(at + 1, "precision", precision)
     return curves
 
 
@@ -6135,16 +6124,6 @@ PARTICIPATION_BIAS = "participation_bias"
 BOUNDARY_EFFECT = "boundary_effect"
 OPERATING_POINTS = "operating_points"
 OPERATING_DIFFERENCES = "operating_differences"
-READ_TABLES = (
-    ROBUSTNESS_RECALL,
-    MODEL_CHANGES,
-    MODEL_ORDERS,
-    MATCHING,
-    PARTICIPATION_BIAS,
-    BOUNDARY_EFFECT,
-    OPERATING_POINTS,
-    OPERATING_DIFFERENCES,
-)
 # The candidates' file stem, and what is written by hand in a results
 # directory, kept when it is rebuilt.
 CANDIDATES = "candidate_trends"
