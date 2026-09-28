@@ -1,8 +1,12 @@
 """The benchmark's analyses (examples/benchmark/analyze.py): the paired bootstrap
-and sign-flip test, the held-out split and the results size limit; loading a run
-written in the runner's schema, with hand-chosen truth and events, one of its two
-sessions at a Unix clock origin."""
+and sign-flip test, the held-out split and the results size limit; loading, matching
+and every analysis on a run written in the runner's schema, with hand-chosen truth
+and events, one of its two sessions at a Unix clock origin; the command's files.
+No test draws a figure."""
 
+import dataclasses
+import functools
+import inspect
 from types import SimpleNamespace
 
 import numpy as np
@@ -619,3 +623,57 @@ def test_paired_timing_uses_shared_truth_only(analyze, timing_run):
         assert row[f"{stem}_p"] == 1.0
     # no pair shares a burst primary expression here
     assert analyze.paired_timing(tables, matches, "burst", n_resamples=FEW).empty
+
+
+def _quick(analysis):
+    """``analysis`` with few resamples, where its table takes any."""
+    if "n_resamples" not in inspect.signature(analysis.table).parameters:
+        return analysis
+    return dataclasses.replace(
+        analysis, table=functools.partial(analysis.table, n_resamples=FEW)
+    )
+
+
+def test_the_command_writes_every_table_and_the_summary(analyze, tiny_run, tmp_path):
+    results = tmp_path / "results" / "tiny"
+    analyses = [_quick(analysis) for analysis in analyze.ANALYSES]
+    seconds = analyze.analyze_run(tiny_run.parent, results, figures=False, analyses=analyses)
+    names = [analysis.name for analysis in analyze.ANALYSES]
+    assert list(seconds) == ["load", "match", *names]
+    assert sorted(path.name for path in results.iterdir()) == sorted(
+        [*(f"{name}.csv" for name in names), "summary.md"]
+    )
+    summary = (results / "summary.md").read_text()
+    for analysis in analyze.ANALYSES:
+        assert f"- `{analysis.name}.csv`: {analysis.description}" in summary
+    assert "2 sessions of reference, 2 methods" in summary
+    assert (
+        f"- `{MALLORY[0]}` (literature): 1 of 2 sessions; ValueError: made to fail" in summary
+    )
+    # the tables read back as the functions give them
+    profile = pd.read_csv(results / "detection_profile.csv")
+    assert profile.recall.tolist()[:5] == [1.0, 1.0, 1.0, 1.0, 0.0]
+    failures = pd.read_csv(results / "failures.csv", keep_default_na=False)
+    assert failures[["method", "n_sessions", "n_failures"]].to_numpy().tolist() == [
+        [KAY[0], 2, 0],
+        [MALLORY[0], 1, 1],
+    ]
+
+
+def test_a_file_over_the_limit_stops_the_command(analyze, tiny_run, tmp_path):
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / "earlier.csv").write_text("kept\n")
+    huge = analyze.Analysis(
+        "huge", lambda tables, matches: pd.DataFrame({"x": np.arange(300_000)}), "Too big."
+    )
+    with pytest.raises(ValueError, match=r"huge\.csv would be .* over the 1,000,000-byte"):
+        analyze.analyze_run(tiny_run.parent, results, figures=False, analyses=[huge])
+    # the results in place are left as they were
+    assert [path.name for path in results.iterdir()] == ["earlier.csv"]
+
+
+def test_the_command_refuses_no_workers(analyze, capsys):
+    with pytest.raises(SystemExit):
+        analyze.main(["--run-name", "v1", "--workers", "0"])
+    assert "--workers must be at least 1" in capsys.readouterr().err

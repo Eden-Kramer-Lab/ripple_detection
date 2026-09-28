@@ -1,35 +1,84 @@
-"""Analyze a finished benchmark run: what each method finds and misses, and how
-methods agree.
+"""Analyze a finished benchmark run: what each method finds and misses, what its
+false positives are, how methods agree and how their boundaries differ.
+
+Usage, from the repository root (see README.md, "Analysing a run")::
+
+    uv run python examples/benchmark/analyze.py --run-name NAME [--workers N]
+        [--run-directory PATH] [--results-directory PATH]
+
+It reads the run's ``combined/`` (``examples/benchmark/output/<run_name>/`` unless
+``--run-directory`` says otherwise; ``run.py``'s docstring lists every column) and
+rebuilds ``examples/benchmark/results/<run_name>/``: per analysis in ``ANALYSES``
+one CSV and one PNG, and ``summary.md``, which names each file with one sentence on
+what it shows and lists the methods that failed. No file may pass ``SIZE_LIMIT``
+(1 MB): the command stops before writing one, leaving the previous results as they
+were.
+
+What is analysed. The reference condition's sessions and the rows whose
+``setting`` is ``"default"`` or ``"literature"`` (``main_rows``): each detector at
+its defaults and every recipe. The runner stores events, not pairs, so every
+session is matched again (``match_run``, ``--workers`` processes): one to one
+(``match_events``, IoU 0: any overlap) against the truth windows at 10 % of the
+peak, errors also against those at 25 and 50 %. A method is headlined against its
+primary expression (``methods.csv``); comparisons of all pairs of methods use the
+network truth, the one every method is scored on.
+
+Failures. A session, method and setting the run should hold and has no scores for
+is a failure, never zero events (``load_run``). Every per-method table carries
+``n_sessions``, the sessions its numbers pool, and ``n_failures``; a table of pairs
+``n_failures_a`` and ``n_failures_b``.
 
 Intervals and tests. Every interval is a 95 % percentile interval from
 ``paired_bootstrap`` over sessions (2000 resamples, seed 0): a resample draws
 sessions with replacement, one draw shared by every method, so the methods stay
-paired. A difference between two methods carries ``sign_flip_test``'s two-sided
-p-value over sessions.
+paired. A pooled ratio or median is resampled whole; a difference between two
+methods is summarized per session (the sessions are the independent units), and
+its estimate and interval are the mean of those per-session values and its
+p-value ``sign_flip_test``'s, two-sided, over them.
 
-Every results file is at most ``SIZE_LIMIT`` bytes (1 MB): ``write_result``
-refuses a larger one before writing anything.
+Signs and units. Times and errors are seconds (the figures show milliseconds). A
+signed error is detected minus truth: negative, early. A difference between two
+methods is A minus B, A the method named first (by name): negative, A earlier, or
+for absolute errors, A closer to the truth.
+
+The tables, each built by the function of the same name, whose docstring lists its
+columns: ``failures`` (``failure_counts``), ``detection_profile``,
+``false_positive_classes``, ``pairwise_agreement``, ``agreement_dendrogram``,
+``consensus``, ``overlap_quality``, ``boundary_errors``,
+``paired_timing_<expression>`` (``paired_timing``, one per primary expression),
+``method_differences``, ``error_correlations`` and ``splits_and_merges``.
 """
 
 from __future__ import annotations
 
+import argparse
 import dataclasses
 import functools
+import io
 import itertools
 import os
+import time as wall_clock
 from collections.abc import Callable, Collection, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 from conditions import TRUTH_FRACTIONS
 from numpy.typing import ArrayLike
-from run import TABLES, _concat, load_truth, read_table, truth_window_sets
+from run import OUTPUT, TABLES, _concat, load_truth, read_table, truth_window_sets
+from scipy.cluster.hierarchy import linkage
+from scipy.spatial.distance import squareform
+from validate_simulator import replace_directory
 
 import ripple_detection as rd
 from ripple_detection.evaluate import COMPARISON_COLUMNS
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from matplotlib.figure import Figure
+    from matplotlib.image import AxesImage
 
 HERE = Path(__file__).resolve().parent
 RESULTS = HERE / "results"
@@ -1332,6 +1381,36 @@ def pairwise_agreement(
     return _session_means(tables, network, AGREEMENT, n_resamples=n_resamples)
 
 
+def agreement_linkage(methods: Sequence[str], jaccard: pd.Series) -> np.ndarray[Any, Any]:
+    """Average linkage of methods on ``1 - jaccard``.
+
+    Parameters
+    ----------
+    methods : sequence of str
+        The leaves, in order.
+    jaccard : pandas.Series
+        Indexed by ``(method_a, method_b)``; a pair missing, or NaN, is at
+        distance 1.
+
+    Returns
+    -------
+    tree : ndarray, shape (n_methods - 1, 4)
+        ``scipy.cluster.hierarchy.linkage``'s; empty for fewer than two
+        methods.
+    """
+    position = {method: index for index, method in enumerate(methods)}
+    distance = np.ones((len(methods), len(methods)))
+    np.fill_diagonal(distance, 0.0)
+    for (a, b), value in jaccard.items():
+        distance[position[a], position[b]] = distance[position[b], position[a]] = (
+            1.0 - value if np.isfinite(value) else 1.0
+        )
+    if len(methods) < 2:
+        return np.empty((0, 4))
+    tree: np.ndarray[Any, Any] = linkage(squareform(distance, checks=False), method="average")
+    return tree
+
+
 def agreement_dendrogram(tables: RunTables, matches: Matches) -> pd.DataFrame:
     """Main methods clustered by agreement: average linkage on ``1 - jaccard``.
 
@@ -1353,19 +1432,11 @@ def agreement_dendrogram(tables: RunTables, matches: Matches) -> pd.DataFrame:
         merge (``node`` n, n + 1, ..., ``method`` ``""``, the two nodes it
         joins, their distance and the leaves under it).
     """
-    from scipy.cluster.hierarchy import linkage
-    from scipy.spatial.distance import squareform
-
     methods = sorted(main_rows(tables.methods)["method"])
     network = matches.comparisons[matches.comparisons["truth_expression"] == "network"]
-    mean = network.groupby(["method_a", "method_b"])["jaccard"].mean()
-    position = {method: index for index, method in enumerate(methods)}
-    distance = np.ones((len(methods), len(methods)))
-    np.fill_diagonal(distance, 0.0)
-    for (a, b), jaccard in mean.items():
-        distance[position[a], position[b]] = distance[position[b], position[a]] = (
-            1.0 - jaccard if np.isfinite(jaccard) else 1.0
-        )
+    tree = agreement_linkage(
+        methods, network.groupby(["method_a", "method_b"])["jaccard"].mean()
+    )
     leaves = pd.DataFrame(
         {
             "node": np.arange(len(methods)),
@@ -1376,9 +1447,8 @@ def agreement_dendrogram(tables: RunTables, matches: Matches) -> pd.DataFrame:
             "size": 1,
         }
     )
-    if len(methods) < 2:
+    if not len(tree):
         return leaves
-    tree = linkage(squareform(distance, checks=False), method="average")
     merges = pd.DataFrame(
         {
             "node": len(methods) + np.arange(len(tree)),
@@ -1754,3 +1824,641 @@ def paired_timing(
                     row[f"{stem}_p"] = tests.loc[(a, b), f"{name}_p"] if known else np.nan
             rows.append(row)
     return _with_pair_failures(pd.DataFrame(rows, columns=PAIRED_TIMING_COLUMNS), tables)
+
+
+# Figures (matplotlib is imported only inside them)
+
+_FONT = 5
+# Seconds to the milliseconds the figures show.
+_MS = 1000.0
+
+
+def _grid(
+    table: pd.DataFrame,
+    rows: str,
+    columns: str,
+    value: str,
+    row_order: Sequence[str],
+    column_order: Sequence[str],
+) -> np.ndarray[Any, Any]:
+    """``table``'s ``value`` as a (row, column) array in the given orders,
+    NaN where no row gives one."""
+    grid = np.full((len(row_order), len(column_order)), np.nan)
+    row = pd.Index(row_order).get_indexer(table[rows])
+    column = pd.Index(column_order).get_indexer(table[columns])
+    keep = (row >= 0) & (column >= 0)
+    grid[row[keep], column[keep]] = table[value].to_numpy(dtype=float)[keep]
+    return grid
+
+
+def _pair_grid(
+    table: pd.DataFrame, value: str, methods: Sequence[str], *, antisymmetric: bool
+) -> np.ndarray[Any, Any]:
+    """A pair table's ``value`` as a method-by-method array, row A and column
+    B; the transpose holds B against A (negated for a difference)."""
+    upper = _grid(table, "method_a", "method_b", value, methods, methods)
+    lower = _grid(table, "method_b", "method_a", value, methods, methods)
+    return np.where(np.isnan(upper), -lower if antisymmetric else lower, upper)
+
+
+def _heatmap(
+    axis: Axes,
+    values: np.ndarray[Any, Any],
+    rows: Sequence[str],
+    columns: Sequence[str],
+    title: str,
+    **style: Any,
+) -> AxesImage:
+    image = axis.imshow(values, aspect="auto", interpolation="nearest", **style)
+    axis.set_xticks(range(len(columns)), list(columns), rotation=90, fontsize=_FONT)
+    axis.set_yticks(range(len(rows)), list(rows), fontsize=_FONT)
+    axis.set_title(title, fontsize=8)
+    return image
+
+
+def _boxes(axis: Axes, stats: pd.DataFrame, scale: float = 1.0, color: str = "C0") -> None:
+    """Horizontal boxes, one row of ``stats`` per box from the top: whiskers
+    from ``q05`` to ``q95``, the box ``q25`` to ``q75``, a tick at the
+    median."""
+    y = np.arange(len(stats))[::-1]
+    axis.hlines(y, stats["q05"] * scale, stats["q95"] * scale, color="0.5", linewidth=0.6)
+    axis.barh(
+        y,
+        (stats["q75"] - stats["q25"]) * scale,
+        left=stats["q25"] * scale,
+        height=0.6,
+        color=color,
+        alpha=0.5,
+    )
+    axis.plot(stats["median"] * scale, y, "|", color="k", markersize=4)
+    axis.tick_params(labelsize=_FONT)
+
+
+def _tall(n_rows: int) -> float:
+    """Inches of figure height for ``n_rows`` labelled rows."""
+    return 1.5 + 0.12 * n_rows
+
+
+def plot_detection_profile(profile: pd.DataFrame) -> Figure:
+    """``detection_profile``'s recall, method by event type."""
+    import matplotlib.pyplot as plt
+
+    methods = list(dict.fromkeys(profile["method"]))
+    kinds = list(dict.fromkeys(profile["event_type"]))
+    figure, axis = plt.subplots(figsize=(5, _tall(len(methods))))
+    image = _heatmap(
+        axis,
+        _grid(profile, "method", "event_type", "recall", methods, kinds),
+        methods,
+        kinds,
+        "Recall against the network truth, by event type",
+        cmap="viridis",
+        vmin=0,
+        vmax=1,
+    )
+    figure.colorbar(image, ax=axis, shrink=0.3)
+    return figure
+
+
+def plot_false_positive_classes(classes: pd.DataFrame) -> Figure:
+    """``false_positive_classes``' fractions, stacked per method."""
+    import matplotlib.pyplot as plt
+
+    methods = list(dict.fromkeys(classes["method"]))
+    shown = classes.groupby("label", sort=False)["n_events"].sum()
+    labels = list(shown[shown > 0].index)
+    fractions = _grid(classes, "method", "label", "fraction", methods, labels)
+    figure, axis = plt.subplots(figsize=(7, _tall(len(methods))))
+    colors = plt.get_cmap("tab20")(np.arange(len(labels)) % 20)
+    y = np.arange(len(methods))[::-1]
+    left = np.zeros(len(methods))
+    for position, label in enumerate(labels):
+        width = np.nan_to_num(fractions[:, position])
+        axis.barh(y, width, left=left, color=colors[position], label=label, height=0.8)
+        left += width
+    axis.set_yticks(y, methods, fontsize=_FONT)
+    axis.set_xlabel("fraction of the method's false positives", fontsize=7)
+    axis.set_title("What false positives overlap (primary expression, IoU 0)", fontsize=8)
+    axis.legend(fontsize=_FONT, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    return figure
+
+
+def _leaf_order(agreement: pd.DataFrame) -> list[str]:
+    """The methods of a pair table in its dendrogram's leaf order."""
+    from scipy.cluster.hierarchy import leaves_list
+
+    methods = sorted(set(agreement["method_a"]) | set(agreement["method_b"]))
+    tree = agreement_linkage(methods, agreement.set_index(["method_a", "method_b"])["jaccard"])
+    if not len(tree):
+        return methods
+    return [methods[leaf] for leaf in leaves_list(tree)]
+
+
+def plot_pairwise_agreement(agreement: pd.DataFrame) -> Figure:
+    """``pairwise_agreement``'s four Jaccard indices, methods in the
+    dendrogram's leaf order."""
+    import matplotlib.pyplot as plt
+
+    methods = _leaf_order(agreement)
+    size = 2 + 0.09 * len(methods)
+    figure, axes = plt.subplots(2, 2, figsize=(2 * size, 2 * size))
+    for axis, name in zip(axes.flat, AGREEMENT, strict=True):
+        image = _heatmap(
+            axis,
+            _pair_grid(agreement, name, methods, antisymmetric=False),
+            methods,
+            methods,
+            f"{name} (mean over sessions)",
+            cmap="viridis",
+            vmin=0,
+            vmax=1,
+        )
+    figure.colorbar(image, ax=axes, shrink=0.3)
+    return figure
+
+
+def plot_agreement_dendrogram(dendrogram: pd.DataFrame) -> Figure:
+    """``agreement_dendrogram``'s tree."""
+    import matplotlib.pyplot as plt
+    from scipy.cluster.hierarchy import dendrogram as draw
+
+    leaves = dendrogram[dendrogram["left"] < 0]
+    merges = dendrogram[dendrogram["left"] >= 0]
+    figure, axis = plt.subplots(figsize=(6, _tall(len(leaves))))
+    if len(merges):
+        tree = merges[["left", "right", "distance", "size"]].to_numpy(dtype=float)
+        draw(
+            tree,
+            labels=list(leaves["method"]),
+            orientation="left",
+            ax=axis,
+            leaf_font_size=_FONT,
+            color_threshold=0,
+            above_threshold_color="0.3",
+        )
+    axis.set_xlabel("1 - jaccard (average linkage)", fontsize=7)
+    axis.set_title("Methods clustered by agreement against the network truth", fontsize=8)
+    return figure
+
+
+def plot_consensus(table: pd.DataFrame) -> Figure:
+    """``consensus``: methods per true event by type, and per group of false
+    positives."""
+    import matplotlib.pyplot as plt
+
+    figure, (left, right) = plt.subplots(1, 2, figsize=(10, 4))
+    true = table[table["kind"] == "true_event"]
+    for kind, rows in true.groupby("event_type", sort=False):
+        left.plot(rows["n_methods"], rows["fraction"], ".-", label=kind, markersize=3)
+    left.set_xlabel("methods that found it", fontsize=7)
+    left.set_ylabel("fraction of the type's true events", fontsize=7)
+    left.set_title("True events", fontsize=8)
+    left.legend(fontsize=_FONT)
+    groups = table[table["kind"] == "false_positive_group"]
+    right.bar(groups["n_methods"], groups["count"], color="0.4")
+    right.set_yscale("log")
+    right.set_xlabel("methods a group of overlapping false positives spans", fontsize=7)
+    right.set_ylabel("groups", fontsize=7)
+    right.set_title("False positives", fontsize=8)
+    for axis in (left, right):
+        axis.tick_params(labelsize=_FONT)
+    return figure
+
+
+def plot_overlap_quality(quality: pd.DataFrame) -> Figure:
+    """``overlap_quality``'s distributions, one panel per measure."""
+    import matplotlib.pyplot as plt
+
+    methods = list(dict.fromkeys(quality["method"]))
+    figure, axes = plt.subplots(1, 3, figsize=(10, _tall(len(methods))), sharey=True)
+    for axis, measure in zip(axes, OVERLAP_MEASURES, strict=True):
+        rows = quality[quality["measure"] == measure].set_index("method").loc[methods]
+        _boxes(axis, rows)
+        axis.set_xlim(0, 1)
+        axis.set_title(measure, fontsize=8)
+    axes[0].set_yticks(np.arange(len(methods))[::-1], methods, fontsize=_FONT)
+    figure.suptitle("Matched pairs against the primary expression: 5-95 % and IQR", fontsize=8)
+    return figure
+
+
+def plot_boundary_errors(errors: pd.DataFrame) -> Figure:
+    """``boundary_errors`` in ms: boxes at 10 % of the peak, the medians at
+    25 % (triangle) and 50 % (square)."""
+    import matplotlib.pyplot as plt
+
+    keys = errors[["method", "expression"]].drop_duplicates()
+    labels = [
+        f"{method} ({expression})" for method, expression in keys.itertuples(index=False)
+    ]
+    panels = [(b, m) for m in ("signed", "absolute") for b in ("onset", "offset")]
+    figure, axes = plt.subplots(1, 4, figsize=(13, _tall(len(labels))), sharey=True)
+    y = np.arange(len(labels))[::-1]
+    for axis, (boundary, measure) in zip(axes, panels, strict=True):
+        rows = errors[(errors["boundary"] == boundary) & (errors["measure"] == measure)]
+        at = {
+            fraction: rows[rows["fraction"] == fraction].merge(keys, how="right")
+            for fraction in TRUTH_FRACTIONS
+        }
+        _boxes(axis, at[TRUTH_FRACTIONS[0]], scale=_MS)
+        for fraction, marker in zip(TRUTH_FRACTIONS[1:], ("^", "s"), strict=True):
+            axis.plot(at[fraction]["median"] * _MS, y, marker, markersize=2, color="C3")
+        if measure == "signed":
+            axis.axvline(0, color="0.7", linewidth=0.6)
+        axis.set_title(f"{boundary}, {measure} (ms; detected - truth)", fontsize=8)
+    axes[0].set_yticks(y, labels, fontsize=_FONT)
+    return figure
+
+
+def plot_paired_timing(timing: pd.DataFrame) -> Figure:
+    """``paired_timing``'s mean paired differences at 10 % of the peak, in ms:
+    row A minus column B."""
+    import matplotlib.pyplot as plt
+
+    shown = timing[timing["fraction"] == TRUTH_FRACTIONS[0]]
+    methods = sorted(set(shown["method_a"]) | set(shown["method_b"]))
+    size = 2 + 0.12 * len(methods)
+    figure, axes = plt.subplots(2, 2, figsize=(2 * size, 2 * size))
+    for axis, stem in zip(
+        axes.flat,
+        ("onset_signed", "offset_signed", "onset_absolute", "offset_absolute"),
+        strict=True,
+    ):
+        values = _pair_grid(shown, f"{stem}_estimate", methods, antisymmetric=True) * _MS
+        limit = np.nanmax(np.abs(values)) if np.isfinite(values).any() else 1.0
+        image = _heatmap(
+            axis,
+            values,
+            methods,
+            methods,
+            f"{stem} (ms, A - B)",
+            cmap="RdBu_r",
+            vmin=-limit,
+            vmax=limit,
+        )
+        figure.colorbar(image, ax=axis, shrink=0.5)
+    return figure
+
+
+def plot_method_differences(differences: pd.DataFrame) -> Figure:
+    """``method_differences``' median start and end differences, in ms:
+    row A minus column B."""
+    import matplotlib.pyplot as plt
+
+    methods = sorted(set(differences["method_a"]) | set(differences["method_b"]))
+    size = 2 + 0.09 * len(methods)
+    figure, axes = plt.subplots(1, 2, figsize=(2 * size, size))
+    for axis, name in zip(axes, DIFFERENCES[:2], strict=True):
+        values = _pair_grid(differences, name, methods, antisymmetric=True) * _MS
+        limit = np.nanmax(np.abs(values)) if np.isfinite(values).any() else 1.0
+        image = _heatmap(
+            axis,
+            values,
+            methods,
+            methods,
+            f"{name} (ms, A - B)",
+            cmap="RdBu_r",
+            vmin=-limit,
+            vmax=limit,
+        )
+        figure.colorbar(image, ax=axis, shrink=0.5)
+    return figure
+
+
+def plot_error_correlations(correlations: pd.DataFrame) -> Figure:
+    """``error_correlations``' mean correlations, method by method."""
+    import matplotlib.pyplot as plt
+
+    methods = sorted(set(correlations["method_a"]) | set(correlations["method_b"]))
+    size = 2 + 0.09 * len(methods)
+    figure, axes = plt.subplots(1, 2, figsize=(2 * size, size))
+    for axis, name in zip(axes, CORRELATIONS, strict=True):
+        image = _heatmap(
+            axis,
+            _pair_grid(correlations, name, methods, antisymmetric=False),
+            methods,
+            methods,
+            name,
+            cmap="RdBu_r",
+            vmin=-1,
+            vmax=1,
+        )
+    figure.colorbar(image, ax=axes, shrink=0.5)
+    return figure
+
+
+def plot_splits_and_merges(rates: pd.DataFrame) -> Figure:
+    """``splits_and_merges``' rates with their intervals, overall and on
+    doublets."""
+    import matplotlib.pyplot as plt
+
+    methods = list(dict.fromkeys(rates["method"]))
+    figure, axes = plt.subplots(1, 2, figsize=(9, _tall(len(methods))), sharey=True)
+    y = np.arange(len(methods))[::-1]
+    for axis, rate in zip(axes, ("split_rate", "merge_rate"), strict=True):
+        for offset, (subset, color) in enumerate((("all", "C0"), (DOUBLET, "C1"))):
+            rows = rates[rates["subset"] == subset].set_index("method").loc[methods]
+            error = np.abs(
+                rows[[f"{rate}_low", f"{rate}_high"]].to_numpy().T - rows[rate].to_numpy()
+            )
+            axis.errorbar(
+                rows[rate],
+                y + 0.2 * offset,
+                xerr=error,
+                fmt=".",
+                color=color,
+                label=subset,
+                markersize=3,
+                elinewidth=0.6,
+            )
+        axis.set_title(rate.replace("_", " "), fontsize=8)
+        axis.tick_params(labelsize=_FONT)
+    axes[0].set_yticks(y, methods, fontsize=_FONT)
+    axes[1].legend(fontsize=_FONT)
+    return figure
+
+
+# The command line
+
+
+@dataclasses.dataclass(frozen=True)
+class Analysis:
+    """One analysis: its table, the figure drawn from it, and what each shows.
+
+    Attributes
+    ----------
+    name : str
+        The files' stem: ``<name>.csv`` and ``<name>.png``.
+    table : callable
+        ``table(tables, matches)``: the analysis's table.
+    description : str
+        One sentence on what the table shows, for ``summary.md``.
+    figure : callable or None
+        ``figure(table)``: a matplotlib Figure; None for no figure.
+    figure_description : str
+        One sentence on what the figure shows.
+    """
+
+    name: str
+    table: Callable[[RunTables, Matches], pd.DataFrame]
+    description: str
+    figure: Callable[[pd.DataFrame], Figure] | None = None
+    figure_description: str = ""
+
+
+ANALYSES: tuple[Analysis, ...] = (
+    Analysis(
+        "failures",
+        lambda tables, _matches: failure_counts(tables),
+        "Each method's sessions with scores and failures (a missing result, never zero "
+        "events), with the first error.",
+    ),
+    Analysis(
+        "detection_profile",
+        detection_profile,
+        "Recall per event type against the network truth, per method, pooled over sessions.",
+        plot_detection_profile,
+        "Recall as a heatmap, method by event type.",
+    ),
+    Analysis(
+        "false_positive_classes",
+        false_positive_classes,
+        "What each method's false positives (unmatched against its primary expression) "
+        "overlap longest: an event type's component, a non-event or nothing.",
+        plot_false_positive_classes,
+        "Those fractions stacked per method.",
+    ),
+    Analysis(
+        "pairwise_agreement",
+        pairwise_agreement,
+        "Agreement of every pair of methods against the network truth: Jaccard of their "
+        "events, of their true and of their false events, and of the true events found.",
+        plot_pairwise_agreement,
+        "The four indices as heatmaps, methods in the dendrogram's order.",
+    ),
+    Analysis(
+        "agreement_dendrogram",
+        agreement_dendrogram,
+        "Methods clustered by average linkage on 1 - Jaccard.",
+        plot_agreement_dendrogram,
+        "The dendrogram.",
+    ),
+    Analysis(
+        "consensus",
+        consensus,
+        "How many methods found each true event, by type, and how many methods each "
+        "group of overlapping false positives spans.",
+        plot_consensus,
+        "Both distributions.",
+    ),
+    Analysis(
+        "overlap_quality",
+        overlap_quality,
+        "IoU, coverage and temporal precision of each method's matched pairs against its "
+        "primary expression, with its recall.",
+        plot_overlap_quality,
+        "Their distributions per method.",
+    ),
+    Analysis(
+        "boundary_errors",
+        boundary_errors,
+        "Signed and absolute onset and offset errors (detected minus truth) against the "
+        "truth at 10, 25 and 50 % of the peak, each median with its pair count and the "
+        "method's recall.",
+        plot_boundary_errors,
+        "Their distributions at 10 % and the medians at 25 and 50 %, in ms.",
+    ),
+    *(
+        Analysis(
+            f"paired_timing_{expression}",
+            functools.partial(paired_timing, expression=expression),
+            f"For methods whose primary expression is {expression}, each pair's error "
+            "differences (A minus B) on the true events both found, with a sign-flip test.",
+            plot_paired_timing,
+            "The mean paired differences at 10 % as heatmaps, in ms.",
+        )
+        for expression in ("ripple", "burst", "network")
+    ),
+    Analysis(
+        "method_differences",
+        method_differences,
+        "How every pair of methods' matched events differ in start and end (A minus B), "
+        "and how often A's comes first.",
+        plot_method_differences,
+        "The median differences as heatmaps, in ms.",
+    ),
+    Analysis(
+        "error_correlations",
+        error_correlations,
+        "Spearman correlation of every pair of methods' signed errors on the network "
+        "events both found.",
+        plot_error_correlations,
+        "The correlations as heatmaps.",
+    ),
+    Analysis(
+        "splits_and_merges",
+        splits_and_merges,
+        "How often each method splits a true event or merges several, overall and on "
+        "ripple doublets.",
+        plot_splits_and_merges,
+        "Both rates with their intervals.",
+    ),
+)
+# Figures are saved at this resolution.
+_DPI = 100
+FLOAT_FORMAT = "%.6g"
+
+
+def _png(figure: Figure) -> bytes:
+    import matplotlib.pyplot as plt
+
+    buffer = io.BytesIO()
+    figure.savefig(buffer, format="png", dpi=_DPI, bbox_inches="tight")
+    plt.close(figure)
+    return buffer.getvalue()
+
+
+def _summary(run_name: str, tables: RunTables, files: Sequence[tuple[str, str]]) -> str:
+    """``summary.md``: what was analysed, the conventions, each file with
+    its sentence, and the failures."""
+    main = main_rows(tables.methods)
+    counts = failure_counts(tables)
+    failed = counts[counts["n_failures"] > 0]
+    conditions = ", ".join(tables.sessions["condition_id"].drop_duplicates())
+    lines = [
+        f"# Benchmark results: {run_name}",
+        "",
+        (
+            f"`analyze.py` on `output/{run_name}/combined/`: {len(tables.sessions)} "
+            f"sessions of {conditions}, {len(main)} methods (detectors at their defaults, "
+            "every recipe)."
+        ),
+        (
+            "Events are matched one to one to the truth windows at 10 % of the peak (IoU "
+            "0), each method against its primary expression unless a file says otherwise. "
+            "Times are seconds; a signed error is detected minus truth (negative: early), a "
+            "difference between methods A minus B, A named first. Intervals are 95 % "
+            "paired-bootstrap intervals over sessions; p-values are two-sided sign-flip "
+            "tests over sessions."
+        ),
+        "",
+        "## Files",
+        "",
+        *(f"- `{name}`: {sentence}" for name, sentence in files),
+        "",
+        "## Failures",
+        "",
+        (
+            "Every table counts each method's failures (`n_failures`): a session without "
+            "its scores is a failure, never zero events, and the numbers pool the sessions "
+            "it ran."
+        ),
+        "",
+    ]
+    if failed.empty:
+        lines.append("No method failed on these sessions.")
+    else:
+        lines += [
+            f"- `{row.method}` ({row.setting}): {row.n_failures} of "
+            f"{row.n_sessions + row.n_failures} sessions; {row.error}"
+            for row in failed.itertuples()
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def analyze_run(
+    run_directory: str | os.PathLike[str],
+    results_directory: str | os.PathLike[str],
+    *,
+    workers: int = 1,
+    figures: bool = True,
+    analyses: Sequence[Analysis] = ANALYSES,
+) -> dict[str, float]:
+    """Run every analysis on a run and write its results.
+
+    Parameters
+    ----------
+    run_directory : str or path-like
+        ``examples/benchmark/output/<run_name>``; its ``combined/`` is read.
+    results_directory : str or path-like
+        Rebuilt from scratch (in ``<name>.partial``, renamed into place):
+        ``<name>.csv`` per analysis, ``<name>.png`` per figure and
+        ``summary.md``.
+    workers : int, optional
+        Processes for matching the sessions again.
+    figures : bool, optional
+        Draw the figures (needs matplotlib).
+    analyses : sequence of Analysis, optional
+
+    Returns
+    -------
+    seconds : dict of str to float
+        Wall time of loading, matching, each analysis's table and each figure.
+
+    Raises
+    ------
+    ValueError
+        A file would be over ``SIZE_LIMIT``: nothing is written in place.
+    """
+    root = Path(run_directory)
+    seconds = {}
+    started = wall_clock.perf_counter()
+    tables = load_run(root / "combined")
+    seconds["load"] = wall_clock.perf_counter() - started
+    started = wall_clock.perf_counter()
+    matches = match_run(tables, workers=max(1, min(workers, len(tables.sessions))))
+    seconds["match"] = wall_clock.perf_counter() - started
+    if figures:
+        import matplotlib as mpl
+
+        mpl.use("Agg")
+    files = []
+    with replace_directory(Path(results_directory)) as partial:
+        for analysis in analyses:
+            started = wall_clock.perf_counter()
+            table = analysis.table(tables, matches)
+            seconds[analysis.name] = wall_clock.perf_counter() - started
+            text = table.to_csv(index=False, float_format=FLOAT_FORMAT)
+            write_result(partial / f"{analysis.name}.csv", text.encode())
+            files.append((f"{analysis.name}.csv", analysis.description))
+            if figures and analysis.figure is not None:
+                started = wall_clock.perf_counter()
+                write_result(partial / f"{analysis.name}.png", _png(analysis.figure(table)))
+                seconds[f"{analysis.name}.png"] = wall_clock.perf_counter() - started
+                files.append((f"{analysis.name}.png", analysis.figure_description))
+        summary = _summary(root.name, tables, files)
+        write_result(partial / "summary.md", summary.encode())
+    return seconds
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    """The command line; see the module docstring."""
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--run-name", required=True)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=max(1, (os.cpu_count() or 2) - 1),
+        help="processes matching sessions again (default: one fewer than the cores)",
+    )
+    parser.add_argument(
+        "--run-directory", help="the run's directory (default: output/<run-name>)"
+    )
+    parser.add_argument(
+        "--results-directory", help="where to write (default: results/<run-name>)"
+    )
+    args = parser.parse_args(argv)
+    if args.workers < 1:
+        parser.error("--workers must be at least 1.")
+    run_directory = Path(args.run_directory or OUTPUT / args.run_name)
+    results = Path(args.results_directory or RESULTS / args.run_name)
+    try:
+        seconds = analyze_run(run_directory, results, workers=args.workers)
+    except ValueError as error:
+        raise SystemExit(str(error)) from None
+    for step, taken in seconds.items():
+        print(f"{step}: {taken:.1f} s")
+    print(results)
+
+
+if __name__ == "__main__":
+    main()
