@@ -139,6 +139,30 @@ def test_sobol_on_ishigami(attribution):
     assert (table[["first_finite_draws", "total_finite_draws"]] == 200).all().all()
 
 
+def test_sobol_indices_by_hand(attribution):
+    """One factor, two rows: the variance is that of y_a and y_b together
+    (0, 1, 1, 3: 19/12), first = mean(y_b (y_ab - y_a)) = 3 over it and
+    total = mean((y_a - y_ab)^2) / 2 = 1 over it."""
+    first, total = attribution.sobol_indices(
+        np.array([0.0, 1.0]), np.array([1.0, 3.0]), np.array([[0.0, 3.0]])
+    )
+    np.testing.assert_allclose(first, [36 / 19], rtol=1e-12)
+    np.testing.assert_allclose(total, [12 / 19], rtol=1e-12)
+
+
+def test_sobol_intervals_honour_the_level(attribution):
+    rng = np.random.default_rng(3)
+    y_a, y_b, y_ab = rng.normal(size=128), rng.normal(size=128), rng.normal(size=(2, 128))
+    y_ab[0] += y_b  # a factor with an effect
+    wide = attribution.sobol_intervals(y_a, y_b, y_ab, n_resamples=400)
+    narrow = attribution.sobol_intervals(y_a, y_b, y_ab, n_resamples=400, level=0.5)
+    for kind in ("first", "total"):
+        assert (narrow[f"{kind}_low"] > wide[f"{kind}_low"]).all()
+        assert (narrow[f"{kind}_high"] < wide[f"{kind}_high"]).all()
+    # the same draws: the 25th and 75th percentiles of the 95 % interval's
+    np.testing.assert_array_equal(narrow["first"], wide["first"])
+
+
 def test_sobol_intervals_with_missing_outputs(attribution):
     """An index with a missing output has no estimate and so no interval; the
     finite rows and draws behind each are counted."""
@@ -194,6 +218,12 @@ def test_shapley_additive_and_efficiency(attribution):
     sampled, error = attribution.shapley(_toy, factors, n_permutations=4000)
     assert max(abs(sampled[f] - exact[f]) for f in factors) < 0.05
     assert all(value > 0 for value in error.values())
+    # the standard errors are the size of the Monte Carlo error: every value
+    # within four of them of the exact one, and a quarter of the permutations
+    # doubling them (the error of a mean falls as the root of the draws)
+    assert max(abs(sampled[f] - exact[f]) / error[f] for f in factors) < 4
+    _, fewer = attribution.shapley(_toy, factors, n_permutations=1000)
+    assert np.median([error[f] / fewer[f] for f in factors]) == pytest.approx(0.5, abs=0.1)
 
 
 @pytest.mark.parametrize("n_factors", [3, 10])
@@ -646,8 +676,9 @@ def test_reference_template(attribution):
         speed="none",
     )
     # an integer median is rounded down
-    pair = [templates[0], _spike_template(attribution, minimum_active_units=5)]
-    assert attribution.reference_template("spikes", pair).minimum_active_units == 2
+    # an integer median is rounded down, not to the nearest: 3.5 gives 3
+    pair = [templates[0], _spike_template(attribution, minimum_active_units=7)]
+    assert attribution.reference_template("spikes", pair).minimum_active_units == 3
     lfp = attribution.reference_template("lfp")
     assert (lfp.normalization_period, lfp.minimum_event_duration) == ("speed<5", 0.025)
     with pytest.raises(ValueError, match="no template"):
@@ -749,6 +780,24 @@ def test_evaluate_config_is_memoized(attribution, long_context):
     context.release()
     assert attribution.evaluate_config(pipeline, [context], reference) == first
     assert context.n_runs == before + 5
+
+
+def test_evaluate_config_means_skip_missing_values(attribution, monkeypatch):
+    """Each Y is the mean over the sessions with a value: onset error is
+    missing on a session without a matched pair."""
+    per_session = iter(
+        [
+            {**dict.fromkeys(attribution.Y_NAMES, 0.5), "onset_error_25": np.nan},
+            {**dict.fromkeys(attribution.Y_NAMES, 0.25), "onset_error_25": 0.004},
+            {**dict.fromkeys(attribution.Y_NAMES, 0.0), "onset_error_25": -0.002},
+        ]
+    )
+    monkeypatch.setattr(
+        attribution, "evaluate_session", lambda pipeline, context, reference: next(per_session)
+    )
+    found = attribution.evaluate_config(None, [None] * 3, None)
+    assert found["onset_error_25"] == pytest.approx(0.001)
+    assert found["f1"] == pytest.approx(0.25)
 
 
 def test_the_context_is_read_only_and_bounded(attribution, long_context):
@@ -888,6 +937,28 @@ def test_a_run_without_the_session_or_reference_raises(attribution, run, short_r
     run._write_table(table, copy / "conditions.csv")
     with pytest.raises(ValueError, match="0 reference rows"):
         attribution.reference_parameters(copy)
+    copy = tmp_path / "no_truth"
+    shutil.copytree(short_run, copy)
+    truth = copy / "conditions" / "reference" / "truth.csv.gz"
+    _rewrite(truth, lambda frame: frame[frame["session_id"] != "reference/0"])
+    with pytest.raises(ValueError, match="reference/0 is not the run's: no truth rows"):
+        attribution.reference_session(copy, 0)
+
+
+def test_regeneration_uses_every_saved_parameter(attribution, run, conditions, tmp_path):
+    """Delta at rest changes the signals and not the truth: only the saved
+    parameters, not the defaults, give the run's sessions."""
+    overrides = {"render.delta_amplitude": 8.0}
+    root = _write_run(run, conditions, tmp_path, SHORT, 1, overrides)
+    session = attribution.reference_session(root, 0)
+    reference = conditions.conditions()[0]
+    expected = conditions.simulate_condition(
+        reference, 0, {"session.duration_s": SHORT, **overrides}
+    )
+    np.testing.assert_array_equal(session.lfps, expected.lfps)
+    default = conditions.simulate_condition(reference, 0, {"session.duration_s": SHORT})
+    assert not np.array_equal(session.lfps, default.lfps)
+    assert session.events.equals(default.events)
 
 
 def test_check_report(attribution, short_run, tmp_path, monkeypatch):
@@ -913,6 +984,10 @@ def test_check_report(attribution, short_run, tmp_path, monkeypatch):
     stale = {**identity, "simulation_fingerprint": "d" * 64, "sha256": "e" * 64}
     (copy / "run_spec.json").write_text(json.dumps({"validation_report": stale}))
     with pytest.raises(ValueError, match="at: sha256, simulation_fingerprint"):
+        attribution.check_report(copy, parameters)
+    stale = {**identity, "target_table_hash": "f" * 64}
+    (copy / "run_spec.json").write_text(json.dumps({"validation_report": stale}))
+    with pytest.raises(ValueError, match="at: target_table_hash"):
         attribution.check_report(copy, parameters)
 
 
