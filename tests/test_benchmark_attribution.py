@@ -1382,7 +1382,9 @@ def test_the_override_runs_a_family_below_the_minimum_labelled(
         monkeypatch.setattr(
             attribution, name, lambda *arguments, name=name, **options: (name, options)
         )
-    monkeypatch.setattr(attribution, "_save_figure", lambda path, figure: drawn.append(figure))
+    monkeypatch.setattr(
+        attribution.FamilyOutput, "figure", lambda self, name, figure: drawn.append(figure)
+    )
     arguments = ["--run-name", "x", "--family", "lfp", "--workers", "1"]
     arguments += ["--run-directory", str(copy), "--results-directory", str(results)]
     attribution.main([*arguments, "--analysis", "all", "--below-minimum", "--sobol-n", "128"])

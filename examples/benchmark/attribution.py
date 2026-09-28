@@ -104,7 +104,13 @@ from typing import Any, Protocol, TypeVar
 
 import numpy as np
 import pandas as pd
-from analyze import percentile_intervals, resample_weights, write_result
+from analyze import (
+    FLOAT_FORMAT,
+    _png,
+    percentile_intervals,
+    resample_weights,
+    write_result,
+)
 from conditions import parameters_from_json, session_seed, simulate_parameters
 from numpy.typing import ArrayLike, DTypeLike
 from recipe_configs import (
@@ -3149,17 +3155,6 @@ def plot_shapley(values: pd.DataFrame, pair: str, y: str, *, caveat: str = "") -
 # Command line
 
 
-def _save_figure(path: Path, figure: Any) -> None:
-    import io
-
-    import matplotlib.pyplot as plt
-
-    buffer = io.BytesIO()
-    figure.savefig(buffer, format="png", dpi=120)
-    plt.close(figure)
-    write_result(path, buffer.getvalue())
-
-
 @dataclasses.dataclass(frozen=True)
 class FamilyOutput:
     """Where the command writes a family's outputs, each named with the family
@@ -3183,8 +3178,10 @@ class FamilyOutput:
     rows: Path
 
     def table(self, name: str, frame: pd.DataFrame) -> None:
-        """Write a results table, refused over ``analyze.SIZE_LIMIT``."""
-        content = frame.assign(caveat=self.caveat).to_csv(index=False).encode()
+        """Write a results table as the analyses write theirs
+        (``analyze.FLOAT_FORMAT``, refused over ``analyze.SIZE_LIMIT``)."""
+        frame = frame.assign(caveat=self.caveat)
+        content = frame.to_csv(index=False, float_format=FLOAT_FORMAT).encode()
         write_result(self.results / f"{self.family}_{name}.csv", content)
 
     def raw(self, name: str, frame: pd.DataFrame) -> None:
@@ -3194,8 +3191,9 @@ class FamilyOutput:
         )
 
     def figure(self, name: str, figure: Any) -> None:
-        """Write a figure as PNG, and close it."""
-        _save_figure(self.results / f"{self.family}_{name}.png", figure)
+        """Write a figure as the analyses write theirs (``analyze._png``), and
+        close it."""
+        write_result(self.results / f"{self.family}_{name}.png", _png(figure))
 
 
 def _free_cores() -> float:
