@@ -1387,6 +1387,71 @@ def grouped_intervals(
     return keys
 
 
+def _pooled_ratios(
+    frame: pd.DataFrame,
+    by: Sequence[str],
+    ratios: Mapping[str, tuple[str, str]],
+    counts: Sequence[str],
+    sums: Sequence[str] = (),
+    *,
+    n_resamples: int,
+) -> pd.DataFrame:
+    """Each group's totals and pooled ratios, with intervals.
+
+    Parameters
+    ----------
+    frame : pandas.DataFrame
+        With ``session_id``, the ``by`` columns and those summed.
+    by : sequence of str
+    ratios : mapping of str to (str, str)
+        Each ratio's name and its numerator and denominator columns.
+    counts : sequence of str
+        Columns summed as whole numbers.
+    sums : sequence of str, optional
+        Columns summed as they are.
+    n_resamples : int
+
+    Returns
+    -------
+    pooled : pandas.DataFrame
+        One row per group, sorted by ``by``: the ``by`` columns, ``counts``
+        and ``sums`` summed over the group's rows, then each ratio's
+        ``<name>`` (the numerator's total over the denominator's, NaN where
+        that is 0), ``<name>_low`` and ``<name>_high`` (``grouped_intervals``).
+    """
+    intervals = grouped_intervals(
+        frame, by, _ratio_of_sums(*ratios.values()), list(ratios), n_resamples=n_resamples
+    )
+    totals = frame.groupby(list(by))[[*counts, *sums]].sum()
+    return (
+        totals.astype(dict.fromkeys(counts, int)).reset_index().merge(intervals, on=list(by))
+    )
+
+
+_DETECTION_COUNTS = ("n_reference", "n_detected", "n_matched")
+
+
+def _detection_rates(
+    frame: pd.DataFrame, by: Sequence[str], tables: RunTables, *, n_resamples: int
+) -> pd.DataFrame:
+    """Recall, precision and false positives per minute of each group of
+    per-session counts (``_DETECTION_COUNTS``), pooled with intervals
+    (``_pooled_ratios``), the counts and ``minutes`` outside every network
+    window summed."""
+    frame = frame.assign(
+        n_unmatched=frame["n_detected"] - frame["n_matched"],
+        minutes=frame["session_id"].map(_minutes_outside(tables.sessions)).to_numpy(),
+    )
+    ratios = {
+        "recall": ("n_matched", "n_reference"),
+        "precision": ("n_matched", "n_detected"),
+        "false_positives_per_minute": ("n_unmatched", "minutes"),
+    }
+    return _pooled_ratios(
+        frame, by, ratios, _DETECTION_COUNTS, ("minutes",), n_resamples=n_resamples
+    )
+
+
 def _method_grid(
     methods: pd.DataFrame, keys: Mapping[str, Sequence[Any]] | None = None
 ) -> pd.DataFrame:
@@ -1474,17 +1539,13 @@ def recall(
     frame = frame.join(n_truth, on=["session_id", "expression"]).join(
         n_found, on=[*_KEY, "expression"]
     )
-    frame = frame.fillna({"n_truth": 0, "n_found": 0})
-    by = ["method", "setting", "expression"]
-    intervals = grouped_intervals(
-        frame,
-        by,
-        _ratio_of_sums(("n_found", "n_truth")),
-        ["recall"],
+    return _pooled_ratios(
+        frame.fillna({"n_truth": 0, "n_found": 0}),
+        ["method", "setting", "expression"],
+        {"recall": ("n_found", "n_truth")},
+        ["n_truth", "n_found"],
         n_resamples=n_resamples,
     )
-    totals = frame.groupby(by)[["n_truth", "n_found"]].sum().astype(int).reset_index()
-    return totals.merge(intervals, on=by)
 
 
 # Every condition, against the primary expression
@@ -1940,17 +2001,13 @@ def detection_profile(
         pd.DataFrame({"type": rd.EVENT_TYPES}), how="cross"
     )
     frame = frame.join(n_true, on=["session_id", "type"]).join(n_found, on=[*_KEY, "type"])
-    frame = frame.fillna({"n_true": 0, "n_found": 0})
-    by = ["method", "setting", "type"]
-    intervals = grouped_intervals(
-        frame,
-        by,
-        _ratio_of_sums(("n_found", "n_true")),
-        ["recall"],
+    profile = _pooled_ratios(
+        frame.fillna({"n_true": 0, "n_found": 0}),
+        ["method", "setting", "type"],
+        {"recall": ("n_found", "n_true")},
+        ["n_true", "n_found"],
         n_resamples=n_resamples,
-    )
-    totals = frame.groupby(by)[["n_true", "n_found"]].sum().astype(int).reset_index()
-    profile = totals.merge(intervals, on=by).rename(columns={"type": "event_type"})
+    ).rename(columns={"type": "event_type"})
     grid = _method_grid(_by_intervals(tables.methods), {"event_type": rd.EVENT_TYPES})
     return _per_method(profile, tables, grid, ("n_true", "n_found"))
 
@@ -2001,18 +2058,16 @@ def false_positive_classes(
     frame = _by_intervals(tables.ran).merge(pd.DataFrame({"label": labels}), how="cross")
     frame = frame.join(counted.rename("n_events"), on=[*_KEY, "label"]).fillna({"n_events": 0})
     frame["n_unmatched"] = frame.groupby(_KEY)["n_events"].transform("sum")
-    by = ["method", "setting", "label"]
-    intervals = grouped_intervals(
+    counts = ["n_events", "n_unmatched"]
+    classes = _pooled_ratios(
         frame,
-        by,
-        _ratio_of_sums(("n_events", "n_unmatched")),
-        ["fraction"],
+        ["method", "setting", "label"],
+        {"fraction": ("n_events", "n_unmatched")},
+        counts,
         n_resamples=n_resamples,
     )
-    totals = frame.groupby(by)[["n_events", "n_unmatched"]].sum().astype(int).reset_index()
     grid = _method_grid(_by_intervals(tables.methods), {"label": labels})
-    classes = totals.merge(intervals, on=by)
-    return _per_method(classes, tables, grid, ("n_events", "n_unmatched"))
+    return _per_method(classes, tables, grid, counts)
 
 
 def consensus(tables: RunTables, matches: Matches) -> pd.DataFrame:
@@ -2092,18 +2147,15 @@ def splits_and_merges(
         windows), ``merge_rate`` with ``_low`` and ``_high``;
         ``primary_expression``, ``n_sessions``, ``n_failures``.
     """
-    frame = matches.overlaps
     by = ["method", "setting", "subset"]
     counts = ["n_truth", "n_split", "n_detected", "n_merged"]
-    intervals = grouped_intervals(
-        frame,
+    rates = _pooled_ratios(
+        matches.overlaps,
         by,
-        _ratio_of_sums(("n_split", "n_truth"), ("n_merged", "n_detected")),
-        ["split_rate", "merge_rate"],
+        {"split_rate": ("n_split", "n_truth"), "merge_rate": ("n_merged", "n_detected")},
+        counts,
         n_resamples=n_resamples,
     )
-    totals = frame.groupby(by)[counts].sum().astype(int).reset_index()
-    rates = totals.merge(intervals, on=by)
     columns = [
         *by,
         "n_truth",
@@ -2154,31 +2206,13 @@ def point_inventories(
         ``_low`` and ``_high``; ``primary_expression``, ``n_sessions``,
         ``n_failures``.
     """
-    counts = ["n_reference", "n_detected", "n_matched"]
     primary = tables.methods[["method", "setting", "primary_expression"]].rename(
         columns={"primary_expression": "expression"}
     )
     own = matches.points.merge(primary, on=["method", "setting", "expression"])
-    frame = own.drop(columns="expression").assign(
-        n_unmatched=own["n_detected"] - own["n_matched"],
-        minutes=own["session_id"].map(_minutes_outside(tables.sessions)).to_numpy(),
-    )
-    by = ["method", "setting"]
-    intervals = grouped_intervals(
-        frame,
-        by,
-        _ratio_of_sums(
-            ("n_matched", "n_reference"),
-            ("n_matched", "n_detected"),
-            ("n_unmatched", "minutes"),
-        ),
-        ["recall", "precision", "false_positives_per_minute"],
-        n_resamples=n_resamples,
-    )
-    totals = frame.groupby(by)[[*counts, "minutes"]].sum().reset_index()
-    table = totals.astype(dict.fromkeys(counts, int)).merge(intervals, on=by)
+    table = _detection_rates(own, ["method", "setting"], tables, n_resamples=n_resamples)
     grid = _method_grid(tables.methods[tables.methods["scoring"] == PEAK_CONTAINMENT])
-    table = _per_method(table, tables, grid, counts).fillna({"minutes": 0.0})
+    table = _per_method(table, tables, grid, _DETECTION_COUNTS).fillna({"minutes": 0.0})
     table.insert(2, "scoring", PEAK_CONTAINMENT)
     return table
 
@@ -4622,19 +4656,12 @@ def matching_sensitivity(
         twice_matched=2 * counted["n_matched"],
         n_either=counted["n_reference"] + counted["n_detected"],
     )
-    intervals = grouped_intervals(
-        counted,
-        by,
-        _ratio_of_sums(
-            ("n_matched", "n_reference"),
-            ("n_matched", "n_detected"),
-            ("twice_matched", "n_either"),
-        ),
-        ["recall", "precision", "f1"],
-        n_resamples=n_resamples,
-    )
-    totals = counted.groupby(by)[["n_reference", "n_detected", "n_matched"]].sum()
-    table = totals.astype(int).reset_index().merge(intervals, on=by)
+    ratios = {
+        "recall": ("n_matched", "n_reference"),
+        "precision": ("n_matched", "n_detected"),
+        "f1": ("twice_matched", "n_either"),
+    }
+    table = _pooled_ratios(counted, by, ratios, _DETECTION_COUNTS, n_resamples=n_resamples)
     grouped = pairs.assign(
         abs_onset=pairs["onset_error_10"].abs(), abs_offset=pairs["offset_error_10"].abs()
     ).groupby(by)
@@ -4829,15 +4856,14 @@ def rates_by_state(
         parts.append(part[[*_KEY, "state", "n_events", "minutes", "true_events"]])
     long = pd.concat(parts, ignore_index=True)
     by = ["method", "setting", "state"]
-    intervals = grouped_intervals(
+    rates = _pooled_ratios(
         long,
         by,
-        _ratio_of_sums(("n_events", "minutes"), ("true_events", "minutes")),
-        ["rate", "true_rate"],
+        {"rate": ("n_events", "minutes"), "true_rate": ("true_events", "minutes")},
+        ["n_events", "true_events"],
+        ["minutes"],
         n_resamples=n_resamples,
     )
-    totals = long.groupby(by)[["n_events", "minutes", "true_events"]].sum().reset_index()
-    rates = totals.merge(intervals.drop(columns=["true_rate_low", "true_rate_high"]), on=by)
     columns = [*by, "n_events", "minutes", "rate", "rate_low", "rate_high"]
     grid = _method_grid(tables.methods, {"state": STATES})
     rates = _per_method(
@@ -5114,23 +5140,7 @@ def appendix_expressions(
         [frame.fillna(dict.fromkeys(counts, 0)), matches.points],
         ["session_id", *by, *counts],
     ).astype(dict.fromkeys(counts, int))
-    frame = frame.assign(
-        n_unmatched=frame["n_detected"] - frame["n_matched"],
-        minutes=frame["session_id"].map(_minutes_outside(tables.sessions)).to_numpy(),
-    )
-    rates = grouped_intervals(
-        frame,
-        by,
-        _ratio_of_sums(
-            ("n_matched", "n_reference"),
-            ("n_matched", "n_detected"),
-            ("n_unmatched", "minutes"),
-        ),
-        ["recall", "precision", "false_positives_per_minute"],
-        n_resamples=n_resamples,
-    )
-    totals = frame.groupby(by)[[*counts, "minutes"]].sum().reset_index()
-    appendix = totals.merge(rates, on=by)
+    appendix = _detection_rates(frame, by, tables, n_resamples=n_resamples)
     pairs = found.assign(
         **{
             name: np.abs(found[column]) if absolute else found[column]
