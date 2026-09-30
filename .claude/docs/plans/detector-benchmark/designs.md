@@ -812,6 +812,9 @@ decided during the phase:
 
 Per detector, condition, expression and `minimum_iou`, pooled over sessions: at each setting,
 `recall = Σ n_matched / Σ n_reference` and `fp_rate = Σ unmatched / Σ non-event minutes`.
+(Superseded 2026-09-30: `fp_rate = Σ false positives / Σ minutes outside every network
+window`, a false positive an unmatched detection whose time lies outside every network
+window, counted at each minimum IoU; see the notes after "Bootstrap and permutation tests".)
 Curves are drawn in threshold order. For a target FP rate `r` in `(0.5, 1, 2, 5)` per minute:
 
 ```python
@@ -831,6 +834,11 @@ def at_fp_rate(curve, target, floor, columns):
         return pd.Series(np.nan, index=list(columns))
     return pd.Series({c: float(np.interp(t, xs, points[c].to_numpy(float))) for c in columns})
 ```
+
+(Superseded 2026-09-30 for a target past every setting's rate: "NaN outside the range" now
+holds only below the lowest rate. Past the highest, every setting keeps within the target
+and the best recall's setting is read, `within budget`, a lower bound on the recall at that
+budget; a setting without a rate is on no curve. The sketch above has no budget rule.)
 
 Settings with equal FP rates (several at 0, floored to the same value) collapse to one setting,
 the best recall, so `np.interp` gets strictly increasing `x`. The setting is chosen once, by
@@ -1005,8 +1013,11 @@ the results correct but hard to read, the maintainer deciding:
   `appendix_expressions`' false positives per minute, intervals included.
 - **IoU.** 0 stays the predeclared primary; IoU >= 0.5 is a second headline, labelled post hoc
   (added after v1's results were seen).
-- **Two false-positive rates.** All unmatched detections over the minutes outside every network
-  window (the existing denominator), and unmatched detections at rest over the rest minutes
+- **Two false-positive rates** (superseded 2026-09-30: the rates count false positives,
+  the unmatched detections outside every network window, and "all unmatched detections"
+  below is the unmatched burden's numerator). All unmatched detections over the minutes
+  outside every network window (the existing denominator), and unmatched detections at
+  rest over the rest minutes
   outside every network window, those while running counted with their minutes. A detection is
   placed on the running bouts, as closed intervals, by `rates_by_state`'s rule (`event_times`:
   its peak, else its bounds' midpoint), a choice made in review for consistency within the
@@ -1066,14 +1077,17 @@ deciding to switch every rate at once:
   IoU 0 (Shvartsman at 1 per minute 0.335 to 0.662); a level-specific event-free count
   would have added 5,853 detections to the main settings' 166,639 false positives, most
   from long-event recipes.
-- **What moved on v1.** At IoU 0 every operating point moved by 0.012 or less, but Long's
-  curve now has no false positive at any setting and reaches no target (0.737 at 0.5 per
-  minute before); no detector newly reaches a target. Three held-out settings changed
-  (Carey at 0.5 and 5, Long at 0.5); 20 of 22 significant operating differences stay (the
+- **What moved on v1** (as first built; superseded by the follow-ups below, which read
+  Long within budget at every target and changed trend 5). At IoU 0 every operating point
+  moved by 0.012 or less, but Long's curve now has no false positive at any setting and
+  reaches no target (0.737 at 0.5 per minute before); no detector newly reaches a target.
+  Three held-out settings changed (Carey at 0.5 and 5, Long at 0.5); 20 of 22 significant
+  operating differences stay (the
   two lost are Long's); model sensitivity's supported orders go from 138 to 126, all 12
   lost Long's at 0.5 per minute, with 13 reversals before and after. No statement of
-  `trends.md` changed; two of its numbers moved (Roumis's upper bound at 1 per minute 0.804
-  to 0.805, the Roumis-Kay p-value 0.29 to 0.25).
+  `trends.md` changed then (trend 5 changed with the follow-ups); two of its numbers
+  moved (Roumis's upper bound at 1 per minute 0.804 to 0.805, the Roumis-Kay p-value 0.29
+  to 0.25).
 - **Grouping.** `identical_groups` keys on each event's start, end and event time: two methods
   with the same bounds but different peaks place events differently at rest or running and
   inside or outside the windows. On v1 the ten groups are unchanged.
@@ -1110,6 +1124,36 @@ Two follow-ups the same day, the orchestrator and the maintainer deciding:
   Kay. The new reversals (Karlsson over Zugaro at 2 per minute under the local profile;
   Long's under the local profile and varying noise) have no spot check and are not
   stated in `trends.md`.
+
+After four reviews (2026-09-30), which recounted the event-free counts independently and
+found them correct, the orchestrator decided, following the maintainer's lower-bound reading:
+
+- **One-way comparisons.** A value within budget is a lower bound, so for A - B
+  (`established_direction`) with A within budget only a positive difference can be
+  established, with B only a negative one, with both nothing; with neither the interval
+  decides as before. `operating_differences` gets `bound` and `established` (difference,
+  interval and p as computed); the orders get each side's read-off kind per condition, the
+  bounds, `supported` (established in the reference), `survives` (established the same way
+  in the alternative) and `reversed` (established the other way), `point_reversed` the
+  opposite estimates the alternative establishes nothing about; model sensitivity's changes
+  at a target (alternative minus reference) get their read-off kinds, `bound` and
+  `established`; `matching_sensitivity` `read_off_at_<target>`. Candidate reversals rest on
+  established orders and say when a side is within budget; the operating order ranks the
+  values read between tested settings and names those within budget apart. On v1: 26 of
+  the 54 operating differences are established (41 had p < 0.05; the 15 others are Long's or
+  Zugaro's the wrong way for their bound); supported orders 240 to 168 (the 72 lost each
+  have a side within budget), reversals 21 to 14 (the 7 lost all Long's); three of Long's
+  candidate reversals drop out, Karlsson over Zugaro at 2 per minute under the local profile
+  stays with a note (Zugaro is within budget in the reference, an upper bound on the
+  negative reference difference). Trend 5 no longer places Long below Roumis or Kay.
+- **No silent read-off.** A reading at a condition or level whose false positives were not
+  counted raises, naming both, instead of reading the NaN rate as out of reach; a setting
+  without a rate is on no curve.
+- **Tests.** Hand counts whose false positives differ from their unmatched events now fail
+  nine rate paths a mutation run showed untested (reverting each numerator); a peak a few
+  ulps past a window's edge at a Unix origin counts as inside. Three mutations still pass
+  (a point method's false positives matched against the network instead of the primary
+  expression, in scores and in matches, and an unguarded NaN recall within budget).
 
 ## Attribution
 
