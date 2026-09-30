@@ -3005,34 +3005,6 @@ TESTED = "tested"
 WITHIN_BUDGET = "within budget"
 
 
-def _within_budget(
-    x: np.ndarray[Any, Any], recall: ArrayLike, targets: np.ndarray[Any, Any]
-) -> tuple[np.ndarray[Any, Any], int | None]:
-    """Which targets lie past every setting's rate, and the setting a curve
-    gives there.
-
-    Parameters
-    ----------
-    x : ndarray, shape (n_settings,)
-        Each setting's floored log false-positive rate, every one finite.
-    recall : array_like, shape (n_settings,)
-    targets : ndarray, shape (n_targets,)
-        Log false-positive rates.
-
-    Returns
-    -------
-    past : ndarray of bool, shape (n_targets,)
-    best : int or None
-        The setting with the best recall (ties: the first in threshold
-        order); None when no recall is defined.
-    """
-    recall = np.asarray(recall, dtype=float)
-    past = targets > x.max() if len(x) else np.zeros(len(targets), bool)
-    if not np.isfinite(recall).any():
-        return past, None
-    return past, int(np.argmax(np.where(np.isfinite(recall), recall, -np.inf)))
-
-
 def established_direction(
     kind_a: ArrayLike, kind_b: ArrayLike, low: ArrayLike, high: ArrayLike
 ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
@@ -3119,19 +3091,21 @@ def _at_fp_rates(
         return found, kinds
     x = np.log(np.maximum(fp_rate, floor))
     # FP rate up, then recall down (NaN last), then threshold order
-    order = np.lexsort((np.arange(len(x)), -np.asarray(recall, dtype=float), x))
+    order = np.lexsort((np.arange(len(x)), -recall, x))
     ranked = x[order]
-    repeated = (ranked[1:] == ranked[:-1]) | (np.isnan(ranked[1:]) & np.isnan(ranked[:-1]))
-    kept = order[np.concatenate([[True], ~repeated])]
+    kept = order[np.concatenate([[True], ranked[1:] != ranked[:-1]])]
     xs = x[kept]
     inside = (xs[0] <= targets) & (targets <= xs[-1])
     for column in range(values.shape[1]):
         found[inside, column] = np.interp(targets[inside], xs, values[kept, column])
     kinds[inside] = np.where(np.isin(targets[inside], xs), TESTED, INTERPOLATED)
-    past, best = _within_budget(x, recall, targets)
-    if best is not None:
-        found[past] = values[best]
-        kinds[past] = WITHIN_BUDGET
+    # past every setting's rate, every setting keeps within the budget
+    past = targets > xs[-1]
+    if past.any():
+        best = choose_setting(recall, x, np.inf)
+        if best is not None:
+            found[past] = values[best]
+            kinds[past] = WITHIN_BUDGET
     return found, kinds
 
 
@@ -4487,8 +4461,9 @@ def _nearest_settings(
     x = np.log(np.maximum(rates["fp_rate"][held], floor))
     wanted = np.log(np.asarray(targets, dtype=float))
     chosen = np.argmin(np.abs(x[:, None] - wanted[None, :]), axis=0)
-    past, best = _within_budget(x, rates["recall"][held], wanted)
-    if best is not None:
+    past = wanted > x.max()
+    best = choose_setting(rates["recall"][held], x, np.inf)
+    if past.any() and best is not None:
         chosen[past] = best
     return [settings[positions[position]] for position in chosen]
 
