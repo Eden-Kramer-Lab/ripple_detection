@@ -1671,14 +1671,7 @@ def recall(
 
 # Every condition, against the primary expression
 
-COUNT_COLUMNS = (
-    *_KEY,
-    "minimum_iou",
-    "n_reference",
-    "n_detected",
-    "n_matched",
-    "n_false_positives",
-)
+COUNT_COLUMNS = (*_KEY, "minimum_iou", *_RATE_COUNTS)
 ERROR_ROW_COLUMNS = (
     *_KEY,
     "minimum_iou",
@@ -1686,7 +1679,7 @@ ERROR_ROW_COLUMNS = (
     "offset_error",
 )
 # The runner's metrics.csv columns the scores read.
-_METRIC_READ = (*COUNT_COLUMNS[:3], "expression", *COUNT_COLUMNS[3:-1])
+_METRIC_READ = (*_KEY, "expression", "minimum_iou", *_DETECTION_COUNTS)
 EXPRESSION_COUNT_COLUMNS = (*_METRIC_READ, "n_false_positives")
 PARTICIPATION_COLUMNS = (*_KEY, "n_events", "principal_fraction")
 _EVENT_READ = (
@@ -1988,7 +1981,7 @@ def load_scores(run_directory: str | os.PathLike[str], *, workers: int = 1) -> C
     false_positives = _concat(
         [outside for _, _, outside in found], [*at_level, "n_false_positives"]
     ).astype({"minimum_iou": float})
-    interval = _by_intervals(metrics)[list(COUNT_COLUMNS[:-1])].merge(
+    interval = _by_intervals(metrics)[[*_KEY, "minimum_iou", *_DETECTION_COUNTS]].merge(
         false_positives, on=at_level, how="left"
     )
     counts = _concat([interval, points], COUNT_COLUMNS).astype(
@@ -3268,7 +3261,7 @@ def _rates(pooled: Mapping[str, np.ndarray[Any, Any]]) -> dict[str, np.ndarray[A
     }
 
 
-_COUNTED = ("n_reference", "n_detected", "n_matched", "n_false_positives", "minutes", "ran")
+_COUNTED = (*_RATE_COUNTS, "minutes", "ran")
 _ERROR_MEASURES = ("onset_error", "offset_error", "abs_onset_error", "abs_offset_error")
 # A method without rows: counts and errors as the pools read them.
 _NO_COUNTS = pd.DataFrame(
@@ -5896,6 +5889,8 @@ COMPACT_HELD_OUT = f"{COMPACT}_held_out"
 COMPACT_POINTS = f"{COMPACT}_points"
 _GROUP_COLUMNS = ("method", "members", "n_members", "stand_in_inputs")
 _WITH_INTERVAL = ("", "_low", "_high")
+# The false-positive rate with its interval, as every table names it.
+_FP_RATE_COLUMNS = tuple(f"false_positives_per_minute{part}" for part in _WITH_INTERVAL)
 # The scores taken from matching_sensitivity at each level.
 _LEVEL_SCORES = (
     ("n_matched", ("",)),
@@ -5917,7 +5912,7 @@ COMPACT_COLUMNS = (
     ),
     "n_false_positives",
     "minutes",
-    *(f"false_positives_per_minute{part}" for part in _WITH_INTERVAL),
+    *_FP_RATE_COLUMNS,
     "n_false_positives_rest",
     "rest_minutes",
     *(f"false_positives_rest_per_rest_minute{part}" for part in _WITH_INTERVAL),
@@ -5963,9 +5958,7 @@ COMPACT_HELD_OUT_COLUMNS = (
     "recall",
     "recall_low",
     "recall_high",
-    "false_positives_per_minute",
-    "false_positives_per_minute_low",
-    "false_positives_per_minute_high",
+    *_FP_RATE_COLUMNS,
     "n_sessions",
 )
 # The held-out rows' kind: a tested setting's scores on the held-out sessions.
@@ -6295,8 +6288,9 @@ def compact_comparison(
             for part in parts
         }
         table = table.merge(at[[*key, *renamed]].rename(columns=renamed), on=key, how="left")
-    rates = [f"false_positives_per_minute{part}" for part in _WITH_INTERVAL]
-    overall = appendix.loc[appendix["primary"], [*key, "n_false_positives", "minutes", *rates]]
+    overall = appendix.loc[
+        appendix["primary"], [*key, "n_false_positives", "minutes", *_FP_RATE_COLUMNS]
+    ]
     table = table.merge(overall, on=key, how="left")
     split = split.drop(columns=["primary_expression", "n_sessions", "n_failures"])
     table = table.merge(split, on=key, how="left")
@@ -6403,11 +6397,12 @@ def compact_held_out(thresholds: pd.DataFrame, points: pd.DataFrame) -> pd.DataF
     held = thresholds.rename(columns={"n_held_out_sessions": "n_sessions"}).assign(
         source="held_out", kind=np.where(thresholds["setting"] != "", MEASURED, "")
     )
-    rates = [f"false_positives_per_minute{part}" for part in _WITH_INTERVAL]
     read = (
         points[points["minimum_iou"] == 0]
         .rename(columns={"read_off": "kind"})
-        .assign(source="operating_point", setting="", **dict.fromkeys(rates, np.nan))
+        .assign(
+            source="operating_point", setting="", **dict.fromkeys(_FP_RATE_COLUMNS, np.nan)
+        )
     )
     both = _concat([held, read], COMPACT_HELD_OUT_COLUMNS)
     order = ["method", "fp_target", "source"]

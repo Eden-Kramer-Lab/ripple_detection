@@ -1346,9 +1346,11 @@ def test_scores_of_every_condition_match_the_runner(analyze, run, tiny_run, tiny
     expected = metrics[metrics.expression == metrics.method.map(primary)]
     key = ["session_id", "method", "setting", "minimum_iou"]
     got = scores.counts.sort_values(key).reset_index(drop=True)
+    # the runner's counts; the false positives are counted again here
+    metric = [*analyze._KEY, "minimum_iou", *analyze._DETECTION_COUNTS]
     pd.testing.assert_frame_equal(
-        got[list(analyze.COUNT_COLUMNS[:-1])],
-        expected[list(analyze.COUNT_COLUMNS[:-1])].sort_values(key).reset_index(drop=True),
+        got[metric],
+        expected[metric].sort_values(key).reset_index(drop=True),
         check_dtype=False,
     )
     # per session, Kay's leakage and last events and Mallory's two are false
