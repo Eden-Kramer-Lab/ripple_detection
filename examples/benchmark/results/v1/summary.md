@@ -74,7 +74,13 @@ Interval methods whose events can be one sample long (`recipe:lee_2002`) keep th
 - `model_sensitivity.csv`: Each result's change under each of the simulator's six alternative models, paired with the reference by replicate; unreachable targets stay missing.
 - `model_sensitivity.png`: Recall changes per alternative, detectors at 1 per minute as triangles.
 - `model_sensitivity_orders.csv`: Orders of detectors by recall at common false-positive rates in the reference and under each alternative model, with intervals and the share of resamples reversed.
+- `compact_ripple.csv`: The headline comparison of the methods whose primary expression is ripple, one row per group of methods with identical detections, with its members and stand-in inputs: recall and precision at IoU 0 (predeclared) and 0.5 (post hoc), unmatched detections per minute overall and at rest, and median onset and offset errors at 10 and 50 %, each with its interval and counts.
+- `compact_burst.csv`: The headline comparison of the methods whose primary expression is burst, one row per group of methods with identical detections, with its members and stand-in inputs: recall and precision at IoU 0 (predeclared) and 0.5 (post hoc), unmatched detections per minute overall and at rest, and median onset and offset errors at 10 and 50 %, each with its interval and counts.
+- `compact_network.csv`: The headline comparison of the methods whose primary expression is network, one row per group of methods with identical detections, with its members and stand-in inputs: recall and precision at IoU 0 (predeclared) and 0.5 (post hoc), unmatched detections per minute overall and at rest, and median onset and offset errors at 10 and 50 %, each with its interval and counts.
+- `compact_held_out.csv`: Per detector and target rate, the recall and unmatched detections per minute measured on the held-out replicates at the setting chosen on the others, beside the operating point's recall read off the curve, labelled interpolated or tested.
+- `compact_points.csv`: The point inventories' recall, precision and unmatched detections per minute by peak containment, one row per group of identical detections, with its members and stand-in inputs.
 - `candidate_trends.csv`: Candidate trends drawn from the tables, each with its evidence and the spot check to draw; none is a conclusion until its events have been looked at.
+- `compact.md`: The compact tables of the ripple, burst and network methods at a readable width, estimates only, then what each column means.
 
 ## Failures
 

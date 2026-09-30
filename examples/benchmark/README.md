@@ -516,12 +516,13 @@ after the factor and levels are `paired_changes`' `CHANGE_COLUMNS`), the orders 
 `appendix_curves_<expression>` (`expression_curves`), `compact_<target>`
 (`compact_comparison`) and `candidate_trends` (`TREND_COLUMNS`).
 
-On run `v1` (the shared 18-core machine), with `--workers 6`, the command took 3.0
-minutes wall and at most 4.4 GB resident: loading the reference 9 s, matching it again
-at the three minimum IoUs 30 s, every condition's scores 19 s, the tables 1.8 minutes
-(`robustness` 28 s, `model_sensitivity` 17 s, `appendix_expressions` 17 s,
-`boundary_errors` 12 s, `robustness_crossed` 9 s, the others under 7 s each) and the
-figures 11 s. It wrote 66 files (37 CSV, 28 PNG and `summary.md`), the largest 846 kB.
+On run `v1` (the shared 18-core machine), with `--workers 6`, the command took 3.1
+minutes wall and at most 4.1 GB resident: loading the reference 9 s, matching it again
+at the three minimum IoUs 34 s, every condition's scores 20 s, the tables 1.9 minutes
+(`robustness` 28 s, `appendix_expressions` 18 s, `model_sensitivity` 16 s,
+`boundary_errors` 13 s, `robustness_crossed` 9 s, the others under 7 s each, the compact
+tables under 1 s) and the figures 11 s. It wrote 72 files (42 CSV, 28 PNG, `compact.md`
+and `summary.md`), the largest 846 kB.
 
 ## Results
 
