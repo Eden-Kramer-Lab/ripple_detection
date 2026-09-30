@@ -1103,27 +1103,26 @@ Two follow-ups the same day, the orchestrator and the maintainer deciding:
   at every level above. IoU 0 is unchanged byte for byte on v1 (curves, appendix, compact
   tables); at IoU 0.5 the operating points move by up to 0.031 (Karlsson at 0.5 per minute
   0.201 to 0.171).
-- **Read-off at a budget.** A target past every setting's floored rate is within budget:
-  the value is the setting with the best recall's (ties: the first in threshold order),
-  `read_off` `within budget`: the recall at the best tested setting, a lower bound on
-  the recall at that budget, since settings with more false positives were not tested
-  (Long's lowest swept threshold, 1.5, already has 0 false positives on v1). A bracketed
-  target is interpolated as before, one below every
-  setting's rate stays empty; a target equal to the highest rate stays `tested` at that
-  setting. The rule is in `_at_fp_rates` (and `_nearest_settings`, so a spot setting and
-  the events a recall rests on are the setting read), so every reading follows, resamples
-  included. `choose_setting` already chose the best recall at or below the target, so the
-  held-out settings do not change. On v1 Long's detector, with no false positive at any
-  setting, reads 0.766 at every target at IoU 0 (0.760 at 0.2, 0.358 at 0.5) and Zugaro's
-  0.781 at 2 and 5 per minute; operating differences compared go from 27 to 54 (20 to 41
-  with p < 0.05), supported model-sensitivity orders from 126 to 240 (none lost), reversals
-  from 13 to 21. Trend 5 of `trends.md` said "Long's and Yu's curves do not reach that
-  rate"; its Roumis-Kay conclusion holds with the same numbers, and the clause now says
-  that Yu's curve does not reach 1 per minute and Long, read within budget at 0.766
-  (0.754, 0.778), a lower bound, is third: below Roumis with support, not separated from
-  Kay. The new reversals (Karlsson over Zugaro at 2 per minute under the local profile;
-  Long's under the local profile and varying noise) have no spot check and are not
-  stated in `trends.md`.
+- **Read-off at a budget.** A target past every setting's floored rate is within budget: the
+  value is the setting with the best recall's (ties: the first in threshold order), `read_off`
+  `within budget`: the recall at the best tested setting, a lower bound on the recall at that
+  budget, since settings with more false positives were not tested (Long's lowest swept
+  threshold, 1.5, already has 0 false positives on v1). A bracketed target is interpolated as
+  before, one below every setting's rate stays empty; a target equal to the highest rate stays
+  `tested` at that setting. The rule is in `_at_fp_rates`, which since the cleanup of
+  2026-09-30 also returns the setting read, so a spot setting and the events a recall rests on
+  are that setting; every reading follows, resamples included. `choose_setting` already chose
+  the best recall at or below the target, so the held-out settings do not change. On v1 Long's
+  detector, with no false positive at any setting, reads 0.766 at every target at IoU 0 (0.760
+  at 0.2, 0.358 at 0.5) and Zugaro's 0.781 at 2 and 5 per minute; operating differences
+  compared go from 27 to 54 (20 to 41 with p < 0.05), supported model-sensitivity orders from
+  126 to 240 (none lost), reversals from 13 to 21. Trend 5 of `trends.md` said "Long's and Yu's
+  curves do not reach that rate"; its Roumis-Kay conclusion holds with the same numbers, and
+  the clause now says that Yu's curve does not reach 1 per minute and Long, read within budget
+  at 0.766 (0.754, 0.778), a lower bound, is third: below Roumis with support, not separated
+  from Kay. The new reversals (Karlsson over Zugaro at 2 per minute under the local profile;
+  Long's under the local profile and varying noise) have no spot check and are not stated in
+  `trends.md`.
 
 After four reviews (2026-09-30), which recounted the event-free counts independently and
 found them correct, the orchestrator decided, following the maintainer's lower-bound reading:
