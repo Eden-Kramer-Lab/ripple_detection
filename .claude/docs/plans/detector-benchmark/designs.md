@@ -1080,6 +1080,29 @@ deciding to switch every rate at once:
 - **Cost.** The rebuild took 3.4 minutes wall against 3.5 before, back to back; every
   condition's scores 22.5 s against 19.5 s.
 
+Two follow-ups the same day, the orchestrator and the maintainer deciding:
+
+- **Per-level false positives.** A detection unmatched at minimum IoU L whose time lies
+  outside every network window is a false positive at L; each level's curves and rates use
+  their own level's count (the reference's settings are counted at every level, the other
+  conditions' at IoU 0, which is all they are read at). This replaces the IoU-0 count reused
+  at every level above. IoU 0 is unchanged byte for byte on v1 (curves, appendix, compact
+  tables); at IoU 0.5 the operating points move by up to 0.031 (Karlsson at 0.5 per minute
+  0.201 to 0.171).
+- **Read-off at a budget.** A target past every setting's floored rate is within budget:
+  the value is the setting with the best recall's (ties: the first in threshold order),
+  `read_off` `within budget`. A bracketed target is interpolated as before, one below every
+  setting's rate stays empty; a target equal to the highest rate stays `tested` at that
+  setting. The rule is in `_at_fp_rates` (and `_nearest_settings`, so a spot setting and
+  the events a recall rests on are the setting read), so every reading follows, resamples
+  included. `choose_setting` already chose the best recall at or below the target, so the
+  held-out settings do not change. On v1 Long's detector, with no false positive at any
+  setting, reads 0.766 at every target at IoU 0 (0.760 at 0.2, 0.358 at 0.5) and Zugaro's
+  0.781 at 2 and 5 per minute; operating differences compared go from 27 to 54 (20 to 41
+  with p < 0.05), supported model-sensitivity orders from 126 to 240 (none lost), reversals
+  from 13 to 21. Trend 5 of `trends.md` ("Long's and Yu's curves do not reach that rate")
+  no longer holds for Long; `trends.md` was left for the maintainer.
+
 ## Attribution
 
 Module `examples/benchmark/attribution.py`. This phase defines experimental `Step`,
