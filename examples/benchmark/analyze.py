@@ -7708,19 +7708,22 @@ class Inputs:
 AnalysisTable = Callable[[Inputs], pd.DataFrame]
 
 
+def _cached(inputs: Inputs, key: Any, compute: Callable[[], Any]) -> Any:
+    """``compute()``, once per ``Inputs`` and ``key``: every later call with
+    the key returns the first result."""
+    if key not in inputs.cache:
+        inputs.cache[key] = compute()
+    return inputs.cache[key]
+
+
 def _of_reference(function: Callable[..., pd.DataFrame]) -> AnalysisTable:
     """An analysis of the reference condition's tables and matches, computed
     once for every table read from it."""
-
-    def table(inputs: Inputs) -> pd.DataFrame:
-        if function not in inputs.cache:
-            inputs.cache[function] = function(
-                inputs.tables, inputs.matches, n_resamples=inputs.n_resamples
-            )
-        found: pd.DataFrame = inputs.cache[function]
-        return found
-
-    return table
+    return lambda inputs: _cached(
+        inputs,
+        function,
+        lambda: function(inputs.tables, inputs.matches, n_resamples=inputs.n_resamples),
+    )
 
 
 def _of_scores(
@@ -7730,9 +7733,9 @@ def _of_scores(
     tables read from it (``select``: default the result itself)."""
 
     def table(inputs: Inputs) -> pd.DataFrame:
-        if function not in inputs.cache:
-            inputs.cache[function] = function(inputs.scores, n_resamples=inputs.n_resamples)
-        found = inputs.cache[function]
+        found = _cached(
+            inputs, function, lambda: function(inputs.scores, n_resamples=inputs.n_resamples)
+        )
         return found if select is None else select(found)
 
     return table
@@ -7749,47 +7752,47 @@ def _expression_curves(expression: str) -> AnalysisTable:
 
 
 def _matching(inputs: Inputs) -> pd.DataFrame:
-    if MATCHING not in inputs.cache:
-        points = _of_scores(operating_points)(inputs)
-        inputs.cache[MATCHING] = matching_sensitivity(
-            inputs.tables, inputs.matches, points, n_resamples=inputs.n_resamples
-        )
-    found: pd.DataFrame = inputs.cache[MATCHING]
-    return found
+    return _cached(
+        inputs,
+        MATCHING,
+        lambda: matching_sensitivity(
+            inputs.tables,
+            inputs.matches,
+            _of_scores(operating_points)(inputs),
+            n_resamples=inputs.n_resamples,
+        ),
+    )
 
 
 def _compact(name: str) -> AnalysisTable:
     """One of the compact tables (``compact_<target>``, ``compact_held_out``,
     ``compact_points``), all built once from the tables they read."""
 
-    def table(inputs: Inputs) -> pd.DataFrame:
-        if COMPACT not in inputs.cache:
-            comparison = compact_comparison(
-                inputs.tables,
-                inputs.matches,
-                _matching(inputs),
-                _of_reference(boundary_errors)(inputs),
-                n_resamples=inputs.n_resamples,
-            )
-            inputs.cache[COMPACT] = {
-                **{
-                    f"{COMPACT}_{target}": comparison[
-                        comparison["primary_expression"] == target
-                    ].reset_index(drop=True)
-                    for target in COMPACT_TARGETS
-                },
-                f"{COMPACT}_held_out": compact_held_out(
-                    _of_scores(held_out_thresholds)(inputs),
-                    _of_scores(operating_points)(inputs),
-                ),
-                f"{COMPACT}_points": compact_points(
-                    inputs.tables, _of_reference(point_inventories)(inputs)
-                ),
-            }
-        found: pd.DataFrame = inputs.cache[COMPACT][name]
-        return found
+    def tables(inputs: Inputs) -> dict[str, pd.DataFrame]:
+        comparison = compact_comparison(
+            inputs.tables,
+            inputs.matches,
+            _matching(inputs),
+            _of_reference(boundary_errors)(inputs),
+            n_resamples=inputs.n_resamples,
+        )
+        return {
+            **{
+                f"{COMPACT}_{target}": comparison[
+                    comparison["primary_expression"] == target
+                ].reset_index(drop=True)
+                for target in COMPACT_TARGETS
+            },
+            f"{COMPACT}_held_out": compact_held_out(
+                _of_scores(held_out_thresholds)(inputs),
+                _of_scores(operating_points)(inputs),
+            ),
+            f"{COMPACT}_points": compact_points(
+                inputs.tables, _of_reference(point_inventories)(inputs)
+            ),
+        }
 
-    return table
+    return lambda inputs: _cached(inputs, COMPACT, lambda: tables(inputs))[name]
 
 
 @dataclasses.dataclass(frozen=True)
