@@ -3063,7 +3063,7 @@ def _at_fp_rates(
     values: ArrayLike,
     targets: ArrayLike,
     floor: float,
-) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]]:
     """``at_fp_rate`` on arrays, every target at once.
 
     Parameters
@@ -3091,6 +3091,12 @@ def _at_fp_rates(
         recall at that budget, since no setting with more false positives was
         tested; ``""`` where it lies
         below every setting's rate, so the curve does not reach it.
+    read : ndarray of int, shape (n_targets,)
+        The setting read at each target, a position in ``fp_rate``: the best
+        within budget, else the kept setting whose floored rate is nearest
+        the target in log rate (ties: the first in threshold order; for an
+        unreached target the nearest, where a look at it starts); -1 for a
+        curve without settings.
     """
     fp_rate = np.asarray(fp_rate, dtype=float)
     values = np.asarray(values, dtype=float).reshape(len(fp_rate), -1)
@@ -3098,8 +3104,9 @@ def _at_fp_rates(
     targets = np.log(np.asarray(targets, dtype=float))
     found = np.full((len(targets), values.shape[1]), np.nan)
     kinds = np.full(len(targets), "", dtype=object)
+    read = np.full(len(targets), -1)
     if not len(fp_rate):
-        return found, kinds
+        return found, kinds, read
     x = np.log(np.maximum(fp_rate, floor))
     # FP rate up, then recall down (NaN last), then threshold order
     order = np.lexsort((np.arange(len(x)), -recall, x))
@@ -3110,6 +3117,9 @@ def _at_fp_rates(
     for column in range(values.shape[1]):
         found[inside, column] = np.interp(targets[inside], xs, values[kept, column])
     kinds[inside] = np.where(np.isin(targets[inside], xs), TESTED, INTERPOLATED)
+    distance = np.abs(xs[:, None] - targets[None, :])
+    nearest = distance == distance.min(axis=0)
+    read = np.where(nearest, kept[:, None], len(x)).min(axis=0)
     # past every setting's rate, every setting keeps within the budget
     past = targets > xs[-1]
     if past.any():
@@ -3117,7 +3127,8 @@ def _at_fp_rates(
         if best is not None:
             found[past] = values[best]
             kinds[past] = WITHIN_BUDGET
-    return found, kinds
+            read[past] = best
+    return found, kinds, read
 
 
 def at_fp_rate(
@@ -3150,7 +3161,7 @@ def at_fp_rate(
     found : pandas.Series
         Indexed by ``columns``; NaN below every setting's rate.
     """
-    found, _ = _at_fp_rates(
+    found, _, _ = _at_fp_rates(
         curve["fp_rate"], curve["recall"], curve[list(columns)], [target], floor
     )
     return pd.Series(found[0], index=list(columns))
@@ -3462,20 +3473,24 @@ def _read_off(
     pooled: Mapping[str, np.ndarray[Any, Any]],
     targets: Sequence[float],
     columns: Sequence[str],
-) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
-    """A pooled curve's ``columns`` (``recall`` or the pool's) at each target
-    and how each was read off (``_at_fp_rates``), shapes (n_targets,
-    n_columns) and (n_targets,), over the settings with scores
-    (``_held_curve``)."""
+) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+    """A pooled curve's ``columns`` (``recall`` or the pool's) at each target,
+    how each was read off and the setting read, a position in ``pooled``
+    (``_at_fp_rates``; -1 for none), shapes (n_targets, n_columns),
+    (n_targets,) and (n_targets,), over the settings held (``_held_curve``)."""
     curve = _held_curve(pooled)
     if curve is None:
         return (
             np.full((len(targets), len(columns)), np.nan),
             np.full(len(targets), "", dtype=object),
+            np.full(len(targets), -1),
         )
     held, rates, floor = curve
     values = np.column_stack([{**pooled, **rates}[column][held] for column in columns])
-    return _at_fp_rates(rates["fp_rate"][held], rates["recall"][held], values, targets, floor)
+    found, kinds, read = _at_fp_rates(
+        rates["fp_rate"][held], rates["recall"][held], values, targets, floor
+    )
+    return found, kinds, np.where(read >= 0, np.flatnonzero(held)[read], -1)
 
 
 def _condition_sessions(scores: ConditionScores, condition: str) -> list[str]:
@@ -3656,7 +3671,7 @@ def operating_points(
             complete, own_counts, own_errors = _sweep_inputs(counts, errors, method, settings)
             pool = _curve_pool(own_counts, own_errors, "session_id", sessions, settings)
             pooled = pool(np.ones(len(sessions)))
-            estimate, kinds = _read_off(pooled, targets, columns)
+            estimate, kinds, _ = _read_off(pooled, targets, columns)
             draws = np.array([_read_off(pool(w), targets, columns)[0] for w in weights])
             low, high = _conditional_intervals(estimate, draws)
             attained = np.isfinite(draws[:, :, 0]).mean(axis=0)
@@ -4496,28 +4511,6 @@ class SweepRecalls:
         )
 
 
-def _settings_read(
-    pool: Pool, settings: Sequence[str], n_units: int, targets: Sequence[float]
-) -> list[str]:
-    """The setting of a sweep pool whose false-positive rate, pooled over
-    every unit, is nearest each target in log rate, or for a target past
-    every setting's rate the one the curve is read at there (``_at_fp_rates``:
-    the best recall); ``""`` for none."""
-    curve = _held_curve(pool(np.ones(n_units)))
-    if curve is None:
-        return [""] * len(targets)
-    held, rates, floor = curve
-    positions = np.flatnonzero(held)
-    x = np.log(np.maximum(rates["fp_rate"][held], floor))
-    wanted = np.log(np.asarray(targets, dtype=float))
-    chosen = np.argmin(np.abs(x[:, None] - wanted[None, :]), axis=0)
-    past = wanted > x.max()
-    best = choose_setting(rates["recall"][held], x, np.inf)
-    if past.any() and best is not None:
-        chosen[past] = best
-    return [settings[positions[position]] for position in chosen]
-
-
 def _sweep_recalls(
     scores: ConditionScores,
     conditions: Sequence[str],
@@ -4531,20 +4524,23 @@ def _sweep_recalls(
     counts = _sweep_counts(scores, conditions, replicates)
     pools: list[list[Pool]] = [[] for _ in conditions]
     paired = []
-    settings_read = np.full((len(conditions), len(detectors), len(targets)), "", dtype=object)
-    events = np.zeros((len(conditions), len(detectors), len(targets)))
+    shape = (len(conditions), len(detectors), len(targets))
+    estimate = np.full(shape, np.nan)
+    read_off = np.full(shape, "", dtype=object)
+    settings_read = np.full(shape, "", dtype=object)
+    events = np.zeros(shape)
     for d, detector in enumerate(detectors):
         settings, complete, own = _sweep_rows(scores, counts, conditions, detector)
         paired.append(complete)
         for c, (row, condition) in enumerate(zip(pools, conditions, strict=True)):
             mine = own[(own["condition_id"] == condition).to_numpy()]
             row.append(_curve_pool(mine, _NO_ERRORS, "replicate", replicates, settings, ()))
-            settings_read[c, d] = _settings_read(row[-1], settings, len(replicates), targets)
-            matched = row[-1](np.ones(len(replicates)))["n_matched"]
-            events[c, d] = [
-                matched[settings.index(label)] if label else 0.0
-                for label in settings_read[c, d]
-            ]
+            # the whole sample's reading, and the setting it reads at each target
+            pooled = row[-1](np.ones(len(replicates)))
+            found, read_off[c, d], read = _read_off(pooled, targets, ["recall"])
+            estimate[c, d] = found[:, 0]
+            settings_read[c, d] = [settings[at] if at >= 0 else "" for at in read]
+            events[c, d] = [pooled["n_matched"][at] if at >= 0 else 0.0 for at in read]
 
     def statistic(weights: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
         return np.array(
@@ -4554,13 +4550,6 @@ def _sweep_recalls(
             ]
         )
 
-    shape = (len(conditions), len(detectors), len(targets))
-    read = [
-        [_read_off(pool(np.ones(len(replicates))), targets, ["recall"]) for pool in row]
-        for row in pools
-    ]
-    estimate = np.array([[found[:, 0] for found, _ in row] for row in read]).reshape(shape)
-    read_off = np.array([[kinds for _, kinds in row] for row in read], dtype=object)
     weights = resample_weights(len(replicates), n_resamples=n_resamples)
     alone = np.array([statistic(w) for w in np.eye(len(replicates))])
     return SweepRecalls(
@@ -4570,7 +4559,7 @@ def _sweep_recalls(
         events=events,
         replicates=paired,
         settings_read=settings_read,
-        read_off=read_off.reshape(shape),
+        read_off=read_off,
     )
 
 

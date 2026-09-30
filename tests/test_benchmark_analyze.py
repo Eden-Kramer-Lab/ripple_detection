@@ -1691,7 +1691,7 @@ def test_at_fp_rate_keeps_one_setting(analyze):
 def test_reading_off_says_where_a_value_is_interpolated(analyze):
     fp_rate, recall = [8.0, 2.0, 2.0, 0.5, 0.0], [0.9, 0.6, 0.7, 0.4, 0.2]
     targets = [0.2, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 9.0]
-    found, kinds = analyze._at_fp_rates(fp_rate, recall, recall, targets, 0.25)
+    found, kinds, read = analyze._at_fp_rates(fp_rate, recall, recall, targets, 0.25)
     # a value exactly where there is a label
     assert (np.isnan(found[:, 0]) == (kinds == "")).all()
     # at a setting's rate (0 floored to 0.25, a repeated rate once), between
@@ -1707,25 +1707,33 @@ def test_reading_off_says_where_a_value_is_interpolated(analyze):
         "within budget",
     ]
     assert found[-1, 0] == 0.9
+    # the setting read: the kept setting nearest the target (of the two at 2
+    # per minute the better, 2; ties between rates the first in threshold
+    # order), below the curve the nearest, within budget the best
+    assert read.tolist() == [4, 4, 3, 2, 2, 0, 0, 0]
 
 
 def test_a_curve_within_budget_gives_its_best_recall(analyze):
     # every setting at 0 false positives, floored (Long on v1): at any
     # target above the floor the best recall's setting, whole
     recall, onset = [0.6, 0.7, 0.65, 0.7], [0.01, 0.02, 0.03, 0.04]
-    found, kinds = analyze._at_fp_rates(
+    found, kinds, read = analyze._at_fp_rates(
         [0.0] * 4, recall, np.column_stack([recall, onset]), [0.2, 0.25, 0.5, 5.0], 0.25
     )
     assert kinds.tolist() == ["", "tested", "within budget", "within budget"]
     # ties: the first in threshold order
     assert found[2:].tolist() == [[0.7, 0.02], [0.7, 0.02]]
+    assert read.tolist() == [1, 1, 1, 1]
     # a curve whose best recall is not at its highest rate: bracketed targets
     # are interpolated as before, one past every setting takes the best
     fp_rate, recall = [0.1, 0.2, 0.3], [0.5, 0.8, 0.6]
-    found, kinds = analyze._at_fp_rates(fp_rate, recall, recall, [0.05, 0.15, 0.3, 1.0], 0.01)
+    found, kinds, read = analyze._at_fp_rates(
+        fp_rate, recall, recall, [0.05, 0.15, 0.3, 1.0], 0.01
+    )
     assert kinds.tolist() == ["", "interpolated", "tested", "within budget"]
     between = 0.5 + 0.3 * np.log(1.5) / np.log(2)
     assert found[1:, 0].tolist() == pytest.approx([between, 0.6, 0.8])
+    assert read.tolist() == [0, 1, 2, 1]
 
 
 def _fewer_false_positives_than_unmatched():
@@ -1771,6 +1779,23 @@ def test_every_reading_counts_false_positives_not_unmatched_events(analyze):
     # nearest in log rate to 0.4 per minute: 0.5 (2.0), not 0.1 (3.0)
     near = analyze._sweep_recalls(scores, ["reference"], range(4), [KAY[0]], [0.4], FEW)
     assert near.settings_read[0, 0, 0] == "2.0"
+
+
+def test_the_setting_shown_is_the_setting_read(analyze):
+    """Settings 2.0 and 3.0 share a rate (1 per minute), 3.0 with the better
+    recall, so 1 per minute is read at 3.0: the setting a spot check shows
+    and the events the recall rests on are 3.0's, not the first in threshold
+    order at that rate."""
+    counts = [
+        _kay("reference", replicate, setting, matched, detected)
+        for replicate in range(4)
+        for setting, matched, detected in (("2.0", 6, 16), ("3.0", 7, 17), ("4.0", 3, 4))
+    ]
+    scores = _hand_scores(analyze, counts)
+    found = analyze._sweep_recalls(scores, ["reference"], range(4), [KAY[0]], [1.0], FEW)
+    assert (found.read_off[0, 0, 0], found.estimate[0, 0, 0]) == ("tested", 0.7)
+    assert found.settings_read[0, 0, 0] == "3.0"
+    assert found.events[0, 0, 0] == 28
 
 
 def test_every_reading_within_budget_takes_the_best_setting(analyze):
@@ -4169,9 +4194,10 @@ def test_a_setting_without_a_rate_is_left_out_of_a_curve(analyze):
         "minutes": np.array([10.0, 10.0, 0.0]),
         "ran": np.array([1.0, 1.0, 1.0]),
     }
-    found, kinds = analyze._read_off(pooled, [1.0, 0.2], ["recall"])
+    found, kinds, read = analyze._read_off(pooled, [1.0, 0.2], ["recall"])
     assert kinds.tolist() == ["within budget", "interpolated"]
     assert found[0, 0] == 0.6
+    assert read.tolist() == [1, 1]
 
 
 def test_the_command_writes_every_table_and_the_summary(analyze, two_condition_run, tmp_path):
