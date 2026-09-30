@@ -1,85 +1,85 @@
-primary_expression,fp_target,method_a,method_b,setting_a,setting_b,recall_a,recall_b,reached_a,reached_b,read_off_a,read_off_b,difference,difference_low,difference_high,difference_p,n_draws,n_defined_a,n_defined_b,n_events_a,n_events_b,n_replicates,n_dropped
-ripple,0.5,Karlsson_ripple_detector,Kay_ripple_detector,6.0,8.0,0.221477,,True,False,interpolated,,,,,,0,11,8,661,402,20,0
-ripple,1,Karlsson_ripple_detector,Kay_ripple_detector,3.5,2.5,0.633784,0.784125,True,True,interpolated,interpolated,-0.150341,-0.194193,-0.115824,0,2000,20,19,1345,1584,20,0
-ripple,2,Karlsson_ripple_detector,Kay_ripple_detector,3.0,2.0,0.744627,0.818877,True,True,interpolated,interpolated,-0.0742497,-0.0815388,-0.066719,0,2000,20,20,1467,1680,20,0
-ripple,5,Karlsson_ripple_detector,Kay_ripple_detector,2.5,2.0,0.792552,0.847525,True,True,interpolated,interpolated,-0.0549727,-0.0633568,-0.046615,0,2000,20,20,1581,1680,20,0
-ripple,0.5,Karlsson_ripple_detector,Long_sharp_wave_ripple_detector,6.0,1.5,0.221477,0.765779,True,True,interpolated,within budget,-0.544302,-0.645661,-0.418835,0,1983,11,20,661,1553,20,0
-ripple,1,Karlsson_ripple_detector,Long_sharp_wave_ripple_detector,3.5,1.5,0.633784,0.765779,True,True,interpolated,within budget,-0.131995,-0.177881,-0.0895741,0,2000,20,20,1345,1553,20,0
-ripple,2,Karlsson_ripple_detector,Long_sharp_wave_ripple_detector,3.0,1.5,0.744627,0.765779,True,True,interpolated,within budget,-0.0211516,-0.0377944,-0.00176865,0.032,2000,20,20,1467,1553,20,0
-ripple,5,Karlsson_ripple_detector,Long_sharp_wave_ripple_detector,2.5,1.5,0.792552,0.765779,True,True,interpolated,within budget,0.0267731,0.0132352,0.0429634,0,2000,20,20,1581,1553,20,0
-ripple,0.5,Karlsson_ripple_detector,Roumis_ripple_detector,6.0,8.0,0.221477,,True,False,interpolated,,,,,,0,11,8,661,418,20,0
-ripple,1,Karlsson_ripple_detector,Roumis_ripple_detector,3.5,2.5,0.633784,0.786274,True,True,interpolated,interpolated,-0.15249,-0.195743,-0.118834,0,2000,20,19,1345,1581,20,0
-ripple,2,Karlsson_ripple_detector,Roumis_ripple_detector,3.0,2.0,0.744627,0.819351,True,True,interpolated,interpolated,-0.0747231,-0.0826407,-0.0662,0,2000,20,20,1467,1679,20,0
-ripple,5,Karlsson_ripple_detector,Roumis_ripple_detector,2.5,2.0,0.792552,0.84595,True,True,interpolated,interpolated,-0.0533977,-0.0619926,-0.0448525,0,2000,20,20,1581,1679,20,0
-ripple,0.5,Karlsson_ripple_detector,Shvartsman_ripple_detector,6.0,6.0,0.221477,0.223732,True,True,interpolated,interpolated,-0.00225558,-0.116867,0.0288782,0.701967,1983,11,11,661,520,20,0
-ripple,1,Karlsson_ripple_detector,Shvartsman_ripple_detector,3.5,2.5,0.633784,0.750714,True,True,interpolated,interpolated,-0.11693,-0.158652,-0.0825787,0,2000,20,20,1345,1469,20,0
-ripple,2,Karlsson_ripple_detector,Shvartsman_ripple_detector,3.0,2.0,0.744627,0.788271,True,True,interpolated,interpolated,-0.0436431,-0.0545746,-0.0334255,0,2000,20,20,1467,1580,20,0
-ripple,5,Karlsson_ripple_detector,Shvartsman_ripple_detector,2.5,1.5,0.792552,0.811894,True,True,interpolated,interpolated,-0.0193418,-0.0268443,-0.0127857,0,2000,20,20,1581,1679,20,0
-ripple,0.5,Karlsson_ripple_detector,Yu_ripple_detector,6.0,99.999,0.221477,,True,False,interpolated,,,,,,0,11,0,661,1702,20,0
-ripple,1,Karlsson_ripple_detector,Yu_ripple_detector,3.5,99.999,0.633784,,True,False,interpolated,,,,,,0,20,0,1345,1702,20,0
-ripple,2,Karlsson_ripple_detector,Yu_ripple_detector,3.0,99.999,0.744627,,True,False,interpolated,,,,,,0,20,0,1467,1702,20,0
-ripple,5,Karlsson_ripple_detector,Yu_ripple_detector,2.5,99.999,0.792552,0.842129,True,True,interpolated,interpolated,-0.0495771,-0.0600323,-0.0397451,0,1843,20,13,1581,1702,20,0
-ripple,0.5,Karlsson_ripple_detector,Zugaro_ripple_detector,6.0,10.0,0.221477,,True,False,interpolated,,,,,,0,11,3,661,712,20,0
-ripple,1,Karlsson_ripple_detector,Zugaro_ripple_detector,3.5,6.0,0.633784,0.62666,True,True,interpolated,interpolated,0.00712395,-0.0967453,0.246236,0.973396,1917,20,14,1345,1242,20,0
-ripple,2,Karlsson_ripple_detector,Zugaro_ripple_detector,3.0,2.5,0.744627,0.781065,True,True,interpolated,within budget,-0.0364376,-0.0530546,-0.0180271,0,2000,20,20,1467,1584,20,0
-ripple,5,Karlsson_ripple_detector,Zugaro_ripple_detector,2.5,2.5,0.792552,0.781065,True,True,interpolated,within budget,0.0114871,-0.00381978,0.028471,0.146,2000,20,20,1581,1584,20,0
-ripple,0.5,Kay_ripple_detector,Long_sharp_wave_ripple_detector,8.0,1.5,,0.765779,False,True,,within budget,,,,,0,8,20,402,1553,20,0
-ripple,1,Kay_ripple_detector,Long_sharp_wave_ripple_detector,2.5,1.5,0.784125,0.765779,True,True,interpolated,within budget,0.0183458,-0.00173892,0.0387607,0.072,2000,19,20,1584,1553,20,0
-ripple,2,Kay_ripple_detector,Long_sharp_wave_ripple_detector,2.0,1.5,0.818877,0.765779,True,True,interpolated,within budget,0.0530981,0.0379331,0.0714821,0,2000,20,20,1680,1553,20,0
-ripple,5,Kay_ripple_detector,Long_sharp_wave_ripple_detector,2.0,1.5,0.847525,0.765779,True,True,interpolated,within budget,0.0817458,0.0663343,0.100076,0,2000,20,20,1680,1553,20,0
-ripple,0.5,Kay_ripple_detector,Roumis_ripple_detector,8.0,8.0,,,False,False,,,,,,,0,8,8,402,418,20,0
-ripple,1,Kay_ripple_detector,Roumis_ripple_detector,2.5,2.5,0.784125,0.786274,True,True,interpolated,interpolated,-0.00214948,-0.00780666,0.00169233,0.25,2000,19,19,1584,1581,20,0
-ripple,2,Kay_ripple_detector,Roumis_ripple_detector,2.0,2.0,0.818877,0.819351,True,True,interpolated,interpolated,-0.000473407,-0.00455359,0.00326593,0.763,2000,20,20,1680,1679,20,0
-ripple,5,Kay_ripple_detector,Roumis_ripple_detector,2.0,2.0,0.847525,0.84595,True,True,interpolated,interpolated,0.00157505,-0.0010412,0.00477159,0.285,2000,20,20,1680,1679,20,0
-ripple,0.5,Kay_ripple_detector,Shvartsman_ripple_detector,8.0,6.0,,0.223732,False,True,,interpolated,,,,,0,8,11,402,520,20,0
-ripple,1,Kay_ripple_detector,Shvartsman_ripple_detector,2.5,2.5,0.784125,0.750714,True,True,interpolated,interpolated,0.0334109,0.020822,0.0431859,0,2000,19,20,1584,1469,20,0
-ripple,2,Kay_ripple_detector,Shvartsman_ripple_detector,2.0,2.0,0.818877,0.788271,True,True,interpolated,interpolated,0.0306066,0.0221626,0.0382108,0,2000,20,20,1680,1580,20,0
-ripple,5,Kay_ripple_detector,Shvartsman_ripple_detector,2.0,1.5,0.847525,0.811894,True,True,interpolated,interpolated,0.0356309,0.0296369,0.0416271,0,2000,20,20,1680,1679,20,0
-ripple,0.5,Kay_ripple_detector,Yu_ripple_detector,8.0,99.999,,,False,False,,,,,,,0,8,0,402,1702,20,0
-ripple,1,Kay_ripple_detector,Yu_ripple_detector,2.5,99.999,0.784125,,True,False,interpolated,,,,,,0,19,0,1584,1702,20,0
-ripple,2,Kay_ripple_detector,Yu_ripple_detector,2.0,99.999,0.818877,,True,False,interpolated,,,,,,0,20,0,1680,1702,20,0
-ripple,5,Kay_ripple_detector,Yu_ripple_detector,2.0,99.999,0.847525,0.842129,True,True,interpolated,interpolated,0.0053956,-0.0022024,0.0136732,0.151926,1843,20,13,1680,1702,20,0
-ripple,0.5,Kay_ripple_detector,Zugaro_ripple_detector,8.0,10.0,,,False,False,,,,,,,0,8,3,402,712,20,0
-ripple,1,Kay_ripple_detector,Zugaro_ripple_detector,2.5,6.0,0.784125,0.62666,True,True,interpolated,interpolated,0.157465,0.0459457,0.40768,0,1917,19,14,1584,1242,20,0
-ripple,2,Kay_ripple_detector,Zugaro_ripple_detector,2.0,2.5,0.818877,0.781065,True,True,interpolated,within budget,0.0378121,0.0206891,0.0562131,0,2000,20,20,1680,1584,20,0
-ripple,5,Kay_ripple_detector,Zugaro_ripple_detector,2.0,2.5,0.847525,0.781065,True,True,interpolated,within budget,0.0664598,0.0500616,0.0857353,0,2000,20,20,1680,1584,20,0
-ripple,0.5,Long_sharp_wave_ripple_detector,Roumis_ripple_detector,1.5,8.0,0.765779,,True,False,within budget,,,,,,0,20,8,1553,418,20,0
-ripple,1,Long_sharp_wave_ripple_detector,Roumis_ripple_detector,1.5,2.5,0.765779,0.786274,True,True,within budget,interpolated,-0.0204953,-0.0430665,-0.00217182,0.031,2000,20,19,1553,1581,20,0
-ripple,2,Long_sharp_wave_ripple_detector,Roumis_ripple_detector,1.5,2.0,0.765779,0.819351,True,True,within budget,interpolated,-0.0535715,-0.0727517,-0.0380358,0,2000,20,20,1553,1679,20,0
-ripple,5,Long_sharp_wave_ripple_detector,Roumis_ripple_detector,1.5,2.0,0.765779,0.84595,True,True,within budget,interpolated,-0.0801708,-0.0989011,-0.0649344,0,2000,20,20,1553,1679,20,0
-ripple,0.5,Long_sharp_wave_ripple_detector,Shvartsman_ripple_detector,1.5,6.0,0.765779,0.223732,True,True,within budget,interpolated,0.542047,0.324834,0.652804,0,1995,20,11,1553,520,20,0
-ripple,1,Long_sharp_wave_ripple_detector,Shvartsman_ripple_detector,1.5,2.5,0.765779,0.750714,True,True,within budget,interpolated,0.015065,-0.00541931,0.030963,0.131,2000,20,20,1553,1469,20,0
-ripple,2,Long_sharp_wave_ripple_detector,Shvartsman_ripple_detector,1.5,2.0,0.765779,0.788271,True,True,within budget,interpolated,-0.0224915,-0.0405156,-0.00817254,0.002,2000,20,20,1553,1580,20,0
-ripple,5,Long_sharp_wave_ripple_detector,Shvartsman_ripple_detector,1.5,1.5,0.765779,0.811894,True,True,within budget,interpolated,-0.0461149,-0.0641849,-0.0301059,0,2000,20,20,1553,1679,20,0
-ripple,0.5,Long_sharp_wave_ripple_detector,Yu_ripple_detector,1.5,99.999,0.765779,,True,False,within budget,,,,,,0,20,0,1553,1702,20,0
-ripple,1,Long_sharp_wave_ripple_detector,Yu_ripple_detector,1.5,99.999,0.765779,,True,False,within budget,,,,,,0,20,0,1553,1702,20,0
-ripple,2,Long_sharp_wave_ripple_detector,Yu_ripple_detector,1.5,99.999,0.765779,,True,False,within budget,,,,,,0,20,0,1553,1702,20,0
-ripple,5,Long_sharp_wave_ripple_detector,Yu_ripple_detector,1.5,99.999,0.765779,0.842129,True,True,within budget,interpolated,-0.0763502,-0.0973912,-0.0598394,0,1843,20,13,1553,1702,20,0
-ripple,0.5,Long_sharp_wave_ripple_detector,Zugaro_ripple_detector,1.5,10.0,0.765779,,True,False,within budget,,,,,,0,20,3,1553,712,20,0
-ripple,1,Long_sharp_wave_ripple_detector,Zugaro_ripple_detector,1.5,6.0,0.765779,0.62666,True,True,within budget,interpolated,0.139119,0.0216939,0.394596,0.00625978,1917,20,14,1553,1242,20,0
-ripple,2,Long_sharp_wave_ripple_detector,Zugaro_ripple_detector,1.5,2.5,0.765779,0.781065,True,True,within budget,within budget,-0.015286,-0.0342031,0.00360523,0.113,2000,20,20,1553,1584,20,0
-ripple,5,Long_sharp_wave_ripple_detector,Zugaro_ripple_detector,1.5,2.5,0.765779,0.781065,True,True,within budget,within budget,-0.015286,-0.0342031,0.00360523,0.113,2000,20,20,1553,1584,20,0
-ripple,0.5,Roumis_ripple_detector,Shvartsman_ripple_detector,8.0,6.0,,0.223732,False,True,,interpolated,,,,,0,8,11,418,520,20,0
-ripple,1,Roumis_ripple_detector,Shvartsman_ripple_detector,2.5,2.5,0.786274,0.750714,True,True,interpolated,interpolated,0.0355604,0.0262408,0.0440059,0,2000,19,20,1581,1469,20,0
-ripple,2,Roumis_ripple_detector,Shvartsman_ripple_detector,2.0,2.0,0.819351,0.788271,True,True,interpolated,interpolated,0.0310801,0.0228497,0.0393719,0,2000,20,20,1679,1580,20,0
-ripple,5,Roumis_ripple_detector,Shvartsman_ripple_detector,2.0,1.5,0.84595,0.811894,True,True,interpolated,interpolated,0.0340558,0.0280711,0.0398603,0,2000,20,20,1679,1679,20,0
-ripple,0.5,Roumis_ripple_detector,Yu_ripple_detector,8.0,99.999,,,False,False,,,,,,,0,8,0,418,1702,20,0
-ripple,1,Roumis_ripple_detector,Yu_ripple_detector,2.5,99.999,0.786274,,True,False,interpolated,,,,,,0,19,0,1581,1702,20,0
-ripple,2,Roumis_ripple_detector,Yu_ripple_detector,2.0,99.999,0.819351,,True,False,interpolated,,,,,,0,20,0,1679,1702,20,0
-ripple,5,Roumis_ripple_detector,Yu_ripple_detector,2.0,99.999,0.84595,0.842129,True,True,interpolated,interpolated,0.00382055,-0.00337664,0.01119,0.29083,1843,20,13,1679,1702,20,0
-ripple,0.5,Roumis_ripple_detector,Zugaro_ripple_detector,8.0,10.0,,,False,False,,,,,,,0,8,3,418,712,20,0
-ripple,1,Roumis_ripple_detector,Zugaro_ripple_detector,2.5,6.0,0.786274,0.62666,True,True,interpolated,interpolated,0.159614,0.0500134,0.408002,0,1917,19,14,1581,1242,20,0
-ripple,2,Roumis_ripple_detector,Zugaro_ripple_detector,2.0,2.5,0.819351,0.781065,True,True,interpolated,within budget,0.0382855,0.0222743,0.0565771,0,2000,20,20,1679,1584,20,0
-ripple,5,Roumis_ripple_detector,Zugaro_ripple_detector,2.0,2.5,0.84595,0.781065,True,True,interpolated,within budget,0.0648848,0.0488447,0.0836452,0,2000,20,20,1679,1584,20,0
-ripple,0.5,Shvartsman_ripple_detector,Yu_ripple_detector,6.0,99.999,0.223732,,True,False,interpolated,,,,,,0,11,0,520,1702,20,0
-ripple,1,Shvartsman_ripple_detector,Yu_ripple_detector,2.5,99.999,0.750714,,True,False,interpolated,,,,,,0,20,0,1469,1702,20,0
-ripple,2,Shvartsman_ripple_detector,Yu_ripple_detector,2.0,99.999,0.788271,,True,False,interpolated,,,,,,0,20,0,1580,1702,20,0
-ripple,5,Shvartsman_ripple_detector,Yu_ripple_detector,1.5,99.999,0.811894,0.842129,True,True,interpolated,interpolated,-0.0302353,-0.039017,-0.0222932,0,1843,20,13,1679,1702,20,0
-ripple,0.5,Shvartsman_ripple_detector,Zugaro_ripple_detector,6.0,10.0,0.223732,,True,False,interpolated,,,,,,0,11,3,520,712,20,0
-ripple,1,Shvartsman_ripple_detector,Zugaro_ripple_detector,2.5,6.0,0.750714,0.62666,True,True,interpolated,interpolated,0.124054,0.0153376,0.372673,0.00834637,1917,20,14,1469,1242,20,0
-ripple,2,Shvartsman_ripple_detector,Zugaro_ripple_detector,2.0,2.5,0.788271,0.781065,True,True,interpolated,within budget,0.00720547,-0.0102375,0.0267575,0.428,2000,20,20,1580,1584,20,0
-ripple,5,Shvartsman_ripple_detector,Zugaro_ripple_detector,1.5,2.5,0.811894,0.781065,True,True,interpolated,within budget,0.0308289,0.0133897,0.0499501,0,2000,20,20,1679,1584,20,0
-ripple,0.5,Yu_ripple_detector,Zugaro_ripple_detector,99.999,10.0,,,False,False,,,,,,,0,0,3,1702,712,20,0
-ripple,1,Yu_ripple_detector,Zugaro_ripple_detector,99.999,6.0,,0.62666,False,True,,interpolated,,,,,0,0,14,1702,1242,20,0
-ripple,2,Yu_ripple_detector,Zugaro_ripple_detector,99.999,2.5,,0.781065,False,True,,within budget,,,,,0,0,20,1702,1584,20,0
-ripple,5,Yu_ripple_detector,Zugaro_ripple_detector,99.999,2.5,0.842129,0.781065,True,True,interpolated,within budget,0.0610642,0.0455057,0.0798637,0,1843,13,20,1702,1584,20,0
+primary_expression,fp_target,method_a,method_b,setting_a,setting_b,recall_a,recall_b,reached_a,reached_b,read_off_a,read_off_b,difference,difference_low,difference_high,difference_p,bound,established,n_draws,n_defined_a,n_defined_b,n_events_a,n_events_b,n_replicates,n_dropped
+ripple,0.5,Karlsson_ripple_detector,Kay_ripple_detector,6.0,8.0,0.221477,,True,False,interpolated,,,,,,,False,0,11,8,661,402,20,0
+ripple,1,Karlsson_ripple_detector,Kay_ripple_detector,3.5,2.5,0.633784,0.784125,True,True,interpolated,interpolated,-0.150341,-0.194193,-0.115824,0,,True,2000,20,19,1345,1584,20,0
+ripple,2,Karlsson_ripple_detector,Kay_ripple_detector,3.0,2.0,0.744627,0.818877,True,True,interpolated,interpolated,-0.0742497,-0.0815388,-0.066719,0,,True,2000,20,20,1467,1680,20,0
+ripple,5,Karlsson_ripple_detector,Kay_ripple_detector,2.5,2.0,0.792552,0.847525,True,True,interpolated,interpolated,-0.0549727,-0.0633568,-0.046615,0,,True,2000,20,20,1581,1680,20,0
+ripple,0.5,Karlsson_ripple_detector,Long_sharp_wave_ripple_detector,6.0,1.5,0.221477,0.765779,True,True,interpolated,within budget,-0.544302,-0.645661,-0.418835,0,upper,True,1983,11,20,661,1553,20,0
+ripple,1,Karlsson_ripple_detector,Long_sharp_wave_ripple_detector,3.5,1.5,0.633784,0.765779,True,True,interpolated,within budget,-0.131995,-0.177881,-0.0895741,0,upper,True,2000,20,20,1345,1553,20,0
+ripple,2,Karlsson_ripple_detector,Long_sharp_wave_ripple_detector,3.0,1.5,0.744627,0.765779,True,True,interpolated,within budget,-0.0211516,-0.0377944,-0.00176865,0.032,upper,True,2000,20,20,1467,1553,20,0
+ripple,5,Karlsson_ripple_detector,Long_sharp_wave_ripple_detector,2.5,1.5,0.792552,0.765779,True,True,interpolated,within budget,0.0267731,0.0132352,0.0429634,0,upper,False,2000,20,20,1581,1553,20,0
+ripple,0.5,Karlsson_ripple_detector,Roumis_ripple_detector,6.0,8.0,0.221477,,True,False,interpolated,,,,,,,False,0,11,8,661,418,20,0
+ripple,1,Karlsson_ripple_detector,Roumis_ripple_detector,3.5,2.5,0.633784,0.786274,True,True,interpolated,interpolated,-0.15249,-0.195743,-0.118834,0,,True,2000,20,19,1345,1581,20,0
+ripple,2,Karlsson_ripple_detector,Roumis_ripple_detector,3.0,2.0,0.744627,0.819351,True,True,interpolated,interpolated,-0.0747231,-0.0826407,-0.0662,0,,True,2000,20,20,1467,1679,20,0
+ripple,5,Karlsson_ripple_detector,Roumis_ripple_detector,2.5,2.0,0.792552,0.84595,True,True,interpolated,interpolated,-0.0533977,-0.0619926,-0.0448525,0,,True,2000,20,20,1581,1679,20,0
+ripple,0.5,Karlsson_ripple_detector,Shvartsman_ripple_detector,6.0,6.0,0.221477,0.223732,True,True,interpolated,interpolated,-0.00225558,-0.116867,0.0288782,0.701967,,False,1983,11,11,661,520,20,0
+ripple,1,Karlsson_ripple_detector,Shvartsman_ripple_detector,3.5,2.5,0.633784,0.750714,True,True,interpolated,interpolated,-0.11693,-0.158652,-0.0825787,0,,True,2000,20,20,1345,1469,20,0
+ripple,2,Karlsson_ripple_detector,Shvartsman_ripple_detector,3.0,2.0,0.744627,0.788271,True,True,interpolated,interpolated,-0.0436431,-0.0545746,-0.0334255,0,,True,2000,20,20,1467,1580,20,0
+ripple,5,Karlsson_ripple_detector,Shvartsman_ripple_detector,2.5,1.5,0.792552,0.811894,True,True,interpolated,interpolated,-0.0193418,-0.0268443,-0.0127857,0,,True,2000,20,20,1581,1679,20,0
+ripple,0.5,Karlsson_ripple_detector,Yu_ripple_detector,6.0,99.999,0.221477,,True,False,interpolated,,,,,,,False,0,11,0,661,1702,20,0
+ripple,1,Karlsson_ripple_detector,Yu_ripple_detector,3.5,99.999,0.633784,,True,False,interpolated,,,,,,,False,0,20,0,1345,1702,20,0
+ripple,2,Karlsson_ripple_detector,Yu_ripple_detector,3.0,99.999,0.744627,,True,False,interpolated,,,,,,,False,0,20,0,1467,1702,20,0
+ripple,5,Karlsson_ripple_detector,Yu_ripple_detector,2.5,99.999,0.792552,0.842129,True,True,interpolated,interpolated,-0.0495771,-0.0600323,-0.0397451,0,,True,1843,20,13,1581,1702,20,0
+ripple,0.5,Karlsson_ripple_detector,Zugaro_ripple_detector,6.0,10.0,0.221477,,True,False,interpolated,,,,,,,False,0,11,3,661,712,20,0
+ripple,1,Karlsson_ripple_detector,Zugaro_ripple_detector,3.5,6.0,0.633784,0.62666,True,True,interpolated,interpolated,0.00712395,-0.0967453,0.246236,0.973396,,False,1917,20,14,1345,1242,20,0
+ripple,2,Karlsson_ripple_detector,Zugaro_ripple_detector,3.0,2.5,0.744627,0.781065,True,True,interpolated,within budget,-0.0364376,-0.0530546,-0.0180271,0,upper,True,2000,20,20,1467,1584,20,0
+ripple,5,Karlsson_ripple_detector,Zugaro_ripple_detector,2.5,2.5,0.792552,0.781065,True,True,interpolated,within budget,0.0114871,-0.00381978,0.028471,0.146,upper,False,2000,20,20,1581,1584,20,0
+ripple,0.5,Kay_ripple_detector,Long_sharp_wave_ripple_detector,8.0,1.5,,0.765779,False,True,,within budget,,,,,upper,False,0,8,20,402,1553,20,0
+ripple,1,Kay_ripple_detector,Long_sharp_wave_ripple_detector,2.5,1.5,0.784125,0.765779,True,True,interpolated,within budget,0.0183458,-0.00173892,0.0387607,0.072,upper,False,2000,19,20,1584,1553,20,0
+ripple,2,Kay_ripple_detector,Long_sharp_wave_ripple_detector,2.0,1.5,0.818877,0.765779,True,True,interpolated,within budget,0.0530981,0.0379331,0.0714821,0,upper,False,2000,20,20,1680,1553,20,0
+ripple,5,Kay_ripple_detector,Long_sharp_wave_ripple_detector,2.0,1.5,0.847525,0.765779,True,True,interpolated,within budget,0.0817458,0.0663343,0.100076,0,upper,False,2000,20,20,1680,1553,20,0
+ripple,0.5,Kay_ripple_detector,Roumis_ripple_detector,8.0,8.0,,,False,False,,,,,,,,False,0,8,8,402,418,20,0
+ripple,1,Kay_ripple_detector,Roumis_ripple_detector,2.5,2.5,0.784125,0.786274,True,True,interpolated,interpolated,-0.00214948,-0.00780666,0.00169233,0.25,,False,2000,19,19,1584,1581,20,0
+ripple,2,Kay_ripple_detector,Roumis_ripple_detector,2.0,2.0,0.818877,0.819351,True,True,interpolated,interpolated,-0.000473407,-0.00455359,0.00326593,0.763,,False,2000,20,20,1680,1679,20,0
+ripple,5,Kay_ripple_detector,Roumis_ripple_detector,2.0,2.0,0.847525,0.84595,True,True,interpolated,interpolated,0.00157505,-0.0010412,0.00477159,0.285,,False,2000,20,20,1680,1679,20,0
+ripple,0.5,Kay_ripple_detector,Shvartsman_ripple_detector,8.0,6.0,,0.223732,False,True,,interpolated,,,,,,False,0,8,11,402,520,20,0
+ripple,1,Kay_ripple_detector,Shvartsman_ripple_detector,2.5,2.5,0.784125,0.750714,True,True,interpolated,interpolated,0.0334109,0.020822,0.0431859,0,,True,2000,19,20,1584,1469,20,0
+ripple,2,Kay_ripple_detector,Shvartsman_ripple_detector,2.0,2.0,0.818877,0.788271,True,True,interpolated,interpolated,0.0306066,0.0221626,0.0382108,0,,True,2000,20,20,1680,1580,20,0
+ripple,5,Kay_ripple_detector,Shvartsman_ripple_detector,2.0,1.5,0.847525,0.811894,True,True,interpolated,interpolated,0.0356309,0.0296369,0.0416271,0,,True,2000,20,20,1680,1679,20,0
+ripple,0.5,Kay_ripple_detector,Yu_ripple_detector,8.0,99.999,,,False,False,,,,,,,,False,0,8,0,402,1702,20,0
+ripple,1,Kay_ripple_detector,Yu_ripple_detector,2.5,99.999,0.784125,,True,False,interpolated,,,,,,,False,0,19,0,1584,1702,20,0
+ripple,2,Kay_ripple_detector,Yu_ripple_detector,2.0,99.999,0.818877,,True,False,interpolated,,,,,,,False,0,20,0,1680,1702,20,0
+ripple,5,Kay_ripple_detector,Yu_ripple_detector,2.0,99.999,0.847525,0.842129,True,True,interpolated,interpolated,0.0053956,-0.0022024,0.0136732,0.151926,,False,1843,20,13,1680,1702,20,0
+ripple,0.5,Kay_ripple_detector,Zugaro_ripple_detector,8.0,10.0,,,False,False,,,,,,,,False,0,8,3,402,712,20,0
+ripple,1,Kay_ripple_detector,Zugaro_ripple_detector,2.5,6.0,0.784125,0.62666,True,True,interpolated,interpolated,0.157465,0.0459457,0.40768,0,,True,1917,19,14,1584,1242,20,0
+ripple,2,Kay_ripple_detector,Zugaro_ripple_detector,2.0,2.5,0.818877,0.781065,True,True,interpolated,within budget,0.0378121,0.0206891,0.0562131,0,upper,False,2000,20,20,1680,1584,20,0
+ripple,5,Kay_ripple_detector,Zugaro_ripple_detector,2.0,2.5,0.847525,0.781065,True,True,interpolated,within budget,0.0664598,0.0500616,0.0857353,0,upper,False,2000,20,20,1680,1584,20,0
+ripple,0.5,Long_sharp_wave_ripple_detector,Roumis_ripple_detector,1.5,8.0,0.765779,,True,False,within budget,,,,,,lower,False,0,20,8,1553,418,20,0
+ripple,1,Long_sharp_wave_ripple_detector,Roumis_ripple_detector,1.5,2.5,0.765779,0.786274,True,True,within budget,interpolated,-0.0204953,-0.0430665,-0.00217182,0.031,lower,False,2000,20,19,1553,1581,20,0
+ripple,2,Long_sharp_wave_ripple_detector,Roumis_ripple_detector,1.5,2.0,0.765779,0.819351,True,True,within budget,interpolated,-0.0535715,-0.0727517,-0.0380358,0,lower,False,2000,20,20,1553,1679,20,0
+ripple,5,Long_sharp_wave_ripple_detector,Roumis_ripple_detector,1.5,2.0,0.765779,0.84595,True,True,within budget,interpolated,-0.0801708,-0.0989011,-0.0649344,0,lower,False,2000,20,20,1553,1679,20,0
+ripple,0.5,Long_sharp_wave_ripple_detector,Shvartsman_ripple_detector,1.5,6.0,0.765779,0.223732,True,True,within budget,interpolated,0.542047,0.324834,0.652804,0,lower,True,1995,20,11,1553,520,20,0
+ripple,1,Long_sharp_wave_ripple_detector,Shvartsman_ripple_detector,1.5,2.5,0.765779,0.750714,True,True,within budget,interpolated,0.015065,-0.00541931,0.030963,0.131,lower,False,2000,20,20,1553,1469,20,0
+ripple,2,Long_sharp_wave_ripple_detector,Shvartsman_ripple_detector,1.5,2.0,0.765779,0.788271,True,True,within budget,interpolated,-0.0224915,-0.0405156,-0.00817254,0.002,lower,False,2000,20,20,1553,1580,20,0
+ripple,5,Long_sharp_wave_ripple_detector,Shvartsman_ripple_detector,1.5,1.5,0.765779,0.811894,True,True,within budget,interpolated,-0.0461149,-0.0641849,-0.0301059,0,lower,False,2000,20,20,1553,1679,20,0
+ripple,0.5,Long_sharp_wave_ripple_detector,Yu_ripple_detector,1.5,99.999,0.765779,,True,False,within budget,,,,,,lower,False,0,20,0,1553,1702,20,0
+ripple,1,Long_sharp_wave_ripple_detector,Yu_ripple_detector,1.5,99.999,0.765779,,True,False,within budget,,,,,,lower,False,0,20,0,1553,1702,20,0
+ripple,2,Long_sharp_wave_ripple_detector,Yu_ripple_detector,1.5,99.999,0.765779,,True,False,within budget,,,,,,lower,False,0,20,0,1553,1702,20,0
+ripple,5,Long_sharp_wave_ripple_detector,Yu_ripple_detector,1.5,99.999,0.765779,0.842129,True,True,within budget,interpolated,-0.0763502,-0.0973912,-0.0598394,0,lower,False,1843,20,13,1553,1702,20,0
+ripple,0.5,Long_sharp_wave_ripple_detector,Zugaro_ripple_detector,1.5,10.0,0.765779,,True,False,within budget,,,,,,lower,False,0,20,3,1553,712,20,0
+ripple,1,Long_sharp_wave_ripple_detector,Zugaro_ripple_detector,1.5,6.0,0.765779,0.62666,True,True,within budget,interpolated,0.139119,0.0216939,0.394596,0.00625978,lower,True,1917,20,14,1553,1242,20,0
+ripple,2,Long_sharp_wave_ripple_detector,Zugaro_ripple_detector,1.5,2.5,0.765779,0.781065,True,True,within budget,within budget,-0.015286,-0.0342031,0.00360523,0.113,both,False,2000,20,20,1553,1584,20,0
+ripple,5,Long_sharp_wave_ripple_detector,Zugaro_ripple_detector,1.5,2.5,0.765779,0.781065,True,True,within budget,within budget,-0.015286,-0.0342031,0.00360523,0.113,both,False,2000,20,20,1553,1584,20,0
+ripple,0.5,Roumis_ripple_detector,Shvartsman_ripple_detector,8.0,6.0,,0.223732,False,True,,interpolated,,,,,,False,0,8,11,418,520,20,0
+ripple,1,Roumis_ripple_detector,Shvartsman_ripple_detector,2.5,2.5,0.786274,0.750714,True,True,interpolated,interpolated,0.0355604,0.0262408,0.0440059,0,,True,2000,19,20,1581,1469,20,0
+ripple,2,Roumis_ripple_detector,Shvartsman_ripple_detector,2.0,2.0,0.819351,0.788271,True,True,interpolated,interpolated,0.0310801,0.0228497,0.0393719,0,,True,2000,20,20,1679,1580,20,0
+ripple,5,Roumis_ripple_detector,Shvartsman_ripple_detector,2.0,1.5,0.84595,0.811894,True,True,interpolated,interpolated,0.0340558,0.0280711,0.0398603,0,,True,2000,20,20,1679,1679,20,0
+ripple,0.5,Roumis_ripple_detector,Yu_ripple_detector,8.0,99.999,,,False,False,,,,,,,,False,0,8,0,418,1702,20,0
+ripple,1,Roumis_ripple_detector,Yu_ripple_detector,2.5,99.999,0.786274,,True,False,interpolated,,,,,,,False,0,19,0,1581,1702,20,0
+ripple,2,Roumis_ripple_detector,Yu_ripple_detector,2.0,99.999,0.819351,,True,False,interpolated,,,,,,,False,0,20,0,1679,1702,20,0
+ripple,5,Roumis_ripple_detector,Yu_ripple_detector,2.0,99.999,0.84595,0.842129,True,True,interpolated,interpolated,0.00382055,-0.00337664,0.01119,0.29083,,False,1843,20,13,1679,1702,20,0
+ripple,0.5,Roumis_ripple_detector,Zugaro_ripple_detector,8.0,10.0,,,False,False,,,,,,,,False,0,8,3,418,712,20,0
+ripple,1,Roumis_ripple_detector,Zugaro_ripple_detector,2.5,6.0,0.786274,0.62666,True,True,interpolated,interpolated,0.159614,0.0500134,0.408002,0,,True,1917,19,14,1581,1242,20,0
+ripple,2,Roumis_ripple_detector,Zugaro_ripple_detector,2.0,2.5,0.819351,0.781065,True,True,interpolated,within budget,0.0382855,0.0222743,0.0565771,0,upper,False,2000,20,20,1679,1584,20,0
+ripple,5,Roumis_ripple_detector,Zugaro_ripple_detector,2.0,2.5,0.84595,0.781065,True,True,interpolated,within budget,0.0648848,0.0488447,0.0836452,0,upper,False,2000,20,20,1679,1584,20,0
+ripple,0.5,Shvartsman_ripple_detector,Yu_ripple_detector,6.0,99.999,0.223732,,True,False,interpolated,,,,,,,False,0,11,0,520,1702,20,0
+ripple,1,Shvartsman_ripple_detector,Yu_ripple_detector,2.5,99.999,0.750714,,True,False,interpolated,,,,,,,False,0,20,0,1469,1702,20,0
+ripple,2,Shvartsman_ripple_detector,Yu_ripple_detector,2.0,99.999,0.788271,,True,False,interpolated,,,,,,,False,0,20,0,1580,1702,20,0
+ripple,5,Shvartsman_ripple_detector,Yu_ripple_detector,1.5,99.999,0.811894,0.842129,True,True,interpolated,interpolated,-0.0302353,-0.039017,-0.0222932,0,,True,1843,20,13,1679,1702,20,0
+ripple,0.5,Shvartsman_ripple_detector,Zugaro_ripple_detector,6.0,10.0,0.223732,,True,False,interpolated,,,,,,,False,0,11,3,520,712,20,0
+ripple,1,Shvartsman_ripple_detector,Zugaro_ripple_detector,2.5,6.0,0.750714,0.62666,True,True,interpolated,interpolated,0.124054,0.0153376,0.372673,0.00834637,,True,1917,20,14,1469,1242,20,0
+ripple,2,Shvartsman_ripple_detector,Zugaro_ripple_detector,2.0,2.5,0.788271,0.781065,True,True,interpolated,within budget,0.00720547,-0.0102375,0.0267575,0.428,upper,False,2000,20,20,1580,1584,20,0
+ripple,5,Shvartsman_ripple_detector,Zugaro_ripple_detector,1.5,2.5,0.811894,0.781065,True,True,interpolated,within budget,0.0308289,0.0133897,0.0499501,0,upper,False,2000,20,20,1679,1584,20,0
+ripple,0.5,Yu_ripple_detector,Zugaro_ripple_detector,99.999,10.0,,,False,False,,,,,,,,False,0,0,3,1702,712,20,0
+ripple,1,Yu_ripple_detector,Zugaro_ripple_detector,99.999,6.0,,0.62666,False,True,,interpolated,,,,,,False,0,0,14,1702,1242,20,0
+ripple,2,Yu_ripple_detector,Zugaro_ripple_detector,99.999,2.5,,0.781065,False,True,,within budget,,,,,upper,False,0,0,20,1702,1584,20,0
+ripple,5,Yu_ripple_detector,Zugaro_ripple_detector,99.999,2.5,0.842129,0.781065,True,True,interpolated,within budget,0.0610642,0.0455057,0.0798637,0,upper,False,1843,13,20,1702,1584,20,0
