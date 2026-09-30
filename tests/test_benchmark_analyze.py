@@ -1114,6 +1114,16 @@ def test_point_inventories_are_scored_apart(analyze, point_matched):
     assert analyze.consensus(tables, matches).n_methods_compared.unique().tolist() == [2]
     counts = analyze.failure_counts(tables).set_index("method")
     assert counts.loc[DAVIDSON[0], "scoring"] == "peak_containment"
+    assert DAVIDSON[0] not in set(analyze.false_positive_rates(tables, matches).method)
+    leveled = analyze.match_run(tables, levels=(0.0, 0.2, 0.5))
+    compact = analyze.compact_comparison(
+        tables,
+        leveled,
+        analyze.matching_sensitivity(tables, leveled, n_resamples=FEW),
+        analyze.boundary_errors(tables, leveled, n_resamples=FEW),
+        n_resamples=FEW,
+    )
+    assert compact.method.tolist() == [KAY[0], LEE[0]]
 
 
 @pytest.fixture(scope="module")
@@ -1148,6 +1158,9 @@ def test_a_method_that_never_ran_keeps_its_rows(analyze, failing_run):
         "matching_sensitivity": analyze.matching_sensitivity(tables, matches, **quick),
         "rates_by_state": analyze.rates_by_state(tables, bouts=bouts, **quick),
         "point_inventories": analyze.point_inventories(tables, matches, **quick),
+        "false_positive_rates": analyze.false_positive_rates(
+            tables, matches, bouts=bouts, **quick
+        ),
     }
     measured = {
         "detection_profile": "recall",
@@ -1160,6 +1173,7 @@ def test_a_method_that_never_ran_keeps_its_rows(analyze, failing_run):
         "matching_sensitivity": "recall",
         "rates_by_state": "rate",
         "point_inventories": "recall",
+        "false_positive_rates": "unmatched_per_minute",
     }
     for name, table in per_method.items():
         failed = (
@@ -1189,6 +1203,21 @@ def test_a_method_that_never_ran_keeps_its_rows(analyze, failing_run):
     timing = pairs["paired_timing_ripple"]
     assert timing.fraction.tolist() == [0.1, 0.25, 0.5]
     assert timing.onset_signed_estimate.isna().all()
+    compact = analyze.compact_comparison(
+        tables,
+        matches,
+        per_method["matching_sensitivity"],
+        per_method["boundary_errors"],
+        bouts=bouts,
+        **quick,
+    ).set_index("method")
+    points = analyze.compact_points(tables, per_method["point_inventories"]).set_index(
+        "method"
+    )
+    for table, failed in ((compact, KARLSSON[0]), (points, DAVIDSON[0])):
+        assert (table.loc[failed, "n_sessions"], table.loc[failed, "n_failures"]) == (0, 2)
+    assert np.isnan(compact.loc[KARLSSON[0], "recall_iou0"])
+    assert np.isnan(points.loc[DAVIDSON[0], "recall"])
 
 
 def test_other_levels_match_the_primary_expression_and_the_network(analyze, failing_run):
@@ -1592,6 +1621,8 @@ def test_operating_curves_and_points_by_hand(analyze):
     assert points.attained.tolist() == [1.0, 1.0, 1.0, 0.0]
     # 0.5 and 2 per minute are two settings' rates; 1 lies between them
     assert points.read_off.tolist() == ["tested", "interpolated", "tested", ""]
+    every = analyze.operating_points(scores, n_resamples=FEW)
+    assert ((every.read_off == "") == every.recall.isna()).all()
 
 
 def test_operating_curves_label_defaults_and_recipes(analyze):
@@ -2197,12 +2228,19 @@ def test_session_bouts_are_the_simulated_schedule(analyze, benchmark_import):
     )
     assert len(expected)
     assert np.array_equal(analyze.session_bouts(sessions)["x/3"], expected)
-    # rest to the timestamps' rounding: a few units in the last place, not 1 us
-    ulp = np.spacing(200.0)
-    assert len(analyze.session_bouts(sessions.assign(rest_s=rest + 4 * ulp)))
-    for wrong in (rest - 1, rest + 1e-7):
-        with pytest.raises(ValueError, match="x/3: the running schedule drawn again"):
-            analyze.session_bouts(sessions.assign(rest_s=wrong))
+    # rest to the timestamps' rounding: a few units in the last place of the
+    # duration, not 16, at 200 s and at 10^5 s, where an absolute tolerance
+    # fit for one is wrong for the other
+    for duration in (200.0, 1e5):
+        rng = np.random.default_rng(conditions.stage_seeds(3)[0])
+        drawn = conditions.running_schedule(duration, rng)
+        rest = duration - np.diff(drawn, axis=1).sum()
+        long = sessions.assign(duration_s=duration, rest_s=rest)
+        ulp = np.spacing(duration)
+        assert len(analyze.session_bouts(long.assign(rest_s=rest + 4 * ulp)))
+        for wrong in (rest - 1, rest + 1e-7, rest + 16 * ulp):
+            with pytest.raises(ValueError, match="x/3: the running schedule drawn again"):
+                analyze.session_bouts(long.assign(rest_s=wrong))
 
 
 @pytest.fixture(scope="module")
@@ -2697,6 +2735,8 @@ def test_operating_differences_are_paired_by_session(analyze):
     assert (unreached.reached_a, unreached.reached_b) == (True, False)
     assert (unreached.read_off_a, unreached.read_off_b) == ("interpolated", "")
     # 5 per minute is Roumis's first setting's rate, past Kay's curve
+    for side in ("a", "b"):
+        assert ((table[f"read_off_{side}"] == "") == table[f"recall_{side}"].isna()).all()
     at_five = table[table.fp_target == 5.0].set_index(["method_a", "method_b"])
     assert at_five.loc[(KAY[0], ROUMIS), ["read_off_a", "read_off_b"]].tolist() == [
         "",
@@ -3160,6 +3200,21 @@ def tiny_compact(analyze, tiny_tables, tiny_levels):
     return compact, sensitivity, errors
 
 
+_RATE_COLUMNS = (
+    "n_unmatched",
+    "n_unmatched_rest",
+    "n_unmatched_running",
+    "minutes",
+    "rest_minutes",
+    "running_minutes",
+    *(
+        f"{name}{part}"
+        for name in ("unmatched_per_minute", "unmatched_rest_per_rest_minute")
+        for part in ("", "_low", "_high")
+    ),
+)
+
+
 def test_what_was_not_computed_is_refused(analyze, tiny_tables, tiny_levels, tiny_compact):
     # matched at IoU 0 alone, as match_run matches by default
     with pytest.raises(ValueError, match=r"not formed at minimum IoU \[0\.2, 0\.5\]"):
@@ -3173,8 +3228,19 @@ def test_what_was_not_computed_is_refused(analyze, tiny_tables, tiny_levels, tin
         )
 
 
-def test_compact_comparison_takes_its_numbers_from_their_tables(analyze, tiny_compact):
+def test_compact_comparison_takes_its_numbers_from_their_tables(
+    analyze, tiny_tables, tiny_levels, tiny_compact
+):
     compact, sensitivity, errors = tiny_compact
+    # the unmatched counts, minutes and rates: false_positive_rates' with
+    # the bouts given, Kay's running ones among them
+    matches, bouts = tiny_levels
+    rates = analyze.false_positive_rates(tiny_tables, matches, bouts=bouts, n_resamples=FEW)
+    rates = rates.set_index("method").loc[compact.method, list(_RATE_COLUMNS)]
+    pd.testing.assert_frame_equal(
+        compact.set_index("method")[list(_RATE_COLUMNS)], rates, check_dtype=False
+    )
+    assert compact.n_unmatched_running.tolist() == [4, 0]
     assert list(compact.columns) == list(analyze.COMPACT_COLUMNS)
     assert compact[
         ["primary_expression", "method", "members", "n_members"]
@@ -3273,6 +3339,123 @@ def test_compact_held_out_sets_measured_beside_interpolated(analyze):
     assert rows.loc[(ROUMIS, 1.0, "operating_point"), "kind"] == ""
     assert rows.loc[(ROUMIS, 5.0, "operating_point"), "kind"] == "tested"
     assert rows.loc[(ROUMIS, 5.0, "held_out"), "kind"] == "measured"
+
+
+LIU = ("recipe:liu_2019", "literature")
+LIU_AWAKE = ("recipe:liu_2019_awake", "literature")
+WU = ("recipe:wu_2014_ripples", "literature")
+
+
+@pytest.fixture(scope="module")
+def compact_run(analyze, run, tmp_path_factory):
+    """The tiny sessions with a second burst-only event whose window overlaps
+    the first's (5.9 to 6.1 s and 6.05 to 6.25 s), a running bout over both
+    (5.8 to 6.3 s), and: Kay; the two Liu 2019 configurations, whose stand-ins
+    differ, with the same events; Carey, headlined against the network, with
+    one false positive on the first session and none on the second; and
+    Davidson's and Wu's ripple peaks, the same points."""
+    sessions = []
+    for origin in (0.0, UNIX_ORIGIN):
+        session = _tiny_session(run, origin)
+        extra = _event_table(run, [(5, "burst_only", "burst", 0, 6.15, 0.1)], origin)
+        session["events"] = pd.concat([session["events"], extra], ignore_index=True)
+        bursts = origin + np.array([(1.94, 2.06), (5.9, 6.1), (7.95, 8.15)])
+        carey = [(1.94, 2.06), (3.94, 4.06)] + ([(18.0, 18.1)] if origin == 0 else [])
+        peaks = origin + np.array([2.0, 12.0])
+        session["detected"] = {
+            KAY: session["detected"][KAY],
+            LIU: bursts,
+            LIU_AWAKE: bursts,
+            CAREY: origin + np.array(carey),
+            DAVIDSON: np.column_stack([peaks, peaks]),
+            WU: np.column_stack([peaks, peaks]),
+        }
+        sessions.append(session)
+    tables = analyze.load_run(_write_run(run, tmp_path_factory.mktemp("compact"), sessions))
+    matches = analyze.match_run(tables, levels=(0.0, 0.2, 0.5))
+    bouts = {"reference/0": np.array([[5.8, 6.3]])}
+    bouts["reference/1"] = bouts["reference/0"] + UNIX_ORIGIN
+    sensitivity = analyze.matching_sensitivity(tables, matches, n_resamples=FEW)
+    errors = analyze.boundary_errors(tables, matches, n_resamples=FEW)
+    compact = analyze.compact_comparison(
+        tables, matches, sensitivity, errors, bouts=bouts, n_resamples=FEW
+    )
+    points = analyze.point_inventories(tables, matches, n_resamples=FEW)
+    return SimpleNamespace(
+        tables=tables,
+        matches=matches,
+        bouts=bouts,
+        errors=errors,
+        compact=compact,
+        points=analyze.compact_points(tables, points),
+    )
+
+
+def test_compact_tables_keep_one_row_per_group(analyze, compact_run):
+    compact = compact_run.compact
+    # by primary expression in the targets' order, not the methods' (Carey first)
+    assert compact[["primary_expression", "method", "n_members"]].to_numpy().tolist() == [
+        ["ripple", KAY[0], 1],
+        ["burst", LIU[0], 2],
+        ["network", CAREY[0], 1],
+    ]
+    liu = compact.iloc[1]
+    assert liu.members == f"{LIU[0]} {LIU_AWAKE[0]}"
+    assert liu.stand_in_inputs == (
+        f"{LIU[0]} (pyramidal sleep_intervals); {LIU_AWAKE[0]} (pyramidal behavior_intervals)"
+    )
+    # Carey's errors against the network, not its ripple or burst windows
+    carey = compact.iloc[2]
+    errors = compact_run.errors
+    network = errors[
+        (errors.method == CAREY[0])
+        & (errors.expression == "network")
+        & (errors.measure == "signed")
+        & (errors.boundary == "onset")
+        & np.isclose(errors.fraction, 0.1)
+    ].iloc[0]
+    assert carey.onset_error_10 == network["median"]
+    # Carey has a false positive on the first session alone
+    assert [carey.n_unmatched, carey.n_unmatched_rest, carey.n_unmatched_running] == [1, 1, 0]
+    # the bout's 0.5 s less the 0.35 s of the two overlapping windows' union
+    assert compact.running_minutes.tolist() == pytest.approx([2 * 0.15 / 60] * 3, abs=1e-6)
+    points = compact_run.points
+    assert points[["method", "members", "n_members"]].to_numpy().tolist() == [
+        [DAVIDSON[0], f"{DAVIDSON[0]} {WU[0]}", 2]
+    ]
+
+
+def test_compact_page_lists_groups_and_stand_ins(analyze, compact_run):
+    compact = compact_run.compact.copy()
+    compact.loc[compact.method == CAREY[0], "precision_iou0.5"] = np.nan
+    results = {
+        f"compact_{target}": compact[compact.primary_expression == target]
+        for target in analyze.COMPACT_TARGETS
+    }
+    page = analyze.compact_page("compact", compact_run.tables, results)
+    burst = page.split("## Burst", 1)[1].split("## Network", 1)[0]
+    assert "2 methods in 1 groups." in burst
+    assert f"- `{LIU[0]}`: also `{LIU_AWAKE[0]}`\n" in burst
+    assert (
+        f"- `{LIU[0]}`: {LIU[0]} (pyramidal sleep_intervals); "
+        f"{LIU_AWAKE[0]} (pyramidal behavior_intervals)\n"
+    ) in burst
+    network = page.split("## Network", 1)[1].split("## Definitions", 1)[0]
+    carey = compact.set_index("method").loc[CAREY[0]]
+    assert f"| {carey.precision_iou0:.2f} / n/a |" in network
+    assert page.index("## Ripple") < page.index("## Burst") < page.index("## Network")
+    for phrase in (
+        (
+            "**Identical groups.** Methods sharing a primary expression whose detections "
+            "are identical on every session"
+        ),
+        "**Unmatched / min.** Every detection matching no truth window",
+        (
+            "**Stand-ins.** The inputs the benchmark serves a recipe in place of something "
+            "the simulator lacks"
+        ),
+    ):
+        assert phrase in page
 
 
 def test_compact_page_formats_every_number(analyze, tiny_tables, tiny_compact):
