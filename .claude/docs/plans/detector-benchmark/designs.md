@@ -992,6 +992,45 @@ As implemented after an external statistical review (2026-09-28), the maintainer
   model-sensitivity tables: 4,866 by sign flip, 5,092 by the swap test, 5,446 by the
   bootstrap p (every one with an interval excluding 0).
 
+As implemented for a compact comparison of run v1 (2026-09-29), after an external review found
+the results correct but hard to read, the maintainer deciding:
+
+- **What it is.** `analyze.py` writes `compact_<target>.csv` (ripple, burst, network: interval
+  methods against their primary expression), `compact_held_out.csv`, `compact_points.csv` and
+  `compact.md`, from the reference condition's main methods. Every number but the rate at rest
+  is copied from the table it comes from (`matching_sensitivity`, `boundary_errors`,
+  `point_inventories`, `held_out_thresholds`, `operating_points`); the reference analyses are
+  now computed once per rebuild and shared. On v1 each copied number equals its source's, and
+  the overall rate equals `appendix_expressions`' false positives per minute, intervals
+  included.
+- **IoU.** 0 stays the predeclared primary; IoU >= 0.5 is a second headline, labelled post hoc
+  (added after v1's results were seen).
+- **Two false-positive rates.** All unmatched detections over the minutes outside every network
+  window (the existing denominator), and unmatched detections at rest over the rest minutes
+  outside every network window, those while running counted with their minutes. A detection is
+  placed by its midpoint on the running bouts as closed intervals (`rates_by_state` keeps its
+  peak rule). The bouts are drawn again from the saved seeds; `session_bouts` now checks their
+  rest against `rest_s` to 8 units in the last place of the duration (it allowed 1e-6 s): on v1
+  the two are equal exactly on all 20 reference sessions.
+- **Identical groups.** Methods of one scoring rule and primary expression whose events are
+  equal bit for bit on every session, failures included, are one row. On v1: Karlsson's
+  detector with `carr_2012`, `shin_2019` and `tang_2017`; Kay's with `gillespie_2021`;
+  `ambrose_2016` with `pfeiffer_2013_ripples`; `foster_2006_ripples` with `lee_2002_ripples`;
+  `farooq_2019_science` with `farooq_2019_science_awake`; `liu_2019` with `liu_2019_awake`;
+  `maboudi_2018_open_field` with `pfeiffer_2013`; `grosmark_2016` with `yang_2024`;
+  `huelin_gorriz_2023` with `tirole_2022`; `michon_2019` with `michon_2021`. The two point
+  inventories differ.
+- **Stand-ins.** `recipe_configs.stand_in_inputs` lists the policy inputs with a stated
+  stand-in (the same the assumptions state, `pyramidal` included: units selected by the
+  simulator's labels). A group whose members differ (the two Farooq 2019 Science and the two
+  Liu 2019 configurations: sleep against eligible epochs) lists each member's.
+- **Interpolation labelled.** `operating_points` gains `read_off`, `operating_differences`
+  `read_off_a` and `read_off_b`: `interpolated`, `tested` (a target equal to a kept setting's
+  rate) or empty (unreached). On v1 every reached value is interpolated. Their values, and
+  every other file of `results/v1` but `summary.md`'s file list, are unchanged byte for byte.
+  `matching_sensitivity`'s `recall_at_<target>` and model sensitivity's recalls at a target are
+  read off curves too and carry no label.
+
 ## Attribution
 
 Module `examples/benchmark/attribution.py`. This phase defines experimental `Step`,
