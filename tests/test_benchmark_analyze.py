@@ -3143,6 +3143,19 @@ def tiny_compact(analyze, tiny_tables, tiny_levels):
     return compact, sensitivity, errors
 
 
+def test_what_was_not_computed_is_refused(analyze, tiny_tables, tiny_levels, tiny_compact):
+    # matched at IoU 0 alone, as match_run matches by default
+    with pytest.raises(ValueError, match=r"not formed at minimum IoU \[0\.2, 0\.5\]"):
+        analyze.matching_sensitivity(tiny_tables, analyze.match_run(tiny_tables))
+    matches, bouts = tiny_levels
+    _, sensitivity, errors = tiny_compact
+    without = errors[~np.isclose(errors.fraction, 0.5)]
+    with pytest.raises(ValueError, match=r"no errors at \[50\] % of the peak"):
+        analyze.compact_comparison(
+            tiny_tables, matches, sensitivity, without, bouts=bouts, n_resamples=FEW
+        )
+
+
 def test_compact_comparison_takes_its_numbers_from_their_tables(analyze, tiny_compact):
     compact, sensitivity, errors = tiny_compact
     assert list(compact.columns) == list(analyze.COMPACT_COLUMNS)

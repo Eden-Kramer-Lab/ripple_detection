@@ -830,6 +830,11 @@ class Matches:
         against that expression's windows at 10 %: ``expression``,
         ``n_reference``, ``n_detected``, ``n_matched``. These methods are in
         no other table: an interval rule cannot credit a point.
+    levels : tuple of float
+        The ``minimum_iou`` levels ``pairs`` was formed at against each
+        method's primary expression and the network, 0 first: a level
+        missing here was not matched, which is not the same as no pair
+        reaching it.
     """
 
     windows: pd.DataFrame
@@ -840,6 +845,7 @@ class Matches:
     consensus: pd.DataFrame
     false_positive_groups: pd.DataFrame
     points: pd.DataFrame
+    levels: tuple[float, ...] = (0.0,)
 
 
 _MATCH_COLUMNS = {
@@ -1061,6 +1067,7 @@ def match_session(
         consensus=consensus,
         false_positive_groups=groups,
         points=pd.DataFrame(peaks, columns=list(POINT_COLUMNS)),
+        levels=levels,
     )
 
 
@@ -1173,7 +1180,8 @@ def match_run(
         **{
             name: _concat([getattr(session, name) for session in sessions], columns)
             for name, columns in _MATCH_COLUMNS.items()
-        }
+        },
+        levels=tuple(dict.fromkeys((0.0, *levels))),
     )
 
 
@@ -4892,7 +4900,20 @@ def matching_sensitivity(
         ``recall_at_<target>`` (detectors); ``rank`` (by recall, 1 best,
         among methods of the same primary expression at that level);
         ``n_sessions``, ``n_failures``.
+
+    Raises
+    ------
+    ValueError
+        ``matches`` was not matched at some level of ``MATCH_IOU_LEVELS``
+        (``Matches.levels``): its scores there would read as no match.
     """
+    unmatched = [level for level in MATCH_IOU_LEVELS if level not in matches.levels]
+    if unmatched:
+        msg = (
+            f"The matches were not formed at minimum IoU {unmatched}: match again with "
+            "match_run(tables, levels=MATCH_IOU_LEVELS)."
+        )
+        raise ValueError(msg)
     primary = tables.intervals.methods[["method", "setting", "primary_expression"]]
     pairs = matches.pairs.merge(
         primary.rename(columns={"primary_expression": "expression"}),
@@ -5813,7 +5834,17 @@ def compact_comparison(
         median signed ``onset_error_<percent>`` and ``offset_error_<percent>``
         against the truth at 10 and 50 % of the peak (seconds, detected
         minus truth), each with ``_low`` and ``_high``.
+
+    Raises
+    ------
+    ValueError
+        ``errors`` holds no row at some fraction of ``COMPACT_PERCENTS``.
     """
+    percents = np.round(errors["fraction"].to_numpy(float) * 100).astype(int)
+    absent = [percent for percent in COMPACT_PERCENTS if percent not in set(percents)]
+    if absent:
+        msg = f"The boundary errors hold no errors at {absent} % of the peak."
+        raise ValueError(msg)
     key = ["method", "setting"]
     groups = _first_members(tables).merge(failure_counts(tables), on=key)
     groups = groups[
