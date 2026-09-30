@@ -1580,14 +1580,7 @@ def test_a_time_on_a_window_edge_to_the_timestamps_rounding_is_inside(analyze, r
         end + 16 * ulp,
         start - 16 * ulp,
     ]
-    assert analyze.in_network_windows(times, windows).tolist() == [
-        True,
-        True,
-        True,
-        True,
-        False,
-        False,
-    ]
+    assert analyze.in_network_windows(times, windows).tolist() == [True] * 4 + [False] * 2
 
 
 def test_scores_count_event_free_false_positives(analyze, event_free_run):
@@ -1743,8 +1736,11 @@ def _fewer_false_positives_than_unmatched():
     counts = []
     for replicate in range(4):
         for setting, matched, detected, outside in (("2.0", 8, 28, 5), ("3.0", 6, 11, 1)):
-            row = _kay("reference", replicate, setting, matched, detected)
-            counts.append({**row, "n_false_positives": outside})
+            counts.append(
+                _kay(
+                    "reference", replicate, setting, matched, detected, false_positives=outside
+                )
+            )
     return counts
 
 
@@ -1824,16 +1820,9 @@ def _hand_scores(analyze, counts, errors=(), minutes=10.0):
     """ConditionScores built by hand: ``counts`` and ``errors`` are dicts
     with ``condition_id`` and ``replicate`` in place of a session, every
     session ``minutes`` long outside the network windows, every method's
-    primary expression ripple but Mallory's (burst). A count without
-    ``n_false_positives`` has every unmatched event outside the windows."""
+    primary expression ripple but Mallory's (burst)."""
     counts = pd.DataFrame(list(counts)).assign(
         session_id=lambda f: f.condition_id + "/" + f.replicate.astype(str)
-    )
-    unmatched = counts.n_detected - counts.n_matched
-    counts["n_false_positives"] = (
-        counts.n_false_positives.fillna(unmatched)
-        if "n_false_positives" in counts
-        else unmatched
     )
     counts = (
         counts.fillna({"minimum_iou": 0.0})
@@ -1874,11 +1863,25 @@ def _hand_scores(analyze, counts, errors=(), minutes=10.0):
     )
 
 
-def _kay(condition, replicate, setting, matched, detected, reference=10, method=KAY[0]):
+def _kay(
+    condition,
+    replicate,
+    setting,
+    matched,
+    detected,
+    reference=10,
+    method=KAY[0],
+    false_positives=None,
+):
+    """A count by hand; without ``false_positives`` every unmatched event
+    lies outside the windows."""
     return {
         "condition_id": condition, "replicate": replicate, "method": method,
         "setting": setting, "n_reference": reference, "n_detected": detected,
         "n_matched": matched,
+        "n_false_positives": (
+            detected - matched if false_positives is None else false_positives
+        ),
     }  # fmt: skip
 
 
@@ -2147,8 +2150,9 @@ def test_a_false_positive_change_counts_event_free_detections(analyze):
     counts = []
     for replicate in range(4):
         for condition, outside in (("reference", 4), ("ripple_snr=low", 2)):
-            found = _kay(condition, replicate, "default", 5, 12)
-            counts.append({**found, "n_false_positives": outside})
+            counts.append(
+                _kay(condition, replicate, "default", 5, 12, false_positives=outside)
+            )
     changes = analyze.paired_changes(
         _hand_scores(analyze, counts),
         ["reference", "ripple_snr=low"],
@@ -4210,18 +4214,19 @@ def test_the_command_writes_every_table_and_the_summary(analyze, two_condition_r
     ):
         assert heading in summary
     assert "Point inventories (none in this run;" in summary
+    flat = " ".join(summary.split())
     assert (
         "A false positive is an event matching none at IoU 0 whose time (its peak, else "
         "its bounds' midpoint) lies outside every network window at 10 %"
-    ) in " ".join(summary.split())
+    ) in flat
     assert (
         "where every setting's rate is below the target, the best recall of any setting "
         "is read (`within budget`)"
-    ) in " ".join(summary.split())
+    ) in flat
     assert (
         "a lower bound on the recall at that budget: settings with more false positives "
         "were not tested"
-    ) in " ".join(summary.split())
+    ) in flat
     page = (results / "compact.md").read_text()
     assert "a lower bound on the recall at that budget" in " ".join(page.split())
     assert (
