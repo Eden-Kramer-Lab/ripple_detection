@@ -1561,6 +1561,33 @@ def test_unmatched_detections_in_events_are_counted_apart(analyze, event_free_ma
     assert row.n_false_positives_rest + row.n_false_positives_running == row.n_false_positives
 
 
+def test_a_time_on_a_window_edge_to_the_timestamps_rounding_is_inside(analyze, run):
+    """At a Unix clock origin a peak a few units in the last place past a
+    network window's end or before its start is on it (closed, to the
+    timestamps' rounding), one farther is outside."""
+    session = _event_free_session(run, UNIX_ORIGIN)
+    network = rd.truth_windows(session["events"], 0.1, "network")
+    windows = network[["start_time", "end_time"]].to_numpy()
+    start, end = windows[network["id"] == 2][0]
+    ulp = np.spacing(end)
+    times = [
+        end,
+        np.nextafter(end, np.inf),
+        end + 3 * ulp,
+        start - 3 * ulp,
+        end + 16 * ulp,
+        start - 16 * ulp,
+    ]
+    assert analyze.in_network_windows(times, windows).tolist() == [
+        True,
+        True,
+        True,
+        True,
+        False,
+        False,
+    ]
+
+
 def test_scores_count_event_free_false_positives(analyze, event_free_run):
     scores = analyze.load_scores(event_free_run.parent)
     # a point method has no level: -1 here
@@ -1703,6 +1730,48 @@ def test_a_curve_within_budget_gives_its_best_recall(analyze):
     assert kinds.tolist() == ["", "interpolated", "tested", "within budget"]
     between = 0.5 + 0.3 * np.log(1.5) / np.log(2)
     assert found[1:, 0].tolist() == pytest.approx([between, 0.6, 0.8])
+
+
+def _fewer_false_positives_than_unmatched():
+    """Kay on four replicates, 10 minutes each outside the network windows:
+    at setting 2.0 20 unmatched events (2 per minute), 5 of them false
+    positives (0.5 per minute); at 3.0 5 unmatched (0.5), 1 false positive
+    (0.1)."""
+    counts = []
+    for replicate in range(4):
+        for setting, matched, detected, outside in (("2.0", 8, 28, 5), ("3.0", 6, 11, 1)):
+            row = _kay("reference", replicate, setting, matched, detected)
+            counts.append({**row, "n_false_positives": outside})
+    return counts
+
+
+def test_every_reading_counts_false_positives_not_unmatched_events(analyze):
+    """Read by the unmatched events, 1 per minute lies between the two
+    settings' rates (2 and 0.5); by the false positives both keep within it.
+    The curve's estimate and resamples, the held-out choice and its rates,
+    the sweep's recalls and the setting read each take the false positives."""
+    scores = _hand_scores(analyze, _fewer_false_positives_than_unmatched())
+    points = analyze.operating_points(scores, targets=(1.0,), n_resamples=FEW)
+    row = points[points.minimum_iou == 0].iloc[0]
+    assert (row.read_off, row.recall, row.recall_low, row.recall_high) == (
+        "within budget",
+        0.8,
+        0.8,
+        0.8,
+    )
+    held = analyze.held_out_thresholds(scores, targets=(1.0,), n_resamples=FEW).iloc[0]
+    assert (held.setting, held.calibration_fp_rate) == ("2.0", 0.5)
+    assert [
+        held.false_positives_per_minute,
+        held.false_positives_per_minute_low,
+        held.false_positives_per_minute_high,
+    ] == pytest.approx([0.5] * 3)
+    found = analyze._sweep_recalls(scores, ["reference"], range(4), [KAY[0]], [1.0], FEW)
+    assert found.estimate[0, 0, 0] == 0.8
+    assert np.all(found.draws[:, 0, 0, 0] == 0.8)
+    # nearest in log rate to 0.4 per minute: 0.5 (2.0), not 0.1 (3.0)
+    near = analyze._sweep_recalls(scores, ["reference"], range(4), [KAY[0]], [0.4], FEW)
+    assert near.nearest[0, 0, 0] == "2.0"
 
 
 def test_every_reading_within_budget_takes_the_best_setting(analyze):
