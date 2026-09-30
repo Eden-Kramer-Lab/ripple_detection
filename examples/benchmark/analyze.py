@@ -5528,6 +5528,12 @@ _LEVEL_SCORES = (
     ("precision", _WITH_INTERVAL),
 )
 _RATES = ("recall", "precision", "unmatched_per_minute")
+# The other tables' false positives per minute, as the compact tables name
+# them: every unmatched detection over the minutes outside the network windows.
+_UNMATCHED_NAMES = {
+    f"false_positives_per_minute{part}": f"unmatched_per_minute{part}"
+    for part in _WITH_INTERVAL
+}
 COMPACT_COLUMNS = (
     "primary_expression",
     *_GROUP_COLUMNS,
@@ -5680,39 +5686,32 @@ def identical_groups(tables: RunTables) -> pd.DataFrame:
     return groups.join(found, on=["group", "group_setting"]).astype({"n_members": int})
 
 
-def false_positive_rates(
+def unmatched_by_state(
     tables: RunTables,
     matches: Matches,
     *,
     bouts: Mapping[str, np.ndarray[Any, Any]] | None = None,
     n_resamples: int = N_RESAMPLES,
 ) -> pd.DataFrame:
-    """Each interval method's unmatched detections per minute, overall and at rest.
+    """Each interval method's unmatched detections at rest and while running.
 
     A detection is unmatched when it matches no truth window of the
     method's primary expression at 10 % of the peak at IoU 0
-    (``Matches.false_positives``). Two rates, each the unmatched detections
-    summed over the sessions the method ran on over the minutes summed over
-    them:
-
-    - ``unmatched_per_minute``: every unmatched detection, at rest or
-      running, over the minutes outside every network window at 10 %
-      (``minutes``), the denominator of every other false-positive rate in
-      these results;
-    - ``unmatched_rest_per_rest_minute``: the unmatched detections at rest
-      over the minutes of rest outside every network window
-      (``rest_minutes``).
+    (``Matches.false_positives``); every one of them over the minutes
+    outside every network window is ``appendix_expressions``' false
+    positives per minute against the primary expression. Here they are
+    split: ``unmatched_rest_per_rest_minute`` is the unmatched detections at
+    rest, summed over the sessions the method ran on, over the minutes of
+    rest outside every network window summed over them (``rest_minutes``).
 
     A detection is at rest or running by its time as ``rates_by_state``
-    places events (``event_times``: its ``peak_time``, else the midpoint of
-    its bounds) against the session's running bouts as closed intervals on
-    the timestamps (``intervals_to_mask``: a time on a bout's start or end,
-    to the timestamps' rounding, is running), never by whether it overlaps a
-    bout. The unmatched detections while running
-    are counted (``n_unmatched_running``) beside the running minutes outside
-    every network window (``running_minutes``, the bouts' time less their
-    overlap with the network windows); ``rest_minutes`` is ``minutes`` less
-    ``running_minutes``.
+    places events (``_count_by_state``: its ``peak_time``, else the midpoint
+    of its bounds, against the session's running bouts as closed intervals
+    on the timestamps), never by whether it overlaps a bout. The unmatched
+    detections while running are counted (``n_unmatched_running``) beside
+    the running minutes outside every network window (``running_minutes``,
+    the bouts' time less their overlap with the network windows); the rest
+    minutes are the minutes outside every network window less those.
 
     Parameters
     ----------
@@ -5726,12 +5725,11 @@ def false_positive_rates(
 
     Returns
     -------
-    rates : pandas.DataFrame
+    split : pandas.DataFrame
         One row per interval method and setting: ``method``, ``setting``,
-        ``n_unmatched``, ``n_unmatched_rest``, ``n_unmatched_running``,
-        ``minutes``, ``rest_minutes``, ``running_minutes`` (summed over the
-        sessions it has scores on), ``unmatched_per_minute`` and
-        ``unmatched_rest_per_rest_minute``, each with ``_low`` and ``_high``
+        ``n_unmatched_rest``, ``n_unmatched_running``, ``rest_minutes``,
+        ``running_minutes`` (summed over the sessions it has scores on),
+        ``unmatched_rest_per_rest_minute`` with ``_low`` and ``_high``
         (``grouped_intervals``: a session's counts and minutes resampled
         together); ``primary_expression``, ``n_sessions``, ``n_failures``.
     """
@@ -5742,45 +5740,38 @@ def false_positive_rates(
         on=[*_KEY, "event_index"],
         how="left",
     )
-    columns = ["n_unmatched_rest", "n_unmatched_running"]
+    counts = ["n_unmatched_rest", "n_unmatched_running"]
     counted = _count_by_state(unmatched, bouts)
-    counted.columns = columns
+    counted.columns = counts
     network = matches.windows[matches.windows["expression"] == "network"]
     windows = {session_id: _bounds(rows) for session_id, rows in network.groupby("session_id")}
     minutes = _minutes_outside(tables.sessions)
     times = []
     for session_id in tables.sessions["session_id"]:
-        own = windows.get(session_id, np.empty((0, 2)))
-        union = interval_union(own)
+        union = interval_union(windows.get(session_id, np.empty((0, 2))))
         bout = np.asarray(bouts[session_id], dtype=float).reshape(-1, 2)
         overlap = rd.intersect_intervals(union, bout)
         outside = float(np.sum(np.diff(bout, axis=1)) - np.sum(np.diff(overlap, axis=1)))
         times.append(
             {
                 "session_id": session_id,
-                "minutes": minutes[session_id],
                 "rest_minutes": minutes[session_id] - outside / 60,
                 "running_minutes": outside / 60,
             }
         )
-    frame = tables.intervals.ran.join(counted, on=list(_KEY)).fillna(dict.fromkeys(columns, 0))
+    frame = tables.intervals.ran.join(counted, on=list(_KEY)).fillna(dict.fromkeys(counts, 0))
     frame = frame.merge(pd.DataFrame(times), on="session_id")
-    frame["n_unmatched"] = frame["n_unmatched_rest"] + frame["n_unmatched_running"]
-    counts = ["n_unmatched", *columns]
-    sums = ["minutes", "rest_minutes", "running_minutes"]
-    rates = _pooled_ratios(
+    sums = ["rest_minutes", "running_minutes"]
+    split = _pooled_ratios(
         frame,
         ["method", "setting"],
-        {
-            "unmatched_per_minute": ("n_unmatched", "minutes"),
-            "unmatched_rest_per_rest_minute": ("n_unmatched_rest", "rest_minutes"),
-        },
+        {"unmatched_rest_per_rest_minute": ("n_unmatched_rest", "rest_minutes")},
         counts,
         sums,
         n_resamples=n_resamples,
     )
     grid = _method_grid(tables.intervals.methods)
-    return _per_method(rates, tables, grid, counts).fillna(dict.fromkeys(sums, 0.0))
+    return _per_method(split, tables, grid, counts).fillna(dict.fromkeys(sums, 0.0))
 
 
 def _first_members(tables: RunTables) -> pd.DataFrame:
@@ -5803,12 +5794,10 @@ def _in_target_order(frame: pd.DataFrame) -> pd.DataFrame:
 
 def compact_comparison(
     tables: RunTables,
-    matches: Matches,
     sensitivity: pd.DataFrame,
     errors: pd.DataFrame,
-    *,
-    bouts: Mapping[str, np.ndarray[Any, Any]] | None = None,
-    n_resamples: int = N_RESAMPLES,
+    appendix: pd.DataFrame,
+    split: pd.DataFrame,
 ) -> pd.DataFrame:
     """The headline scores of every interval method side by side.
 
@@ -5817,21 +5806,22 @@ def compact_comparison(
     are the group's first member's, which every member shares. The numbers
     are those of the tables they come from, never computed again: recall,
     precision and their counts from ``matching_sensitivity`` at IoU 0 and
-    0.5, the boundary errors from ``boundary_errors``; the unmatched
-    detections per minute are ``false_positive_rates``'.
+    0.5, the boundary errors from ``boundary_errors``, every unmatched
+    detection per minute from ``appendix_expressions``' rows of the primary
+    expression and their split into rest and running from
+    ``unmatched_by_state``.
 
     Parameters
     ----------
     tables : RunTables
-    matches : Matches
     sensitivity : pandas.DataFrame
-        ``matching_sensitivity``' table of ``tables`` and ``matches``.
+        ``matching_sensitivity``' table of ``tables``.
     errors : pandas.DataFrame
         ``boundary_errors``' table of them.
-    bouts : mapping of str to ndarray, optional
-        ``false_positive_rates``'.
-    n_resamples : int, optional
-        ``false_positive_rates``'.
+    appendix : pandas.DataFrame
+        ``appendix_expressions``' table of them.
+    split : pandas.DataFrame
+        ``unmatched_by_state``' table of them.
 
     Returns
     -------
@@ -5845,9 +5835,12 @@ def compact_comparison(
         at each level of ``COMPACT_LEVELS`` (``iou0``, ``iou0.5``)
         ``n_matched_<level>`` (a count, with no interval), ``recall_<level>``
         and ``precision_<level>``, each with ``_low`` and ``_high``;
-        ``false_positive_rates``' counts, minutes and two rates with their
-        intervals; ``n_pairs`` (the pairs matched at IoU 0 against the truth
-        windows at 10 % of the peak) and the median signed
+        ``n_unmatched`` (``n_detected`` less ``n_matched`` at IoU 0),
+        ``minutes`` and ``unmatched_per_minute`` with its interval (the
+        appendix's ``false_positives_per_minute``); ``unmatched_by_state``'
+        counts, minutes and rate at rest with its interval; ``n_pairs``
+        (the pairs matched at IoU 0 against the truth windows at 10 % of
+        the peak) and the median signed
         ``onset_error_<percent>`` and ``offset_error_<percent>`` of those
         pairs, each pair's error measured at the 10 and the 50 % bounds of its
         truth event (seconds, detected minus truth), each with ``_low`` and
@@ -5882,9 +5875,15 @@ def compact_comparison(
         if level == COMPACT_LEVELS[0]:
             own = own.join(at[["n_reference", "n_detected"]])
         table = table.merge(own, on=key, how="left")
-    rates = false_positive_rates(tables, matches, bouts=bouts, n_resamples=n_resamples)
-    rates = rates.drop(columns=["primary_expression", "n_sessions", "n_failures"])
-    table = table.merge(rates, on=key, how="left")
+    overall = appendix[appendix["primary"]].rename(columns=_UNMATCHED_NAMES)
+    overall = overall.assign(n_unmatched=overall["n_detected"] - overall["n_matched"])
+    table = table.merge(
+        overall[[*key, "n_unmatched", "minutes", *_UNMATCHED_NAMES.values()]],
+        on=key,
+        how="left",
+    )
+    split = split.drop(columns=["primary_expression", "n_sessions", "n_failures"])
+    table = table.merge(split, on=key, how="left")
     signed = errors[
         (errors["expression"] == errors["primary_expression"])
         & (errors["measure"] == "signed")
@@ -5928,12 +5927,8 @@ def compact_points(tables: RunTables, points: pd.DataFrame) -> pd.DataFrame:
         ``unmatched_per_minute`` here, over the same ``minutes``, and
         ``n_unmatched`` is ``n_detected`` less ``n_matched``.
     """
-    renamed = {
-        f"false_positives_per_minute{part}": f"unmatched_per_minute{part}"
-        for part in _WITH_INTERVAL
-    }
     table = _first_members(tables).merge(
-        points.rename(columns=renamed), on=["method", "setting"]
+        points.rename(columns=_UNMATCHED_NAMES), on=["method", "setting"]
     )
     table["n_unmatched"] = table["n_detected"] - table["n_matched"]
     return table.reset_index(drop=True)[list(COMPACT_POINT_COLUMNS)]
@@ -5978,10 +5973,7 @@ def compact_held_out(thresholds: pd.DataFrame, points: pd.DataFrame) -> pd.DataF
             "kind": np.where(measured, MEASURED, ""),
             "setting": thresholds["setting"],
             **{f"recall{part}": thresholds[f"recall{part}"] for part in _WITH_INTERVAL},
-            **{
-                f"unmatched_per_minute{part}": thresholds[f"false_positives_per_minute{part}"]
-                for part in _WITH_INTERVAL
-            },
+            **{new: thresholds[old] for old, new in _UNMATCHED_NAMES.items()},
             "n_sessions": thresholds["n_held_out_sessions"],
         }
     )
@@ -7763,10 +7755,10 @@ def _compact(name: str) -> AnalysisTable:
     def tables(inputs: Inputs) -> dict[str, pd.DataFrame]:
         comparison = compact_comparison(
             inputs.tables,
-            inputs.matches,
             _matching(inputs),
             _of_reference(boundary_errors)(inputs),
-            n_resamples=inputs.n_resamples,
+            _of_reference(appendix_expressions)(inputs),
+            _of_reference(unmatched_by_state)(inputs),
         )
         return {
             **{

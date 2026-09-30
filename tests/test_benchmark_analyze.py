@@ -1114,16 +1114,9 @@ def test_point_inventories_are_scored_apart(analyze, point_matched):
     assert analyze.consensus(tables, matches).n_methods_compared.unique().tolist() == [2]
     counts = analyze.failure_counts(tables).set_index("method")
     assert counts.loc[DAVIDSON[0], "scoring"] == "peak_containment"
-    assert DAVIDSON[0] not in set(analyze.false_positive_rates(tables, matches).method)
-    leveled = analyze.match_run(tables, levels=(0.0, 0.2, 0.5))
-    compact = analyze.compact_comparison(
-        tables,
-        leveled,
-        analyze.matching_sensitivity(tables, leveled, n_resamples=FEW),
-        analyze.boundary_errors(tables, leveled, n_resamples=FEW),
-        n_resamples=FEW,
-    )
-    assert compact.method.tolist() == [KAY[0], LEE[0]]
+    found = _compact_of(analyze, tables, analyze.match_run(tables, levels=(0.0, 0.2, 0.5)))
+    assert DAVIDSON[0] not in set(found.split.method)
+    assert found.compact.method.tolist() == [KAY[0], LEE[0]]
 
 
 @pytest.fixture(scope="module")
@@ -1158,7 +1151,7 @@ def test_a_method_that_never_ran_keeps_its_rows(analyze, failing_run):
         "matching_sensitivity": analyze.matching_sensitivity(tables, matches, **quick),
         "rates_by_state": analyze.rates_by_state(tables, bouts=bouts, **quick),
         "point_inventories": analyze.point_inventories(tables, matches, **quick),
-        "false_positive_rates": analyze.false_positive_rates(
+        "unmatched_by_state": analyze.unmatched_by_state(
             tables, matches, bouts=bouts, **quick
         ),
     }
@@ -1173,7 +1166,7 @@ def test_a_method_that_never_ran_keeps_its_rows(analyze, failing_run):
         "matching_sensitivity": "recall",
         "rates_by_state": "rate",
         "point_inventories": "recall",
-        "false_positive_rates": "unmatched_per_minute",
+        "unmatched_by_state": "unmatched_rest_per_rest_minute",
     }
     for name, table in per_method.items():
         failed = (
@@ -1205,11 +1198,10 @@ def test_a_method_that_never_ran_keeps_its_rows(analyze, failing_run):
     assert timing.onset_signed_estimate.isna().all()
     compact = analyze.compact_comparison(
         tables,
-        matches,
         per_method["matching_sensitivity"],
         per_method["boundary_errors"],
-        bouts=bouts,
-        **quick,
+        analyze.appendix_expressions(tables, matches, **quick),
+        per_method["unmatched_by_state"],
     ).set_index("method")
     points = analyze.compact_points(tables, per_method["point_inventories"]).set_index(
         "method"
@@ -3000,6 +2992,21 @@ def test_select_events_for_a_spot_check(analyze, tiny_tables, point_matched):
         select(KAY[0], "8.0", "missed")
 
 
+def _compact_of(analyze, tables, matches, bouts=None):
+    """The tables compact_comparison joins, and its table, of a run matched
+    at every minimum IoU."""
+    found = SimpleNamespace(
+        sensitivity=analyze.matching_sensitivity(tables, matches, n_resamples=FEW),
+        errors=analyze.boundary_errors(tables, matches, n_resamples=FEW),
+        appendix=analyze.appendix_expressions(tables, matches, n_resamples=FEW),
+        split=analyze.unmatched_by_state(tables, matches, bouts=bouts, n_resamples=FEW),
+    )
+    found.compact = analyze.compact_comparison(
+        tables, found.sensitivity, found.errors, found.appendix, found.split
+    )
+    return found
+
+
 def _hand_groups(analyze, tiny_tables):
     """Hand tables for grouping: two sessions, the second at a Unix clock
     origin, and methods (two settings of one among them) whose events agree
@@ -3121,45 +3128,31 @@ def tiny_levels(analyze, tiny_tables):
     return matches, bouts
 
 
-def test_false_positive_rates_place_detections_by_their_time(
-    analyze, tiny_tables, tiny_levels
-):
+def test_unmatched_detections_are_placed_by_their_time(analyze, tiny_tables, tiny_levels):
     matches, bouts = tiny_levels
-    rates = analyze.false_positive_rates(tiny_tables, matches, bouts=bouts, n_resamples=FEW)
-    rates = rates.set_index("method")
+    split = analyze.unmatched_by_state(tiny_tables, matches, bouts=bouts, n_resamples=FEW)
+    split = split.set_index("method")
     # Kay, per session: the false positive over the burst-only event and the
     # last one peak where a bout ends (closed: running); the leakage one
     # starts before the second bout, its peak 0.5 ms before it (rest)
-    kay = rates.loc[KAY[0]]
-    assert [kay.n_unmatched, kay.n_unmatched_rest, kay.n_unmatched_running] == [6, 2, 4]
+    kay = split.loc[KAY[0]]
+    assert [kay.n_unmatched_rest, kay.n_unmatched_running] == [2, 4]
     minutes = (20.0 - tiny_tables.sessions.event_time_s.to_numpy()) / 60
     # the bouts last 2.1495 s, 0.1 s of it inside the burst-only event's window
     running = 2 * 2.0495 / 60
-    assert kay.minutes == pytest.approx(minutes.sum())
     assert kay.running_minutes == pytest.approx(running, abs=1e-6)
     assert kay.rest_minutes == pytest.approx(minutes.sum() - running, abs=1e-6)
-    assert kay.unmatched_per_minute == pytest.approx(6 / minutes.sum())
     assert kay.unmatched_rest_per_rest_minute == pytest.approx(2 / kay.rest_minutes)
     # Mallory, on the session it ran: the EMG's and the last, both at rest
-    mallory = rates.loc[MALLORY[0]]
+    mallory = split.loc[MALLORY[0]]
     assert [mallory.n_unmatched_rest, mallory.n_unmatched_running] == [2, 0]
-    assert mallory.minutes == pytest.approx(minutes[0])
+    assert mallory.rest_minutes == pytest.approx(minutes[0] - running / 2, abs=1e-6)
     assert (mallory.n_sessions, mallory.n_failures) == (1, 1)
-    # the overall rate is the appendix's against the primary expression,
-    # interval too: the same counts, minutes and resamples
-    appendix = analyze.appendix_expressions(tiny_tables, matches, n_resamples=FEW)
-    primary = appendix[appendix.primary].set_index("method")
-    for method in (KAY[0], MALLORY[0]):
-        found, expected = rates.loc[method], primary.loc[method]
-        assert found.n_unmatched == expected.n_detected - expected.n_matched
-        for part in ("", "_low", "_high"):
-            assert (
-                found[f"unmatched_per_minute{part}"]
-                == (expected[f"false_positives_per_minute{part}"])
-            )
 
 
-def test_false_positive_rates_place_by_peak_else_midpoint(analyze, tiny_tables, tiny_levels):
+def test_unmatched_detections_are_placed_by_peak_else_midpoint(
+    analyze, tiny_tables, tiny_levels
+):
     """As rates_by_state places events: by the peak where there is one."""
     matches, bouts = tiny_levels
     events = tiny_tables.events.copy()
@@ -3173,75 +3166,78 @@ def test_false_positive_rates_place_by_peak_else_midpoint(analyze, tiny_tables, 
     events.loc[leakage, "peak_time"] = events.loc[leakage, "end_time"]
     events.loc[last, "peak_time"] = np.nan
     moved = dataclasses.replace(tiny_tables, events=events)
-    rates = analyze.false_positive_rates(moved, matches, bouts=bouts, n_resamples=FEW)
-    kay_rates = rates.set_index("method").loc[KAY[0]]
-    assert [kay_rates.n_unmatched_rest, kay_rates.n_unmatched_running] == [0, 6]
+    split = analyze.unmatched_by_state(moved, matches, bouts=bouts, n_resamples=FEW)
+    kay = split.set_index("method").loc[KAY[0]]
+    assert [kay.n_unmatched_rest, kay.n_unmatched_running] == [0, 6]
 
 
-def test_false_positive_rates_by_default_draw_the_bouts_again(analyze, tiny_tables):
+def test_unmatched_detections_by_default_draw_the_bouts_again(
+    analyze, tiny_tables, tiny_matches
+):
     # the tiny run's sessions are too short for a running bout: all rest
-    rates = analyze.false_positive_rates(
-        tiny_tables, analyze.match_run(tiny_tables), n_resamples=FEW
-    )
-    assert (rates.n_unmatched_running == 0).all()
-    assert rates.rest_minutes.tolist() == rates.minutes.tolist()
+    split = analyze.unmatched_by_state(tiny_tables, tiny_matches, n_resamples=FEW)
+    assert (split.n_unmatched_running == 0).all()
+    assert (split.running_minutes == 0).all()
     wrong = dataclasses.replace(tiny_tables, sessions=tiny_tables.sessions.assign(rest_s=19.0))
     with pytest.raises(ValueError, match="the running schedule drawn again"):
-        analyze.false_positive_rates(wrong, analyze.match_run(tiny_tables))
+        analyze.unmatched_by_state(wrong, tiny_matches)
 
 
 @pytest.fixture(scope="module")
 def tiny_compact(analyze, tiny_tables, tiny_levels):
     matches, bouts = tiny_levels
-    sensitivity = analyze.matching_sensitivity(tiny_tables, matches, n_resamples=FEW)
-    errors = analyze.boundary_errors(tiny_tables, matches, n_resamples=FEW)
-    compact = analyze.compact_comparison(
-        tiny_tables, matches, sensitivity, errors, bouts=bouts, n_resamples=FEW
-    )
-    return compact, sensitivity, errors
+    return _compact_of(analyze, tiny_tables, matches, bouts)
 
 
-_RATE_COLUMNS = (
-    "n_unmatched",
+# The compact columns unmatched_by_state gives, and those the appendix does
+# under their compact names.
+_SPLIT_COLUMNS = (
     "n_unmatched_rest",
     "n_unmatched_running",
-    "minutes",
     "rest_minutes",
     "running_minutes",
-    *(
-        f"{name}{part}"
-        for name in ("unmatched_per_minute", "unmatched_rest_per_rest_minute")
-        for part in ("", "_low", "_high")
-    ),
+    *(f"unmatched_rest_per_rest_minute{part}" for part in ("", "_low", "_high")),
 )
+_OVERALL_COLUMNS = {
+    "minutes": "minutes",
+    **{
+        f"false_positives_per_minute{part}": f"unmatched_per_minute{part}"
+        for part in ("", "_low", "_high")
+    },
+}
 
 
-def test_what_was_not_computed_is_refused(analyze, tiny_tables, tiny_levels, tiny_compact):
+def test_what_was_not_computed_is_refused(analyze, tiny_tables, tiny_compact):
     # matched at IoU 0 alone, as match_run matches by default
     with pytest.raises(ValueError, match=r"not formed at minimum IoU \[0\.2, 0\.5\]"):
         analyze.matching_sensitivity(tiny_tables, analyze.match_run(tiny_tables))
-    matches, bouts = tiny_levels
-    _, sensitivity, errors = tiny_compact
-    without = errors[~np.isclose(errors.fraction, 0.5)]
+    found = tiny_compact
+    without = found.errors[~np.isclose(found.errors.fraction, 0.5)]
     with pytest.raises(ValueError, match=r"no errors at \[50\] % of the peak"):
         analyze.compact_comparison(
-            tiny_tables, matches, sensitivity, without, bouts=bouts, n_resamples=FEW
+            tiny_tables, found.sensitivity, without, found.appendix, found.split
         )
 
 
-def test_compact_comparison_takes_its_numbers_from_their_tables(
-    analyze, tiny_tables, tiny_levels, tiny_compact
-):
-    compact, sensitivity, errors = tiny_compact
-    # the unmatched counts, minutes and rates: false_positive_rates' with
-    # the bouts given, Kay's running ones among them
-    matches, bouts = tiny_levels
-    rates = analyze.false_positive_rates(tiny_tables, matches, bouts=bouts, n_resamples=FEW)
-    rates = rates.set_index("method").loc[compact.method, list(_RATE_COLUMNS)]
-    pd.testing.assert_frame_equal(
-        compact.set_index("method")[list(_RATE_COLUMNS)], rates, check_dtype=False
-    )
+def test_compact_comparison_takes_its_numbers_from_their_tables(analyze, tiny_compact):
+    found = tiny_compact
+    compact, sensitivity, errors = found.compact, found.sensitivity, found.errors
+    by_method = compact.set_index("method")
+    # the split into rest and running: unmatched_by_state's with the bouts
+    # given, Kay's running ones among them
+    split = found.split.set_index("method").loc[compact.method, list(_SPLIT_COLUMNS)]
+    pd.testing.assert_frame_equal(by_method[list(_SPLIT_COLUMNS)], split, check_dtype=False)
     assert compact.n_unmatched_running.tolist() == [4, 0]
+    # every unmatched detection: the appendix's against the primary expression
+    appendix = found.appendix[found.appendix.primary].set_index("method")
+    overall = appendix.loc[compact.method, list(_OVERALL_COLUMNS)].rename(
+        columns=_OVERALL_COLUMNS
+    )
+    pd.testing.assert_frame_equal(
+        by_method[list(_OVERALL_COLUMNS.values())], overall, check_dtype=False
+    )
+    unmatched = appendix.loc[compact.method].eval("n_detected - n_matched")
+    assert compact.n_unmatched.tolist() == unmatched.tolist() == [6, 2]
     assert list(compact.columns) == list(analyze.COMPACT_COLUMNS)
     assert compact[
         ["primary_expression", "method", "members", "n_members"]
@@ -3376,20 +3372,11 @@ def compact_run(analyze, run, tmp_path_factory):
     matches = analyze.match_run(tables, levels=(0.0, 0.2, 0.5))
     bouts = {"reference/0": np.array([[5.8, 6.3]])}
     bouts["reference/1"] = bouts["reference/0"] + UNIX_ORIGIN
-    sensitivity = analyze.matching_sensitivity(tables, matches, n_resamples=FEW)
-    errors = analyze.boundary_errors(tables, matches, n_resamples=FEW)
-    compact = analyze.compact_comparison(
-        tables, matches, sensitivity, errors, bouts=bouts, n_resamples=FEW
-    )
+    found = _compact_of(analyze, tables, matches, bouts)
     points = analyze.point_inventories(tables, matches, n_resamples=FEW)
-    return SimpleNamespace(
-        tables=tables,
-        matches=matches,
-        bouts=bouts,
-        errors=errors,
-        compact=compact,
-        points=analyze.compact_points(tables, points),
-    )
+    found.tables = tables
+    found.points = analyze.compact_points(tables, points)
+    return found
 
 
 def test_compact_tables_keep_one_row_per_group(analyze, compact_run):
@@ -3468,7 +3455,7 @@ def test_compact_page_lists_groups_and_stand_ins(analyze, compact_run):
 
 
 def test_compact_page_formats_every_number(analyze, tiny_tables, tiny_compact):
-    compact, _, _ = tiny_compact
+    compact = tiny_compact.compact
     results = {
         f"compact_{target}": compact[compact.primary_expression == target]
         for target in analyze.COMPACT_TARGETS
