@@ -4153,10 +4153,17 @@ def test_a_rate_is_never_read_where_it_was_not_counted(analyze, two_condition_ru
 
 
 def test_a_setting_without_a_rate_is_left_out_of_a_curve(analyze):
-    # the third setting's rate is undefined: never the best within budget
-    found, kinds = analyze._at_fp_rates(
-        [0.1, 0.3, np.nan], [0.5, 0.6, 0.9], [0.5, 0.6, 0.9], [1.0, 0.2], 0.01
-    )
+    # a pooled curve whose third setting has no minutes, so no rate: never
+    # the best within budget, nor a point interpolated through
+    pooled = {
+        "n_reference": np.array([10.0, 10.0, 10.0]),
+        "n_detected": np.array([6.0, 9.0, 9.0]),
+        "n_matched": np.array([5.0, 6.0, 9.0]),
+        "n_false_positives": np.array([1.0, 3.0, 0.0]),
+        "minutes": np.array([10.0, 10.0, 0.0]),
+        "ran": np.array([1.0, 1.0, 1.0]),
+    }
+    found, kinds = analyze._read_off(pooled, [1.0, 0.2], ["recall"])
     assert kinds.tolist() == ["within budget", "interpolated"]
     assert found[0, 0] == 0.6
 
