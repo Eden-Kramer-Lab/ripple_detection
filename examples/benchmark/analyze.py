@@ -2989,6 +2989,20 @@ AT_TARGET = ("recall", "median_onset_error", "median_offset_error")
 # How a value read off a curve at a target was found.
 INTERPOLATED = "interpolated"
 TESTED = "tested"
+WITHIN_BUDGET = "within budget"
+
+
+def _within_budget(
+    x: np.ndarray[Any, Any], recall: ArrayLike, targets: np.ndarray[Any, Any]
+) -> tuple[np.ndarray[Any, Any], int | None]:
+    """Which targets lie past every setting's floored log rate ``x``, shape
+    (n_targets,), and the setting a curve gives there: the best recall
+    (ties: the first in threshold order), None when no recall is defined."""
+    recall = np.asarray(recall, dtype=float)
+    past = targets > np.nanmax(x) if np.isfinite(x).any() else np.zeros(len(targets), bool)
+    if not np.isfinite(recall).any():
+        return past, None
+    return past, int(np.argmax(np.where(np.isfinite(recall), recall, -np.inf)))
 
 
 def _at_fp_rates(
@@ -3013,13 +3027,16 @@ def _at_fp_rates(
     Returns
     -------
     found : ndarray, shape (n_targets, n_columns)
-        ``values`` read off at each target; NaN outside the curve's rates.
+        ``values`` read off at each target; NaN below every setting's rate.
     kinds : ndarray of str, shape (n_targets,)
         How each was read off: ``"tested"`` where the target is a kept
         setting's floored rate (in log rate, as the curve is read), so the
         value is that setting's; ``"interpolated"`` where it lies strictly
         between two kept settings' rates, so no setting was run there;
-        ``""`` where the curve does not reach the target.
+        ``"within budget"`` where it lies past every setting's rate, so
+        every setting keeps to it and the value is the setting with the best
+        recall's (ties: the first in threshold order); ``""`` where it lies
+        below every setting's rate, so the curve does not reach it.
     """
     fp_rate = np.asarray(fp_rate, dtype=float)
     values = np.asarray(values, dtype=float).reshape(len(fp_rate), -1)
@@ -3039,6 +3056,10 @@ def _at_fp_rates(
     for column in range(values.shape[1]):
         found[inside, column] = np.interp(targets[inside], xs, values[kept, column])
     kinds[inside] = np.where(np.isin(targets[inside], xs), TESTED, INTERPOLATED)
+    past, best = _within_budget(x, recall, targets)
+    if best is not None:
+        found[past] = values[best]
+        kinds[past] = WITHIN_BUDGET
     return found, kinds
 
 
@@ -3051,7 +3072,9 @@ def at_fp_rate(
     recall (ties: the first in threshold order), whole; every column is then
     interpolated linearly in log false-positive rate between the same two
     bracketing rows, so recall and the boundary errors describe the same
-    settings.
+    settings. A target past every setting's rate is within the budget of
+    every setting: the row with the best recall (ties: the first in
+    threshold order) is read, whole.
 
     Parameters
     ----------
@@ -3068,7 +3091,7 @@ def at_fp_rate(
     Returns
     -------
     found : pandas.Series
-        Indexed by ``columns``; NaN outside the curve's range of rates.
+        Indexed by ``columns``; NaN below every setting's rate.
     """
     found, _ = _at_fp_rates(
         curve["fp_rate"], curve["recall"], curve[list(columns)], [target], floor
@@ -3512,8 +3535,10 @@ def operating_points(
     sessions on which every setting of the sweep ran, with 95 % intervals
     from resampling the condition's sessions (``paired_bootstrap``'s
     draws): each resample pools its sessions into a curve and reads it off
-    again, the setting chosen afresh. A target outside a curve's range of
-    rates is NaN, never the nearest end.
+    again, the setting chosen afresh. A target past every setting's rate is
+    within the budget of every setting: the best recall's setting is read
+    there. A target below every setting's rate is NaN, never the nearest
+    end.
 
     Parameters
     ----------
@@ -3529,7 +3554,8 @@ def operating_points(
         One row per detector, ``minimum_iou`` and target: ``method``,
         ``primary_expression``, ``minimum_iou``, ``fp_target``, ``read_off``
         (``_at_fp_rates``' kinds: ``"interpolated"`` between two tested settings,
-        ``"tested"`` at one, ``""`` unreached), then for ``recall``,
+        ``"tested"`` at one, ``"within budget"`` past every setting's rate,
+        ``""`` unreached), then for ``recall``,
         ``median_onset_error`` and ``median_offset_error`` (seconds,
         detected minus truth at 10 %) the estimate, ``_low`` and
         ``_high`` (over the resamples whose curve reaches the target; none
@@ -3583,7 +3609,7 @@ def _conditional_intervals(
 ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
     """Percentile intervals of resampled values shaped like ``estimate``,
     over the resamples where each is defined; NaN wherever the estimate is
-    (a target the full data cannot reach has no interval)."""
+    (a target below every setting's rate in the full data has no interval)."""
     low, high = percentile_intervals(draws.reshape(len(draws), -1))
     low, high = low.reshape(estimate.shape), high.reshape(estimate.shape)
     missing = ~np.isfinite(estimate)
@@ -4336,17 +4362,21 @@ def _nearest_settings(
     pool: Pool, settings: Sequence[str], n_units: int, targets: Sequence[float]
 ) -> list[str]:
     """The setting of a sweep pool whose false-positive rate, pooled over
-    every unit, is nearest each target in log rate; ``""`` for none."""
+    every unit, is nearest each target in log rate, or for a target past
+    every setting's rate the one the curve is read at there (``_at_fp_rates``:
+    the best recall); ``""`` for none."""
     curve = _held_curve(pool(np.ones(n_units)))
     if curve is None:
         return [""] * len(targets)
     held, rates, floor = curve
     positions = np.flatnonzero(held)
-    distance = np.abs(
-        np.log(np.maximum(rates["fp_rate"][held], floor))[:, None]
-        - np.log(np.asarray(targets))[None, :]
-    )
-    return [settings[positions[position]] for position in np.argmin(distance, axis=0)]
+    x = np.log(np.maximum(rates["fp_rate"][held], floor))
+    wanted = np.log(np.asarray(targets, dtype=float))
+    chosen = np.argmin(np.abs(x[:, None] - wanted[None, :]), axis=0)
+    past, best = _within_budget(x, rates["recall"][held], wanted)
+    if best is not None:
+        chosen[past] = best
+    return [settings[positions[position]] for position in chosen]
 
 
 def _sweep_recalls(
@@ -4781,10 +4811,12 @@ def operating_differences(
         ``setting_a`` and ``setting_b`` (each detector's swept setting whose
         false-positive rate is nearest the target, where a spot check
         looks), ``recall_a`` and ``recall_b``, ``reached_a`` and ``reached_b``
-        (whether each curve reaches the target; a recall it does not reach
-        is NaN, never the curve's end), ``read_off_a`` and ``read_off_b``
-        (``_at_fp_rates``' kinds: each recall ``"interpolated"`` between two
-        tested settings, ``"tested"`` at one, ``""`` unreached),
+        (whether each curve reaches the target; a recall it does not reach,
+        the target below every setting's rate, is NaN, never the curve's
+        end), ``read_off_a`` and ``read_off_b`` (``_at_fp_rates``' kinds: each
+        recall ``"interpolated"`` between two tested settings, ``"tested"``
+        at one, ``"within budget"`` past every setting's rate, the best
+        recall's setting, ``""`` unreached),
         ``difference`` (A minus B) with ``_low``, ``_high`` and ``_p``,
         ``n_draws`` (the resamples in which both pooled curves reach the
         target, those the interval and p-value are over; NaN and 0 without a
@@ -6161,8 +6193,10 @@ def compact_held_out(thresholds: pd.DataFrame, points: pd.DataFrame) -> pd.DataF
         sessions every setting of the sweep ran on (``n_sessions``), read off
         the pooled curve (``kind`` its ``read_off``: ``"interpolated"``
         between two tested settings, ``"tested"`` at one, which happens only
-        where a pooled rate equals the target exactly, ``""`` where the curve
-        does not reach the target), with no setting and no false-positive
+        where a pooled rate equals the target exactly, ``"within budget"``
+        where every setting's rate is below it, the best recall read, ``""``
+        where the curve does not reach the target), with no setting and no
+        false-positive
         rate of its own: that is the target, by construction.
         ``n_sessions``: the sessions each value pools.
     """
@@ -6250,10 +6284,13 @@ COMPACT_DEFINITIONS = (
         "replicates at the tested setting chosen on the even ones (`measured`) beside "
         "`operating_points`' recall read off the curve pooled over the sessions every "
         "setting ran on (`n_sessions`): `interpolated` between two tested settings' rates in "
-        "log rate, so no setting was run there, or `tested` where the target is one "
-        "setting's rate, which happens only when a pooled rate equals the target exactly, so "
-        "in practice every reached value is interpolated. Only a held-out value is a number "
-        "a threshold recommendation may quote."
+        "log rate, so no setting was run there, `tested` where the target is one "
+        "setting's rate, which happens only when a pooled rate equals the target exactly, or "
+        "`within budget` where every setting's rate is below the target, so the best "
+        "recall of any setting is read (Long's detector, with no false positive at any "
+        "setting). Only a held-out value is a number a threshold recommendation may quote; "
+        "its setting is the best recall among those within the target on the even "
+        "replicates."
     ),
     (
         "- **Identical groups.** Methods sharing a primary expression whose detections are "
@@ -8135,8 +8172,9 @@ ANALYSES: tuple[Analysis, ...] = (
         OPERATING_POINTS,
         _of_scores(operating_points),
         "Each detector's recall and median onset and offset errors read off its sweep at "
-        "0.5, 1, 2 and 5 false positives per minute, with intervals; missing where the "
-        "curve does not reach the target.",
+        "0.5, 1, 2 and 5 false positives per minute, with intervals; the best recall "
+        "where every setting keeps within the target, missing where the curve does not "
+        "come down to it.",
         plot_operating_points,
         "Recall at each target, per minimum IoU.",
     ),
@@ -8145,8 +8183,8 @@ ANALYSES: tuple[Analysis, ...] = (
         _of_scores(operating_differences),
         "For each pair of detectors sharing a primary expression, the difference in recall "
         "(A minus B) at each target rate, paired by session, with its interval and an "
-        "approximate p-value from the same resamples; missing where a curve does not reach "
-        "the target.",
+        "approximate p-value from the same resamples; missing where a curve does not come "
+        "down to the target.",
     ),
     Analysis(
         "held_out_thresholds",

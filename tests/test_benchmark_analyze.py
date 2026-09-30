@@ -1617,12 +1617,16 @@ def test_false_positives_are_counted_again_where_a_rate_reads_them(analyze, run,
 
 
 def _design_at_fp_rate(curve, target, floor, columns):
-    """``at_fp_rate`` as the benchmark's design writes it, in pandas."""
+    """``at_fp_rate`` as the benchmark's design writes it, in pandas, with
+    the budget rule: past every setting's rate, the best recall's setting."""
     x = np.log(np.maximum(curve.fp_rate.to_numpy(float), floor))
     ranked = curve.assign(_x=x, _order=np.arange(len(curve)))
     ranked = ranked.sort_values(["_x", "recall", "_order"], ascending=[True, False, True])
     points = ranked.drop_duplicates("_x", keep="first")
     xs, t = points._x.to_numpy(), np.log(target)
+    if t > xs[-1]:
+        best = curve.recall.to_numpy(float).argmax()
+        return pd.Series({c: float(curve[c].iloc[best]) for c in columns})
     if not (xs[0] <= t <= xs[-1]):
         return pd.Series(np.nan, index=list(columns))
     return pd.Series({c: float(np.interp(t, xs, points[c].to_numpy(float))) for c in columns})
@@ -1641,10 +1645,11 @@ def test_at_fp_rate_interpolates_in_log_rate(analyze):
     # halfway between 0.5 and 2 per minute in log rate, and between 2 and 8
     assert at(1.0).tolist() == pytest.approx([0.5, 0.01])
     assert at(4.0).tolist() == pytest.approx([0.75, 0.03])
-    # a rate of 0 counts as the floor, and below it or past the end is NaN
+    # a rate of 0 counts as the floor, and below it is NaN; past the end,
+    # within budget, the best recall's setting
     assert at(0.25).tolist() == pytest.approx([0.2, -0.02])
     assert at(0.2).isna().all()
-    assert at(9.0).isna().all()
+    assert at(9.0).tolist() == pytest.approx([0.9, 0.04])
 
 
 def test_at_fp_rate_keeps_one_setting(analyze):
@@ -1667,7 +1672,7 @@ def test_reading_off_says_where_a_value_is_interpolated(analyze):
     # a value exactly where there is a label
     assert (np.isnan(found[:, 0]) == (kinds == "")).all()
     # at a setting's rate (0 floored to 0.25, a repeated rate once), between
-    # two, and outside the curve
+    # two, below the curve, and past it (every setting within the budget)
     assert kinds.tolist() == [
         "",
         "tested",
@@ -1676,8 +1681,53 @@ def test_reading_off_says_where_a_value_is_interpolated(analyze):
         "tested",
         "interpolated",
         "tested",
-        "",
+        "within budget",
     ]
+    assert found[-1, 0] == 0.9
+
+
+def test_a_curve_within_budget_gives_its_best_recall(analyze):
+    # every setting at 0 false positives, floored (Long on v1): at any
+    # target above the floor the best recall's setting, whole
+    recall, onset = [0.6, 0.7, 0.65, 0.7], [0.01, 0.02, 0.03, 0.04]
+    found, kinds = analyze._at_fp_rates(
+        [0.0] * 4, recall, np.column_stack([recall, onset]), [0.2, 0.25, 0.5, 5.0], 0.25
+    )
+    assert kinds.tolist() == ["", "tested", "within budget", "within budget"]
+    # ties: the first in threshold order
+    assert found[2:].tolist() == [[0.7, 0.02], [0.7, 0.02]]
+    # a curve whose best recall is not at its highest rate: bracketed targets
+    # are interpolated as before, one past every setting takes the best
+    fp_rate, recall = [0.1, 0.2, 0.3], [0.5, 0.8, 0.6]
+    found, kinds = analyze._at_fp_rates(fp_rate, recall, recall, [0.05, 0.15, 0.3, 1.0], 0.01)
+    assert kinds.tolist() == ["", "interpolated", "tested", "within budget"]
+    between = 0.5 + 0.3 * np.log(1.5) / np.log(2)
+    assert found[1:, 0].tolist() == pytest.approx([between, 0.6, 0.8])
+
+
+def test_every_reading_within_budget_takes_the_best_setting(analyze):
+    # three settings whose rates, 0.1 per minute, are all within 1 per
+    # minute, the middle one with the best recall, on every replicate
+    counts = [
+        _kay("reference", replicate, setting, matched, matched + 1)
+        for replicate in range(4)
+        for setting, matched in (("2.0", 6), ("3.0", 8), ("4.0", 5))
+    ]
+    scores = _hand_scores(analyze, counts)
+    thresholds = analyze.held_out_thresholds(scores, targets=(1.0,), n_resamples=FEW)
+    held = thresholds.iloc[0]
+    assert (held.setting, held.calibration_recall, held.recall) == ("3.0", 0.8, 0.8)
+    points = analyze.operating_points(scores, targets=(1.0,), n_resamples=FEW)
+    point = points[points.minimum_iou == 0].iloc[0]
+    assert (point.read_off, point.recall, point.recall_low) == ("within budget", 0.8, 0.8)
+    compact = analyze.compact_held_out(thresholds, points).set_index("source")
+    assert compact.loc["operating_point", "kind"] == "within budget"
+    assert compact.loc["held_out", ["setting", "recall"]].tolist() == ["3.0", 0.8]
+    # the setting a spot check looks at, and the events its recall rests on
+    found = analyze._sweep_recalls(scores, ["reference"], range(4), [KAY[0]], [1.0], FEW)
+    assert found.nearest[0, 0, 0] == "3.0"
+    assert found.events[0, 0, 0] == 32
+    assert found.read_off[0, 0, 0] == "within budget"
 
 
 def test_at_fp_rate_is_the_design(analyze):
@@ -1799,11 +1849,13 @@ def test_operating_curves_and_points_by_hand(analyze):
         )
     # the two sessions are alike: every resample reads the same values off
     assert points.loc[1.0, "recall_low"] == pytest.approx(points.loc[1.0, "recall"])
-    # 5 per minute is past the curve's end: missing, not its last point
-    assert points.loc[5.0, ["recall", "recall_low", "recall_high"]].isna().all()
-    assert points.attained.tolist() == [1.0, 1.0, 1.0, 0.0]
+    # 5 per minute is past the curve's end: every setting within it, the best
+    # recall's setting, in the estimate and in every resample
+    assert points.loc[5.0, ["recall", "recall_low", "recall_high"]].tolist() == [0.8] * 3
+    assert points.loc[5.0, "median_onset_error"] == -0.03
+    assert points.attained.tolist() == [1.0, 1.0, 1.0, 1.0]
     # 0.5 and 2 per minute are two settings' rates; 1 lies between them
-    assert points.read_off.tolist() == ["tested", "interpolated", "tested", ""]
+    assert points.read_off.tolist() == ["tested", "interpolated", "tested", "within budget"]
     every = analyze.operating_points(scores, n_resamples=FEW)
     assert ((every.read_off == "") == every.recall.isna()).all()
 
@@ -1828,15 +1880,15 @@ def test_operating_curves_label_defaults_and_recipes(analyze):
 
 
 def test_an_unreached_target_keeps_no_interval(analyze):
-    # the first session's curve reaches 4 false positives a minute, the
-    # second's 0.5, the two pooled 2.25: 3 per minute is past the pooled
-    # curve, though resamples of the first session alone reach it
+    # the first session's curve comes down to 0.2 false positives a minute,
+    # the second's to 0.3, the two pooled to 0.25: 0.22 per minute is below
+    # the pooled curve, though resamples of the first session alone reach it
     counts = [
         *_curve("reference", 0, KAY[0], ((8, 48), (6, 8))),
         *_curve("reference", 1, KAY[0], ((8, 13), (6, 9))),
     ]
     points = analyze.operating_points(
-        _hand_scores(analyze, counts), targets=(3.0,), n_resamples=FEW
+        _hand_scores(analyze, counts), targets=(0.22,), n_resamples=FEW
     )
     row = points[points.minimum_iou == 0].iloc[0]
     assert 0 < row.attained < 1
@@ -2559,7 +2611,9 @@ def _model_run(analyze, *, skip=()):
     """Kay and Karlsson in the reference and every alternative model but
     ``skip``, four replicates each. Kay's recall at 1 per minute is 0.7,
     Karlsson's 0.6, everywhere but under refractory spiking, where Kay's
-    falls to 0.4; no curve reaches 5 per minute."""
+    falls to 0.4; every curve lies within 5 per minute (0.5 and 2), so its
+    best recall is read there: Kay's 0.8, Karlsson's 0.7, Kay's 0.5 under
+    refractory spiking."""
     kay, karlsson = ((8, 28), (6, 11)), ((7, 27), (5, 10))
     counts = []
     for condition in ["reference", *(c for _, _, c in analyze.MODEL_ALTERNATIVES)]:
@@ -2598,10 +2652,15 @@ def test_model_sensitivity_includes_all_variants(analyze):
     )
     assert (refractory.change_p, refractory.n_draws) == (0.0, FEW)
     assert at_fp.loc[("noise_modulation=varying", KAY[0], 1.0), "change"] == 0
-    # 5 per minute is past every curve: missing, not the end of the curve
-    unreachable = at_fp.xs(5.0, level="fp_target")
-    assert (unreachable.status == "unattainable").all()
-    assert unreachable[["change", "change_low", "change_p"]].isna().all().all()
+    # 5 per minute is past every curve: within budget, the best recall
+    within = at_fp.xs(5.0, level="fp_target")
+    assert (within.status == "compared").all()
+    assert within.loc[("spike_model=refractory", KAY[0]), "change"] == pytest.approx(-0.3)
+    # 0.25 per minute is below every curve: missing, not the end of the curve
+    below, _ = analyze.model_sensitivity(scores, targets=(0.25,), n_resamples=FEW)
+    below = below[(below.measure == "recall_at_fp") & (below.status != "not run")]
+    assert (below.status == "unattainable").all()
+    assert below[["change", "change_low", "change_p"]].isna().all().all()
     # Kay ahead of Karlsson in the reference, behind under refractory spiking
     order = orders.set_index(["alternative", "fp_target"])
     flipped = order.loc[("spike_model=refractory", 1.0)]
@@ -2615,7 +2674,9 @@ def test_model_sensitivity_includes_all_variants(analyze):
     kept = order.loc[("noise_modulation=varying", 1.0)]
     assert kept.supported
     assert not kept.reversed
-    assert np.isnan(order.loc[("noise_modulation=varying", 5.0), "reference_difference"])
+    assert order.loc[("noise_modulation=varying", 5.0), "reference_difference"] == (
+        pytest.approx(-0.1)
+    )
     # the main settings' measures, paired the same way
     recall = changes[(changes.measure == "recall") & (changes.method == KAY[0])]
     assert recall.change.dropna().tolist() == [0.0] * 5
@@ -2632,17 +2693,17 @@ def test_model_sensitivity_includes_all_variants(analyze):
     refractory_lines = [
         line for line in lines if "refractory" in line or "reversed at" in line
     ]
-    # reversed at 0.5, 1 and 2 per minute; 5 is out of reach for both detectors
-    assert "of 3 reference orders" in refractory_lines[0]
+    # reversed at 0.5, 1 and 2 per minute, and at 5, within both budgets
+    assert "of 4 reference orders" in refractory_lines[0]
     assert (
         "0 keep that support, 0 lose it (0 of them with the point estimates reversed), "
-        "3 reverse and 0 cannot be compared here" in refractory_lines[0]
+        "4 reverse and 0 cannot be compared here" in refractory_lines[0]
     )
-    assert "2 detector targets are out of reach" in refractory_lines[0]
+    assert "0 detector targets are out of reach" in refractory_lines[0]
     assert refractory_lines[2].startswith("  - reversed at 1/min: `Karlsson_ripple_detector`")
     kept = next(line for line in lines if line.startswith("- `noise_modulation=varying`"))
     assert (
-        "3 keep that support, 0 lose it (0 of them with the point estimates reversed), "
+        "4 keep that support, 0 lose it (0 of them with the point estimates reversed), "
         "0 reverse and 0 cannot" in kept
     )
 
@@ -2651,10 +2712,13 @@ def test_model_sensitivity_keeps_failures_apart_from_unreachable_targets(analyze
     scores = _model_run(analyze)
     counts = scores.counts
     # under coupled strengths both sweeps' second setting has 1 false positive
-    # a minute, so 0.5 per minute is out of reach there alone
-    shifted = (counts.session_id.str.startswith("strength_correlation=coupled")) & (
-        counts.setting == "3.0"
+    # a minute, and Karlsson's under refractory spiking, so 0.5 per minute is
+    # out of reach there alone
+    coupled = counts.session_id.str.startswith("strength_correlation=coupled")
+    karlsson = counts.session_id.str.startswith("spike_model=refractory") & (
+        counts.method == SWEPT_KARLSSON
     )
+    shifted = (coupled | karlsson) & (counts.setting == "3.0")
     counts = counts.assign(
         n_detected=np.where(shifted, counts.n_matched + 10, counts.n_detected),
         n_false_positives=np.where(shifted, 10, counts.n_false_positives),
@@ -2675,7 +2739,7 @@ def test_model_sensitivity_keeps_failures_apart_from_unreachable_targets(analyze
         ["n_failures", "n_replicates", "n_dropped"]
     ].drop_duplicates().to_numpy().tolist() == [[8, 0, 4]]
     karlsson = mine.loc[SWEPT_KARLSSON]
-    assert karlsson.loc[("recall_at_fp", 5.0), ["status", "n_failures"]].tolist() == [
+    assert karlsson.loc[("recall_at_fp", 0.5), ["status", "n_failures"]].tolist() == [
         "unattainable",
         0,
     ]
@@ -2690,8 +2754,8 @@ def test_model_sensitivity_keeps_failures_apart_from_unreachable_targets(analyze
     lines = analyze.model_sensitivity_statements(changes, orders)
     coupled = next(line for line in lines if "`strength_correlation=coupled`" in line)
     assert (
-        "of 3 reference orders of detectors by recall at a common false-positive rate that "
-        "their intervals support, 2 keep that support, 0 lose it (0 of them with the point "
+        "of 4 reference orders of detectors by recall at a common false-positive rate that "
+        "their intervals support, 3 keep that support, 0 lose it (0 of them with the point "
         "estimates reversed), 0 reverse and 1 cannot be compared here (0 for a failure, 1 "
         "out of reach) and 0 more are untested" in coupled
     )
@@ -2941,12 +3005,12 @@ def test_operating_differences_are_paired_by_session(analyze):
     unreached = at_one.loc[(KAY[0], ROUMIS)]
     assert (unreached.reached_a, unreached.reached_b) == (True, False)
     assert (unreached.read_off_a, unreached.read_off_b) == ("interpolated", "")
-    # 5 per minute is Roumis's first setting's rate, past Kay's curve
+    # 5 per minute is Roumis's first setting's rate, past Kay's curve (within budget)
     for side in ("a", "b"):
         assert ((table[f"read_off_{side}"] == "") == table[f"recall_{side}"].isna()).all()
     at_five = table[table.fp_target == 5.0].set_index(["method_a", "method_b"])
     assert at_five.loc[(KAY[0], ROUMIS), ["read_off_a", "read_off_b"]].tolist() == [
-        "",
+        "within budget",
         "tested",
     ]
     assert np.isnan(unreached.difference)
