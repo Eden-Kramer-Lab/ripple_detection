@@ -5532,7 +5532,6 @@ _LEVEL_SCORES = (
     ("recall", _WITH_INTERVAL),
     ("precision", _WITH_INTERVAL),
 )
-_RATES = ("recall", "precision", "unmatched_per_minute")
 # The other tables' false positives per minute, as the compact tables name
 # them: every unmatched detection over the minutes outside the network windows.
 _UNMATCHED_NAMES = {
@@ -5578,7 +5577,11 @@ COMPACT_POINT_COLUMNS = (
     "n_matched",
     "n_unmatched",
     "minutes",
-    *(f"{name}{part}" for name in _RATES for part in _WITH_INTERVAL),
+    *(
+        f"{name}{part}"
+        for name in ("recall", "precision", "unmatched_per_minute")
+        for part in _WITH_INTERVAL
+    ),
 )
 COMPACT_HELD_OUT_COLUMNS = (
     "method",
@@ -5953,7 +5956,7 @@ def compact_points(groups: pd.DataFrame, points: pd.DataFrame) -> pd.DataFrame:
         points.rename(columns=_UNMATCHED_NAMES), on=["method", "setting"]
     )
     table["n_unmatched"] = table["n_detected"] - table["n_matched"]
-    return table.reset_index(drop=True)[list(COMPACT_POINT_COLUMNS)]
+    return table[list(COMPACT_POINT_COLUMNS)]
 
 
 def compact_held_out(thresholds: pd.DataFrame, points: pd.DataFrame) -> pd.DataFrame:
