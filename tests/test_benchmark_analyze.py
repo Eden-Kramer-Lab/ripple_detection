@@ -3009,15 +3009,14 @@ def _compact_of(analyze, tables, matches, bouts=None):
     return found
 
 
-def _hand_groups(analyze, tiny_tables):
+def _hand_groups(tiny_tables):
     """Hand tables for grouping: two sessions, the second at a Unix clock
     origin, and methods (two settings of one among them) whose events agree
     or differ as their names say."""
-    origin = UNIX_ORIGIN
     two = [(1.0, 2.0), (3.0, 4.0)]
     other = [(1.0, 2.5), (3.0, 4.0)]
-    one = [(origin + 1.0, origin + 2.0)]
-    shifted = [(origin + 1.0, np.nextafter(origin + 2.0, np.inf))]
+    one = [(UNIX_ORIGIN + 1.0, UNIX_ORIGIN + 2.0)]
+    shifted = [(UNIX_ORIGIN + 1.0, np.nextafter(UNIX_ORIGIN + 2.0, np.inf))]
     # (method, setting): (primary expression, scoring, events on s0, events
     # on s1; None where the call failed)
     spec = {
@@ -3057,7 +3056,7 @@ def _hand_groups(analyze, tiny_tables):
 
 
 def test_identical_groups_by_hand(analyze, tiny_tables):
-    groups = analyze.identical_groups(_hand_groups(analyze, tiny_tables))
+    groups = analyze.identical_groups(_hand_groups(tiny_tables))
     # one row per group, named by its first member's method and setting: two
     # settings of one method with different events are two groups; a call
     # that failed is not one that found nothing
@@ -3209,10 +3208,10 @@ _OVERALL_COLUMNS = {
 }
 
 
-def test_what_was_not_computed_is_refused(analyze, tiny_tables, tiny_compact):
+def test_what_was_not_computed_is_refused(analyze, tiny_tables, tiny_matches, tiny_compact):
     # matched at IoU 0 alone, as match_run matches by default
     with pytest.raises(ValueError, match=r"not formed at minimum IoU \[0\.2, 0\.5\]"):
-        analyze.matching_sensitivity(tiny_tables, analyze.match_run(tiny_tables))
+        analyze.matching_sensitivity(tiny_tables, tiny_matches)
     found = tiny_compact
     without = found.errors[~np.isclose(found.errors.fraction, 0.5)]
     with pytest.raises(ValueError, match=r"no errors at \[50\] % of the peak"):

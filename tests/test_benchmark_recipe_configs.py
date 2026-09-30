@@ -928,15 +928,14 @@ def test_method_records_are_flat_string_records(recipe_configs, catalog):
     pd.testing.assert_frame_equal(pd.read_csv(buffer, dtype=str, keep_default_na=False), table)
 
 
-def test_stand_in_inputs_are_the_inputs_not_observed(recipe_configs):
+def test_stand_in_inputs_are_the_inputs_not_observed(recipe_configs, configs):
     for config in recipe_configs.RECIPES:
         inputs = recipe_configs.policy_inputs(config)
         assert recipe_configs.stand_in_inputs(config) == tuple(
             name for name in inputs if name not in OBSERVED
         ), config.config_id
-    by_id = {config.config_id: config for config in recipe_configs.RECIPES}
-    assert recipe_configs.stand_in_inputs(by_id["karlsson_2009"]) == ()
-    assert recipe_configs.stand_in_inputs(by_id["liu_2019_awake"]) == (
+    assert recipe_configs.stand_in_inputs(configs["karlsson_2009"]) == ()
+    assert recipe_configs.stand_in_inputs(configs["liu_2019_awake"]) == (
         "pyramidal",
         "behavior_intervals",
     )
