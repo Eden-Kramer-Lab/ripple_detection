@@ -1505,6 +1505,12 @@ _INPUT_KINDS: dict[str, RequirementKind] = {
     "external_ripples": "external",
 }
 
+# Supplied intervals with no row leave nothing eligible, and replace any
+# simulation proxy, so they are a problem rather than an input.
+_NO_INTERVAL = (
+    "supplied with no interval, so nothing is eligible; pass at least one [start, end] pair"
+)
+
 _INPUT_DESCRIPTIONS = {
     "lfps": "raw LFP channels",
     "sharp_wave_lfp": "the stratum radiatum LFP",
@@ -1622,6 +1628,12 @@ def _unmet(
     does not apply."""
     if any(options.get(option) != value for option, value in requirement.when):
         return None
+    if _INPUT_KINDS.get(requirement.input) == "intervals":
+        # behavior_intervals belong to the call, not the recording, and _check
+        # judges them for every method.
+        supplied = getattr(rec, requirement.input, None)
+        if supplied is not None:
+            return None if len(supplied) else _NO_INTERVAL
     if requirement.measured_only and rec.allows_simulation_proxies:
         return None
     if (
@@ -5201,6 +5213,8 @@ def _check(
     eligible = _interval_array(behavior_intervals)
     option_problems, resolved = _option_problems(name, options)
     input_problems = _requirement_problems(entry, recording, eligible, resolved)
+    if eligible is not None and not len(eligible):
+        input_problems.append(f"behavior_intervals - {_NO_INTERVAL}")
     stage = resolved.get("stage", "detection")
     if stage not in {"detection", "decoding_candidates"}:
         input_problems.append(
@@ -5235,9 +5249,11 @@ def check_method(
         One line per problem, each starting with the input or option it
         names: a declared requirement the call does not meet (see
         ``list_methods``: signals, cell selections, curated intervals,
-        external inventories, options measured data must set), a required
-        rate the recording does not have, a keyword the method does not take,
-        a required option not given, or an unknown ``stage``. Empty when the
+        external inventories, options measured data must set), intervals
+        supplied with no row (curated ones a requirement names, or
+        ``behavior_intervals``), a required rate the recording does not have,
+        a keyword the method does not take, a required option not given, or
+        an unknown ``stage``. Empty when the
         call can run; it can still fail on the data themselves (a constant
         baseline, blocks too short for a filter).
 
@@ -5288,6 +5304,7 @@ def run_method(
         for this call only: their meaning differs between methods (reward
         zones, rest, corners, track ends, facing direction). Events not
         wholly inside one interval are dropped; normalization is unchanged.
+        An empty array raises, since no event could be kept.
         Methods whose ``requirements`` name the epochs they need raise on
         measured data without them; awake-frame methods also restrict their
         detection trace to them, as their docstrings say.

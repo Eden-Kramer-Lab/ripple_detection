@@ -84,7 +84,9 @@ running it, and `run_method` uses it: a call missing several inputs fails once,
 listing all of them. A test runs each
 method on a recording holding exactly its declared inputs, then removes each in
 turn and checks the call fails naming it, so the catalog neither understates nor
-overstates what a method needs.
+overstates what a method needs. Intervals supplied with no row (sleep, baseline
+or a call's `behavior_intervals`) count as missing, not as an input: they would
+leave nothing eligible, and a supplied array replaces any simulation proxy.
 
 `Recording.from_arrays` copies inputs, validates selections, and masks artifact
 intervals. It holds every signal as float64, so NaN can mark missing samples:

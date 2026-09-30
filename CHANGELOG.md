@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `literature_methods.check_method` and `run_method` treated intervals supplied
+  with no row as present. An empty `behavior_intervals` returned no events
+  without a word, and empty `sleep_intervals` or `baseline_intervals` on a method
+  that requires them passed the check and then failed on an unrelated error (or,
+  on a simulated recording, displaced the simulation proxy). Each is now listed
+  as a problem, naming the input, and `run_method` raises `ValueError`.
+
 ## [2.0.0] - 2026-09-22
 
 Results and calls change: the same recording gives different events, so detect
