@@ -1810,50 +1810,50 @@ def score_primary(
     union = interval_union(windows["network"])
     by_method = dict(tuple(events.groupby(["method", "setting"], sort=False)))
     errors, points, false_positives = [], [], []
-    for position, (method, setting, expression) in enumerate((*ran, *counted)):
-        rows = by_method.get((method, setting), events.iloc[:0]).sort_values("event_index")
-        reference = windows[expression]
-        key = {"session_id": session_id, "method": method, "setting": setting}
-        outside = _outside_events(rows, union)
-        if method in point_methods():
-            matched = _matched_rows(reference, rows, point=True)[1]
-            points.append(
-                {
-                    **key,
-                    "minimum_iou": np.nan,
-                    "n_reference": len(reference),
-                    "n_detected": len(rows),
-                    "n_matched": len(matched),
-                    "n_false_positives": _false_positives(outside, matched),
-                }
-            )
-            continue
-        bounds = _bounds(rows)
-        paired = position < len(ran)
-        for level in levels if paired else (0.0,):
-            matching = rd.match_events(reference, bounds, minimum_iou=level)
-            matched = matching.pairs["detected_index"].to_numpy()
-            false_positives.append(
-                {
-                    **key,
-                    "minimum_iou": level,
-                    "n_false_positives": _false_positives(outside, matched),
-                }
-            )
-            if not paired:
-                continue
-            pairs = matching.pairs
-            errors.append(
-                pd.DataFrame(
+    for entries, paired in ((ran, True), (counted, False)):
+        for method, setting, expression in entries:
+            rows = by_method.get((method, setting), events.iloc[:0]).sort_values("event_index")
+            reference = windows[expression]
+            key = {"session_id": session_id, "method": method, "setting": setting}
+            outside = _outside_events(rows, union)
+            if method in point_methods():
+                matched = _matched_rows(reference, rows, point=True)[1]
+                points.append(
                     {
-                        "method": method,
-                        "setting": setting,
-                        "minimum_iou": level,
-                        "onset_error": pairs["onset_error"].to_numpy(dtype=float),
-                        "offset_error": pairs["offset_error"].to_numpy(dtype=float),
+                        **key,
+                        "minimum_iou": np.nan,
+                        "n_reference": len(reference),
+                        "n_detected": len(rows),
+                        "n_matched": len(matched),
+                        "n_false_positives": _false_positives(outside, matched),
                     }
                 )
-            )
+                continue
+            bounds = _bounds(rows)
+            for level in levels if paired else (0.0,):
+                matching = rd.match_events(reference, bounds, minimum_iou=level)
+                pairs = matching.pairs
+                false_positives.append(
+                    {
+                        **key,
+                        "minimum_iou": level,
+                        "n_false_positives": _false_positives(
+                            outside, pairs["detected_index"].to_numpy()
+                        ),
+                    }
+                )
+                if paired:
+                    errors.append(
+                        pd.DataFrame(
+                            {
+                                "method": method,
+                                "setting": setting,
+                                "minimum_iou": level,
+                                "onset_error": pairs["onset_error"].to_numpy(dtype=float),
+                                "offset_error": pairs["offset_error"].to_numpy(dtype=float),
+                            }
+                        )
+                    )
     found = _concat(errors, ERROR_ROW_COLUMNS[1:]).assign(session_id=session_id)
     for column in ("session_id", "method", "setting"):
         found[column] = pd.Categorical(found[column], categories=categories[column])
@@ -1937,18 +1937,20 @@ def load_scores(run_directory: str | os.PathLike[str], *, workers: int = 1) -> C
     main = scored["setting"].isin(MAIN_SETTINGS)
     # the reference's sweeps are paired, for the curves; the alternatives'
     # are counted for their rates alone
-    paired = scored[main | scored["session_id"].isin(reference)]
-    counted = scored[~main & scored["session_id"].isin(swept - reference)]
-
-    def listed(frame: pd.DataFrame) -> dict[str, list[tuple[str, str, str]]]:
-        return {
-            session_id: list(rows[["method", "setting", "expression"]].itertuples(False, None))
-            for session_id, rows in frame.groupby("session_id", sort=False)
-        }
-
-    to_score, to_count = listed(paired), listed(counted)
+    paired = main | scored["session_id"].isin(reference)
+    counted = ~main & scored["session_id"].isin(swept - reference)
+    scored = scored[paired | counted].assign(paired=paired[paired | counted])
+    fields = ["method", "setting", "expression"]
+    # per session, its paired entries and its counted ones
+    entries = {
+        session_id: tuple(
+            list(part[fields].itertuples(False, None))
+            for part in (rows[rows["paired"]], rows[~rows["paired"]])
+        )
+        for session_id, rows in scored.groupby("session_id", sort=False)
+    }
     by_session = dict(tuple(events.groupby("session_id", sort=False)))
-    session_ids = [s for s in sessions["session_id"] if s in to_score or s in to_count]
+    session_ids = [s for s in sessions["session_id"] if s in entries]
     categories = {
         "session_id": list(sessions["session_id"]),
         "method": sorted(set(methods["method"])),
@@ -1958,7 +1960,7 @@ def load_scores(run_directory: str | os.PathLike[str], *, workers: int = 1) -> C
         session_ids,
         [by_session.get(s, events.iloc[:0]) for s in session_ids],
         [truth[s][0] for s in session_ids],
-        [to_score.get(s, []) for s in session_ids],
+        [entries[s][0] for s in session_ids],
         [
             tuple(
                 level
@@ -1967,7 +1969,7 @@ def load_scores(run_directory: str | os.PathLike[str], *, workers: int = 1) -> C
             )
             for s in session_ids
         ],
-        [to_count.get(s, []) for s in session_ids],
+        [entries[s][1] for s in session_ids],
     )
     score = functools.partial(score_primary, categories=categories)
     if workers == 1:
