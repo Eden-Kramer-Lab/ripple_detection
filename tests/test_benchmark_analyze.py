@@ -2535,6 +2535,7 @@ def test_matching_sensitivity_by_hand(analyze, mixed_error_run):
             "minimum_iou": 0.0,
             "fp_target": analyze.FP_TARGETS,
             "recall": [0.1, 0.2, 0.3, 0.4],
+            "read_off": "interpolated",
         }
     )
     table = analyze.matching_sensitivity(tables, matches, points, n_resamples=FEW)
@@ -2677,6 +2678,9 @@ def test_model_sensitivity_includes_all_variants(analyze):
     assert order.loc[("noise_modulation=varying", 5.0), "reference_difference"] == (
         pytest.approx(-0.1)
     )
+    # but both are read within budget there, lower bounds: no order is established
+    at_five = order.loc[("noise_modulation=varying", 5.0)]
+    assert (at_five.reference_bound, at_five.supported) == ("both", False)
     # the main settings' measures, paired the same way
     recall = changes[(changes.measure == "recall") & (changes.method == KAY[0])]
     assert recall.change.dropna().tolist() == [0.0] * 5
@@ -2693,17 +2697,18 @@ def test_model_sensitivity_includes_all_variants(analyze):
     refractory_lines = [
         line for line in lines if "refractory" in line or "reversed at" in line
     ]
-    # reversed at 0.5, 1 and 2 per minute, and at 5, within both budgets
-    assert "of 4 reference orders" in refractory_lines[0]
+    # reversed at 0.5, 1 and 2 per minute; at 5 both are within budget, so
+    # no order is established there
+    assert "of 3 reference orders" in refractory_lines[0]
     assert (
         "0 keep that support, 0 lose it (0 of them with the point estimates reversed), "
-        "4 reverse and 0 cannot be compared here" in refractory_lines[0]
+        "3 reverse and 0 cannot be compared here" in refractory_lines[0]
     )
     assert "0 detector targets are out of reach" in refractory_lines[0]
     assert refractory_lines[2].startswith("  - reversed at 1/min: `Karlsson_ripple_detector`")
     kept = next(line for line in lines if line.startswith("- `noise_modulation=varying`"))
     assert (
-        "4 keep that support, 0 lose it (0 of them with the point estimates reversed), "
+        "3 keep that support, 0 lose it (0 of them with the point estimates reversed), "
         "0 reverse and 0 cannot" in kept
     )
 
@@ -2754,8 +2759,8 @@ def test_model_sensitivity_keeps_failures_apart_from_unreachable_targets(analyze
     lines = analyze.model_sensitivity_statements(changes, orders)
     coupled = next(line for line in lines if "`strength_correlation=coupled`" in line)
     assert (
-        "of 4 reference orders of detectors by recall at a common false-positive rate that "
-        "their intervals support, 3 keep that support, 0 lose it (0 of them with the point "
+        "of 3 reference orders of detectors by recall at a common false-positive rate that "
+        "their intervals support, 2 keep that support, 0 lose it (0 of them with the point "
         "estimates reversed), 0 reverse and 1 cannot be compared here (0 for a failure, 1 "
         "out of reach) and 0 more are untested" in coupled
     )
@@ -2787,9 +2792,11 @@ _HAND_ORDERS = (
 _HAND_TARGETS = (0.5, 1.0, 2.0, 5.0, 10.0, 20.0)
 
 
-def _hand_orders(analyze, alternative="spike_model=refractory"):
+def _hand_orders(analyze, alternative="spike_model=refractory", within=()):
     """``_orders`` of Karlsson (A) and Kay (B) over ``_HAND_ORDERS``: B's
-    recall 0.5 everywhere, A's 0.5 plus the difference, 41 resamples."""
+    recall 0.5 everywhere, A's 0.5 plus the difference, 41 resamples, each
+    read off interpolated but the (condition, side) pairs of ``within``,
+    read within budget at every target."""
     n_resamples = 41
     estimate = np.full((2, 2, len(_HAND_TARGETS)), 0.5)
     draws = np.full((n_resamples, 2, 2, len(_HAND_TARGETS)), 0.5)
@@ -2797,6 +2804,9 @@ def _hand_orders(analyze, alternative="spike_model=refractory"):
         for c, (value, low, high) in enumerate(conditions):
             estimate[c, 0, t] += value
             draws[:, c, 0, t] += np.linspace(low, high, n_resamples)
+    read_off = np.full((2, 2, len(_HAND_TARGETS)), "interpolated", dtype=object)
+    for condition, side in within:
+        read_off[condition, side] = "within budget"
     found = analyze.SweepRecalls(
         estimate=estimate,
         draws=draws,
@@ -2804,7 +2814,7 @@ def _hand_orders(analyze, alternative="spike_model=refractory"):
         events=np.full((2, 2, len(_HAND_TARGETS)), 20.0),
         replicates=[{0, 1, 2, 3}, {0, 1, 2, 3}],
         nearest=np.full((2, 2, len(_HAND_TARGETS)), "2.0", dtype=object),
-        read_off=np.full((2, 2, len(_HAND_TARGETS)), "interpolated", dtype=object),
+        read_off=read_off,
     )
     detectors = [SWEPT_KARLSSON, KAY[0]]
     return analyze._orders(
@@ -2829,6 +2839,211 @@ def test_a_reversal_needs_the_alternative_interval_to_exclude_zero(analyze):
     # supported or not
     assert orders.point_reversed.tolist() == [False, True, False, False, False, True]
     assert orders.loc[1.0, "alternative_low"] < 0 < orders.loc[1.0, "alternative_high"]
+
+
+def test_a_difference_with_a_side_within_budget_is_established_one_way(analyze):
+    """A value read within budget is a lower bound on its recall: A - B with A
+    within budget can be established positive only, with B within budget
+    negative only, with both nothing."""
+    kinds = ["", "within budget"]
+    low = np.array([0.1, -0.3, 0.1, -0.3, 0.1, -0.3, 0.1, -0.3, -0.1])
+    high = np.array([0.3, -0.1, 0.3, -0.1, 0.3, -0.1, 0.3, -0.1, 0.1])
+    a = [kinds[k] for k in (0, 0, 1, 1, 0, 0, 1, 1, 0)]
+    b = [kinds[k] for k in (0, 0, 0, 0, 1, 1, 1, 1, 0)]
+    bound, sign = analyze.established_direction(a, b, low, high)
+    assert bound.tolist() == ["", "", "lower", "lower", "upper", "upper", "both", "both", ""]
+    assert sign.tolist() == [1, -1, 1, 0, 0, -1, 0, 0, 0]
+    # an interval undefined establishes nothing
+    assert analyze.established_direction([""], [""], [np.nan], [np.nan])[1].tolist() == [0]
+
+
+def test_an_order_with_a_side_within_budget_is_established_one_way(analyze):
+    """At 0.5 per minute Karlsson minus Kay is +0.1 (+0.05, +0.15) in the
+    reference and -0.1 (-0.15, -0.05) under the alternative; at 5 per minute
+    +0.1 and +0.08 (+0.03, +0.12)."""
+
+    def order(*within):
+        return _hand_orders(analyze, within=within).set_index("fp_target")
+
+    plain = order()
+    assert list(plain.columns) == list(analyze.ORDER_COLUMNS[:2]) + list(
+        analyze.ORDER_COLUMNS[3:]
+    )
+    assert plain.loc[0.5, ["supported", "reversed", "point_reversed"]].tolist() == [
+        True,
+        True,
+        False,
+    ]
+    assert plain.loc[5.0, "survives"]
+    # the reference's A within budget: a lower bound, positive, still supported
+    found = order((0, 0))
+    assert found.loc[0.5, ["reference_bound", "reference_read_off_a"]].tolist() == [
+        "lower",
+        "within budget",
+    ]
+    assert found.loc[0.5, ["supported", "reversed"]].tolist() == [True, True]
+    # its B within budget: an upper bound cannot establish a positive order
+    found = order((0, 1))
+    assert found.loc[0.5, "reference_bound"] == "upper"
+    assert not found.supported.any()
+    assert not found.reversed.any()
+    assert not order((0, 0), (0, 1)).supported.any()
+    # the alternative's A within budget: its negative difference is only a
+    # lower bound, so not a reversal, but its positive one keeps the order
+    found = order((1, 0))
+    assert found.loc[0.5, ["alternative_bound", "alternative_read_off_a"]].tolist() == [
+        "lower",
+        "within budget",
+    ]
+    assert found.loc[0.5, ["supported", "reversed", "point_reversed"]].tolist() == [
+        True,
+        False,
+        True,
+    ]
+    assert found.loc[5.0, "survives"]
+    # its B within budget: the negative difference is established, the
+    # positive one no longer keeps the order
+    found = order((1, 1))
+    assert found.loc[0.5, ["reversed", "point_reversed"]].tolist() == [True, False]
+    assert not found.loc[5.0, "survives"]
+    assert not found.loc[5.0, "point_reversed"]
+    # both within budget: nothing established there
+    found = order((1, 0), (1, 1))
+    assert found.loc[0.5, ["alternative_bound", "reversed"]].tolist() == ["both", False]
+    assert not found.loc[5.0, "survives"]
+    # a reversal resting on a value within budget says so as a candidate trend
+    trends = analyze.candidate_trends(
+        {"model_sensitivity_orders": order((1, 1)).reset_index()}
+    )
+    statement = trends[trends.kind == "model_order_reversal"].statement.iloc[0]
+    assert "rests on a lower bound" in statement
+    assert (
+        "Kay_ripple_detector under spike_model=refractory is read within budget" in statement
+    )
+
+
+def _budget_run(analyze):
+    """Six detectors of ripple on four replicates, each curve at 2 and 0.5
+    false positives a minute per session (10 truth windows) or at 0 at every
+    setting (read within budget), in the reference and under refractory
+    spiking, their recall at 1 per minute (* within budget):
+
+    ======================  =========  ===========
+    detector                reference  alternative
+    ======================  =========  ===========
+    Carey                   0.6 *      0.9 *
+    Karlsson                0.6        0.4 *
+    Kay                     0.7        0.9 *
+    Roumis                  0.8 *      0.4
+    Shvartsman              0.5 *      0.7
+    HSE                     0.7        0.4
+    ======================  =========  ===========
+    """
+    bracketed = {0.7: ((8, 28), (6, 11)), 0.6: ((7, 27), (5, 10)), 0.4: ((5, 25), (3, 8))}
+    within = {k: ((round(10 * k), round(10 * k)), (2, 2)) for k in (0.4, 0.5, 0.6, 0.8, 0.9)}
+    curves = {
+        "Carey_candidate_detector": (within[0.6], within[0.9]),
+        SWEPT_KARLSSON: (bracketed[0.6], within[0.4]),
+        KAY[0]: (bracketed[0.7], within[0.9]),
+        ROUMIS: (within[0.8], bracketed[0.4]),
+        "Shvartsman_ripple_detector": (within[0.5], bracketed[0.7]),
+        "multiunit_HSE_detector": (bracketed[0.7], bracketed[0.4]),
+    }
+    counts = []
+    for c, condition in enumerate(("reference", "spike_model=refractory")):
+        for replicate in range(4):
+            for method, sides in curves.items():
+                counts += _curve(condition, replicate, method, sides[c])
+            counts.append(_kay(condition, replicate, "default", 6, 11))
+    return _hand_scores(analyze, counts)
+
+
+def test_differences_and_changes_within_budget_are_established_one_way(analyze):
+    scores = _budget_run(analyze)
+    table = analyze.operating_differences(scores, targets=(1.0,), n_resamples=FEW)
+    rows = table.set_index(["method_a", "method_b"])
+    hse, shvartsman, carey = (
+        "multiunit_HSE_detector",
+        "Shvartsman_ripple_detector",
+        "Carey_candidate_detector",
+    )
+    expected = {
+        (SWEPT_KARLSSON, KAY[0]): (-0.1, "", True),
+        (SWEPT_KARLSSON, ROUMIS): (-0.2, "upper", True),
+        (SWEPT_KARLSSON, shvartsman): (0.1, "upper", False),
+        (carey, KAY[0]): (-0.1, "lower", False),
+        (ROUMIS, hse): (0.1, "lower", True),
+        (ROUMIS, shvartsman): (0.3, "both", False),
+    }
+    for pair, (difference, bound, established) in expected.items():
+        row = rows.loc[pair]
+        assert row.difference == pytest.approx(difference), pair
+        assert (row.bound, bool(row.established)) == (bound, established), pair
+        # the interval and p-value as computed, whatever the bound
+        assert row.difference_low == pytest.approx(difference), pair
+    changes, _ = analyze.model_sensitivity(scores, targets=(1.0,), n_resamples=FEW)
+    at_fp = changes[
+        (changes.alternative == "spike_model=refractory") & (changes.measure == "recall_at_fp")
+    ].set_index("method")
+    expected = {
+        KAY[0]: (0.2, "interpolated", "within budget", "lower", True),
+        SWEPT_KARLSSON: (-0.2, "interpolated", "within budget", "lower", False),
+        ROUMIS: (-0.4, "within budget", "interpolated", "upper", True),
+        shvartsman: (0.2, "within budget", "interpolated", "upper", False),
+        hse: (-0.3, "interpolated", "interpolated", "", True),
+        carey: (0.3, "within budget", "within budget", "both", False),
+    }
+    for method, (change, reference, alternative, bound, established) in expected.items():
+        row = at_fp.loc[method]
+        assert row.change == pytest.approx(change), method
+        assert [row.read_off_reference, row.read_off, row.bound] == [
+            reference,
+            alternative,
+            bound,
+        ], method
+        assert bool(row.established) == established, method
+
+
+def test_the_operating_order_ranks_values_read_off_below_their_budget(analyze):
+    scores = _budget_run(analyze)
+    trends = analyze.candidate_trends(
+        {
+            "operating_points": analyze.operating_points(scores, n_resamples=FEW),
+            "operating_differences": analyze.operating_differences(scores, n_resamples=FEW),
+        }
+    )
+    row = trends[trends.kind == "operating_order"].iloc[0]
+    # Roumis's 0.8 is a lower bound: the order is of the values read between
+    # tested settings, the ones within budget named apart
+    assert row.method == KAY[0]
+    assert (
+        "Carey_candidate_detector, Roumis_ripple_detector, Shvartsman_ripple_detector are "
+        "read within budget, lower bounds on their recall: 0.600, 0.800, 0.500."
+    ) in row.statement
+
+
+def test_matching_sensitivity_says_how_each_recall_was_read_off(analyze, mixed_error_run):
+    tables = analyze.load_run(mixed_error_run)
+    matches = analyze.match_run(tables, levels=(0.0, 0.2, 0.5))
+    points = pd.DataFrame(
+        {
+            "method": KAY[0],
+            "minimum_iou": 0.0,
+            "fp_target": analyze.FP_TARGETS,
+            "recall": [np.nan, 0.2, 0.3, 0.4],
+            "read_off": ["", "interpolated", "tested", "within budget"],
+        }
+    )
+    table = analyze.matching_sensitivity(tables, matches, points, n_resamples=FEW)
+    row = table[table.minimum_iou == 0].iloc[0]
+    assert [row[f"read_off_at_{target:g}"] for target in analyze.FP_TARGETS] == [
+        "",
+        "interpolated",
+        "tested",
+        "within budget",
+    ]
+    at = list(table.columns)
+    assert at.index("read_off_at_1") == at.index("recall_at_1") + 1
 
 
 def test_statements_count_point_reversals_as_lost_support(analyze):

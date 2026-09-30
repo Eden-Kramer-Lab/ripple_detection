@@ -3020,6 +3020,44 @@ def _within_budget(
     return past, int(np.argmax(np.where(np.isfinite(recall), recall, -np.inf)))
 
 
+def established_direction(
+    kind_a: ArrayLike, kind_b: ArrayLike, low: ArrayLike, high: ArrayLike
+) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+    """Which way a difference in recall read off at a target is established.
+
+    A value read within budget (``_at_fp_rates``) is the best tested
+    setting's recall, a lower bound on the recall at that budget: settings
+    with more false positives were not tested. So for A - B with A within
+    budget the observed difference is a lower bound on the true one and only
+    a positive difference can be established; with B within budget an upper
+    bound, only a negative one; with both, nothing; with neither, the
+    interval decides as it would.
+
+    Parameters
+    ----------
+    kind_a, kind_b : array_like of str, shape (n,)
+        How A's and B's values were read off (``_at_fp_rates``' kinds).
+    low, high : array_like, shape (n,)
+        The difference's interval.
+
+    Returns
+    -------
+    bound : ndarray of str, shape (n,)
+        ``""`` (neither within budget), ``"lower"`` (A), ``"upper"`` (B) or
+        ``"both"``.
+    direction : ndarray of int, shape (n,)
+        1 where a positive difference is established (``low > 0`` and B not
+        within budget), -1 a negative one (``high < 0`` and A not within
+        budget), 0 neither; an undefined interval establishes nothing.
+    """
+    a = np.asarray(kind_a, dtype=object) == WITHIN_BUDGET
+    b = np.asarray(kind_b, dtype=object) == WITHIN_BUDGET
+    low, high = np.asarray(low, dtype=float), np.asarray(high, dtype=float)
+    bound = np.select([a & b, a, b], ["both", "lower", "upper"], "").astype(object)
+    direction = ((low > 0) & ~b).astype(int) - ((high < 0) & ~a).astype(int)
+    return bound, direction
+
+
 def _at_fp_rates(
     fp_rate: ArrayLike,
     recall: ArrayLike,
@@ -4318,10 +4356,14 @@ SENSITIVITY_COLUMNS = (
     "n_replicates",
     "reference_value",
     "value",
+    "read_off_reference",
+    "read_off",
     "change",
     "change_low",
     "change_high",
     "change_p",
+    "bound",
+    "established",
     "n_draws",
     "n_defined",
     "n_defined_reference",
@@ -4343,13 +4385,20 @@ ORDER_COLUMNS = (
     "n_failures_b",
     "setting_a",
     "setting_b",
+    "reference_read_off_a",
+    "reference_read_off_b",
+    "alternative_read_off_a",
+    "alternative_read_off_b",
     "reference_difference",
     "reference_low",
     "reference_high",
+    "reference_bound",
     "alternative_difference",
     "alternative_low",
     "alternative_high",
+    "alternative_bound",
     "supported",
+    "survives",
     "reversed",
     "point_reversed",
     "p_reversed",
@@ -4596,12 +4645,19 @@ def model_sensitivity(
         counts come from: filter on it, not on ``setting`` or a missing
         ``minimum_iou``, to keep point methods (``"peak_containment"``)
         apart. Then the reference's and the alternative's values over the
-        ``n_replicates`` pooled, ``change`` (alternative minus reference)
-        with its interval and ``bootstrap_p`` p-value from the same
-        resamples, ``n_draws`` and what it rests on per side
-        (``paired_changes``'; for ``"recall_at_fp"``, ``n_defined`` the
-        replicates whose own curve reaches the target and ``n_events`` the
-        true events found at the swept setting nearest it),
+        ``n_replicates`` pooled, ``read_off_reference`` and ``read_off``
+        (how each ``"recall_at_fp"`` value was read off, ``_at_fp_rates``'
+        kinds; ``""`` for a main setting's measure), ``change`` (alternative
+        minus reference) with its interval and ``bootstrap_p`` p-value from
+        the same resamples, ``bound`` and ``established``
+        (``established_direction`` with the alternative as A: a change whose
+        alternative side is within budget can be established positive only,
+        whose reference side is, negative only, both, not at all; a main
+        setting's measure is established where its interval excludes 0),
+        ``n_draws`` and what it rests on per side (``paired_changes``'; for
+        ``"recall_at_fp"``, ``n_defined`` the replicates whose own curve
+        reaches the target and ``n_events`` the true events found at the
+        setting read: nearest the target, or the best within budget),
         ``n_dropped`` (shared replicates left out
         for the method's failures) and ``n_failures`` (the method's failed
         calls, every setting of a sweep, in both conditions, on the shared
@@ -4611,20 +4667,24 @@ def model_sensitivity(
         with the same primary expression (A first by name), ``status`` as
         above, the ``n_replicates`` both were pooled over (``n_dropped`` left
         out), each detector's failed calls in both conditions
-        (``n_failures_a``, ``n_failures_b``), each detector's swept setting
-        whose false-positive rate in the alternative is nearest the target
-        (``setting_a``, ``setting_b``: where a spot check looks), their
+        (``n_failures_a``, ``n_failures_b``), each detector's setting read
+        in the alternative (``setting_a``, ``setting_b``: nearest the
+        target, or the best within budget; where a spot check looks), how
+        each side's recall was read off in each condition
+        (``reference_read_off_a`` ... ``alternative_read_off_b``), their
         recall differences (A minus B) in the reference and in the
-        alternative with intervals;
-        ``supported``, the reference interval excludes 0; ``reversed``, a
-        supported order the alternative reverses: the alternative's interval
-        lies on the other side of 0 from the reference's estimate (an order
-        whose alternative interval lies on the same side survives, whatever
-        its point estimate); ``point_reversed``,
-        the estimates have opposite signs but the alternative's interval holds
-        0 (supported or not: only the point estimate reverses); ``p_reversed``,
-        the fraction of resamples (where both are defined) in which the signs
-        differ.
+        alternative with intervals and ``reference_bound`` and
+        ``alternative_bound`` (``established_direction``: a value within
+        budget is a lower bound); ``supported``, the reference order is
+        established (its interval excludes 0 in a direction its bound
+        allows); ``survives``, a supported order established the same way
+        in the alternative; ``reversed``, a supported order established the
+        other way in the alternative (so no order both survives and
+        reverses, whatever the alternative's point estimate);
+        ``point_reversed``, the estimates have opposite signs but the
+        alternative establishes no order (supported or not: only the point
+        estimate reverses); ``p_reversed``, the fraction of resamples (where
+        both are defined) in which the signs differ.
     """
     main = _main_methods(scores)
     detectors = _detectors(scores)
@@ -4661,10 +4721,19 @@ def model_sensitivity(
         # failures in either condition, of the replicates both hold
         found["n_failures"] += found.pop("reference_failures")
         found["status"] = _status(found["change"], found["n_failures"], "compared")
+        # a main setting's measure is read off no curve: its interval decides
+        _, direction = established_direction(
+            [""] * len(found), [""] * len(found), found["change_low"], found["change_high"]
+        )
+        found = found.assign(
+            read_off_reference="",
+            read_off="",
+            bound="",
+            established=direction != 0,
+            fp_target=np.nan,
+        )
         changes.append(
-            found.rename(columns={"condition_id": "alternative"}).assign(fp_target=np.nan)[
-                list(SENSITIVITY_COLUMNS)
-            ]
+            found.rename(columns={"condition_id": "alternative"})[list(SENSITIVITY_COLUMNS)]
         )
         replicates = _shared_replicates(scores, pair)
         listed = scores.sessions[
@@ -4684,6 +4753,10 @@ def model_sensitivity(
         difference = estimate[1] - estimate[0]
         low, high = _conditional_intervals(difference, draws[:, 1] - draws[:, 0])
         p, n_draws = _tested(difference, draws[:, 1] - draws[:, 0])
+        # the change is the alternative (A) minus the reference (B)
+        bound, direction = established_direction(
+            found.read_off[1], found.read_off[0], low, high
+        )
         rows = []
         for d, detector in enumerate(detectors):
             for t, target in enumerate(targets):
@@ -4702,10 +4775,14 @@ def model_sensitivity(
                         "n_replicates": len(complete[d]),
                         "reference_value": estimate[0, d, t],
                         "value": estimate[1, d, t],
+                        "read_off_reference": found.read_off[0, d, t],
+                        "read_off": found.read_off[1, d, t],
                         "change": difference[d, t],
                         "change_low": low[d, t],
                         "change_high": high[d, t],
                         "change_p": p[d, t],
+                        "bound": bound[d, t],
+                        "established": bool(direction[d, t] != 0),
                         "n_draws": int(n_draws[d, t]),
                         "n_defined": int(found.defined[1, d, t]),
                         "n_defined_reference": int(found.defined[0, d, t]),
@@ -4759,14 +4836,18 @@ def _orders(
         observed = found.estimate[:, 0] - found.estimate[:, 1]
         resampled = found.draws[:, :, 0] - found.draws[:, :, 1]
         low, high = _conditional_intervals(observed, resampled)
-        supported = (low[0] > 0) | (high[0] < 0)
-        # reversed: the alternative's interval on the other side of 0 from the
-        # reference's estimate, so no order both survives and reverses
-        reversed_ = supported & (
-            ((observed[0] > 0) & (high[1] < 0)) | ((observed[0] < 0) & (low[1] > 0))
+        # each condition's order established the way its values' bounds allow
+        bound, direction = established_direction(
+            found.read_off[:, 0], found.read_off[:, 1], low, high
         )
+        supported = direction[0] != 0
+        survives = supported & (direction[1] == direction[0])
+        # reversed: established in the alternative the other way, so no order
+        # both survives and reverses
+        reversed_ = supported & (direction[1] == -direction[0])
         opposite = observed[0] * observed[1] < 0
-        holds_zero = (low[1] <= 0) & (high[1] >= 0)
+        # opposite estimates without an established alternative order
+        unsettled = direction[1] == 0
         for t, target in enumerate(targets):
             both = np.isfinite(resampled[:, 0, t]) & np.isfinite(resampled[:, 1, t])
             flips = np.sign(resampled[both, 0, t]) * np.sign(resampled[both, 1, t]) < 0
@@ -4787,15 +4868,22 @@ def _orders(
                     "n_failures_b": failures[detectors[b]],
                     "setting_a": found.nearest[1, 0, t],
                     "setting_b": found.nearest[1, 1, t],
+                    "reference_read_off_a": found.read_off[0, 0, t],
+                    "reference_read_off_b": found.read_off[0, 1, t],
+                    "alternative_read_off_a": found.read_off[1, 0, t],
+                    "alternative_read_off_b": found.read_off[1, 1, t],
                     "reference_difference": observed[0, t],
                     "reference_low": low[0, t],
                     "reference_high": high[0, t],
+                    "reference_bound": bound[0, t],
                     "alternative_difference": observed[1, t],
                     "alternative_low": low[1, t],
                     "alternative_high": high[1, t],
+                    "alternative_bound": bound[1, t],
                     "supported": bool(supported[t]),
+                    "survives": bool(survives[t]),
                     "reversed": bool(reversed_[t]),
-                    "point_reversed": bool(opposite[t] & holds_zero[t]),
+                    "point_reversed": bool(opposite[t] & unsettled[t]),
                     "p_reversed": flips.mean() if both.any() else np.nan,
                 }
             )
@@ -4819,6 +4907,8 @@ DIFFERENCE_COLUMNS = (
     "difference_low",
     "difference_high",
     "difference_p",
+    "bound",
+    "established",
     "n_draws",
     "n_defined_a",
     "n_defined_b",
@@ -4868,6 +4958,9 @@ def operating_differences(
         at one, ``"within budget"`` past every setting's rate, the best
         recall's setting, ``""`` unreached),
         ``difference`` (A minus B) with ``_low``, ``_high`` and ``_p``,
+        ``bound`` and ``established`` (``established_direction``: with A read
+        within budget, a lower bound, only a positive difference is
+        established, with B, only a negative one, with both, none),
         ``n_draws`` (the resamples in which both pooled curves reach the
         target, those the interval and p-value are over; NaN and 0 without a
         difference), ``n_defined_a`` and ``n_defined_b`` (the sessions whose
@@ -4891,6 +4984,9 @@ def operating_differences(
         resampled = own.draws[:, 0, 0] - own.draws[:, 0, 1]
         low, high = _conditional_intervals(difference, resampled)
         p, n_draws = _tested(difference, resampled)
+        bound, direction = established_direction(
+            own.read_off[0, 0], own.read_off[0, 1], low, high
+        )
         for t, target in enumerate(targets):
             rows.append(
                 {
@@ -4910,6 +5006,8 @@ def operating_differences(
                     "difference_low": low[t],
                     "difference_high": high[t],
                     "difference_p": p[t],
+                    "bound": bound[t],
+                    "established": bool(direction[t] != 0),
                     "n_draws": int(n_draws[t]),
                     "n_defined_a": int(own.defined[0, 0, t]),
                     "n_defined_b": int(own.defined[0, 1, t]),
@@ -4964,10 +5062,12 @@ def model_sensitivity_statements(
 ) -> list[str]:
     """What survives each alternative model and what depends on it, as Markdown.
 
-    A reference order counts as a statement when its interval excludes 0
-    (``supported``): it survives an alternative when the alternative's
-    interval excludes 0 on the same side, reverses when it excludes 0 on
-    the other side (``reversed``), and otherwise loses its support, among
+    A reference order counts as a statement when it is established
+    (``supported``: its interval excludes 0 in a direction a value read
+    within budget, a lower bound, allows): it survives an alternative when
+    the alternative establishes it the same way (``survives``), reverses
+    when the alternative establishes it the other way (``reversed``), and
+    otherwise loses its support, among
     those the ones whose point estimate alone reverses
     (``point_reversed``) counted and listed as such; it cannot be
     compared when the alternative's difference is missing, counted apart by
@@ -5008,13 +5108,7 @@ def model_sensitivity_statements(
                     for row in moved.itertuples(index=False)
                 )
         mine = orders[(orders["alternative"] == alternative) & orders["supported"]]
-        same = np.sign(mine["reference_difference"])
-        survive = int(
-            (
-                ((same > 0) & (mine["alternative_low"] > 0))
-                | ((same < 0) & (mine["alternative_high"] < 0))
-            ).sum()
-        )
+        survive = int(mine["survives"].sum())
         reversed_ = mine[mine["reversed"]]
         point_reversed = mine[mine["point_reversed"]]
         missing = mine["alternative_difference"].isna()
@@ -5104,8 +5198,11 @@ def matching_sensitivity(
         ``_high``; ``iou_q25``, ``median_iou``, ``iou_q75``;
         ``median_abs_onset_error`` and ``median_abs_offset_error`` (10 %,
         seconds); ``recall_<event_type>`` against the network truth;
-        ``recall_at_<target>`` (detectors); ``rank`` (by recall, 1 best,
-        among methods of the same primary expression at that level);
+        ``recall_at_<target>`` (detectors), each followed by
+        ``read_off_at_<target>``, how it was read off (``"within budget"``:
+        the best tested setting's recall, a lower bound); ``rank`` (by
+        recall, 1 best, among methods of the same primary expression at that
+        level);
         ``n_sessions``, ``n_failures``.
 
     Raises
@@ -5191,9 +5288,16 @@ def matching_sensitivity(
         table = table.join(pd.Series(ratio, index=sums.index, name=f"recall_{kind}"), on=by)
     if points is not None and len(points):
         for target in FP_TARGETS:
-            at = points.loc[points["fp_target"] == target, ["method", "minimum_iou", "recall"]]
+            at = points.loc[
+                points["fp_target"] == target, ["method", "minimum_iou", "recall", "read_off"]
+            ]
             table = table.merge(
-                at.rename(columns={"recall": f"recall_at_{target:g}"}),
+                at.rename(
+                    columns={
+                        "recall": f"recall_at_{target:g}",
+                        "read_off": f"read_off_at_{target:g}",
+                    }
+                ),
                 on=["method", "minimum_iou"],
                 how="left",
             )
@@ -7446,6 +7550,28 @@ def _trend(
     }
 
 
+def _budget_note(order: Any) -> str:
+    """What an order (a row of ``model_sensitivity``'s orders) says when a
+    side of it is read within budget: that it rests on a lower bound."""
+    sides = [
+        f"{method} {where}"
+        for method, where, kind in (
+            (order.method_a, "in the reference", order.reference_read_off_a),
+            (order.method_b, "in the reference", order.reference_read_off_b),
+            (order.method_a, f"under {order.alternative}", order.alternative_read_off_a),
+            (order.method_b, f"under {order.alternative}", order.alternative_read_off_b),
+        )
+        if kind == WITHIN_BUDGET
+    ]
+    if not sides:
+        return ""
+    verb = "is" if len(sides) == 1 else "are"
+    return (
+        f" It rests on a lower bound: {', '.join(sides)} {verb} read within budget, the "
+        "best tested setting's recall."
+    )
+
+
 def _rank_moves(sensitivity: pd.DataFrame) -> pd.DataFrame:
     """``order_changes``' methods whose rank moves by 3 or more from IoU 0 to
     the last level: ``rank_0``, ``rank_last`` and ``last_level``."""
@@ -7466,10 +7592,16 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     checking that it does not come from failures, empty sweeps or a unit
     error. Each names where to look, for ``select_events``: a condition, one
     or two methods each with its setting (a main setting's own; for a trend
-    at a false-positive target, the swept setting whose rate is nearest the
-    target), and which events (``"missed"`` or ``"found"`` truth events of
-    the first method's primary expression, or its ``"false_positive"``
-    events).
+    at a false-positive target, the setting read: nearest the target, or the
+    best within budget), and which events (``"missed"`` or ``"found"`` truth
+    events of the first method's primary expression, or its
+    ``"false_positive"`` events, every unmatched detection).
+
+    A value read within budget is a lower bound (``established_direction``):
+    an order across models is a candidate only where it is established in
+    both conditions, and its statement says when it rests on such a value;
+    the operating order ranks the values read between tested settings and
+    names those within budget apart, as lower bounds.
 
     Parameters
     ----------
@@ -7555,7 +7687,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
             f"At {r.fp_target:g} false positives a minute, {r.method_a} minus "
             f"{r.method_b} in recall is {r.reference_difference:+.3f} in the reference "
             f"and {r.alternative_difference:+.3f} under {r.alternative} (reversed in "
-            f"{r.p_reversed:.0%} of resamples).",
+            f"{r.p_reversed:.0%} of resamples)." + _budget_note(r),
             f"{r.method_a} {r.method_b}",
             INTERVAL,
             r.alternative,
@@ -7652,8 +7784,12 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     if len(points):
         at_one = points[(points["minimum_iou"] == 0) & (points["fp_target"] == 1.0)]
         for expression, own in at_one.groupby("primary_expression", sort=True):
-            reached = own.dropna(subset=["recall"]).sort_values(
-                "recall", ascending=False, kind="stable"
+            # a value within budget is a lower bound: named apart, not ranked
+            budget = own[own["read_off"] == WITHIN_BUDGET]
+            reached = (
+                own[own["read_off"] != WITHIN_BUDGET]
+                .dropna(subset=["recall"])
+                .sort_values("recall", ascending=False, kind="stable")
             )
             if len(reached) < 2:
                 continue
@@ -7691,6 +7827,13 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
                 f"p {f'< 2/{n_draws}' if p == 0 else f'{p:.3g}'} (approximate, from the "
                 f"interval's {n_draws} resamples) over {n_replicates} sessions, paired."
             )
+            if len(budget):
+                one = len(budget) == 1
+                statement += (
+                    f" {', '.join(budget['method'])} {'is' if one else 'are'} read within "
+                    f"budget, {'a lower bound on its' if one else 'lower bounds on their'} "
+                    f"recall: {', '.join(f'{value:.3f}' for value in budget['recall'])}."
+                )
             if unreached:
                 verb = "does" if len(unreached) == 1 else "do"
                 statement += (
