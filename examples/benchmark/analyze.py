@@ -480,6 +480,26 @@ def _by_intervals(frame: pd.DataFrame, column: str = "method") -> pd.DataFrame:
     return frame[~frame[column].isin(point_methods())]
 
 
+def time_rounding(*times: ArrayLike) -> float:
+    """The timestamps' rounding: 8 units in the last place of the largest
+    magnitude among ``times``, the room ``match_events`` gives a minimum IoU
+    and ties between overlaps.
+
+    Parameters
+    ----------
+    *times : array_like
+        Timestamps or bounds, of any shape; empty ones are left out.
+
+    Returns
+    -------
+    rounding : float
+        That of 0 when every array is empty.
+    """
+    arrays = [np.asarray(values, dtype=float) for values in times]
+    scale = max((float(np.abs(a).max()) for a in arrays if a.size), default=0.0)
+    return 8 * float(np.spacing(scale))
+
+
 def match_peaks(windows: ArrayLike, peaks: ArrayLike) -> np.ndarray[Any, Any]:
     """Pair truth windows one to one with the time points inside them.
 
@@ -503,8 +523,7 @@ def match_peaks(windows: ArrayLike, peaks: ArrayLike) -> np.ndarray[Any, Any]:
     """
     windows = np.asarray(windows, dtype=float).reshape(-1, 2)
     peaks = np.asarray(peaks, dtype=float).reshape(-1)
-    scale = max((float(np.abs(a).max()) for a in (windows, peaks) if a.size), default=0.0)
-    tolerance = 8 * float(np.spacing(scale))
+    tolerance = time_rounding(windows, peaks)
     order = np.argsort(peaks, kind="stable")
     ordered = peaks[order]
     # the next unused point at or after each position (a union-find, halving paths)
@@ -5063,7 +5082,7 @@ def session_bouts(sessions: pd.DataFrame) -> dict[str, np.ndarray[Any, Any]]:
         duration = float(row.duration_s)
         drawn = running_schedule(duration, rng)
         rest = duration - float(np.sum(np.diff(drawn, axis=1)))
-        if abs(rest - float(row.rest_s)) > 8 * float(np.spacing(duration)):
+        if abs(rest - float(row.rest_s)) > time_rounding(duration):
             msg = (
                 f"{row.session_id}: the running schedule drawn again leaves {rest} s of "
                 f"rest, the run recorded {row.rest_s} s."
