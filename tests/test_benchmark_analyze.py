@@ -3879,6 +3879,10 @@ def test_the_command_writes_every_table_and_the_summary(analyze, two_condition_r
         "its bounds' midpoint) lies outside every network window at 10 %"
     ) in " ".join(summary.split())
     assert (
+        "where every setting's rate is below the target, the best recall of any setting "
+        "is read (`within budget`)"
+    ) in " ".join(summary.split())
+    assert (
         "Across every condition, 1 calls failed (sweeps included), by method, setting and "
         f"condition:\n\n- `{MALLORY[0]}` (literature), `reference`: 1 sessions" in summary
     )
