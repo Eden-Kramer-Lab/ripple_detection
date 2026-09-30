@@ -1714,13 +1714,14 @@ class ConditionScores:
         (``match_peaks``) for a point method, whose ``minimum_iou`` is NaN
         (no IoU applies): ``methods``' ``scoring`` is the column to tell them
         apart by. ``n_false_positives``: the events matching no window of the
-        primary expression at IoU 0 whose times (``event_times``) lie outside
-        every network window at 10 % (``in_network_windows``), matched again
-        here; the IoU-0 count at every level, so a curve at any level has the
-        same false positives. Counted where a rate reads it: the main
-        settings in every session, every setting in the reference's and the
-        model alternatives' (``MODEL_ALTERNATIVES``) sessions; NaN for the
-        sweeps of the other conditions, which no analysis reads.
+        primary expression at the row's ``minimum_iou`` whose times
+        (``event_times``) lie outside every network window at 10 %
+        (``in_network_windows``), matched again here. Counted where a rate
+        reads it: every setting at every level in the reference's sessions,
+        which the curves read; at IoU 0 the main settings in every session
+        and every setting in the model alternatives' (``MODEL_ALTERNATIVES``)
+        sessions; NaN elsewhere (the other conditions' sweeps, and levels
+        above 0 outside the reference), which no analysis reads.
     errors : pandas.DataFrame
         One row per matched pair of an interval method against its primary
         expression (``ERROR_ROW_COLUMNS``): ``onset_error`` and
@@ -1743,7 +1744,7 @@ class ConditionScores:
         the reference condition's sessions, every interval method and
         setting at every level, for the appendix's curves, with
         ``n_false_positives`` as in ``counts`` (against the primary
-        expression: one count per method and setting).
+        expression: one count per method, setting and level).
     """
 
     sessions: pd.DataFrame
@@ -1783,7 +1784,7 @@ def score_primary(
         The ``minimum_iou`` levels of an interval method's pairs.
     counted : sequence of (method, setting, primary expression)
         More methods and settings whose false positives alone are counted,
-        with no pair.
+        at IoU 0, with no pair.
     categories : mapping of str to sequence of str
         The categories of ``session_id``, ``method`` and ``setting`` in the
         errors.
@@ -1796,10 +1797,11 @@ def score_primary(
     points : pandas.DataFrame
         ``COUNT_COLUMNS``, one row per point method, ``minimum_iou`` NaN.
     false_positives : pandas.DataFrame
-        One row per interval method and setting: ``session_id``, ``method``,
-        ``setting`` and ``n_false_positives``, its events matching no window
-        of the primary expression at IoU 0 whose times lie outside every
-        network window at 10 % (``in_network_windows``).
+        One row per interval method, setting and level (``levels`` for
+        ``ran``, 0 for ``counted``): ``session_id``, ``method``, ``setting``,
+        ``minimum_iou`` and ``n_false_positives``, its events matching no
+        window of the primary expression at that minimum IoU whose times lie
+        outside every network window at 10 % (``in_network_windows``).
     """
     expressions = {expression for *_, expression in (*ran, *counted)}
     windows = {
@@ -1827,14 +1829,15 @@ def score_primary(
             )
             continue
         bounds = _bounds(rows)
-        wanted = levels if position < len(ran) else ()
-        for level in dict.fromkeys((0.0, *wanted)):
+        paired = position < len(ran)
+        for level in levels if paired else (0.0,):
             matching = rd.match_events(reference, bounds, minimum_iou=level)
-            if level == 0:
-                unmatched = event_times(rows)[matching.unmatched_detected]
-                outside = ~in_network_windows(unmatched, windows["network"])
-                false_positives.append({**key, "n_false_positives": int(outside.sum())})
-            if level not in wanted:
+            unmatched = event_times(rows)[matching.unmatched_detected]
+            outside = ~in_network_windows(unmatched, windows["network"])
+            false_positives.append(
+                {**key, "minimum_iou": level, "n_false_positives": int(outside.sum())}
+            )
+            if not paired:
                 continue
             pairs = matching.pairs
             errors.append(
@@ -1855,7 +1858,7 @@ def score_primary(
     return (
         found[list(ERROR_ROW_COLUMNS)],
         pd.DataFrame(points, columns=list(COUNT_COLUMNS)),
-        pd.DataFrame(false_positives, columns=[*_KEY, "n_false_positives"]),
+        pd.DataFrame(false_positives, columns=[*_KEY, "minimum_iou", "n_false_positives"]),
     )
 
 
@@ -1945,11 +1948,12 @@ def load_scores(run_directory: str | os.PathLike[str], *, workers: int = 1) -> C
             found = list(pool.map(score, *arguments))
     errors = _concat([session_errors for session_errors, _, _ in found], ERROR_ROW_COLUMNS)
     points = _concat([session_points for _, session_points, _ in found], COUNT_COLUMNS)
+    at_level = [*_KEY, "minimum_iou"]
     false_positives = _concat(
-        [outside for _, _, outside in found], [*_KEY, "n_false_positives"]
-    )
+        [outside for _, _, outside in found], [*at_level, "n_false_positives"]
+    ).astype({"minimum_iou": float})
     interval = _by_intervals(metrics)[list(COUNT_COLUMNS[:-1])].merge(
-        false_positives, on=list(_KEY), how="left"
+        false_positives, on=at_level, how="left"
     )
     counts = _concat([interval, points], COUNT_COLUMNS).astype(
         {
@@ -1968,7 +1972,7 @@ def load_scores(run_directory: str | os.PathLike[str], *, workers: int = 1) -> C
         errors=errors,
         participation=_participation(events, ran, read_table(combined / "units.csv.gz")),
         failures=failures,
-        expression_counts=expression_counts.merge(false_positives, on=list(_KEY), how="left"),
+        expression_counts=expression_counts.merge(false_positives, on=at_level, how="left"),
     )
 
 
@@ -3414,8 +3418,8 @@ def operating_curves(
     Against each method's primary expression, pooled over the condition's
     sessions: at each setting, ``recall`` is the matched truth windows over
     all, and ``false_positives_per_minute`` the false positives (events
-    matching no window at IoU 0 whose times lie outside every network
-    window, at every level) over the minutes outside every network window.
+    matching no window at the curve's minimum IoU whose times lie outside
+    every network window) over the minutes outside every network window.
     A sweep is pooled over the sessions
     on which every one of its settings ran, so every point of a curve is
     over the same sessions. Every interval method's main setting is a point
@@ -8357,7 +8361,8 @@ def _summary(
             "its bounds' midpoint) lies outside every network window at 10 % (a time on a "
             "window's start or end is inside); false positives per minute are those over "
             "the minutes outside every network window, so both cover the same time, in "
-            "every table and at every minimum IoU (the operating curves' axis included). An "
+            "every table. A curve at a higher minimum IoU (0.2, 0.5) counts the events "
+            "unmatched at that IoU the same way, so its axis is its own level's. An "
             "unmatched event inside a network window is no false positive: it counts against "
             "precision only (`n_unmatched_in_events` in the compact tables). Times are "
             "seconds; a signed error is detected minus truth (negative: early), a "

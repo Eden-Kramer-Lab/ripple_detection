@@ -419,15 +419,18 @@ network window at 10 % of the peak, the windows closed (a time on a window's sta
 end is inside; `in_network_windows`). False positives per minute are those over the
 minutes outside every network window, so numerator and denominator cover the same time.
 That is the rate of every table (`false_positives_per_minute`, with `n_false_positives`
-beside it where counts are shown) and the operating curves' axis at every minimum IoU:
-the IoU-0 count, so a curve at IoU 0.5 has the same false positives as at 0. An
+beside it where counts are shown) and the operating curves' axis. A curve at a higher
+minimum IoU (0.2, 0.5) counts the detections unmatched at that level the same way: a
+detection that overlaps a window below the level and whose time lies outside every
+network window is a false positive there, one whose time lies inside is not. An
 unmatched detection whose time lies inside a network window, such as a ripple method's
 detection of a sharp-wave-only event, is no false positive: it counts against precision,
 which counts every unmatched detection, and the compact tables count it apart
 (`n_unmatched_in_events`). Point methods follow the same rule by their points' times.
 Every rate is re-counted from the saved events: matching again every setting in the
-reference and in the six alternative models' conditions, whose sweeps the curves and
-model sensitivity read, and the main settings in every condition.
+reference at every minimum IoU, every setting in the six alternative models' conditions
+at IoU 0, whose sweeps the curves and model sensitivity read, and the main settings in
+every condition at IoU 0.
 
 - `failures`: each method's sessions with scores and without, and its scoring rule. A
   session without a method's scores is a failure, never zero events. Every per-method

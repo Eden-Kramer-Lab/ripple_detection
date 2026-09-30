@@ -1458,10 +1458,14 @@ def _event_free_session(run, origin):
     by an event whose peak (10.25 s) lies outside every network window, and
     leaves three events unmatched: inside the first sharp-wave-only event,
     with its peak on the second's end, and over nothing (16 s); only the last
-    is a false positive. Its sweep point has the first and last of those and
-    one more over nothing. Davidson's ripple peaks lie on the first ripple's,
-    inside the first sharp-wave-only event, on the second's end and over
-    nothing."""
+    is a false positive. Its match of the second ripple has IoU 0.26, so at
+    IoU 0.5 it is unmatched and, outside every window, a false positive
+    there. Its sweep point has an event over the first ripple with IoU 0.25
+    and its peak inside the ripple's window (unmatched at 0.5, a false
+    positive at no level), the first and last unmatched default events, the
+    second ripple's match and one more over nothing. Davidson's ripple peaks
+    lie on the first ripple's, inside the first sharp-wave-only event, on the
+    second's end and over nothing."""
     events = _event_table(
         run,
         [
@@ -1485,7 +1489,8 @@ def _event_free_session(run, origin):
         (origin + 9.96, origin + 10.3, origin + 10.25),
         (origin + 16.0, origin + 16.1, origin + 16.05),
     ]
-    sweep = [kay[1], kay[4], (origin + 17.0, origin + 17.1, origin + 17.05)]
+    wide = (origin + 1.9, origin + 2.3, origin + 2.0)
+    sweep = [wide, kay[1], kay[3], kay[4], (origin + 17.0, origin + 17.1, origin + 17.05)]
     peaks = np.array([origin + 2.0, origin + 4.0, edge, origin + 16.05])
     return {
         "events": events,
@@ -1562,21 +1567,33 @@ def test_scores_count_event_free_false_positives(analyze, event_free_run):
     counts = scores.counts.fillna({"minimum_iou": -1.0})
     counts = counts.groupby(["method", "setting", "minimum_iou"])
     # per session one false positive at the default, two in the sweep point,
-    # one of Davidson's points: the count at IoU 0, at every level
+    # one of Davidson's points; at IoU 0.5 the second ripple's match (IoU
+    # 0.26, its peak outside every window) is one more, the first ripple's
+    # wide event in the sweep (IoU 0.25, its peak inside) is none
     assert counts.n_false_positives.sum().to_dict() == {
         (*DAVIDSON, -1.0): 2,
-        **{(KAY[0], "3.0", level): 4 for level in (0.0, 0.2, 0.5)},
-        **{(KAY[0], "default", level): 2 for level in (0.0, 0.2, 0.5)},
+        **{(KAY[0], "3.0", level): count for level, count in ((0.0, 4), (0.2, 4), (0.5, 6))},
+        **{
+            (KAY[0], "default", level): count
+            for level, count in ((0.0, 2), (0.2, 2), (0.5, 4))
+        },
     }
-    curves = analyze.operating_curves(scores)
-    sweep = curves[(curves.setting == KAY_SWEEP[1]) & (curves.minimum_iou == 0)].iloc[0]
-    assert [sweep.n_detected, sweep.n_matched, sweep.n_false_positives] == [6, 0, 4]
+    curves = analyze.operating_curves(scores).set_index(["setting", "minimum_iou"])
+    sweep = curves.loc[(KAY_SWEEP[1], 0.0)]
+    assert [sweep.n_detected, sweep.n_matched, sweep.n_false_positives] == [10, 4, 4]
     # the unmatched events inside a sharp-wave-only event are not in the rate
-    rate = 4 / scores.sessions.minutes.sum()
+    minutes = scores.sessions.minutes.sum()
+    rate = 4 / minutes
     assert sweep.false_positives_per_minute == pytest.approx(rate)
+    # each level's curve its own level's false positives
+    half = curves.loc[(KAY_SWEEP[1], 0.5)]
+    assert [half.n_matched, half.n_false_positives] == [0, 6]
+    assert half.false_positives_per_minute == pytest.approx(6 / minutes)
     network = analyze.expression_curves(scores, "network")
-    at_zero = network[(network.setting == KAY_SWEEP[1]) & (network.minimum_iou == 0)]
-    assert at_zero.false_positives_per_minute.tolist() == pytest.approx([rate])
+    sweep = network[network.setting == KAY_SWEEP[1]].set_index("minimum_iou")
+    assert sweep.false_positives_per_minute.tolist() == pytest.approx(
+        [rate, rate, 6 / minutes]
+    )
 
 
 def test_false_positives_are_counted_again_where_a_rate_reads_them(analyze, run, tmp_path):
@@ -1592,6 +1609,11 @@ def test_false_positives_are_counted_again_where_a_rate_reads_them(analyze, run,
     assert found[("ripple_snr=low/0", *DAVIDSON)] == 1
     # a sweep no rate reads is not matched again
     assert np.isnan(found[("ripple_snr=low/0", *KAY_SWEEP)])
+    # nor a main setting at a level above 0 outside the reference
+    above = scores.counts[scores.counts.minimum_iou == 0.5]
+    above = above.set_index(["session_id", "method", "setting"]).n_false_positives
+    assert np.isnan(above[("ripple_snr=low/0", *KAY)])
+    assert above[("reference/0", *KAY)] == 2
 
 
 def _design_at_fp_rate(curve, target, floor, columns):
