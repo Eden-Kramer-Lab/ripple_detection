@@ -5637,8 +5637,10 @@ def identical_groups(tables: RunTables) -> pd.DataFrame:
     -------
     groups : pandas.DataFrame
         One row per method and setting of ``tables.methods``, in its order:
-        ``method``, ``setting``, ``group`` (the group's first member in that
-        order), ``members`` (every member, in that order, space-separated)
+        ``method``, ``setting``, ``group`` and ``group_setting`` (the
+        method and setting of the group's first member in that order, so two
+        settings of one method with different events are two groups),
+        ``members`` (every member's method, in that order, space-separated)
         and ``n_members``.
     """
     ran = set(tables.ran[list(_KEY)].itertuples(index=False, name=None))
@@ -5646,7 +5648,7 @@ def identical_groups(tables: RunTables) -> pd.DataFrame:
         key: _bounds(rows) for key, rows in tables.events.groupby(list(_KEY), sort=False)
     }
     none = np.empty((0, 2))
-    first: dict[tuple[Any, ...], str] = {}
+    first: dict[tuple[Any, ...], tuple[str, str]] = {}
     rows = []
     listed = tables.methods[["method", "setting", "primary_expression", "scoring"]]
     for method, setting, primary, scoring in listed.itertuples(index=False):
@@ -5658,13 +5660,13 @@ def identical_groups(tables: RunTables) -> pd.DataFrame:
             bounds = np.asarray(events.get((session_id, method, setting), none), dtype=float)
             ordered = bounds[np.lexsort((bounds[:, 1], bounds[:, 0]))]
             outputs.append(np.ascontiguousarray(ordered).tobytes())
-        group = first.setdefault((scoring, primary, tuple(outputs)), method)
-        rows.append({"method": method, "setting": setting, "group": group})
-    groups = pd.DataFrame(rows, columns=["method", "setting", "group"])
-    members = groups.groupby("group", sort=False)["method"]
-    groups["members"] = groups["group"].map(members.agg(" ".join))
-    groups["n_members"] = groups["group"].map(members.size()).astype(int)
-    return groups
+        group = first.setdefault((scoring, primary, tuple(outputs)), (method, setting))
+        rows.append((method, setting, *group))
+    columns = ["method", "setting", "group", "group_setting"]
+    groups = pd.DataFrame(rows, columns=columns)
+    members = groups.groupby(["group", "group_setting"], sort=False)["method"]
+    found = pd.DataFrame({"members": members.agg(" ".join), "n_members": members.size()})
+    return groups.join(found, on=["group", "group_setting"]).astype({"n_members": int})
 
 
 def false_positive_rates(
@@ -5782,7 +5784,9 @@ def _first_members(tables: RunTables) -> pd.DataFrame:
     """Each group's first member (``identical_groups``), with the group's
     ``members``, ``n_members`` and ``stand_in_inputs`` (``_group_stand_ins``)."""
     groups = identical_groups(tables)
-    first = groups[groups["method"] == groups["group"]].drop(columns="group")
+    first = groups[
+        (groups["method"] == groups["group"]) & (groups["setting"] == groups["group_setting"])
+    ].drop(columns=["group", "group_setting"])
     stand_ins = first["members"].map(lambda members: _group_stand_ins(members.split()))
     return first.assign(stand_in_inputs=stand_ins.to_numpy())
 

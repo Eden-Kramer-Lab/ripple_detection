@@ -2961,39 +2961,42 @@ def test_select_events_for_a_spot_check(analyze, tiny_tables, point_matched):
 
 def _hand_groups(analyze, tiny_tables):
     """Hand tables for grouping: two sessions, the second at a Unix clock
-    origin, and methods whose events agree or differ as their names say."""
+    origin, and methods (two settings of one among them) whose events agree
+    or differ as their names say."""
     origin = UNIX_ORIGIN
     two = [(1.0, 2.0), (3.0, 4.0)]
+    other = [(1.0, 2.5), (3.0, 4.0)]
     one = [(origin + 1.0, origin + 2.0)]
     shifted = [(origin + 1.0, np.nextafter(origin + 2.0, np.inf))]
-    # method: (primary expression, scoring, events on s0, events on s1; None failed)
+    # (method, setting): (primary expression, scoring, events on s0, events
+    # on s1; None where the call failed)
     spec = {
-        "a": ("ripple", "interval", two, one),
-        "b_same_as_a": ("ripple", "interval", two[::-1], one),
-        "c_one_ulp_off": ("ripple", "interval", two, shifted),
-        "d_failed_on_s1": ("ripple", "interval", two, None),
-        "e_same_as_d": ("ripple", "interval", two, None),
-        "f_burst": ("burst", "interval", two, one),
-        "g_none": ("ripple", "interval", [], []),
-        "h_none": ("ripple", "interval", [], []),
-        "i_points": ("ripple", "peak_containment", two, one),
+        ("a", "default"): ("ripple", "interval", two, one),
+        ("a", "3.0"): ("ripple", "interval", other, one),
+        ("b_same_as_a", "default"): ("ripple", "interval", two[::-1], one),
+        ("b_same_as_a_3", "default"): ("ripple", "interval", other, one),
+        ("c_one_ulp_off", "default"): ("ripple", "interval", two, shifted),
+        ("d_failed_on_s1", "default"): ("ripple", "interval", two, None),
+        ("e_same_as_d", "default"): ("ripple", "interval", two, None),
+        ("f_none_on_s1", "default"): ("ripple", "interval", two, []),
+        ("g_burst", "default"): ("burst", "interval", two, one),
+        ("h_none", "default"): ("ripple", "interval", [], []),
+        ("i_none", "default"): ("ripple", "interval", [], []),
+        ("j_points", "default"): ("ripple", "peak_containment", two, one),
     }
     sessions = ["s0", "s1"]
     ran, events = [], []
-    for method, (_, _, *outputs) in spec.items():
+    for (method, setting), (_, _, *outputs) in spec.items():
         for session_id, bounds in zip(sessions, outputs, strict=True):
             if bounds is None:
                 continue
-            ran.append((session_id, method, "default"))
-            events += [(session_id, method, "default", *pair) for pair in bounds]
+            ran.append((session_id, method, setting))
+            events += [(session_id, method, setting, *pair) for pair in bounds]
     return dataclasses.replace(
         tiny_tables,
         sessions=pd.DataFrame({"session_id": sessions}),
         methods=pd.DataFrame(
-            [
-                (method, "default", primary, scoring)
-                for method, (primary, scoring, *_) in spec.items()
-            ],
+            [(*key, primary, scoring) for key, (primary, scoring, *_) in spec.items()],
             columns=["method", "setting", "primary_expression", "scoring"],
         ),
         ran=pd.DataFrame(ran, columns=["session_id", "method", "setting"]),
@@ -3005,21 +3008,33 @@ def _hand_groups(analyze, tiny_tables):
 
 def test_identical_groups_by_hand(analyze, tiny_tables):
     groups = analyze.identical_groups(_hand_groups(analyze, tiny_tables))
-    assert groups.group.tolist() == [
-        "a",
-        "a",
-        "c_one_ulp_off",
-        "d_failed_on_s1",
-        "d_failed_on_s1",
-        "f_burst",
-        "g_none",
-        "g_none",
-        "i_points",
+    # each group named by its first member's method and setting: two settings
+    # of one method with different events are two groups
+    assert list(zip(groups.group, groups.group_setting, strict=True)) == [
+        ("a", "default"),
+        ("a", "3.0"),
+        ("a", "default"),
+        ("a", "3.0"),
+        ("c_one_ulp_off", "default"),
+        ("d_failed_on_s1", "default"),
+        ("d_failed_on_s1", "default"),
+        ("f_none_on_s1", "default"),
+        ("g_burst", "default"),
+        ("h_none", "default"),
+        ("h_none", "default"),
+        ("j_points", "default"),
+    ]
+    assert groups.members.tolist()[:4] == [
+        "a b_same_as_a",
+        "a b_same_as_a_3",
+        "a b_same_as_a",
+        "a b_same_as_a_3",
     ]
     by = groups.set_index("method")
-    assert by.loc["b_same_as_a", "members"] == "a b_same_as_a"
     assert by.loc["e_same_as_d", "members"] == "d_failed_on_s1 e_same_as_d"
-    assert by.n_members.tolist() == [2, 2, 1, 2, 2, 1, 2, 2, 1]
+    # a call that failed is not one that found nothing
+    assert by.loc["f_none_on_s1", "members"] == "f_none_on_s1"
+    assert groups.n_members.tolist() == [2, 2, 2, 2, 1, 2, 2, 1, 1, 2, 2, 1]
 
 
 def test_a_group_lists_its_stand_ins(analyze):
