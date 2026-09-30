@@ -1549,9 +1549,7 @@ def _detection_rates(
     (``_pooled_ratios``), the counts and ``minutes`` outside every network
     window summed: the false positives, the unmatched detections outside
     every window, over those minutes."""
-    frame = frame.assign(
-        minutes=frame["session_id"].map(_minutes_outside(tables.sessions)).to_numpy(),
-    )
+    frame = frame.assign(minutes=frame["session_id"].map(_minutes_outside(tables.sessions)))
     ratios = {
         "recall": ("n_matched", "n_reference"),
         "precision": ("n_matched", "n_detected"),
@@ -4876,9 +4874,8 @@ def _orders(
         # reversed: established in the alternative the other way, so no order
         # both survives and reverses
         reversed_ = supported & (direction[1] == -direction[0])
-        opposite = observed[0] * observed[1] < 0
         # opposite estimates without an established alternative order
-        unsettled = direction[1] == 0
+        point_reversed = (observed[0] * observed[1] < 0) & (direction[1] == 0)
         for t, target in enumerate(targets):
             both = np.isfinite(resampled[:, 0, t]) & np.isfinite(resampled[:, 1, t])
             flips = np.sign(resampled[both, 0, t]) * np.sign(resampled[both, 1, t]) < 0
@@ -4914,7 +4911,7 @@ def _orders(
                     "supported": bool(supported[t]),
                     "survives": bool(survives[t]),
                     "reversed": bool(reversed_[t]),
-                    "point_reversed": bool(opposite[t] & unsettled[t]),
+                    "point_reversed": bool(point_reversed[t]),
                     "p_reversed": flips.mean() if both.any() else np.nan,
                 }
             )
