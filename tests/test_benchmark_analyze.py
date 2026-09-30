@@ -3415,8 +3415,11 @@ def test_compact_tables_keep_one_row_per_group(analyze, compact_run):
         & np.isclose(errors.fraction, 0.1)
     ].iloc[0]
     assert carey.onset_error_10 == network["median"]
-    # Carey has a false positive on the first session alone
+    # Carey has a false positive on the first session alone: the second
+    # counts none, and its minutes count, in the rate and its interval
     assert [carey.n_unmatched, carey.n_unmatched_rest, carey.n_unmatched_running] == [1, 1, 0]
+    assert carey.unmatched_per_minute == pytest.approx(1 / carey.minutes)
+    assert np.isfinite([carey.unmatched_per_minute_low, carey.unmatched_per_minute_high]).all()
     # the bout's 0.5 s less the 0.35 s of the two overlapping windows' union
     assert compact.running_minutes.tolist() == pytest.approx([2 * 0.15 / 60] * 3, abs=1e-6)
     points = compact_run.points
@@ -3449,7 +3452,12 @@ def test_compact_page_lists_groups_and_stand_ins(analyze, compact_run):
             "**Identical groups.** Methods sharing a primary expression whose detections "
             "are identical on every session"
         ),
-        "**Unmatched / min.** Every detection matching no truth window",
+        (
+            "**Unmatched / min.** Every detection matching no truth window of its primary "
+            "expression at IoU 0, at rest or running, over the minutes outside every network "
+            "window at 10 % (`minutes`), the denominator of every other false-positive rate "
+            "in these results."
+        ),
         (
             "**Stand-ins.** The inputs the benchmark serves a recipe in place of something "
             "the simulator lacks"
