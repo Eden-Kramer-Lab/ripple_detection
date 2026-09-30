@@ -5092,6 +5092,40 @@ def session_bouts(sessions: pd.DataFrame) -> dict[str, np.ndarray[Any, Any]]:
     return bouts
 
 
+def _count_by_state(
+    events: pd.DataFrame, bouts: Mapping[str, np.ndarray[Any, Any]]
+) -> pd.DataFrame:
+    """Each session, method and setting's events at rest and running.
+
+    An event is placed by its ``peak_time``, else its bounds' midpoint
+    (``event_times``), against its session's running bouts as closed
+    intervals (``intervals_to_mask``): one on a bout's start or end, to the
+    timestamps' rounding, is running.
+
+    Parameters
+    ----------
+    events : pandas.DataFrame
+        ``session_id``, ``method``, ``setting``, ``start_time``, ``end_time``
+        and ``peak_time`` (missing for none).
+    bouts : mapping of str to ndarray, shape (n_bouts, 2)
+        Each session's running bouts.
+
+    Returns
+    -------
+    counts : pandas.DataFrame
+        Indexed by ``session_id``, ``method`` and ``setting``, those with
+        events: ``rest`` and ``running``.
+    """
+    frames = []
+    for session_id, rows in events.groupby("session_id", sort=False):
+        running = rd.intervals_to_mask(event_times(rows), bouts[session_id])
+        frames.append(
+            rows[list(_KEY)].assign(rest=(~running).astype(int), running=running.astype(int))
+        )
+    placed = _concat(frames, [*_KEY, "rest", "running"])
+    return placed.groupby(list(_KEY))[["rest", "running"]].sum()
+
+
 def rates_by_state(
     tables: RunTables,
     *,
@@ -5124,14 +5158,7 @@ def rates_by_state(
     """
     bouts = session_bouts(tables.sessions) if bouts is None else bouts
     durations = tables.sessions.set_index("session_id")["duration_s"]
-    frames = []
-    for session_id, events in tables.events.groupby("session_id", sort=False):
-        running = rd.intervals_to_mask(event_times(events), bouts[session_id])
-        frames.append(
-            events[list(_KEY)].assign(rest=(~running).astype(int), running=running.astype(int))
-        )
-    placed = _concat(frames, [*_KEY, "rest", "running"])
-    counted = placed.groupby(list(_KEY))[["rest", "running"]].sum()
+    counted = _count_by_state(tables.events, bouts)
     truth = []
     for session_id, (events, non_events) in tables.truth.items():
         running_minutes = float(np.sum(np.diff(bouts[session_id], axis=1))) / 60
@@ -5751,17 +5778,9 @@ def false_positive_rates(
         on=[*_KEY, "event_index"],
         how="left",
     )
-    placed = []
-    for session_id, rows in unmatched.groupby("session_id", sort=False):
-        running = rd.intervals_to_mask(event_times(rows), bouts[session_id])
-        placed.append(
-            rows[list(_KEY)].assign(
-                n_unmatched_rest=(~running).astype(int),
-                n_unmatched_running=running.astype(int),
-            )
-        )
     columns = ["n_unmatched_rest", "n_unmatched_running"]
-    counted = _concat(placed, [*_KEY, *columns]).groupby(list(_KEY))[columns].sum()
+    counted = _count_by_state(unmatched, bouts)
+    counted.columns = columns
     network = matches.windows[matches.windows["expression"] == "network"]
     windows = {session_id: _bounds(rows) for session_id, rows in network.groupby("session_id")}
     minutes = _minutes_outside(tables.sessions)
