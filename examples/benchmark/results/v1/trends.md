@@ -55,16 +55,16 @@ reported beside, never subtracted from, observed participation.
 
 ## 5. No supported order between Roumis and Kay at 1 false positive a minute
 
-Against ripple truth at 1 false positive a minute, Roumis has the highest recall, 0.786 (0.766,
-0.805), and Kay the next, 0.784 (0.762, 0.802); their paired difference is +0.002 (-0.002,
-+0.008) over 20 sessions, bootstrap p = 0.25 (approximate, from the interval's 2000 resamples),
-so the data do not order them. Yu's curve does not reach 1 false positive a minute. Long has
-no false positive at any threshold tested, so it is read within budget, at its best tested
-setting: 0.766 (0.754, 0.778), a lower bound on its recall at that rate, since no setting with
-more false positives was tested. That places it third, below Roumis with support (Long minus
-Roumis -0.020 (-0.043, -0.002)) and not separated from Kay (Kay minus Long +0.018 (-0.002,
-+0.039)). Spot check `06_operating_order_Roumis_ripple_detector_reference.png`: the two
-detectors give the same events on the events drawn.
+Against ripple truth at 1 false positive a minute, among the curves read between tested
+settings, Roumis has the highest recall, 0.786 (0.766, 0.805), and Kay the next, 0.784 (0.762,
+0.802); their paired difference is +0.002 (-0.002, +0.008) over 20 sessions, bootstrap p = 0.25
+(approximate, from the interval's 2000 resamples), so the data do not order them. Yu's curve
+does not reach 1 false positive a minute. Long has no false positive at any threshold tested,
+so it is read within budget, at its best tested setting: 0.766 (0.754, 0.778), a lower bound on
+its recall at that rate, since no setting with more false positives was tested. The data
+therefore do not place it below Roumis or Kay. Spot check
+`06_operating_order_Roumis_ripple_detector_reference.png`: the two detectors give the same
+events on the events drawn.
 
 ## Not a detector trend: `noise_type=brown`
 
