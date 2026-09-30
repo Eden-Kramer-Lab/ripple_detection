@@ -871,7 +871,8 @@ class Matches:
         (``"background"`` for none), and ``in_events``, whether its time
         (``event_times``) lies inside a network window at 10 %
         (``in_network_windows``): those outside every one are the false
-        positives every rate counts, those inside are not false positives.
+        positives at IoU 0, which every rate at IoU 0 counts; those inside are
+        not false positives.
     comparisons : pandas.DataFrame
         ``compare_detectors`` on the main methods (one setting each, the
         first method of a pair first by name), ``truth_expression``
@@ -4425,12 +4426,14 @@ class SweepRecalls:
         Per detector, the replicates pooled: those on which every setting of
         its sweep ran in every condition, so that the conditions are paired.
     nearest : ndarray of str, shape (n_conditions, n_detectors, n_targets)
-        The swept setting whose pooled false-positive rate is nearest each
-        target in log rate (``""`` for a curve with none), where a spot check
-        of the operating point looks.
+        The setting read at each target: the swept setting whose pooled
+        false-positive rate is nearest it in log rate, or the best within
+        budget past every setting's rate (``""`` for a curve with none),
+        where a spot check of the operating point looks.
     read_off : ndarray of str, shape (n_conditions, n_detectors, n_targets)
         How ``estimate`` was read off (``_at_fp_rates``): ``"interpolated"``,
-        ``"tested"`` or ``""``.
+        ``"tested"``, ``"within budget"`` (the best tested setting's recall,
+        a lower bound on the recall at that budget) or ``""``.
     """
 
     estimate: np.ndarray[Any, Any]
@@ -4948,8 +4951,8 @@ def operating_differences(
     -------
     differences : pandas.DataFrame
         ``DIFFERENCE_COLUMNS``: per pair (A first by name) and target,
-        ``setting_a`` and ``setting_b`` (each detector's swept setting whose
-        false-positive rate is nearest the target, where a spot check
+        ``setting_a`` and ``setting_b`` (each detector's setting read:
+        nearest the target, or the best within budget; where a spot check
         looks), ``recall_a`` and ``recall_b``, ``reached_a`` and ``reached_b``
         (whether each curve reaches the target; a recall it does not reach,
         the target below every setting's rate, is NaN, never the curve's
@@ -4965,8 +4968,9 @@ def operating_differences(
         target, those the interval and p-value are over; NaN and 0 without a
         difference), ``n_defined_a`` and ``n_defined_b`` (the sessions whose
         own curve reaches the target), ``n_events_a`` and ``n_events_b``
-        (the true events found, pooled, at the swept setting nearest the
-        target), ``n_replicates`` (sessions pooled) and ``n_dropped`` (the
+        (the true events found, pooled, at the setting read: nearest the
+        target, or the best within budget), ``n_replicates`` (sessions
+        pooled) and ``n_dropped`` (the
         condition's other sessions).
     """
     detectors = _detectors(scores)
@@ -5794,6 +5798,12 @@ def expression_curves(
 ) -> pd.DataFrame:
     """``operating_curves`` against one expression, whatever each method's primary.
 
+    Recall is against ``expression``; the false-positive axis is not: it is
+    each method's false positives against its primary expression (events
+    unmatched there whose times lie outside every network window), the same
+    count on every expression's curves, so the curves of one method differ in
+    recall alone.
+
     Parameters
     ----------
     scores : ConditionScores
@@ -6404,8 +6414,9 @@ COMPACT_DEFINITIONS = (
         "lies outside every network window at 10 % (closed: a time on a window's start or "
         "end is inside). The false positives, at rest or running, over the minutes outside "
         "every network window (`minutes`): numerator and denominator cover the same time. "
-        "This is the false-positive rate of every other table in these results. It is not "
-        "a rate at rest."
+        "This is the false-positive rate of every other table in these results at IoU 0 (a "
+        "curve at a higher minimum IoU counts the detections unmatched at that level). It "
+        "is not a rate at rest."
     ),
     (
         "- **FP at rest / rest min.** The false positives at rest over the minutes of rest "
@@ -6441,8 +6452,8 @@ COMPACT_DEFINITIONS = (
         "log rate, so no setting was run there, `tested` where the target is one "
         "setting's rate, which happens only when a pooled rate equals the target exactly, or "
         "`within budget` where every setting's rate is below the target, so the best "
-        "recall of any setting is read (Long's detector, with no false positive at any "
-        "setting): the recall at the best tested setting, a lower bound on the recall at "
+        "recall of any setting is read: the recall at the best tested setting, a lower "
+        "bound on the recall at "
         "that budget, since settings with more false positives were not tested. Only a "
         "held-out value is a number a threshold recommendation may quote; "
         "its setting is the best recall among those within the target on the even "
@@ -6757,8 +6768,10 @@ def plot_false_positive_classes(classes: pd.DataFrame) -> Figure:
         axis.barh(y, width, left=left, color=colors[position], label=label, height=0.8)
         left += width
     axis.set_yticks(y, methods, fontsize=_FONT)
-    axis.set_xlabel("fraction of the method's false positives", fontsize=7)
-    axis.set_title("What false positives overlap (primary expression, IoU 0)", fontsize=8)
+    axis.set_xlabel("fraction of the method's unmatched detections", fontsize=7)
+    axis.set_title(
+        "What every unmatched detection overlaps (primary expression, IoU 0)", fontsize=8
+    )
     axis.legend(fontsize=_FONT, loc="upper left", bbox_to_anchor=(1.0, 1.0))
     return figure
 
@@ -6860,7 +6873,7 @@ def plot_consensus(table: pd.DataFrame) -> Figure:
     right.set_yscale("log")
     right.set_xlabel("methods a group of overlapping unmatched detections spans", fontsize=7)
     right.set_ylabel("groups", fontsize=7)
-    right.set_title("False positives", fontsize=8)
+    right.set_title("Unmatched detections", fontsize=8)
     for axis in (left, right):
         axis.tick_params(labelsize=_FONT)
     return figure
@@ -7891,9 +7904,10 @@ def select_from(
     selection : {"missed", "found", "false_positive"}
         Truth windows of the method's primary expression at 10 % it matched
         no event of (IoU 0; peak containment for a point method), those it
-        matched, or its events matching no window.
+        matched, or its events matching no window: every unmatched detection,
+        those inside a network window (no false positives) included.
     event_type : str, optional
-        Keep only truth windows of this event type, or false positives
+        Keep only truth windows of this event type, or unmatched detections
         labelled with it (``label_by_overlap`` against every component and
         non-event; ``"background"`` for none).
 
@@ -8440,7 +8454,8 @@ ANALYSES: tuple[Analysis, ...] = (
         _matching,
         "Recall, precision, F1, the IoU distribution, median absolute errors, recall by "
         "event type and at the target rates (`recall_at_<target>`, interpolated between "
-        "tested settings), and ranks, at minimum IoU 0, 0.2 and 0.5.",
+        "tested settings or, within budget, the best tested setting's, a lower bound; "
+        "`read_off_at_<target>` says which), and ranks, at minimum IoU 0, 0.2 and 0.5.",
         plot_matching_sensitivity,
         "Recall and precision at each minimum IoU.",
     ),
@@ -8456,9 +8471,10 @@ ANALYSES: tuple[Analysis, ...] = (
         Analysis(
             f"appendix_curves_{expression}",
             _expression_curves(expression),
-            f"Every interval method's recall, precision and false positives per minute at "
-            f"every setting and minimum IoU against the {expression.replace('_', ' ')} "
-            "truth, whatever its primary expression.",
+            f"Every interval method's recall and precision at every setting and minimum "
+            f"IoU against the {expression.replace('_', ' ')} truth, whatever its primary "
+            "expression, beside its false positives per minute against its primary "
+            "expression, the same on every expression's curves.",
         )
         for expression in EXPRESSION_ORDER
     ),
@@ -8467,7 +8483,9 @@ ANALYSES: tuple[Analysis, ...] = (
         _of_scores(model_sensitivity, operator.itemgetter(0)),
         "Each result's change under each of the simulator's six alternative models, "
         "paired with the reference by replicate, a recall at a target interpolated between "
-        "tested settings; unreachable targets stay missing.",
+        "tested settings or, within budget, the best tested setting's, a lower bound, so a "
+        "change is established only the way its bound allows (`established`); unreachable "
+        "targets stay missing.",
         plot_model_sensitivity,
         "Recall changes per alternative, detectors at 1 per minute as triangles.",
     ),
@@ -8496,7 +8514,8 @@ ANALYSES: tuple[Analysis, ...] = (
         "Per detector and target rate, the recall and false positives per minute "
         "measured on the held-out replicates at the setting chosen on the others, beside "
         "the operating point's recall read off the curve; `kind` measured, interpolated, "
-        "tested, or empty where there is no value.",
+        "tested, within budget (the best tested setting's recall, a lower bound), or empty "
+        "where there is no value.",
     ),
     Analysis(
         COMPACT_POINTS,

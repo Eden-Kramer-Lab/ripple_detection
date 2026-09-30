@@ -1644,8 +1644,9 @@ def test_false_positives_are_counted_again_where_a_rate_reads_them(analyze, run,
 
 
 def _design_at_fp_rate(curve, target, floor, columns):
-    """``at_fp_rate`` as the benchmark's design writes it, in pandas, with
-    the budget rule: past every setting's rate, the best recall's setting."""
+    """``at_fp_rate`` as the benchmark's design sketch writes it, in pandas,
+    with the budget rule added here (the sketch has none): past every
+    setting's rate, the best recall's setting."""
     x = np.log(np.maximum(curve.fp_rate.to_numpy(float), floor))
     ranked = curve.assign(_x=x, _order=np.arange(len(curve)))
     ranked = ranked.sort_values(["_x", "recall", "_order"], ascending=[True, False, True])

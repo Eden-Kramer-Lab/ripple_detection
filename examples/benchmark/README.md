@@ -496,7 +496,9 @@ every condition at IoU 0.
   minute (against the primary expression: one count per method, on every row), median
   IoU and median signed and absolute errors at 10 %, with intervals.
 - `appendix_curves_<expression>`: every interval method's curve against one expression,
-  one file per expression.
+  one file per expression: recall against that expression, the false-positive axis the
+  method's false positives against its primary expression, the same on every
+  expression's curves.
 - `compact_<target>` (ripple, burst, network), `compact_held_out` and `compact_points`,
   and `compact.md`: the headline comparison side by side, taken from the tables above
   ([Compact comparison](#compact-comparison)).
@@ -525,9 +527,10 @@ on one side it rejects far more often than its level when nothing changed. Besid
 p-value, what the estimate rests on: `n_draws`, the replicates (or sessions) whose own
 value is defined on each side (`n_defined`, `n_defined_reference`; `_a`, `_b`) and the
 events on each side (`n_events`, ...: true events found for recall, the errors and a
-recall at a target, at the setting nearest it; events detected for precision and false
-positives; events with participation for participation), so a change resting on a
-handful of events shows. Without an estimate there is no p-value and `n_draws` is 0.
+recall at a target, at the setting read there, nearest the target or the best within
+budget; events detected for precision; false positives for their rate; events with
+participation for participation), so a change resting on a handful of events shows.
+Without an estimate there is no p-value and `n_draws` is 0.
 
 What each column means is in the docstring of the function that builds the table: the
 function of the table's name, except `failures` (`failure_counts`),
@@ -683,7 +686,17 @@ recalls and orders. Such a value is read off the curve, not measured: `read_off`
 CSV (`read_off_a` and `read_off_b` in `operating_differences.csv`) says `interpolated`
 where the target lies between two tested settings' rates, so no setting was run at it,
 `tested` where it is one setting's rate, and `within budget` where it lies past every
-setting's rate.
+setting's rate. A comparison of two values read at a target holds one way when a side is
+within budget: for A minus B, a lower bound when A is (only a positive difference can
+be established), an upper bound when B is (only a negative one), nothing when both are
+(`bound` and `established` in `operating_differences.csv` and in model sensitivity's
+changes at a target, alternative minus reference; the orders' `supported`, `survives`
+and `reversed` in `model_sensitivity_orders.csv`, with each side's read-off kind and
+bound). `matching_sensitivity.csv` has `read_off_at_<target>` beside each
+`recall_at_<target>`. A reading at a condition or level whose false positives were not
+counted (anything but the reference at every level, or IoU 0 elsewhere for the main
+settings and the alternative models' sweeps) raises rather than reading the missing
+rate as out of reach.
 `operating_differences.csv` has, for two detectors of one primary expression, the
 difference in recall at each target, paired by session, with its interval and test: two
 recalls whose intervals overlap can still differ, and two whose estimates differ may
@@ -692,9 +705,10 @@ setting ran, so a failed call cannot bend one point of a curve. The curves descr
 sessions they are read from: a threshold quoted from them is chosen on the even
 replicates and judged on the odd ones (`held_out_thresholds.png`, held-out recall beside
 the calibration recall). A recipe's point is one configured interpretation, not the
-paper's own tuning. `appendix_curves_<expression>.csv` gives every curve against each
-expression, not only the primary one, and `appendix_expressions.csv` every main method's
-scores against each.
+paper's own tuning. `appendix_curves_<expression>.csv` gives every curve's recall
+against each expression, not only the primary one, over the same false-positive axis
+(the primary expression's false positives), and `appendix_expressions.csv` every main
+method's scores against each.
 
 ### Robustness across conditions
 
@@ -760,12 +774,15 @@ combinations of assumptions.
 A trend goes into `summary.md` or this README only after its underlying events have
 been looked at. `candidate_trends.csv` lists candidates from the tables, each with its
 evidence and where to look; `select_events` picks the events (truth windows a method
-missed or found, or its false positives, of one condition) and `spot_check` draws six of
+missed or found, or its unmatched detections, every one, those inside a network window
+included: the selection named `false_positive`, of one condition) and `spot_check` draws
+six of
 them, the sessions simulated again from the run's parameters and seeds, with the
 signals, spikes, truth windows and the methods' events (a point event as a diamond, a
 method that failed on the session labelled so), into `spot_checks/`, which a rebuild
 keeps. Each candidate names the condition, one or two methods each with the setting to
-draw (at a false-positive target, the swept setting whose rate is nearest it) and
+draw (at a false-positive target, the setting read: nearest the target, or the best
+within budget) and
 which events:
 
 ```python
