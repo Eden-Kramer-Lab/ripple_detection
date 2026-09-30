@@ -3383,19 +3383,20 @@ def compact_run(analyze, run, tmp_path_factory):
 
 def test_compact_tables_keep_one_row_per_group(analyze, compact_run):
     compact = compact_run.compact
-    # by primary expression in the targets' order, not the methods' (Carey first)
+    # one row per group, in the methods' order; one per target once split
     assert compact[["primary_expression", "method", "n_members"]].to_numpy().tolist() == [
+        ["network", CAREY[0], 1],
         ["ripple", KAY[0], 1],
         ["burst", LIU[0], 2],
-        ["network", CAREY[0], 1],
     ]
-    liu = compact.iloc[1]
+    by_method = compact.set_index("method")
+    liu = by_method.loc[LIU[0]]
     assert liu.members == f"{LIU[0]} {LIU_AWAKE[0]}"
     assert liu.stand_in_inputs == (
         f"{LIU[0]} (pyramidal sleep_intervals); {LIU_AWAKE[0]} (pyramidal behavior_intervals)"
     )
     # Carey's errors against the network, not its ripple or burst windows
-    carey = compact.iloc[2]
+    carey = by_method.loc[CAREY[0]]
     errors = compact_run.errors
     network = errors[
         (errors.method == CAREY[0])

@@ -5791,13 +5791,6 @@ def unmatched_by_state(
     return _per_method(split, tables, grid, counts).fillna(dict.fromkeys(sums, 0.0))
 
 
-def _in_target_order(frame: pd.DataFrame) -> pd.DataFrame:
-    """``frame``'s rows by primary expression in ``COMPACT_TARGETS``' order,
-    each expression's in their own order."""
-    order = frame["primary_expression"].map({t: k for k, t in enumerate(COMPACT_TARGETS)})
-    return frame.iloc[np.argsort(order.to_numpy(), kind="stable")].reset_index(drop=True)
-
-
 def compact_comparison(
     groups: pd.DataFrame,
     sensitivity: pd.DataFrame,
@@ -5834,10 +5827,10 @@ def compact_comparison(
     -------
     comparison : pandas.DataFrame
         ``COMPACT_COLUMNS``, one row per group of interval methods whose
-        primary expression is in ``COMPACT_TARGETS``, by expression in that
-        order, then in the groups' order: ``primary_expression``,
-        ``method`` (the group's first member), ``members`` (space-separated),
-        ``n_members``, ``stand_in_inputs``, ``n_sessions``, ``n_failures``, ``n_reference``, ``n_detected``;
+        primary expression is in ``COMPACT_TARGETS``, in the groups' order:
+        ``primary_expression``, ``method`` (the group's first member),
+        ``members`` (space-separated), ``n_members``, ``stand_in_inputs``,
+        ``n_sessions``, ``n_failures``, ``n_reference``, ``n_detected``;
         at each level of ``COMPACT_LEVELS`` (``iou0``, ``iou0.5``)
         ``n_matched_<level>`` (a count, with no interval), ``recall_<level>``
         and ``precision_<level>``, each with ``_low`` and ``_high``;
@@ -5857,7 +5850,11 @@ def compact_comparison(
     ValueError
         ``errors`` holds no row at some fraction of ``COMPACT_PERCENTS``.
     """
-    percents = np.round(errors["fraction"].to_numpy(float) * 100).astype(int)
+    signed = errors[
+        (errors["expression"] == errors["primary_expression"])
+        & (errors["measure"] == "signed")
+    ]
+    percents = np.round(signed["fraction"].to_numpy(float) * 100).astype(int)
     absent = [percent for percent in COMPACT_PERCENTS if percent not in set(percents)]
     if absent:
         msg = f"The boundary errors hold no errors at {absent} % of the peak."
@@ -5866,7 +5863,7 @@ def compact_comparison(
     # matching sensitivity has a row per interval method, whether it ran or not
     listed = sensitivity.loc[
         sensitivity["minimum_iou"] == COMPACT_LEVELS[0],
-        [*key, "primary_expression", "n_sessions", "n_failures"],
+        [*key, "primary_expression", "n_sessions", "n_failures", "n_reference", "n_detected"],
     ]
     table = groups.assign(members=groups["members"].map(" ".join)).merge(listed, on=key)
     table = table[table["primary_expression"].isin(COMPACT_TARGETS)]
@@ -5877,10 +5874,7 @@ def compact_comparison(
             for name, parts in _LEVEL_SCORES
             for part in parts
         }
-        own = at[[*key, *renamed]].rename(columns=renamed)
-        if level == COMPACT_LEVELS[0]:
-            own = own.join(at[["n_reference", "n_detected"]])
-        table = table.merge(own, on=key, how="left")
+        table = table.merge(at[[*key, *renamed]].rename(columns=renamed), on=key, how="left")
     overall = appendix[appendix["primary"]].rename(columns=_UNMATCHED_NAMES)
     overall = overall.assign(n_unmatched=overall["n_detected"] - overall["n_matched"])
     table = table.merge(
@@ -5890,11 +5884,6 @@ def compact_comparison(
     )
     split = split.drop(columns=["primary_expression", "n_sessions", "n_failures"])
     table = table.merge(split, on=key, how="left")
-    signed = errors[
-        (errors["expression"] == errors["primary_expression"])
-        & (errors["measure"] == "signed")
-    ]
-    percents = np.round(signed["fraction"].to_numpy(float) * 100).astype(int)
     for percent in COMPACT_PERCENTS:
         for boundary in ("onset", "offset"):
             rows = signed[(percents == percent) & (signed["boundary"] == boundary).to_numpy()]
@@ -5904,11 +5893,13 @@ def compact_comparison(
                 "median_low": f"{name}_low",
                 "median_high": f"{name}_high",
             }
-            # the pairs are those matched at 10 %, the same at every fraction
-            first = (percent, boundary) == (COMPACT_PERCENTS[0], "onset")
-            picked = rows[[*key, *(["n_pairs"] if first else []), *renamed]]
-            table = table.merge(picked.rename(columns=renamed), on=key, how="left")
-    return _in_target_order(table)[list(COMPACT_COLUMNS)]
+            table = table.merge(
+                rows[[*key, *renamed]].rename(columns=renamed), on=key, how="left"
+            )
+    # the pairs are those matched at 10 %, the same at every fraction and boundary
+    pairs = signed.loc[percents == COMPACT_PERCENTS[0]].drop_duplicates(key)
+    table = table.merge(pairs[[*key, "n_pairs"]], on=key, how="left")
+    return table[list(COMPACT_COLUMNS)]
 
 
 def compact_points(groups: pd.DataFrame, points: pd.DataFrame) -> pd.DataFrame:
