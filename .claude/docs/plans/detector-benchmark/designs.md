@@ -1009,7 +1009,8 @@ the results correct but hard to read, the maintainer deciding:
   window (the existing denominator), and unmatched detections at rest over the rest minutes
   outside every network window, those while running counted with their minutes. A detection is
   placed on the running bouts, as closed intervals, by `rates_by_state`'s rule (`event_times`:
-  its peak, else its bounds' midpoint), chosen for consistency within the results. The bouts
+  its peak, else its bounds' midpoint), a choice made in review for consistency within the
+  results, not a maintainer decision (the first version used the midpoint). The bouts
   are drawn again from the saved seeds; `session_bouts` now checks their rest against
   `rest_s` to 8 units in the last place of the duration (it allowed 1e-6 s): on v1 the two are
   equal exactly on all 20 reference sessions.
