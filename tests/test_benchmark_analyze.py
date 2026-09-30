@@ -3410,6 +3410,9 @@ def test_compact_tables_keep_one_row_per_group(analyze, compact_run):
     assert [carey.n_unmatched, carey.n_unmatched_rest, carey.n_unmatched_running] == [1, 1, 0]
     assert carey.unmatched_per_minute == pytest.approx(1 / carey.minutes)
     assert np.isfinite([carey.unmatched_per_minute_low, carey.unmatched_per_minute_high]).all()
+    rest = ["unmatched_rest_per_rest_minute" + part for part in ("", "_low", "_high")]
+    assert carey[rest[0]] == pytest.approx(1 / carey.rest_minutes)
+    assert np.isfinite(carey[rest].to_numpy(float)).all()
     # the bout's 0.5 s less the 0.35 s of the two overlapping windows' union
     assert compact.running_minutes.tolist() == pytest.approx([2 * 0.15 / 60] * 3, abs=1e-6)
     points = compact_run.points
