@@ -387,8 +387,9 @@ replicates, not sessions, so that the conditions stay paired.
 
 It rebuilds `examples/benchmark/results/<run_name>/`: a CSV per analysis below, a PNG
 for each that has a figure (all but `failures`, `operating_differences`,
-`appendix_expressions`, the `appendix_curves_*` and `model_sensitivity_orders`; none
-for an empty table), `candidate_trends.csv`, and `summary.md`, which names each file with
+`appendix_expressions`, the `appendix_curves_*`, `model_sensitivity_orders` and the
+`compact_*`; none for an empty table), `candidate_trends.csv`, `compact.md`, and
+`summary.md`, which names each file with
 one sentence on what it shows, lists every method that failed on some session and the
 lists the analyses call for (below). What is written there by hand, `trends.md` (the
 trends stated, each with what its spot check showed) and the figures in `spot_checks/`,
@@ -474,6 +475,9 @@ such as `lee_2002`'s, keeps the interval rule: the catalog decides, not the even
   minute, median IoU and median signed and absolute errors at 10 %, with intervals.
 - `appendix_curves_<expression>`: every interval method's curve against one expression,
   one file per expression.
+- `compact_<target>` (ripple, burst, network), `compact_held_out` and `compact_points`,
+  and `compact.md`: the headline comparison side by side, taken from the tables above
+  ([Compact comparison](#compact-comparison)).
 - `candidate_trends`: patterns in the tables worth a spot check, not conclusions.
 
 Signs: an error is detected minus truth (negative: early); a difference between two
@@ -509,8 +513,8 @@ function of the table's name, except `failures` (`failure_counts`),
 `robustness_crossed_<measure>` (`robustness` and `robustness_crossed`, whose columns
 after the factor and levels are `paired_changes`' `CHANGE_COLUMNS`), the orders of
 `model_sensitivity` (`ORDER_COLUMNS`), `operating_differences` (`DIFFERENCE_COLUMNS`),
-`appendix_curves_<expression>` (`expression_curves`) and `candidate_trends`
-(`TREND_COLUMNS`).
+`appendix_curves_<expression>` (`expression_curves`), `compact_<target>`
+(`compact_comparison`) and `candidate_trends` (`TREND_COLUMNS`).
 
 On run `v1` (the shared 18-core machine), with `--workers 6`, the command took 3.0
 minutes wall and at most 4.4 GB resident: loading the reference 9 s, matching it again
@@ -533,6 +537,51 @@ the six alternative models only one at a time.
 0.1 across a factor, the rank changes with the minimum IoU and what survives each
 alternative model, and links `trends.md`, where each stated trend is written by hand
 with the spot check behind it.
+
+### Compact comparison
+
+`compact.md` is the place to start: one table per primary expression (ripple, burst,
+network) of the reference condition's main methods, each against its primary
+expression, with recall and precision at IoU 0 and 0.5, unmatched detections per minute
+overall and at rest, and the median signed onset and offset errors at 10 and 50 % of the
+peak, estimates only. `compact_<target>.csv` has each number's interval and counts. The
+tables compute nothing new but the rate at rest: every other number is copied from the
+table it comes from (recall, precision and their counts from `matching_sensitivity`,
+the errors from `boundary_errors`; the overall rate equals `appendix_expressions`'
+false positives per minute against the primary expression), so they agree with those
+files to the last digit.
+
+- IoU 0 (any overlap) is the predeclared primary matching; IoU >= 0.5 is reported beside
+  it as a second headline, added after run v1's results had been seen: post hoc, not
+  predeclared.
+- Two false-positive rates, each with its numerator and denominator in the CSV:
+  `unmatched_per_minute` is every unmatched detection, at rest or running, over the
+  minutes outside every network window (the denominator of every false-positive rate
+  in these results); `unmatched_rest_per_rest_minute` is the unmatched detections at
+  rest over the minutes of rest outside every network window, those while running
+  counted beside it (`n_unmatched_running` over `running_minutes`). A detection is at
+  rest or running by its midpoint against the running bouts as closed intervals (a
+  midpoint on a bout's start or end is running), the bouts drawn again from each
+  session's saved seed and checked against the run's saved rest time;
+  `rates_by_state` places an event by its peak instead.
+- Methods whose detections are identical on every session, start and end times equal
+  exactly and the same failures, are one row (`members`, `n_members`), named by the
+  first in the methods' order.
+- `stand_in_inputs` lists the inputs the benchmark serves a recipe in place of
+  something the simulator lacks (rest for sleep, baseline or eligible epochs, units
+  selected by the simulator's labels, one template, a zero reference, an external or
+  example ripple inventory; `recipe_configs.stand_in_inputs`), a group's when its
+  members share them, else each member's; a detector has none.
+- `compact_held_out.csv` sets, per detector and target, the recall and false positives
+  measured on the held-out replicates at the tested setting chosen on the others
+  (`kind` `measured`) beside `operating_points`' recall read off the curve of every
+  session (`interpolated` between two tested settings, or `tested` at one): only the
+  held-out value is one a threshold recommendation may quote.
+- `compact_points.csv` keeps the point inventories apart: recall, precision and
+  unmatched detections per minute by peak containment.
+
+Like everything here, the compact tables describe this simulator's reference sessions
+and taxonomy only.
 
 ### Detection and false positives
 

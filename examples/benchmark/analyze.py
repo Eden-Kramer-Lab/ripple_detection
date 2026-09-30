@@ -11,12 +11,13 @@ It reads the run's ``combined/`` and ``conditions.csv``
 otherwise; ``run.py``'s docstring lists every column) and rebuilds
 ``examples/benchmark/results/<run_name>/``: a CSV per analysis in ``ANALYSES``, a
 PNG for each with a figure (all but ``failures``, ``operating_differences``,
-``appendix_expressions``, the ``appendix_curves_<expression>`` and
-``model_sensitivity_orders``; none for an empty table), ``candidate_trends.csv``
-and ``summary.md``, which names each file with one sentence on what it shows and
-lists the methods that failed. ``trends.md`` and ``spot_checks/``, written there by
-hand, and ``attribution/``, written by ``attribution.py``, are carried over
-(``KEPT``). No file may pass ``SIZE_LIMIT`` (1 MB): the command stops before writing
+``appendix_expressions``, the ``appendix_curves_<expression>``,
+``model_sensitivity_orders`` and the ``compact_*``; none for an empty table),
+``candidate_trends.csv``, ``compact.md`` (``compact_page``: the compact tables at a
+readable width, then their definitions) and ``summary.md``, which names each file
+with one sentence on what it shows and lists the methods that failed.
+``trends.md`` and ``spot_checks/``, written there by hand, and ``attribution/``,
+written by ``attribution.py``, are carried over (``KEPT``). No file may pass ``SIZE_LIMIT`` (1 MB): the command stops before writing
 one, leaving the previous results as they were.
 
 What is analysed. Most tables read the reference condition's sessions and the rows
@@ -68,8 +69,9 @@ columns, except: ``failures`` (``failure_counts``), ``paired_timing_<expression>
 columns after the factor and levels ``CHANGE_COLUMNS``, ``paired_changes``'), the
 changes and orders of ``model_sensitivity`` (``SENSITIVITY_COLUMNS``,
 ``ORDER_COLUMNS``), ``operating_differences`` (``DIFFERENCE_COLUMNS``),
-``appendix_curves_<expression>`` (``expression_curves``) and ``candidate_trends``
-(``TREND_COLUMNS``).
+``appendix_curves_<expression>`` (``expression_curves``), ``compact_<target>``
+(``compact_comparison``, one per expression of ``COMPACT_TARGETS``) and
+``candidate_trends`` (``TREND_COLUMNS``).
 """
 
 from __future__ import annotations
@@ -101,7 +103,7 @@ from conditions import (
 )
 from conditions import conditions as benchmark_conditions
 from numpy.typing import ArrayLike
-from recipe_configs import RECIPES
+from recipe_configs import RECIPES, RecipeConfig, stand_in_inputs
 from run import (
     _KEY,
     _PRINCIPAL,
@@ -5465,6 +5467,653 @@ def expression_curves(
     return curves
 
 
+# The compact comparison
+
+# The primary expressions with a compact table, and the minimum IoU levels it
+# reports: 0 (any overlap), the predeclared headline, and 0.5, added after run
+# v1's results had been seen.
+COMPACT_TARGETS = ("ripple", "burst", "network")
+COMPACT_LEVELS = (0.0, 0.5)
+# The truth fractions of its boundary errors, in percent.
+COMPACT_PERCENTS = (10, 50)
+COMPACT = "compact"
+COMPACT_PAGE = "compact.md"
+_GROUP_COLUMNS = ("method", "members", "n_members", "stand_in_inputs")
+_WITH_INTERVAL = ("", "_low", "_high")
+# The scores taken from matching_sensitivity at each level.
+_LEVEL_SCORES = (
+    ("n_matched", ("",)),
+    ("recall", _WITH_INTERVAL),
+    ("precision", _WITH_INTERVAL),
+)
+_RATES = ("recall", "precision", "unmatched_per_minute")
+COMPACT_COLUMNS = (
+    "primary_expression",
+    *_GROUP_COLUMNS,
+    "n_sessions",
+    "n_failures",
+    "n_reference",
+    "n_detected",
+    *(
+        f"{name}_iou{level:g}{part}"
+        for level in COMPACT_LEVELS
+        for name, parts in _LEVEL_SCORES
+        for part in parts
+    ),
+    "n_unmatched",
+    "minutes",
+    *(f"unmatched_per_minute{part}" for part in _WITH_INTERVAL),
+    "n_unmatched_rest",
+    "rest_minutes",
+    *(f"unmatched_rest_per_rest_minute{part}" for part in _WITH_INTERVAL),
+    "n_unmatched_running",
+    "running_minutes",
+    "n_pairs",
+    *(
+        f"{boundary}_error_{percent}{part}"
+        for percent in COMPACT_PERCENTS
+        for boundary in ("onset", "offset")
+        for part in _WITH_INTERVAL
+    ),
+)
+COMPACT_POINT_COLUMNS = (
+    "primary_expression",
+    *_GROUP_COLUMNS,
+    "n_sessions",
+    "n_failures",
+    "n_reference",
+    "n_detected",
+    "n_matched",
+    "n_unmatched",
+    "minutes",
+    *(f"{name}{part}" for name in _RATES for part in _WITH_INTERVAL),
+)
+COMPACT_HELD_OUT_COLUMNS = (
+    "method",
+    "primary_expression",
+    "fp_target",
+    "source",
+    "kind",
+    "setting",
+    "recall",
+    "recall_low",
+    "recall_high",
+    "unmatched_per_minute",
+    "unmatched_per_minute_low",
+    "unmatched_per_minute_high",
+    "n_sessions",
+)
+# The held-out rows' kind: a tested setting's scores on the held-out sessions.
+MEASURED = "measured"
+
+
+@functools.cache
+def _configurations() -> dict[str, RecipeConfig]:
+    """Each configured recipe by its method name, ``"recipe:<config_id>"``."""
+    return {f"recipe:{config.config_id}": config for config in RECIPES}
+
+
+def method_stand_ins(method: str) -> tuple[str, ...]:
+    """The inputs the benchmark serves a method by a stand-in.
+
+    Parameters
+    ----------
+    method : str
+        A registry name or ``"recipe:<config_id>"``.
+
+    Returns
+    -------
+    inputs : tuple of str
+        ``stand_in_inputs`` of the recipe's configuration: what the input
+        policy supplies in place of something the simulation lacks (rest for
+        sleep, baseline or eligible epochs, a selection of units by the
+        simulator's labels, one template, a zero reference, an external or
+        example ripple inventory). Empty for a detector, which takes only
+        observed signals.
+    """
+    config = _configurations().get(method)
+    return () if config is None else stand_in_inputs(config)
+
+
+def _group_stand_ins(members: Sequence[str]) -> str:
+    """The stand-in inputs of a group's members, space-separated when they
+    share them, else each member's as ``"<member> (<inputs>)"`` joined by
+    ``"; "`` (``"none"`` for a member with none)."""
+    found = {member: method_stand_ins(member) for member in members}
+    if len(set(found.values())) <= 1:
+        return " ".join(next(iter(found.values()), ()))
+    return "; ".join(
+        f"{member} ({' '.join(inputs) or 'none'})" for member, inputs in found.items()
+    )
+
+
+def identical_groups(tables: RunTables) -> pd.DataFrame:
+    """The methods whose detections are identical on every session read.
+
+    Two methods are in one group when they share a scoring rule and a primary
+    expression and, on every session, either both failed or both returned
+    the same events: the same start and end times, bit for bit, as pairs
+    sorted by start then end. A method that failed on some sessions is
+    grouped only with methods that failed on exactly those sessions and
+    agree on every other; no tolerance is applied, so events one unit in the
+    last place apart are different.
+
+    Parameters
+    ----------
+    tables : RunTables
+
+    Returns
+    -------
+    groups : pandas.DataFrame
+        One row per method and setting of ``tables.methods``, in its order:
+        ``method``, ``setting``, ``group`` (the group's first member in that
+        order), ``members`` (every member, in that order, space-separated)
+        and ``n_members``.
+    """
+    ran = set(tables.ran[list(_KEY)].itertuples(index=False, name=None))
+    events = {
+        key: _bounds(rows) for key, rows in tables.events.groupby(list(_KEY), sort=False)
+    }
+    none = np.empty((0, 2))
+    first: dict[tuple[Any, ...], str] = {}
+    rows = []
+    listed = tables.methods[["method", "setting", "primary_expression", "scoring"]]
+    for method, setting, primary, scoring in listed.itertuples(index=False):
+        outputs: list[bytes | None] = []
+        for session_id in tables.sessions["session_id"]:
+            if (session_id, method, setting) not in ran:
+                outputs.append(None)
+                continue
+            bounds = np.asarray(events.get((session_id, method, setting), none), dtype=float)
+            ordered = bounds[np.lexsort((bounds[:, 1], bounds[:, 0]))]
+            outputs.append(np.ascontiguousarray(ordered).tobytes())
+        group = first.setdefault((scoring, primary, tuple(outputs)), method)
+        rows.append({"method": method, "setting": setting, "group": group})
+    groups = pd.DataFrame(rows, columns=["method", "setting", "group"])
+    members = groups.groupby("group", sort=False)["method"]
+    groups["members"] = groups["group"].map(members.agg(" ".join))
+    groups["n_members"] = groups["group"].map(members.size()).astype(int)
+    return groups
+
+
+def false_positive_rates(
+    tables: RunTables,
+    matches: Matches,
+    *,
+    bouts: Mapping[str, np.ndarray[Any, Any]] | None = None,
+    n_resamples: int = N_RESAMPLES,
+) -> pd.DataFrame:
+    """Each interval method's unmatched detections per minute, overall and at rest.
+
+    A detection is unmatched when it matches no truth window of the
+    method's primary expression at 10 % of the peak at IoU 0
+    (``Matches.false_positives``). Two rates, each the unmatched detections
+    summed over the sessions the method ran on over the minutes summed over
+    them:
+
+    - ``unmatched_per_minute``: every unmatched detection, at rest or
+      running, over the minutes outside every network window at 10 %
+      (``minutes``), the denominator of every false-positive rate of these
+      results;
+    - ``unmatched_rest_per_rest_minute``: the unmatched detections at rest
+      over the minutes of rest outside every network window
+      (``rest_minutes``).
+
+    A detection is at rest or running by its midpoint, the mean of its start
+    and end, against the session's running bouts as closed intervals on the
+    timestamps (``intervals_to_mask``: a midpoint on a bout's start or end,
+    to the timestamps' rounding, is running), never by its peak, and never
+    by whether it overlaps a bout. The unmatched detections while running
+    are counted (``n_unmatched_running``) beside the running minutes outside
+    every network window (``running_minutes``, the bouts' time less their
+    overlap with the network windows); ``rest_minutes`` is ``minutes`` less
+    ``running_minutes``.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+    bouts : mapping of str to ndarray, optional
+        Each session's running bouts, shape (n_bouts, 2), sorted and
+        disjoint, on the session's timestamps; default ``session_bouts``,
+        which checks them against the run's ``rest_s``.
+    n_resamples : int, optional
+
+    Returns
+    -------
+    rates : pandas.DataFrame
+        One row per interval method and setting: ``method``, ``setting``,
+        ``n_unmatched``, ``n_unmatched_rest``, ``n_unmatched_running``,
+        ``minutes``, ``rest_minutes``, ``running_minutes`` (summed over the
+        sessions it has scores on), ``unmatched_per_minute`` and
+        ``unmatched_rest_per_rest_minute``, each with ``_low`` and ``_high``
+        (``grouped_intervals``: a session's counts and minutes resampled
+        together); ``primary_expression``, ``n_sessions``, ``n_failures``.
+    """
+    bouts = session_bouts(tables.sessions) if bouts is None else bouts
+    placed = []
+    for session_id, rows in matches.false_positives.groupby("session_id", sort=False):
+        middle = (rows["start_time"].to_numpy(float) + rows["end_time"].to_numpy(float)) / 2
+        running = rd.intervals_to_mask(middle, bouts[session_id])
+        placed.append(
+            rows[list(_KEY)].assign(
+                n_unmatched_rest=(~running).astype(int),
+                n_unmatched_running=running.astype(int),
+            )
+        )
+    columns = ["n_unmatched_rest", "n_unmatched_running"]
+    counted = _concat(placed, [*_KEY, *columns]).groupby(list(_KEY))[columns].sum()
+    network = matches.windows[matches.windows["expression"] == "network"]
+    windows = {session_id: _bounds(rows) for session_id, rows in network.groupby("session_id")}
+    minutes = _minutes_outside(tables.sessions)
+    times = []
+    for session_id in tables.sessions["session_id"]:
+        own = windows.get(session_id, np.empty((0, 2)))
+        union = rd.merge_close_events(own[np.argsort(own[:, 0], kind="stable")])
+        bout = np.asarray(bouts[session_id], dtype=float).reshape(-1, 2)
+        overlap = rd.intersect_intervals(union, bout)
+        outside = float(np.sum(np.diff(bout, axis=1)) - np.sum(np.diff(overlap, axis=1)))
+        times.append(
+            {
+                "session_id": session_id,
+                "minutes": minutes[session_id],
+                "rest_minutes": minutes[session_id] - outside / 60,
+                "running_minutes": outside / 60,
+            }
+        )
+    frame = tables.intervals.ran.join(counted, on=list(_KEY)).fillna(dict.fromkeys(columns, 0))
+    frame = frame.merge(pd.DataFrame(times), on="session_id")
+    frame["n_unmatched"] = frame["n_unmatched_rest"] + frame["n_unmatched_running"]
+    counts = ["n_unmatched", *columns]
+    sums = ["minutes", "rest_minutes", "running_minutes"]
+    rates = _pooled_ratios(
+        frame,
+        ["method", "setting"],
+        {
+            "unmatched_per_minute": ("n_unmatched", "minutes"),
+            "unmatched_rest_per_rest_minute": ("n_unmatched_rest", "rest_minutes"),
+        },
+        counts,
+        sums,
+        n_resamples=n_resamples,
+    )
+    grid = _method_grid(tables.intervals.methods)
+    return _per_method(rates, tables, grid, counts).fillna(dict.fromkeys(sums, 0.0))
+
+
+def _first_members(tables: RunTables) -> pd.DataFrame:
+    """Each group's first member (``identical_groups``), with the group's
+    ``members``, ``n_members`` and ``stand_in_inputs`` (``_group_stand_ins``)."""
+    groups = identical_groups(tables)
+    first = groups[groups["method"] == groups["group"]].drop(columns="group")
+    stand_ins = first["members"].map(lambda members: _group_stand_ins(members.split()))
+    return first.assign(stand_in_inputs=stand_ins.to_numpy())
+
+
+def _in_target_order(frame: pd.DataFrame) -> pd.DataFrame:
+    """``frame``'s rows by primary expression in ``COMPACT_TARGETS``' order,
+    each expression's in their own order."""
+    order = frame["primary_expression"].map({t: k for k, t in enumerate(COMPACT_TARGETS)})
+    return frame.iloc[np.argsort(order.to_numpy(), kind="stable")].reset_index(drop=True)
+
+
+def compact_comparison(
+    tables: RunTables,
+    matches: Matches,
+    sensitivity: pd.DataFrame,
+    errors: pd.DataFrame,
+    *,
+    bouts: Mapping[str, np.ndarray[Any, Any]] | None = None,
+    n_resamples: int = N_RESAMPLES,
+) -> pd.DataFrame:
+    """The headline scores of every interval method side by side.
+
+    Each method against its primary expression, one row per group of
+    methods with identical detections (``identical_groups``): the scores
+    are the group's first member's, which every member shares. The numbers
+    are those of the tables they come from, never computed again: recall,
+    precision and their counts from ``matching_sensitivity`` at IoU 0 and
+    0.5, the boundary errors from ``boundary_errors``; the unmatched
+    detections per minute are ``false_positive_rates``'.
+
+    Parameters
+    ----------
+    tables : RunTables
+    matches : Matches
+    sensitivity : pandas.DataFrame
+        ``matching_sensitivity``' table of ``tables`` and ``matches``.
+    errors : pandas.DataFrame
+        ``boundary_errors``' table of them.
+    bouts : mapping of str to ndarray, optional
+        ``false_positive_rates``'.
+    n_resamples : int, optional
+        ``false_positive_rates``'.
+
+    Returns
+    -------
+    comparison : pandas.DataFrame
+        ``COMPACT_COLUMNS``, one row per group of interval methods whose
+        primary expression is in ``COMPACT_TARGETS``, by expression in that
+        order, then in ``tables.methods``' order: ``primary_expression``,
+        ``method`` (the group's first member), ``members``, ``n_members``,
+        ``stand_in_inputs`` (``_group_stand_ins``; empty for a detector),
+        ``n_sessions``, ``n_failures``, ``n_reference``, ``n_detected``;
+        at each level of ``COMPACT_LEVELS`` (``iou0``, ``iou0.5``)
+        ``n_matched_<level>``, ``recall_<level>`` and
+        ``precision_<level>``, each with ``_low`` and ``_high``;
+        ``false_positive_rates``' counts, minutes and two rates with their
+        intervals; ``n_pairs`` (the pairs matched at 10 %, IoU 0) and the
+        median signed ``onset_error_<percent>`` and ``offset_error_<percent>``
+        against the truth at 10 and 50 % of the peak (seconds, detected
+        minus truth), each with ``_low`` and ``_high``.
+    """
+    key = ["method", "setting"]
+    groups = _first_members(tables).merge(failure_counts(tables), on=key)
+    groups = groups[
+        (groups["scoring"] == INTERVAL) & groups["primary_expression"].isin(COMPACT_TARGETS)
+    ]
+    table = groups[
+        [*key, "primary_expression", *_GROUP_COLUMNS[1:], "n_sessions", "n_failures"]
+    ]
+    for level in COMPACT_LEVELS:
+        at = sensitivity[sensitivity["minimum_iou"] == level]
+        renamed = {
+            f"{name}{part}": f"{name}_iou{level:g}{part}"
+            for name, parts in _LEVEL_SCORES
+            for part in parts
+        }
+        own = at[[*key, *renamed]].rename(columns=renamed)
+        if level == COMPACT_LEVELS[0]:
+            own = own.join(at[["n_reference", "n_detected"]])
+        table = table.merge(own, on=key, how="left")
+    rates = false_positive_rates(tables, matches, bouts=bouts, n_resamples=n_resamples)
+    rates = rates.drop(columns=["primary_expression", "n_sessions", "n_failures"])
+    table = table.merge(rates, on=key, how="left")
+    signed = errors[
+        (errors["expression"] == errors["primary_expression"])
+        & (errors["measure"] == "signed")
+    ]
+    percents = np.round(signed["fraction"].to_numpy(float) * 100).astype(int)
+    for percent in COMPACT_PERCENTS:
+        for boundary in ("onset", "offset"):
+            rows = signed[(percents == percent) & (signed["boundary"] == boundary).to_numpy()]
+            name = f"{boundary}_error_{percent}"
+            renamed = {
+                "median": name,
+                "median_low": f"{name}_low",
+                "median_high": f"{name}_high",
+            }
+            # the pairs are those matched at 10 %, the same at every fraction
+            first = (percent, boundary) == (COMPACT_PERCENTS[0], "onset")
+            picked = rows[[*key, *(["n_pairs"] if first else []), *renamed]]
+            table = table.merge(picked.rename(columns=renamed), on=key, how="left")
+    return _in_target_order(table)[list(COMPACT_COLUMNS)]
+
+
+def compact_points(tables: RunTables, points: pd.DataFrame) -> pd.DataFrame:
+    """The point inventories' headline scores, one row per group.
+
+    Kept apart from the interval methods: scored by peak containment, with
+    recall, precision and unmatched detections per minute only.
+
+    Parameters
+    ----------
+    tables : RunTables
+    points : pandas.DataFrame
+        ``point_inventories``' table of ``tables``.
+
+    Returns
+    -------
+    points : pandas.DataFrame
+        ``COMPACT_POINT_COLUMNS``, one row per group of point methods with
+        identical detections (``identical_groups``), in ``tables.methods``'
+        order, with the first member's numbers as ``point_inventories``
+        gives them: its ``false_positives_per_minute`` is
+        ``unmatched_per_minute`` here, over the same ``minutes``, and
+        ``n_unmatched`` is ``n_detected`` less ``n_matched``.
+    """
+    renamed = {
+        f"false_positives_per_minute{part}": f"unmatched_per_minute{part}"
+        for part in _WITH_INTERVAL
+    }
+    table = _first_members(tables).merge(
+        points.rename(columns=renamed), on=["method", "setting"]
+    )
+    table["n_unmatched"] = table["n_detected"] - table["n_matched"]
+    return table.reset_index(drop=True)[list(COMPACT_POINT_COLUMNS)]
+
+
+def compact_held_out(thresholds: pd.DataFrame, points: pd.DataFrame) -> pd.DataFrame:
+    """Each detector's held-out recall at each target beside the one read off
+    its curve.
+
+    Parameters
+    ----------
+    thresholds : pandas.DataFrame
+        ``held_out_thresholds``' table.
+    points : pandas.DataFrame
+        ``operating_points``' table.
+
+    Returns
+    -------
+    held_out : pandas.DataFrame
+        ``COMPACT_HELD_OUT_COLUMNS``, two rows per detector and target, by
+        method, target, then ``source``: ``"held_out"``, the setting chosen
+        on the calibration replicates (``setting``) with its recall and
+        unmatched detections per minute measured on the held-out replicates
+        (``kind`` ``"measured"``; ``""``, every value missing, where no
+        setting was at or below the target); and ``"operating_point"``,
+        ``operating_points``' recall at IoU 0 over every session, read off
+        the pooled curve (``kind`` its ``read_off``: ``"interpolated"``
+        between two tested settings, ``"tested"`` at one, ``""`` where the
+        curve does not reach the target), with no setting and no unmatched
+        rate of its own: that is the target, by construction.
+        ``n_sessions``: the sessions each value pools.
+    """
+    measured = (thresholds["setting"] != "").to_numpy()
+    held = pd.DataFrame(
+        {
+            "method": thresholds["method"],
+            "primary_expression": thresholds["primary_expression"],
+            "fp_target": thresholds["fp_target"],
+            "source": "held_out",
+            "kind": np.where(measured, MEASURED, ""),
+            "setting": thresholds["setting"],
+            **{f"recall{part}": thresholds[f"recall{part}"] for part in _WITH_INTERVAL},
+            **{
+                f"unmatched_per_minute{part}": thresholds[f"false_positives_per_minute{part}"]
+                for part in _WITH_INTERVAL
+            },
+            "n_sessions": thresholds["n_held_out_sessions"],
+        }
+    )
+    at_zero = points[points["minimum_iou"] == 0]
+    read = pd.DataFrame(
+        {
+            "method": at_zero["method"],
+            "primary_expression": at_zero["primary_expression"],
+            "fp_target": at_zero["fp_target"],
+            "source": "operating_point",
+            "kind": at_zero["read_off"],
+            "setting": "",
+            **{f"recall{part}": at_zero[f"recall{part}"] for part in _WITH_INTERVAL},
+            **{f"unmatched_per_minute{part}": np.nan for part in _WITH_INTERVAL},
+            "n_sessions": at_zero["n_sessions"],
+        }
+    )
+    both = _concat([held, read], COMPACT_HELD_OUT_COLUMNS)
+    order = ["method", "fp_target", "source"]
+    return both.sort_values(order, kind="stable").reset_index(drop=True)
+
+
+def _number(value: float) -> str:
+    """A recall or precision to two decimals, ``"n/a"`` for none."""
+    return f"{value:.2f}" if np.isfinite(value) else "n/a"
+
+
+def _rate(value: float) -> str:
+    """A rate per minute to three significant digits, ``"n/a"`` for none."""
+    return f"{value:#.3g}".rstrip(".") if np.isfinite(value) else "n/a"
+
+
+def _milliseconds(value: float) -> str:
+    """An error in seconds as signed milliseconds, ``"n/a"`` for none."""
+    return f"{1000 * value:+.1f}" if np.isfinite(value) else "n/a"
+
+
+COMPACT_DEFINITIONS = (
+    (
+        "- **Target and truth windows.** A method is scored against its primary expression "
+        "(`methods.csv`), and its table is that expression's: the ripple, the burst, or the "
+        "network event, a latent event's ripple, sharp-wave and burst components joined. A "
+        "truth window is where a component's envelope is at or above 10 % of its peak "
+        "(errors are measured at 50 % too)."
+    ),
+    (
+        "- **Matching.** One to one. IoU 0, any overlap, is the predeclared primary "
+        "matching. IoU >= 0.5 is reported beside it as a second headline; it was added after "
+        "run v1's results had been seen, so it is post hoc, not predeclared. Recall is the "
+        "truth windows matched over all of them, precision the detections matched over all, "
+        "each pooled over the sessions a method ran on."
+    ),
+    (
+        "- **Unmatched / min.** Every detection matching no truth window at IoU 0, at rest or "
+        "running, over the minutes outside every network window at 10 % (`minutes`), the "
+        "denominator of every false-positive rate of these results. It is not a rate at rest."
+    ),
+    (
+        "- **At rest / rest min.** The unmatched detections at rest over the minutes of rest "
+        "outside every network window (`rest_minutes`). A detection is at rest or running by "
+        "its midpoint, the mean of its start and end, against the session's running bouts as "
+        "closed intervals on the timestamps (a midpoint on a bout's start or end is "
+        "running), not by its peak or by overlap. The bouts are drawn again from each "
+        "session's saved seed and checked against the run's saved rest time. Unmatched "
+        "detections while running are counted in the CSV (`n_unmatched_running`, over "
+        "`running_minutes`), with no rate."
+    ),
+    (
+        "- **Onset and offset.** The median signed error, detected minus truth (negative: "
+        "early), in ms, over the pairs matched at IoU 0, against the truth windows at 10 % "
+        "and at 50 % of the peak. A method that finds only the easy events can time them "
+        "better: read each beside its recall."
+    ),
+    (
+        "- **Held-out and interpolated.** `compact_held_out.csv` sets, per detector and "
+        "target false-positive rate, the recall and rate measured on the odd (held-out) "
+        "replicates at the tested setting chosen on the even ones (`measured`) beside "
+        "`operating_points`' recall read off the curve of every session: `interpolated` "
+        "between two tested settings' rates in log rate, so no setting was run there, or "
+        "`tested` where the target is one setting's rate. Only a held-out value is a number "
+        "a threshold recommendation may quote."
+    ),
+    (
+        "- **Identical groups.** Methods sharing a primary expression whose detections are "
+        "identical on every session, start and end times equal exactly and the same "
+        "failures, are one row, named by the first in the methods' order; `n` counts its "
+        "members, and `members` in the CSV lists them."
+    ),
+    (
+        "- **Stand-ins.** The inputs the benchmark serves a recipe in place of something the "
+        "simulator lacks (the input policy's stand-ins: rest for sleep, baseline or eligible "
+        "epochs, units selected by the simulator's labels, one template, a zero reference, "
+        "an external or example ripple inventory). `stand_in_inputs` in the CSV lists a "
+        "group's when its members share them, else each member's."
+    ),
+    (
+        "- **Intervals.** 95 % paired-bootstrap intervals over sessions (2000 resamples, "
+        "seed 0), in the CSVs, not here."
+    ),
+    (
+        "- **Scope.** These numbers describe this simulator's reference sessions and its "
+        "taxonomy of events and non-events only, not recorded data, and no method's own "
+        "published performance."
+    ),
+)
+
+
+def compact_page(run_name: str, tables: RunTables, results: Mapping[str, pd.DataFrame]) -> str:
+    """``compact.md``: the three target tables at a readable width, then
+    their definitions.
+
+    Parameters
+    ----------
+    run_name : str
+    tables : RunTables
+        The reference condition's, which the tables were built from.
+    results : mapping of str to pandas.DataFrame
+        The analyses' tables by name, ``compact_<target>`` for each of
+        ``COMPACT_TARGETS`` among them.
+
+    Returns
+    -------
+    page : str
+        Markdown, every number formatted (recall and precision to two
+        decimals, rates to three significant digits, errors in signed
+        milliseconds to one decimal) and no interval: those, and the
+        counts, are in the CSVs.
+    """
+    durations = ", ".join(f"{d:g}" for d in sorted(set(tables.sessions["duration_s"])))
+    lines = [
+        f"# Compact comparison: {run_name}",
+        "",
+        (
+            f"The reference condition's {len(tables.sessions)} simulated sessions "
+            f"({durations} s each) and the main methods, each detector at its defaults "
+            "and every recipe, each against its primary expression, one row per group of "
+            "methods with identical detections. Estimates only: each number's 95 % "
+            "interval and counts are in `compact_<target>.csv`. Held-out and "
+            "interpolated operating values are in `compact_held_out.csv`, the point "
+            "inventories, scored by peak containment, in `compact_points.csv`."
+        ),
+    ]
+    for target in COMPACT_TARGETS:
+        table = results[f"{COMPACT}_{target}"]
+        lines += [
+            "",
+            f"## {target.capitalize()}",
+            "",
+            f"{int(table['n_members'].sum())} methods in {len(table)} groups.",
+            "",
+            (
+                "| Method | n | Recall, IoU 0 / 0.5 | Precision, IoU 0 / 0.5 "
+                "| Unmatched / min | At rest / rest min | Onset ms, 10 / 50 % "
+                "| Offset ms, 10 / 50 % |"
+            ),
+            "|---|--:|--:|--:|--:|--:|--:|--:|",
+        ]
+        for row in table.to_dict("records"):
+            failed = f" ({row['n_failures']} failed)" if row["n_failures"] else ""
+            cells = [
+                f"`{row['method']}`{failed}",
+                str(row["n_members"]),
+                f"{_number(row['recall_iou0'])} / {_number(row['recall_iou0.5'])}",
+                f"{_number(row['precision_iou0'])} / {_number(row['precision_iou0.5'])}",
+                _rate(row["unmatched_per_minute"]),
+                _rate(row["unmatched_rest_per_rest_minute"]),
+                *(
+                    f"{_milliseconds(row[f'{boundary}_error_{COMPACT_PERCENTS[0]}'])} / "
+                    f"{_milliseconds(row[f'{boundary}_error_{COMPACT_PERCENTS[1]}'])}"
+                    for boundary in ("onset", "offset")
+                ),
+            ]
+            lines.append("| " + " | ".join(cells) + " |")
+        grouped = table[table["n_members"] > 1]
+        lines += ["", "Rows standing for methods with identical detections:", ""]
+        lines += [
+            f"- `{row.method}`: also "
+            + ", ".join(f"`{member}`" for member in row.members.split()[1:])
+            for row in grouped.itertuples(index=False)
+        ] or ["- none"]
+        stand_ins = table[table["stand_in_inputs"] != ""]
+        lines += ["", "Inputs served by a stand-in:", ""]
+        lines += [
+            f"- `{row.method}`: {row.stand_in_inputs}"
+            for row in stand_ins.itertuples(index=False)
+        ] or ["- none"]
+    lines += ["", "## Definitions", "", *COMPACT_DEFINITIONS]
+    return "\n".join(lines) + "\n"
+
+
 # Figures (matplotlib is imported only inside them)
 
 _FONT = 5
@@ -6976,10 +7625,18 @@ AnalysisTable = Callable[[Inputs], pd.DataFrame]
 
 
 def _of_reference(function: Callable[..., pd.DataFrame]) -> AnalysisTable:
-    """An analysis of the reference condition's tables and matches."""
-    return lambda inputs: function(
-        inputs.tables, inputs.matches, n_resamples=inputs.n_resamples
-    )
+    """An analysis of the reference condition's tables and matches, computed
+    once for every table read from it."""
+
+    def table(inputs: Inputs) -> pd.DataFrame:
+        if function not in inputs.cache:
+            inputs.cache[function] = function(
+                inputs.tables, inputs.matches, n_resamples=inputs.n_resamples
+            )
+        found: pd.DataFrame = inputs.cache[function]
+        return found
+
+    return table
 
 
 def _of_scores(
@@ -7008,10 +7665,47 @@ def _expression_curves(expression: str) -> AnalysisTable:
 
 
 def _matching(inputs: Inputs) -> pd.DataFrame:
-    points = _of_scores(operating_points)(inputs)
-    return matching_sensitivity(
-        inputs.tables, inputs.matches, points, n_resamples=inputs.n_resamples
-    )
+    if MATCHING not in inputs.cache:
+        points = _of_scores(operating_points)(inputs)
+        inputs.cache[MATCHING] = matching_sensitivity(
+            inputs.tables, inputs.matches, points, n_resamples=inputs.n_resamples
+        )
+    found: pd.DataFrame = inputs.cache[MATCHING]
+    return found
+
+
+def _compact(name: str) -> AnalysisTable:
+    """One of the compact tables (``compact_<target>``, ``compact_held_out``,
+    ``compact_points``), all built once from the tables they read."""
+
+    def table(inputs: Inputs) -> pd.DataFrame:
+        if COMPACT not in inputs.cache:
+            comparison = compact_comparison(
+                inputs.tables,
+                inputs.matches,
+                _matching(inputs),
+                _of_reference(boundary_errors)(inputs),
+                n_resamples=inputs.n_resamples,
+            )
+            inputs.cache[COMPACT] = {
+                **{
+                    f"{COMPACT}_{target}": comparison[
+                        comparison["primary_expression"] == target
+                    ].reset_index(drop=True)
+                    for target in COMPACT_TARGETS
+                },
+                f"{COMPACT}_held_out": compact_held_out(
+                    _of_scores(held_out_thresholds)(inputs),
+                    _of_scores(operating_points)(inputs),
+                ),
+                f"{COMPACT}_points": compact_points(
+                    inputs.tables, _of_reference(point_inventories)(inputs)
+                ),
+            }
+        found: pd.DataFrame = inputs.cache[COMPACT][name]
+        return found
+
+    return table
 
 
 @dataclasses.dataclass(frozen=True)
@@ -7285,6 +7979,32 @@ ANALYSES: tuple[Analysis, ...] = (
         _of_scores(model_sensitivity, operator.itemgetter(1)),
         "Orders of detectors by recall at common false-positive rates in the reference and "
         "under each alternative model, with intervals and the share of resamples reversed.",
+    ),
+    *(
+        Analysis(
+            f"{COMPACT}_{target}",
+            _compact(f"{COMPACT}_{target}"),
+            f"The headline comparison of the methods whose primary expression is {target}, "
+            "one row per group of methods with identical detections, with its members and "
+            "stand-in inputs: recall and precision at IoU 0 (predeclared) and 0.5 (post "
+            "hoc), unmatched detections per minute overall and at rest, and median onset "
+            "and offset errors at 10 and 50 %, each with its interval and counts.",
+        )
+        for target in COMPACT_TARGETS
+    ),
+    Analysis(
+        f"{COMPACT}_held_out",
+        _compact(f"{COMPACT}_held_out"),
+        "Per detector and target rate, the recall and unmatched detections per minute "
+        "measured on the held-out replicates at the setting chosen on the others, beside "
+        "the operating point's recall read off the curve, labelled interpolated or tested.",
+    ),
+    Analysis(
+        f"{COMPACT}_points",
+        _compact(f"{COMPACT}_points"),
+        "The point inventories' recall, precision and unmatched detections per minute by "
+        "peak containment, one row per group of identical detections, with its members and "
+        "stand-in inputs.",
     ),
 )
 # Figures are saved at this resolution.
@@ -7683,6 +8403,18 @@ def analyze_run(
                 ),
             )
         )
+        if all(f"{COMPACT}_{target}" in results for target in COMPACT_TARGETS):
+            page = compact_page(root.name, tables, results)
+            write_result(partial / COMPACT_PAGE, page.encode())
+            files.append(
+                (
+                    COMPACT_PAGE,
+                    (
+                        "The compact tables of the ripple, burst and network methods at a "
+                        "readable width, estimates only, then what each column means."
+                    ),
+                )
+            )
         summary = _summary(
             root.name,
             tables,
