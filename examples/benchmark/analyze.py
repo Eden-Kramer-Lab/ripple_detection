@@ -864,7 +864,7 @@ class Matches:
     consensus: pd.DataFrame
     false_positive_groups: pd.DataFrame
     points: pd.DataFrame
-    levels: tuple[float, ...] = (0.0,)
+    levels: tuple[float, ...]
 
 
 _MATCH_COLUMNS = {
@@ -923,7 +923,7 @@ def match_session(
     truth: tuple[pd.DataFrame, pd.DataFrame],
     ran: Sequence[tuple[str, str]],
     primary: Mapping[tuple[str, str], str],
-    levels: Sequence[float] = (0.0,),
+    levels: tuple[float, ...] = (0.0,),
     points: Collection[str] = (),
 ) -> Matches:
     """Match one session's events to its truth again.
@@ -939,10 +939,10 @@ def match_session(
         The methods and settings with scores on the session, events or not.
     primary : mapping of (method, setting) to str
         Each one's primary expression.
-    levels : sequence of float, optional
+    levels : tuple of float, optional
         The ``minimum_iou`` levels of ``pairs`` against each method's primary
-        expression and the network, the ones read at levels other than 0;
-        0 is always among them, and the only level of the other expressions.
+        expression and the network, 0 first (``match_run`` puts it there),
+        the only level of the other expressions.
     points : collection of str, optional
         Methods whose events are time points (``point_methods``): scored by
         peak containment in ``points`` and left out of every other table.
@@ -959,7 +959,6 @@ def match_session(
         compared by name.
     """
     event_table, non_event_table = truth
-    levels = tuple(dict.fromkeys((0.0, *levels)))
     sets = truth_window_sets(event_table)
     truth_bounds = {
         expression: [_bounds(frame) for frame in frames] for expression, frames in sets.items()
@@ -1189,6 +1188,7 @@ def match_run(
         [ran.get(session_id, []) for session_id in session_ids],
     )
     points = set(tables.methods.loc[tables.methods["scoring"] == PEAK_CONTAINMENT, "method"])
+    levels = tuple(dict.fromkeys((0.0, *levels)))
     match = functools.partial(match_session, primary=primary, levels=levels, points=points)
     if workers == 1:
         sessions = list(map(match, *arguments))
@@ -1200,7 +1200,7 @@ def match_run(
             name: _concat([getattr(session, name) for session in sessions], columns)
             for name, columns in _MATCH_COLUMNS.items()
         },
-        levels=tuple(dict.fromkeys((0.0, *levels))),
+        levels=levels,
     )
 
 
