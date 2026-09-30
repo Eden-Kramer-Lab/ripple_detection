@@ -997,12 +997,12 @@ the results correct but hard to read, the maintainer deciding:
 
 - **What it is.** `analyze.py` writes `compact_<target>.csv` (ripple, burst, network: interval
   methods against their primary expression), `compact_held_out.csv`, `compact_points.csv` and
-  `compact.md`, from the reference condition's main methods. Every number but the rate at rest
-  is copied from the table it comes from (`matching_sensitivity`, `boundary_errors`,
-  `point_inventories`, `held_out_thresholds`, `operating_points`); the reference analyses are
-  now computed once per rebuild and shared. On v1 each copied number equals its source's, and
-  the overall rate equals `appendix_expressions`' false positives per minute, intervals
-  included.
+  `compact.md`, from the reference condition's main methods. Nothing is new but the split
+  into rest and running: every other number is copied from the table it comes from
+  (`matching_sensitivity`, `boundary_errors`, `point_inventories`, `held_out_thresholds`,
+  `operating_points`); the reference analyses are now computed once per rebuild and shared.
+  On v1 each copied number equals its source's, and the overall rate equals
+  `appendix_expressions`' false positives per minute, intervals included.
 - **IoU.** 0 stays the predeclared primary; IoU >= 0.5 is a second headline, labelled post hoc
   (added after v1's results were seen).
 - **Two false-positive rates.** All unmatched detections over the minutes outside every network

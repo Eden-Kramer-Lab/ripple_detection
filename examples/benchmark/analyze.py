@@ -5687,8 +5687,8 @@ def false_positive_rates(
 
     - ``unmatched_per_minute``: every unmatched detection, at rest or
       running, over the minutes outside every network window at 10 %
-      (``minutes``), the denominator of every false-positive rate of these
-      results;
+      (``minutes``), the denominator of every other false-positive rate in
+      these results;
     - ``unmatched_rest_per_rest_minute``: the unmatched detections at rest
       over the minutes of rest outside every network window
       (``rest_minutes``).
@@ -5841,13 +5841,15 @@ def compact_comparison(
         ``stand_in_inputs`` (``_group_stand_ins``; empty for a detector),
         ``n_sessions``, ``n_failures``, ``n_reference``, ``n_detected``;
         at each level of ``COMPACT_LEVELS`` (``iou0``, ``iou0.5``)
-        ``n_matched_<level>``, ``recall_<level>`` and
-        ``precision_<level>``, each with ``_low`` and ``_high``;
+        ``n_matched_<level>`` (a count, with no interval), ``recall_<level>``
+        and ``precision_<level>``, each with ``_low`` and ``_high``;
         ``false_positive_rates``' counts, minutes and two rates with their
-        intervals; ``n_pairs`` (the pairs matched at 10 %, IoU 0) and the
-        median signed ``onset_error_<percent>`` and ``offset_error_<percent>``
-        against the truth at 10 and 50 % of the peak (seconds, detected
-        minus truth), each with ``_low`` and ``_high``.
+        intervals; ``n_pairs`` (the pairs matched at IoU 0 against the truth
+        windows at 10 % of the peak) and the median signed
+        ``onset_error_<percent>`` and ``offset_error_<percent>`` of those
+        pairs, each pair's error measured at the 10 and the 50 % bounds of its
+        truth event (seconds, detected minus truth), each with ``_low`` and
+        ``_high``.
 
     Raises
     ------
@@ -5953,13 +5955,15 @@ def compact_held_out(thresholds: pd.DataFrame, points: pd.DataFrame) -> pd.DataF
         method, target, then ``source``: ``"held_out"``, the setting chosen
         on the calibration replicates (``setting``) with its recall and
         unmatched detections per minute measured on the held-out replicates
-        (``kind`` ``"measured"``; ``""``, every value missing, where no
-        setting was at or below the target); and ``"operating_point"``,
-        ``operating_points``' recall at IoU 0 over every session, read off
+        (``kind`` ``"measured"``; ``""``, every value but ``n_sessions``
+        missing, where no setting was at or below the target); and
+        ``"operating_point"``, ``operating_points``' recall at IoU 0 over the
+        sessions every setting of the sweep ran on (``n_sessions``), read off
         the pooled curve (``kind`` its ``read_off``: ``"interpolated"``
-        between two tested settings, ``"tested"`` at one, ``""`` where the
-        curve does not reach the target), with no setting and no unmatched
-        rate of its own: that is the target, by construction.
+        between two tested settings, ``"tested"`` at one, which happens only
+        where a pooled rate equals the target exactly, ``""`` where the curve
+        does not reach the target), with no setting and no unmatched rate of
+        its own: that is the target, by construction.
         ``n_sessions``: the sessions each value pools.
     """
     measured = (thresholds["setting"] != "").to_numpy()
@@ -6029,9 +6033,10 @@ COMPACT_DEFINITIONS = (
         "each pooled over the sessions a method ran on."
     ),
     (
-        "- **Unmatched / min.** Every detection matching no truth window at IoU 0, at rest or "
-        "running, over the minutes outside every network window at 10 % (`minutes`), the "
-        "denominator of every false-positive rate of these results. It is not a rate at rest."
+        "- **Unmatched / min.** Every detection matching no truth window of its primary "
+        "expression at IoU 0, at rest or running, over the minutes outside every network "
+        "window at 10 % (`minutes`), the denominator of every other false-positive rate in "
+        "these results. It is not a rate at rest."
     ),
     (
         "- **At rest / rest min.** The unmatched detections at rest over the minutes of rest "
@@ -6039,24 +6044,27 @@ COMPACT_DEFINITIONS = (
         "its time, as `rates_by_state` places events: its peak, else the midpoint of its "
         "bounds, against the session's running bouts as closed intervals on the timestamps "
         "(a time on a bout's start or end is running), not by overlap. The bouts are drawn "
-        "again from each "
-        "session's saved seed and checked against the run's saved rest time. Unmatched "
+        "again from each session's saved seed and checked against the run's saved rest "
+        "time. Unmatched "
         "detections while running are counted in the CSV (`n_unmatched_running`, over "
         "`running_minutes`), with no rate."
     ),
     (
         "- **Onset and offset.** The median signed error, detected minus truth (negative: "
-        "early), in ms, over the pairs matched at IoU 0, against the truth windows at 10 % "
-        "and at 50 % of the peak. A method that finds only the easy events can time them "
-        "better: read each beside its recall."
+        "early), in ms, over the pairs matched at IoU 0 against the truth windows at 10 % of "
+        "the peak, each pair's error measured at the 10 % and at the 50 % bounds of its "
+        "truth event. A method that finds only the easy events can time them better: read "
+        "each beside its recall."
     ),
     (
         "- **Held-out and interpolated.** `compact_held_out.csv` sets, per detector and "
         "target false-positive rate, the recall and rate measured on the odd (held-out) "
         "replicates at the tested setting chosen on the even ones (`measured`) beside "
-        "`operating_points`' recall read off the curve of every session: `interpolated` "
-        "between two tested settings' rates in log rate, so no setting was run there, or "
-        "`tested` where the target is one setting's rate. Only a held-out value is a number "
+        "`operating_points`' recall read off the curve pooled over the sessions every "
+        "setting ran on (`n_sessions`): `interpolated` between two tested settings' rates in "
+        "log rate, so no setting was run there, or `tested` where the target is one "
+        "setting's rate, which happens only when a pooled rate equals the target exactly, so "
+        "in practice every reached value is interpolated. Only a held-out value is a number "
         "a threshold recommendation may quote."
     ),
     (
@@ -8010,7 +8018,8 @@ ANALYSES: tuple[Analysis, ...] = (
         MATCHING,
         _matching,
         "Recall, precision, F1, the IoU distribution, median absolute errors, recall by "
-        "event type and at the target rates, and ranks, at minimum IoU 0, 0.2 and 0.5.",
+        "event type and at the target rates (`recall_at_<target>`, interpolated between "
+        "tested settings), and ranks, at minimum IoU 0, 0.2 and 0.5.",
         plot_matching_sensitivity,
         "Recall and precision at each minimum IoU.",
     ),
@@ -8036,7 +8045,8 @@ ANALYSES: tuple[Analysis, ...] = (
         MODEL_CHANGES,
         _of_scores(model_sensitivity, operator.itemgetter(0)),
         "Each result's change under each of the simulator's six alternative models, "
-        "paired with the reference by replicate; unreachable targets stay missing.",
+        "paired with the reference by replicate, a recall at a target interpolated between "
+        "tested settings; unreachable targets stay missing.",
         plot_model_sensitivity,
         "Recall changes per alternative, detectors at 1 per minute as triangles.",
     ),
@@ -8063,7 +8073,8 @@ ANALYSES: tuple[Analysis, ...] = (
         _compact(f"{COMPACT}_held_out"),
         "Per detector and target rate, the recall and unmatched detections per minute "
         "measured on the held-out replicates at the setting chosen on the others, beside "
-        "the operating point's recall read off the curve, labelled interpolated or tested.",
+        "the operating point's recall read off the curve; `kind` measured, interpolated, "
+        "tested, or empty where there is no value.",
     ),
     Analysis(
         f"{COMPACT}_points",
@@ -8393,10 +8404,12 @@ def analyze_run(
     results_directory : str or path-like
         Rebuilt from scratch (in ``<name>.partial``, renamed into place):
         ``<name>.csv`` per analysis, ``<name>.png`` per figure (none for an
-        empty table), ``candidate_trends.csv`` and ``summary.md``. What is
-        written there by hand or by another command (``KEPT``: ``trends.md``,
-        ``spot_checks/`` and attribution.py's ``attribution/``) is copied into
-        the rebuilt directory last, just before it replaces the old one.
+        empty table), ``candidate_trends.csv``, ``compact.md`` (``compact_page``,
+        written when ``analyses`` holds every ``compact_<target>``) and
+        ``summary.md``. What is written there by hand or by another command
+        (``KEPT``: ``trends.md``, ``spot_checks/`` and attribution.py's
+        ``attribution/``) is copied into the rebuilt directory last, just
+        before it replaces the old one.
     workers : int, optional
         Processes for matching the sessions again.
     figures : bool, optional

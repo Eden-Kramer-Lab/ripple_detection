@@ -517,11 +517,11 @@ after the factor and levels are `paired_changes`' `CHANGE_COLUMNS`), the orders 
 (`compact_comparison`) and `candidate_trends` (`TREND_COLUMNS`).
 
 On run `v1` (the shared 18-core machine), with `--workers 6`, the command took 3.1
-minutes wall and at most 4.1 GB resident: loading the reference 9 s, matching it again
-at the three minimum IoUs 34 s, every condition's scores 20 s, the tables 1.9 minutes
-(`robustness` 28 s, `appendix_expressions` 18 s, `model_sensitivity` 16 s,
-`boundary_errors` 13 s, `robustness_crossed` 9 s, the others under 7 s each, the compact
-tables under 1 s) and the figures 11 s. It wrote 72 files (42 CSV, 28 PNG, `compact.md`
+minutes wall and at most 4.1 to 4.8 GB resident across rebuilds: loading the reference
+9 s, matching it again at the three minimum IoUs 34 s, every condition's scores 20 s,
+the tables 1.9 minutes (`robustness` 28 s, `appendix_expressions` 18 s,
+`model_sensitivity` 16 s, `boundary_errors` 13 s, `robustness_crossed` 9 s, the others
+under 7 s each, the compact tables under 1 s) and the figures 11 s. It wrote 72 files (42 CSV, 28 PNG, `compact.md`
 and `summary.md`), the largest 846 kB.
 
 ## Results
@@ -546,19 +546,19 @@ network) of the reference condition's main methods, each against its primary
 expression, with recall and precision at IoU 0 and 0.5, unmatched detections per minute
 overall and at rest, and the median signed onset and offset errors at 10 and 50 % of the
 peak, estimates only. `compact_<target>.csv` has each number's interval and counts. The
-tables compute nothing new but the rate at rest: every other number is copied from the
-table it comes from (recall, precision and their counts from `matching_sensitivity`,
-the errors from `boundary_errors`; the overall rate equals `appendix_expressions`'
-false positives per minute against the primary expression), so they agree with those
-files to the last digit.
+tables compute nothing new but the split into rest and running: every other number is
+copied from the table it comes from (recall, precision and their counts from
+`matching_sensitivity`, the errors from `boundary_errors`; the overall rate equals
+`appendix_expressions`' false positives per minute against the primary expression), so
+they agree with those files to the last digit.
 
 - IoU 0 (any overlap) is the predeclared primary matching; IoU >= 0.5 is reported beside
   it as a second headline, added after run v1's results had been seen: post hoc, not
   predeclared.
 - Two false-positive rates, each with its numerator and denominator in the CSV:
   `unmatched_per_minute` is every unmatched detection, at rest or running, over the
-  minutes outside every network window (the denominator of every false-positive rate
-  in these results); `unmatched_rest_per_rest_minute` is the unmatched detections at
+  minutes outside every network window (the denominator of every other false-positive
+  rate in these results); `unmatched_rest_per_rest_minute` is the unmatched detections at
   rest over the minutes of rest outside every network window, those while running
   counted beside it (`n_unmatched_running` over `running_minutes`). A detection is at
   rest or running by its time as `rates_by_state` places events (its peak, else the
@@ -575,9 +575,11 @@ files to the last digit.
   members share them, else each member's; a detector has none.
 - `compact_held_out.csv` sets, per detector and target, the recall and false positives
   measured on the held-out replicates at the tested setting chosen on the others
-  (`kind` `measured`) beside `operating_points`' recall read off the curve of every
-  session (`interpolated` between two tested settings, or `tested` at one): only the
-  held-out value is one a threshold recommendation may quote.
+  (`kind` `measured`) beside `operating_points`' recall read off the curve pooled over
+  the sessions every setting ran on (`n_sessions`): `interpolated` between two tested
+  settings, or `tested` at one, which happens only when a pooled rate equals the target
+  exactly, so in practice every reached value is interpolated. Only the held-out value
+  is one a threshold recommendation may quote.
 - `compact_points.csv` keeps the point inventories apart: recall, precision and
   unmatched detections per minute by peak containment.
 
