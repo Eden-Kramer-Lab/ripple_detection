@@ -564,7 +564,7 @@ def test_matching_again_gives_the_runner_scores(analyze, run, tiny_run, tiny_mat
 
 
 def test_false_positive_labels(tiny_matches):
-    labels = tiny_matches.false_positives.groupby(["session_id", "method"])["label"]
+    labels = tiny_matches.unmatched.groupby(["session_id", "method"])["label"]
     assert labels.apply(sorted).to_dict() == {
         ("reference/0", KAY[0]): ["background", "burst_only:burst", "spike_leakage"],
         ("reference/0", MALLORY[0]): ["background", "emg"],
@@ -1108,7 +1108,7 @@ def test_point_inventories_are_scored_apart(analyze, point_matched):
         analyze.boundary_errors(tables, matches, n_resamples=FEW),
         analyze.splits_and_merges(tables, matches, n_resamples=FEW),
         matches.pairs,
-        matches.false_positives,
+        matches.unmatched,
     ]
     for frame in interval_tables:
         assert DAVIDSON[0] not in set(frame.method)
@@ -1522,7 +1522,7 @@ def event_free_matched(analyze, event_free_run):
 
 def test_a_false_positive_lies_outside_every_network_window(analyze, event_free_matched):
     tables, matches = event_free_matched
-    unmatched = matches.false_positives
+    unmatched = matches.unmatched
     kay = unmatched[unmatched.method == KAY[0]].sort_values(["session_id", "event_index"])
     # the matched event whose peak lies outside every window (3) is neither;
     # inside a sharp-wave-only event and on its end (closed) are in the events
@@ -1774,7 +1774,7 @@ def test_every_reading_counts_false_positives_not_unmatched_events(analyze):
     assert np.all(found.draws[:, 0, 0, 0] == 0.8)
     # nearest in log rate to 0.4 per minute: 0.5 (2.0), not 0.1 (3.0)
     near = analyze._sweep_recalls(scores, ["reference"], range(4), [KAY[0]], [0.4], FEW)
-    assert near.nearest[0, 0, 0] == "2.0"
+    assert near.settings_read[0, 0, 0] == "2.0"
 
 
 def test_every_reading_within_budget_takes_the_best_setting(analyze):
@@ -1797,7 +1797,7 @@ def test_every_reading_within_budget_takes_the_best_setting(analyze):
     assert compact.loc["held_out", ["setting", "recall"]].tolist() == ["3.0", 0.8]
     # the setting a spot check looks at, and the events its recall rests on
     found = analyze._sweep_recalls(scores, ["reference"], range(4), [KAY[0]], [1.0], FEW)
-    assert found.nearest[0, 0, 0] == "3.0"
+    assert found.settings_read[0, 0, 0] == "3.0"
     assert found.events[0, 0, 0] == 32
     assert found.read_off[0, 0, 0] == "within budget"
 
@@ -2885,7 +2885,7 @@ def _hand_orders(analyze, alternative="spike_model=refractory", within=()):
         defined=np.full((2, 2, len(_HAND_TARGETS)), 4),
         events=np.full((2, 2, len(_HAND_TARGETS)), 20.0),
         replicates=[{0, 1, 2, 3}, {0, 1, 2, 3}],
-        nearest=np.full((2, 2, len(_HAND_TARGETS)), "2.0", dtype=object),
+        settings_read=np.full((2, 2, len(_HAND_TARGETS)), "2.0", dtype=object),
         read_off=read_off,
     )
     detectors = [SWEPT_KARLSSON, KAY[0]]
@@ -3707,7 +3707,7 @@ def tiny_levels(analyze, tiny_tables):
     midpoint), one where its last's is, and one starts 0.5 ms past its middle
     one's, each session's from its own clock origin."""
     matches = analyze.match_run(tiny_tables, levels=(0.0, 0.2, 0.5))
-    unmatched = matches.false_positives
+    unmatched = matches.unmatched
     bouts = {}
     for session_id, origin in (("reference/0", 0.0), ("reference/1", UNIX_ORIGIN)):
         kay = unmatched[(unmatched.session_id == session_id) & (unmatched.method == KAY[0])]

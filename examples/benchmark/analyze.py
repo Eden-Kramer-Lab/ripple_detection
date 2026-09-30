@@ -184,7 +184,7 @@ OVERLAP_COLUMNS = (
     "n_detected",
     "n_merged",
 )
-FALSE_POSITIVE_COLUMNS = (
+UNMATCHED_COLUMNS = (
     *_KEY,
     "event_index",
     "start_time",
@@ -867,17 +867,16 @@ class Matches:
         events; ``n_detected`` events (for the doublets, those overlapping a
         doublet's window), ``n_merged`` of them overlapping two or more
         windows.
-    false_positives : pandas.DataFrame
+    unmatched : pandas.DataFrame
         One row per event matching no window of its method's primary
-        expression at ``minimum_iou`` 0, every unmatched detection:
-        ``event_index``, ``start_time``, ``end_time``, ``label``, the window it
-        overlaps longest (``label_by_overlap``) among every event component's,
+        expression at ``minimum_iou`` 0: ``event_index``, ``start_time``,
+        ``end_time``, ``label``, the window it overlaps longest
+        (``label_by_overlap``) among every event component's,
         ``"<event_type>:<expression>"``, and every non-event's, its type
         (``"background"`` for none), and ``in_events``, whether its time
         (``event_times``) lies inside a network window at 10 %
-        (``in_network_windows``): those outside every one are the false
-        positives at IoU 0, which every rate at IoU 0 counts; those inside are
-        not false positives.
+        (``in_network_windows``); those outside are the false positives at
+        IoU 0.
     comparisons : pandas.DataFrame
         ``compare_detectors`` on the main methods (one setting each, the
         first method of a pair first by name), ``truth_expression``
@@ -910,7 +909,7 @@ class Matches:
     windows: pd.DataFrame
     pairs: pd.DataFrame
     overlaps: pd.DataFrame
-    false_positives: pd.DataFrame
+    unmatched: pd.DataFrame
     comparisons: pd.DataFrame
     consensus: pd.DataFrame
     false_positive_groups: pd.DataFrame
@@ -922,7 +921,7 @@ _MATCH_COLUMNS = {
     "windows": WINDOW_COLUMNS,
     "pairs": PAIR_COLUMNS,
     "overlaps": OVERLAP_COLUMNS,
-    "false_positives": FALSE_POSITIVE_COLUMNS,
+    "unmatched": UNMATCHED_COLUMNS,
     "comparisons": SESSION_COMPARISON_COLUMNS,
     "consensus": CONSENSUS_COLUMNS,
     "false_positive_groups": GROUP_COLUMNS,
@@ -1026,7 +1025,7 @@ def match_session(
     labels = label_windows(event_table, non_event_table)
     union = interval_union(truth_bounds["network"][0])
     by_method = dict(tuple(events.groupby(["method", "setting"], sort=False)))
-    pairs, overlaps, false_positives, peaks = [], [], [], []
+    pairs, overlaps, unmatched_rows, peaks = [], [], [], []
     detected = {}
     for method, setting in ran:
         rows = by_method.get((method, setting), events.iloc[:0]).sort_values("event_index")
@@ -1088,7 +1087,7 @@ def match_session(
         reference = truth_bounds[expression][0]
         matching = at_zero[expression]
         unmatched = matching.unmatched_detected
-        false_positives.append(
+        unmatched_rows.append(
             pd.DataFrame(
                 {
                     **key,
@@ -1098,7 +1097,7 @@ def match_session(
                     "label": rd.label_by_overlap(bounds[unmatched], labels).to_numpy(),
                     "in_events": ~outside[unmatched],
                 },
-                columns=list(FALSE_POSITIVE_COLUMNS),
+                columns=list(UNMATCHED_COLUMNS),
             )
         )
         doublet = (sets[expression][0]["type"] == DOUBLET).to_numpy()
@@ -1127,9 +1126,7 @@ def match_session(
                 columns=list(OVERLAP_COLUMNS),
             )
         )
-    unmatched_events = _concat(false_positives, FALSE_POSITIVE_COLUMNS).astype(
-        {"in_events": bool}
-    )
+    unmatched_events = _concat(unmatched_rows, UNMATCHED_COLUMNS).astype({"in_events": bool})
     comparisons, consensus, groups = _compare_main(
         session_id,
         detected,
@@ -1142,7 +1139,7 @@ def match_session(
         windows=windows,
         pairs=_concat(pairs, PAIR_COLUMNS),
         overlaps=_concat(overlaps, OVERLAP_COLUMNS),
-        false_positives=unmatched_events,
+        unmatched=unmatched_events,
         comparisons=comparisons,
         consensus=consensus,
         false_positive_groups=groups,
@@ -1157,7 +1154,7 @@ def _compare_main(
     primary: Mapping[tuple[str, str], str],
     truth_bounds: Mapping[str, Sequence[np.ndarray[Any, Any]]],
     network_types: np.ndarray[Any, Any],
-    false_positives: pd.DataFrame,
+    unmatched: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """The main methods compared with each other on one session: their
     ``compare_detectors`` rows, which of them found each network event, and
@@ -1197,7 +1194,7 @@ def _compare_main(
         },
         columns=list(CONSENSUS_COLUMNS),
     )
-    shown = false_positives[false_positives["setting"].isin(MAIN_SETTINGS)]
+    shown = unmatched[unmatched["setting"].isin(MAIN_SETTINGS)]
     labels = _connected_groups(_bounds(shown))
     groups = (
         shown.assign(group=labels)
@@ -1261,7 +1258,7 @@ def match_run(
         name: _concat([getattr(session, name) for session in sessions], columns)
         for name, columns in _MATCH_COLUMNS.items()
     }
-    joined["false_positives"] = joined["false_positives"].astype({"in_events": bool})
+    joined["unmatched"] = joined["unmatched"].astype({"in_events": bool})
     return Matches(**joined, levels=levels)
 
 
@@ -1567,9 +1564,9 @@ def _detection_rates(
 
 def _false_positive_counts(matches: Matches) -> pd.Series:
     """Each session, method and setting's false positives: the unmatched
-    detections (``Matches.false_positives``) outside every network window,
+    detections (``Matches.unmatched``) outside every network window,
     by ``session_id``, ``method`` and ``setting``; one without is absent."""
-    found = matches.false_positives
+    found = matches.unmatched
     outside = found[~found["in_events"]]
     return outside.groupby(list(_KEY)).size().rename("n_false_positives")
 
@@ -2285,7 +2282,7 @@ def false_positive_classes(
         ``n_failures``.
     """
     labels = _false_positive_labels(matches)
-    counted = matches.false_positives.groupby([*_KEY, "label"]).size()
+    counted = matches.unmatched.groupby([*_KEY, "label"]).size()
     frame = tables.intervals.ran.merge(pd.DataFrame({"label": labels}), how="cross")
     frame = frame.join(counted.rename("n_events"), on=[*_KEY, "label"]).fillna({"n_events": 0})
     frame["n_unmatched"] = frame.groupby(list(_KEY))["n_events"].transform("sum")
@@ -4448,12 +4445,12 @@ class SweepRecalls:
     defined : ndarray of int, shape (n_conditions, n_detectors, n_targets)
         The pooled replicates whose own curve reaches each target.
     events : ndarray, shape (n_conditions, n_detectors, n_targets)
-        The true events found, pooled, at the setting in ``nearest`` (0 for
+        The true events found, pooled, at the setting in ``settings_read`` (0 for
         none).
     replicates : list of set
         Per detector, the replicates pooled: those on which every setting of
         its sweep ran in every condition, so that the conditions are paired.
-    nearest : ndarray of str, shape (n_conditions, n_detectors, n_targets)
+    settings_read : ndarray of str, shape (n_conditions, n_detectors, n_targets)
         The setting read at each target: the swept setting whose pooled
         false-positive rate is nearest it in log rate, or the best within
         budget past every setting's rate (``""`` for a curve with none),
@@ -4469,7 +4466,7 @@ class SweepRecalls:
     defined: np.ndarray[Any, Any]
     events: np.ndarray[Any, Any]
     replicates: list[set[Any]]
-    nearest: np.ndarray[Any, Any]
+    settings_read: np.ndarray[Any, Any]
     read_off: np.ndarray[Any, Any]
 
     def difference(self, axis: int, a: int = 0, b: int = 1) -> Difference:
@@ -4496,12 +4493,12 @@ class SweepRecalls:
             self.defined[:, [a, b]],
             self.events[:, [a, b]],
             [self.replicates[a], self.replicates[b]],
-            self.nearest[:, [a, b]],
+            self.settings_read[:, [a, b]],
             self.read_off[:, [a, b]],
         )
 
 
-def _nearest_settings(
+def _settings_read(
     pool: Pool, settings: Sequence[str], n_units: int, targets: Sequence[float]
 ) -> list[str]:
     """The setting of a sweep pool whose false-positive rate, pooled over
@@ -4536,7 +4533,7 @@ def _sweep_recalls(
     counts = _sweep_counts(scores, conditions, replicates)
     pools: list[list[Pool]] = [[] for _ in conditions]
     paired = []
-    nearest = np.full((len(conditions), len(detectors), len(targets)), "", dtype=object)
+    settings_read = np.full((len(conditions), len(detectors), len(targets)), "", dtype=object)
     events = np.zeros((len(conditions), len(detectors), len(targets)))
     for d, detector in enumerate(detectors):
         settings, complete, own = _sweep_rows(scores, counts, conditions, detector)
@@ -4544,10 +4541,11 @@ def _sweep_recalls(
         for c, (row, condition) in enumerate(zip(pools, conditions, strict=True)):
             mine = own[(own["condition_id"] == condition).to_numpy()]
             row.append(_curve_pool(mine, _NO_ERRORS, "replicate", replicates, settings, ()))
-            nearest[c, d] = _nearest_settings(row[-1], settings, len(replicates), targets)
+            settings_read[c, d] = _settings_read(row[-1], settings, len(replicates), targets)
             matched = row[-1](np.ones(len(replicates)))["n_matched"]
             events[c, d] = [
-                matched[settings.index(label)] if label else 0.0 for label in nearest[c, d]
+                matched[settings.index(label)] if label else 0.0
+                for label in settings_read[c, d]
             ]
 
     def statistic(weights: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
@@ -4573,7 +4571,7 @@ def _sweep_recalls(
         defined=np.isfinite(alone).sum(axis=0),
         events=events,
         replicates=paired,
-        nearest=nearest,
+        settings_read=settings_read,
         read_off=read_off.reshape(shape),
     )
 
@@ -4899,8 +4897,8 @@ def _orders(
                     "n_dropped": n_shared - len(paired),
                     "n_failures_a": failures[detectors[a]],
                     "n_failures_b": failures[detectors[b]],
-                    "setting_a": found.nearest[1, 0, t],
-                    "setting_b": found.nearest[1, 1, t],
+                    "setting_a": found.settings_read[1, 0, t],
+                    "setting_b": found.settings_read[1, 1, t],
                     "reference_read_off_a": found.read_off[0, 0, t],
                     "reference_read_off_b": found.read_off[0, 1, t],
                     "alternative_read_off_a": found.read_off[1, 0, t],
@@ -5030,8 +5028,8 @@ def operating_differences(
                     "fp_target": target,
                     "method_a": detectors[a],
                     "method_b": detectors[b],
-                    "setting_a": own.nearest[0, 0, t],
-                    "setting_b": own.nearest[0, 1, t],
+                    "setting_a": own.settings_read[0, 0, t],
+                    "setting_b": own.settings_read[0, 1, t],
                     "recall_a": estimate[0, 0, t],
                     "recall_b": estimate[0, 1, t],
                     "reached_a": bool(np.isfinite(estimate[0, 0, t])),
@@ -6093,7 +6091,7 @@ def unmatched_by_state(
 
     A detection is unmatched when it matches no truth window of the
     method's primary expression at 10 % of the peak at IoU 0
-    (``Matches.false_positives``). One whose time (its ``peak_time``, else
+    (``Matches.unmatched``). One whose time (its ``peak_time``, else
     the midpoint of its bounds) lies inside a network window at 10 % is
     counted apart (``n_unmatched_in_events``); the others are the false
     positives, whose count over the minutes outside every network window is
@@ -6142,7 +6140,7 @@ def unmatched_by_state(
     """
     bouts = session_bouts(tables.sessions) if bouts is None else bouts
     # each unmatched detection's peak, from the events it is one of
-    unmatched = matches.false_positives.merge(
+    unmatched = matches.unmatched.merge(
         tables.events[[*_KEY, "event_index", "peak_time"]],
         on=[*_KEY, "event_index"],
         how="left",
