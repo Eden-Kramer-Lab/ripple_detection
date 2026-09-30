@@ -5660,11 +5660,12 @@ def false_positive_rates(
       over the minutes of rest outside every network window
       (``rest_minutes``).
 
-    A detection is at rest or running by its midpoint, the mean of its start
-    and end, against the session's running bouts as closed intervals on the
-    timestamps (``intervals_to_mask``: a midpoint on a bout's start or end,
-    to the timestamps' rounding, is running), never by its peak, and never
-    by whether it overlaps a bout. The unmatched detections while running
+    A detection is at rest or running by its time as ``rates_by_state``
+    places events (``event_times``: its ``peak_time``, else the midpoint of
+    its bounds) against the session's running bouts as closed intervals on
+    the timestamps (``intervals_to_mask``: a time on a bout's start or end,
+    to the timestamps' rounding, is running), never by whether it overlaps a
+    bout. The unmatched detections while running
     are counted (``n_unmatched_running``) beside the running minutes outside
     every network window (``running_minutes``, the bouts' time less their
     overlap with the network windows); ``rest_minutes`` is ``minutes`` less
@@ -5692,10 +5693,15 @@ def false_positive_rates(
         together); ``primary_expression``, ``n_sessions``, ``n_failures``.
     """
     bouts = session_bouts(tables.sessions) if bouts is None else bouts
+    # each unmatched detection's peak, from the events it is one of
+    unmatched = matches.false_positives.merge(
+        tables.events[[*_KEY, "event_index", "peak_time"]],
+        on=[*_KEY, "event_index"],
+        how="left",
+    )
     placed = []
-    for session_id, rows in matches.false_positives.groupby("session_id", sort=False):
-        middle = (rows["start_time"].to_numpy(float) + rows["end_time"].to_numpy(float)) / 2
-        running = rd.intervals_to_mask(middle, bouts[session_id])
+    for session_id, rows in unmatched.groupby("session_id", sort=False):
+        running = rd.intervals_to_mask(event_times(rows), bouts[session_id])
         placed.append(
             rows[list(_KEY)].assign(
                 n_unmatched_rest=(~running).astype(int),
@@ -5985,9 +5991,10 @@ COMPACT_DEFINITIONS = (
     (
         "- **At rest / rest min.** The unmatched detections at rest over the minutes of rest "
         "outside every network window (`rest_minutes`). A detection is at rest or running by "
-        "its midpoint, the mean of its start and end, against the session's running bouts as "
-        "closed intervals on the timestamps (a midpoint on a bout's start or end is "
-        "running), not by its peak or by overlap. The bouts are drawn again from each "
+        "its time, as `rates_by_state` places events: its peak, else the midpoint of its "
+        "bounds, against the session's running bouts as closed intervals on the timestamps "
+        "(a time on a bout's start or end is running), not by overlap. The bouts are drawn "
+        "again from each "
         "session's saved seed and checked against the run's saved rest time. Unmatched "
         "detections while running are counted in the CSV (`n_unmatched_running`, over "
         "`running_minutes`), with no rate."

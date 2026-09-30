@@ -1008,10 +1008,11 @@ the results correct but hard to read, the maintainer deciding:
 - **Two false-positive rates.** All unmatched detections over the minutes outside every network
   window (the existing denominator), and unmatched detections at rest over the rest minutes
   outside every network window, those while running counted with their minutes. A detection is
-  placed by its midpoint on the running bouts as closed intervals (`rates_by_state` keeps its
-  peak rule). The bouts are drawn again from the saved seeds; `session_bouts` now checks their
-  rest against `rest_s` to 8 units in the last place of the duration (it allowed 1e-6 s): on v1
-  the two are equal exactly on all 20 reference sessions.
+  placed on the running bouts, as closed intervals, by `rates_by_state`'s rule (`event_times`:
+  its peak, else its bounds' midpoint), chosen for consistency within the results. The bouts
+  are drawn again from the saved seeds; `session_bouts` now checks their rest against
+  `rest_s` to 8 units in the last place of the duration (it allowed 1e-6 s): on v1 the two are
+  equal exactly on all 20 reference sessions.
 - **Identical groups.** Methods of one scoring rule and primary expression whose events are
   equal bit for bit on every session, failures included, are one row. On v1: Karlsson's
   detector with `carr_2012`, `shin_2019` and `tang_2017`; Kay's with `gillespie_2021`;

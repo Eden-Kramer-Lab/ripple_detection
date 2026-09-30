@@ -3043,32 +3043,35 @@ def test_a_group_lists_its_stand_ins(analyze):
 
 @pytest.fixture(scope="module")
 def tiny_levels(analyze, tiny_tables):
-    """The tiny run matched at every minimum IoU, and running bouts that end
-    on Kay's first and last false positives' midpoints and start just past
-    its middle one's (0.5 ms), each session's from its own clock origin."""
+    """The tiny run matched at every minimum IoU, and running bouts: one ends
+    where Kay's first false positive's time is (its peak, here its bounds'
+    midpoint), one where its last's is, and one starts 0.5 ms past its middle
+    one's, each session's from its own clock origin."""
     matches = analyze.match_run(tiny_tables, levels=(0.0, 0.2, 0.5))
     unmatched = matches.false_positives
     bouts = {}
     for session_id, origin in (("reference/0", 0.0), ("reference/1", UNIX_ORIGIN)):
         kay = unmatched[(unmatched.session_id == session_id) & (unmatched.method == KAY[0])]
-        middle = ((kay.start_time + kay.end_time) / 2).sort_values().to_numpy()
+        times = ((kay.start_time + kay.end_time) / 2).sort_values().to_numpy()
         bouts[session_id] = np.array(
             [
-                [origin + 5.9, middle[0]],
-                [middle[1] + 0.0005, origin + 13.0],
-                [origin + 15.0, middle[2]],
+                [origin + 5.9, times[0]],
+                [times[1] + 0.0005, origin + 13.0],
+                [origin + 15.0, times[2]],
             ]
         )
     return matches, bouts
 
 
-def test_false_positive_rates_place_detections_by_midpoint(analyze, tiny_tables, tiny_levels):
+def test_false_positive_rates_place_detections_by_their_time(
+    analyze, tiny_tables, tiny_levels
+):
     matches, bouts = tiny_levels
     rates = analyze.false_positive_rates(tiny_tables, matches, bouts=bouts, n_resamples=FEW)
     rates = rates.set_index("method")
     # Kay, per session: the false positive over the burst-only event and the
-    # last one end where a bout does (closed: running); the leakage one
-    # starts before the second bout, its midpoint 0.5 ms before it (rest)
+    # last one peak where a bout ends (closed: running); the leakage one
+    # starts before the second bout, its peak 0.5 ms before it (rest)
     kay = rates.loc[KAY[0]]
     assert [kay.n_unmatched, kay.n_unmatched_rest, kay.n_unmatched_running] == [6, 2, 4]
     minutes = (20.0 - tiny_tables.sessions.event_time_s.to_numpy()) / 60
@@ -3096,6 +3099,25 @@ def test_false_positive_rates_place_detections_by_midpoint(analyze, tiny_tables,
                 found[f"unmatched_per_minute{part}"]
                 == (expected[f"false_positives_per_minute{part}"])
             )
+
+
+def test_false_positive_rates_place_by_peak_else_midpoint(analyze, tiny_tables, tiny_levels):
+    """As rates_by_state places events: by the peak where there is one."""
+    matches, bouts = tiny_levels
+    events = tiny_tables.events.copy()
+    kay = events.method == KAY[0]
+    # the leakage false positive (11.999 to 12.001 s) peaks at its end, inside
+    # the bout that starts 0.5 ms past its midpoint; the last has no peak, so
+    # its midpoint, on a bout's end, places it
+    leakage = kay & np.isclose(events.start_time % 100, 11.999)
+    last = kay & np.isclose(events.start_time % 100, 16.0)
+    assert leakage.sum() == last.sum() == 2
+    events.loc[leakage, "peak_time"] = events.loc[leakage, "end_time"]
+    events.loc[last, "peak_time"] = np.nan
+    moved = dataclasses.replace(tiny_tables, events=events)
+    rates = analyze.false_positive_rates(moved, matches, bouts=bouts, n_resamples=FEW)
+    kay_rates = rates.set_index("method").loc[KAY[0]]
+    assert [kay_rates.n_unmatched_rest, kay_rates.n_unmatched_running] == [0, 6]
 
 
 def test_false_positive_rates_by_default_draw_the_bouts_again(analyze, tiny_tables):
@@ -3248,7 +3270,7 @@ def test_compact_page_formats_every_number(analyze, tiny_tables, tiny_compact):
     assert network.count("- none") == 2
     for phrase in (
         "post hoc, not predeclared",
-        "by its midpoint",
+        "its peak, else the midpoint of its bounds",
         "`interpolated`",
         "this simulator's reference sessions",
         "`n_unmatched_running`",

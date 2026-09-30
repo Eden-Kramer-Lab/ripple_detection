@@ -561,10 +561,10 @@ files to the last digit.
   in these results); `unmatched_rest_per_rest_minute` is the unmatched detections at
   rest over the minutes of rest outside every network window, those while running
   counted beside it (`n_unmatched_running` over `running_minutes`). A detection is at
-  rest or running by its midpoint against the running bouts as closed intervals (a
-  midpoint on a bout's start or end is running), the bouts drawn again from each
-  session's saved seed and checked against the run's saved rest time;
-  `rates_by_state` places an event by its peak instead.
+  rest or running by its time as `rates_by_state` places events (its peak, else the
+  midpoint of its bounds) against the running bouts as closed intervals (a time on a
+  bout's start or end is running), the bouts drawn again from each session's saved seed
+  and checked against the run's saved rest time.
 - Methods whose detections are identical on every session, start and end times equal
   exactly and the same failures, are one row (`members`, `n_members`), named by the
   first in the methods' order.
