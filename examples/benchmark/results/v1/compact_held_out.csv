@@ -24,13 +24,13 @@ Kay_ripple_detector,ripple,2,operating_point,interpolated,,0.818877,0.804858,0.8
 Kay_ripple_detector,ripple,5,held_out,measured,2.0,0.824155,0.80651,0.845145,2.28107,2.05801,2.50497,10
 Kay_ripple_detector,ripple,5,operating_point,interpolated,,0.847525,0.83827,0.858431,,,,20
 Long_sharp_wave_ripple_detector,ripple,0.5,held_out,measured,1.5,0.760386,0.744508,0.775187,0,0,0,10
-Long_sharp_wave_ripple_detector,ripple,0.5,operating_point,,,,,,,,,20
+Long_sharp_wave_ripple_detector,ripple,0.5,operating_point,within budget,,0.765779,0.753532,0.777669,,,,20
 Long_sharp_wave_ripple_detector,ripple,1,held_out,measured,1.5,0.760386,0.744508,0.775187,0,0,0,10
-Long_sharp_wave_ripple_detector,ripple,1,operating_point,,,,,,,,,20
+Long_sharp_wave_ripple_detector,ripple,1,operating_point,within budget,,0.765779,0.753532,0.777669,,,,20
 Long_sharp_wave_ripple_detector,ripple,2,held_out,measured,1.5,0.760386,0.744508,0.775187,0,0,0,10
-Long_sharp_wave_ripple_detector,ripple,2,operating_point,,,,,,,,,20
+Long_sharp_wave_ripple_detector,ripple,2,operating_point,within budget,,0.765779,0.753532,0.777669,,,,20
 Long_sharp_wave_ripple_detector,ripple,5,held_out,measured,1.5,0.760386,0.744508,0.775187,0,0,0,10
-Long_sharp_wave_ripple_detector,ripple,5,operating_point,,,,,,,,,20
+Long_sharp_wave_ripple_detector,ripple,5,operating_point,within budget,,0.765779,0.753532,0.777669,,,,20
 Roumis_ripple_detector,ripple,0.5,held_out,measured,8.0,0.199034,0.16824,0.230033,0.531908,0.398777,0.685091,10
 Roumis_ripple_detector,ripple,0.5,operating_point,,,,,,,,,20
 Roumis_ripple_detector,ripple,1,held_out,measured,2.5,0.771981,0.745282,0.797575,0.81832,0.65454,0.99186,10
@@ -60,9 +60,9 @@ Zugaro_ripple_detector,ripple,0.5,operating_point,,,,,,,,,20
 Zugaro_ripple_detector,ripple,1,held_out,measured,6.0,0.615459,0.580155,0.649547,1.03313,0.756856,1.38041,10
 Zugaro_ripple_detector,ripple,1,operating_point,interpolated,,0.62666,0.372184,0.745799,,,,20
 Zugaro_ripple_detector,ripple,2,held_out,measured,2.5,0.783575,0.749472,0.810347,1.51389,1.21821,1.83934,10
-Zugaro_ripple_detector,ripple,2,operating_point,,,,,,,,,20
+Zugaro_ripple_detector,ripple,2,operating_point,within budget,,0.781065,0.761314,0.799312,,,,20
 Zugaro_ripple_detector,ripple,5,held_out,measured,2.5,0.783575,0.749472,0.810347,1.51389,1.21821,1.83934,10
-Zugaro_ripple_detector,ripple,5,operating_point,,,,,,,,,20
+Zugaro_ripple_detector,ripple,5,operating_point,within budget,,0.781065,0.761314,0.799312,,,,20
 multiunit_HSE_detector,burst,0.5,held_out,measured,5.0,0.502513,0.473942,0.534103,0.337557,0.225065,0.439928,10
 multiunit_HSE_detector,burst,0.5,operating_point,interpolated,,0.59303,0.514606,0.658358,,,,20
 multiunit_HSE_detector,burst,1,held_out,measured,4.0,0.664322,0.641657,0.688444,0.583053,0.460352,0.695807,10
