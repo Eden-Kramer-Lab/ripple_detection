@@ -2837,23 +2837,72 @@ def _at_fp_rates(
     (n_settings, n_columns), read off at each target, shape (n_targets,
     n_columns)."""
     fp_rate = np.asarray(fp_rate, dtype=float)
-    recall = np.asarray(recall, dtype=float)
     values = np.asarray(values, dtype=float).reshape(len(fp_rate), -1)
     targets = np.log(np.asarray(targets, dtype=float))
     found = np.full((len(targets), values.shape[1]), np.nan)
     if not len(fp_rate):
         return found
-    x = np.log(np.maximum(fp_rate, floor))
-    # FP rate up, then recall down (NaN last), then threshold order
-    order = np.lexsort((np.arange(len(x)), -recall, x))
-    ranked = x[order]
-    repeated = (ranked[1:] == ranked[:-1]) | (np.isnan(ranked[1:]) & np.isnan(ranked[:-1]))
-    kept = order[np.concatenate([[True], ~repeated])]
-    xs = x[kept]
+    kept, xs = _kept_settings(fp_rate, recall, floor)
     inside = (xs[0] <= targets) & (targets <= xs[-1])
     for column in range(values.shape[1]):
         found[inside, column] = np.interp(targets[inside], xs, values[kept, column])
     return found
+
+
+def _kept_settings(
+    fp_rate: np.ndarray[Any, Any], recall: ArrayLike, floor: float
+) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
+    """The settings ``_at_fp_rates`` reads between, shape (n_kept,), one per
+    floored false-positive rate (the best recall, ties the first), by rate,
+    and their log rates."""
+    x = np.log(np.maximum(fp_rate, floor))
+    # FP rate up, then recall down (NaN last), then threshold order
+    order = np.lexsort((np.arange(len(x)), -np.asarray(recall, dtype=float), x))
+    ranked = x[order]
+    repeated = (ranked[1:] == ranked[:-1]) | (np.isnan(ranked[1:]) & np.isnan(ranked[:-1]))
+    kept = order[np.concatenate([[True], ~repeated])]
+    return kept, x[kept]
+
+
+# How a value read off a curve at a target was found.
+INTERPOLATED = "interpolated"
+TESTED = "tested"
+
+
+def read_off_kinds(
+    fp_rate: ArrayLike, recall: ArrayLike, targets: ArrayLike, floor: float
+) -> np.ndarray[Any, Any]:
+    """Whether ``at_fp_rate`` takes each target's value at a tested setting.
+
+    Parameters
+    ----------
+    fp_rate, recall : array_like, shape (n_settings,)
+        A curve's settings, as ``at_fp_rate`` reads them.
+    targets : array_like, shape (n_targets,)
+        False positives per minute.
+    floor : float
+        ``at_fp_rate``'s.
+
+    Returns
+    -------
+    kinds : ndarray of str, shape (n_targets,)
+        ``"tested"`` where the target is a kept setting's floored rate
+        (in log rate, as the curve is read), so the value is that
+        setting's; ``"interpolated"`` where it
+        lies strictly between two kept settings' rates, so the value is
+        read between them in log rate and no setting was run there; ``""``
+        where the curve does not reach the target and there is no value.
+    """
+    fp_rate = np.asarray(fp_rate, dtype=float)
+    logged = np.log(np.asarray(targets, dtype=float))
+    kinds = np.full(len(logged), "", dtype=object)
+    if not len(fp_rate):
+        return kinds
+    _, xs = _kept_settings(fp_rate, recall, floor)
+    inside = (xs[0] <= logged) & (logged <= xs[-1])
+    tested = np.isin(logged, xs)
+    kinds[inside] = np.where(tested[inside], TESTED, INTERPOLATED)
+    return kinds
 
 
 def at_fp_rate(
@@ -3180,6 +3229,22 @@ def _read_off(
     )
 
 
+def _read_off_kinds(
+    pooled: Mapping[str, np.ndarray[Any, Any]], targets: Sequence[float]
+) -> np.ndarray[Any, Any]:
+    """``read_off_kinds`` of the curve ``_read_off`` reads, shape (n_targets,)."""
+    held = pooled["ran"] > 0
+    if not held.any():
+        return np.full(len(targets), "", dtype=object)
+    rates = _rates(pooled)
+    return read_off_kinds(
+        rates["fp_rate"][held],
+        rates["recall"][held],
+        targets,
+        0.5 / pooled["minutes"][held].max(),
+    )
+
+
 def _condition_sessions(scores: ConditionScores, condition: str) -> list[str]:
     return list(
         scores.sessions.loc[scores.sessions["condition_id"] == condition, "session_id"]
@@ -3329,9 +3394,11 @@ def operating_points(
     -------
     points : pandas.DataFrame
         One row per detector, ``minimum_iou`` and target: ``method``,
-        ``primary_expression``, ``minimum_iou``, ``fp_target``, then for
-        ``recall``, ``median_onset_error`` and ``median_offset_error``
-        (seconds, detected minus truth at 10 %) the estimate, ``_low`` and
+        ``primary_expression``, ``minimum_iou``, ``fp_target``, ``read_off``
+        (``read_off_kinds``: ``"interpolated"`` between two tested settings,
+        ``"tested"`` at one, ``""`` unreached), then for ``recall``,
+        ``median_onset_error`` and ``median_offset_error`` (seconds,
+        detected minus truth at 10 %) the estimate, ``_low`` and
         ``_high`` (over the resamples whose curve reaches the target; none
         where the estimate is NaN); ``attained``, the fraction of resamples
         whose curve reaches it; ``n_sessions``, the sessions every setting
@@ -3352,7 +3419,9 @@ def operating_points(
             settings = _sweep_settings(method, scores.methods)
             complete, own_counts, own_errors = _sweep_inputs(counts, errors, method, settings)
             pool = _curve_pool(own_counts, own_errors, "session_id", sessions, settings)
-            estimate = _read_off(pool(np.ones(len(sessions))), targets, columns)
+            pooled = pool(np.ones(len(sessions)))
+            estimate = _read_off(pooled, targets, columns)
+            kinds = _read_off_kinds(pooled, targets)
             draws = np.array([_read_off(pool(w), targets, columns) for w in weights])
             low, high = _conditional_intervals(estimate, draws)
             attained = np.isfinite(draws[:, :, 0]).mean(axis=0)
@@ -3363,6 +3432,7 @@ def operating_points(
                     "primary_expression": primary[method],
                     "minimum_iou": level,
                     "fp_target": target,
+                    "read_off": kinds[position],
                 }
                 for column, name in enumerate(AT_TARGET):
                     row[name] = estimate[position, column]
@@ -4103,6 +4173,9 @@ class SweepRecalls:
         The swept setting whose pooled false-positive rate is nearest each
         target in log rate (``""`` for a curve with none), where a spot check
         of the operating point looks.
+    read_off : ndarray of str, shape (n_conditions, n_detectors, n_targets)
+        How ``estimate`` was read off (``read_off_kinds``): ``"interpolated"``,
+        ``"tested"`` or ``""``.
     """
 
     estimate: np.ndarray[Any, Any]
@@ -4111,6 +4184,7 @@ class SweepRecalls:
     events: np.ndarray[Any, Any]
     replicates: list[set[Any]]
     nearest: np.ndarray[Any, Any]
+    read_off: np.ndarray[Any, Any]
 
     def pair(self, a: int, b: int) -> SweepRecalls:
         """Two detectors' slices, A (``a``) at index 0 and B at 1."""
@@ -4121,6 +4195,7 @@ class SweepRecalls:
             self.events[:, [a, b]],
             [self.replicates[a], self.replicates[b]],
             self.nearest[:, [a, b]],
+            self.read_off[:, [a, b]],
         )
 
 
@@ -4178,6 +4253,10 @@ def _sweep_recalls(
 
     weights = resample_weights(len(replicates), n_resamples=n_resamples)
     alone = np.array([statistic(w) for w in np.eye(len(replicates))])
+    read_off = np.full((len(conditions), len(detectors), len(targets)), "", dtype=object)
+    for c, row in enumerate(pools):
+        for d, pool in enumerate(row):
+            read_off[c, d] = _read_off_kinds(pool(np.ones(len(replicates))), targets)
     return SweepRecalls(
         estimate=statistic(np.ones(len(replicates))),
         draws=np.array([statistic(w) for w in weights]),
@@ -4185,6 +4264,7 @@ def _sweep_recalls(
         events=events,
         replicates=paired,
         nearest=nearest,
+        read_off=read_off,
     )
 
 
@@ -4517,6 +4597,8 @@ DIFFERENCE_COLUMNS = (
     "recall_b",
     "reached_a",
     "reached_b",
+    "read_off_a",
+    "read_off_b",
     "difference",
     "difference_low",
     "difference_high",
@@ -4564,14 +4646,17 @@ def operating_differences(
         false-positive rate is nearest the target, where a spot check
         looks), ``recall_a`` and ``recall_b``, ``reached_a`` and ``reached_b``
         (whether each curve reaches the target; a recall it does not reach
-        is NaN, never the curve's end), ``difference`` (A minus B) with
-        ``_low``, ``_high`` and ``_p``, ``n_draws`` (the resamples in which
-        both pooled curves reach the target, those the interval and p-value
-        are over; NaN and 0 without a difference), ``n_defined_a`` and
-        ``n_defined_b`` (the sessions whose own curve reaches the target),
-        ``n_events_a`` and ``n_events_b`` (the true events found, pooled, at
-        the swept setting nearest the target), ``n_replicates`` (sessions
-        pooled) and ``n_dropped`` (the condition's other sessions).
+        is NaN, never the curve's end), ``read_off_a`` and ``read_off_b``
+        (``read_off_kinds``: each recall ``"interpolated"`` between two
+        tested settings, ``"tested"`` at one, ``""`` unreached),
+        ``difference`` (A minus B) with ``_low``, ``_high`` and ``_p``,
+        ``n_draws`` (the resamples in which both pooled curves reach the
+        target, those the interval and p-value are over; NaN and 0 without a
+        difference), ``n_defined_a`` and ``n_defined_b`` (the sessions whose
+        own curve reaches the target), ``n_events_a`` and ``n_events_b``
+        (the true events found, pooled, at the swept setting nearest the
+        target), ``n_replicates`` (sessions pooled) and ``n_dropped`` (the
+        condition's other sessions).
     """
     detectors = _detectors(scores)
     primary = _primary_of(scores)
@@ -4601,6 +4686,8 @@ def operating_differences(
                     "recall_b": estimate[0, 1, t],
                     "reached_a": bool(np.isfinite(estimate[0, 0, t])),
                     "reached_b": bool(np.isfinite(estimate[0, 1, t])),
+                    "read_off_a": own.read_off[0, 0, t],
+                    "read_off_b": own.read_off[0, 1, t],
                     "difference": difference[t],
                     "difference_low": low[t],
                     "difference_high": high[t],

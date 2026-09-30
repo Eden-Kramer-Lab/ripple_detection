@@ -1455,6 +1455,25 @@ def test_at_fp_rate_keeps_one_setting(analyze):
     assert found.tolist() == pytest.approx([0.8, -0.01])
 
 
+def test_read_off_kinds_say_where_a_value_is_interpolated(analyze):
+    fp_rate, recall = [8.0, 2.0, 2.0, 0.5, 0.0], [0.9, 0.6, 0.7, 0.4, 0.2]
+    targets = [0.2, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 9.0]
+    kinds = analyze.read_off_kinds(fp_rate, recall, targets, 0.25)
+    # at a setting's rate (0 floored to 0.25, a repeated rate once), between
+    # two, and outside the curve
+    assert kinds.tolist() == [
+        "",
+        "tested",
+        "tested",
+        "interpolated",
+        "tested",
+        "interpolated",
+        "tested",
+        "",
+    ]
+    assert analyze.read_off_kinds([], [], [1.0], 0.25).tolist() == [""]
+
+
 def test_at_fp_rate_is_the_design(analyze):
     rng = np.random.default_rng(3)
     for _ in range(200):
@@ -1570,6 +1589,8 @@ def test_operating_curves_and_points_by_hand(analyze):
     # 5 per minute is past the curve's end: missing, not its last point
     assert points.loc[5.0, ["recall", "recall_low", "recall_high"]].isna().all()
     assert points.attained.tolist() == [1.0, 1.0, 1.0, 0.0]
+    # 0.5 and 2 per minute are two settings' rates; 1 lies between them
+    assert points.read_off.tolist() == ["tested", "interpolated", "tested", ""]
 
 
 def test_operating_curves_label_defaults_and_recipes(analyze):
@@ -2469,6 +2490,7 @@ def _hand_orders(analyze, alternative="spike_model=refractory"):
         events=np.full((2, 2, len(_HAND_TARGETS)), 20.0),
         replicates=[{0, 1, 2, 3}, {0, 1, 2, 3}],
         nearest=np.full((2, 2, len(_HAND_TARGETS)), "2.0", dtype=object),
+        read_off=np.full((2, 2, len(_HAND_TARGETS)), "interpolated", dtype=object),
     )
     detectors = [SWEPT_KARLSSON, KAY[0]]
     return analyze._orders(
@@ -2665,8 +2687,16 @@ def test_operating_differences_are_paired_by_session(analyze):
     )
     # the p-value from those same resamples: none at or above 0
     assert (row.difference_p, row.n_draws, row.n_replicates) == (0.0, FEW, 4)
+    assert (row.read_off_a, row.read_off_b) == ("interpolated", "interpolated")
     unreached = at_one.loc[(KAY[0], ROUMIS)]
     assert (unreached.reached_a, unreached.reached_b) == (True, False)
+    assert (unreached.read_off_a, unreached.read_off_b) == ("interpolated", "")
+    # 5 per minute is Roumis's first setting's rate, past Kay's curve
+    at_five = table[table.fp_target == 5.0].set_index(["method_a", "method_b"])
+    assert at_five.loc[(KAY[0], ROUMIS), ["read_off_a", "read_off_b"]].tolist() == [
+        "",
+        "tested",
+    ]
     assert np.isnan(unreached.difference)
     assert np.isnan(unreached.difference_p)
     assert unreached.n_draws == 0

@@ -580,10 +580,14 @@ the panel of its primary expression. False positives are counted over the minute
 outside every network window, so a rate is per minute of time without events.
 `operating_points.png` gives recall at 0.5, 1, 2 and 5 per minute: a target a curve does
 not reach is missing, never its nearest end, and `attained` in the CSV says in what
-share of resamples it is reached. `operating_differences.csv` has, for two detectors of
-one primary expression, the difference in recall at each target, paired by session,
-with its interval and test: two recalls whose intervals overlap can still differ, and
-two whose estimates differ may not. A sweep is pooled over the sessions on which every
+share of resamples it is reached. Such a value is read off the curve, not measured:
+`read_off` in the CSV (`read_off_a` and `read_off_b` in `operating_differences.csv`)
+says `interpolated` where the target lies between two tested settings' rates, so no
+setting was run at it, and `tested` where it is one setting's rate.
+`operating_differences.csv` has, for two detectors of one primary expression, the
+difference in recall at each target, paired by session, with its interval and test: two
+recalls whose intervals overlap can still differ, and two whose estimates differ may
+not. A sweep is pooled over the sessions on which every
 setting ran, so a failed call cannot bend one point of a curve. The curves describe the
 sessions they are read from: a threshold quoted from them is chosen on the even
 replicates and judged on the odd ones (`held_out_thresholds.png`, held-out recall beside
