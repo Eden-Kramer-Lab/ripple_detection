@@ -2995,11 +2995,26 @@ WITHIN_BUDGET = "within budget"
 def _within_budget(
     x: np.ndarray[Any, Any], recall: ArrayLike, targets: np.ndarray[Any, Any]
 ) -> tuple[np.ndarray[Any, Any], int | None]:
-    """Which targets lie past every setting's floored log rate ``x``, shape
-    (n_targets,), and the setting a curve gives there: the best recall
-    (ties: the first in threshold order), None when no recall is defined."""
+    """Which targets lie past every setting's rate, and the setting a curve
+    gives there.
+
+    Parameters
+    ----------
+    x : ndarray, shape (n_settings,)
+        Each setting's floored log false-positive rate, every one finite.
+    recall : array_like, shape (n_settings,)
+    targets : ndarray, shape (n_targets,)
+        Log false-positive rates.
+
+    Returns
+    -------
+    past : ndarray of bool, shape (n_targets,)
+    best : int or None
+        The setting with the best recall (ties: the first in threshold
+        order); None when no recall is defined.
+    """
     recall = np.asarray(recall, dtype=float)
-    past = targets > np.nanmax(x) if np.isfinite(x).any() else np.zeros(len(targets), bool)
+    past = targets > x.max() if len(x) else np.zeros(len(targets), bool)
     if not np.isfinite(recall).any():
         return past, None
     return past, int(np.argmax(np.where(np.isfinite(recall), recall, -np.inf)))
@@ -3042,6 +3057,10 @@ def _at_fp_rates(
     """
     fp_rate = np.asarray(fp_rate, dtype=float)
     values = np.asarray(values, dtype=float).reshape(len(fp_rate), -1)
+    # a setting without a rate is on no curve
+    rated = np.isfinite(fp_rate)
+    fp_rate, values = fp_rate[rated], values[rated]
+    recall = np.asarray(recall, dtype=float)[rated]
     targets = np.log(np.asarray(targets, dtype=float))
     found = np.full((len(targets), values.shape[1]), np.nan)
     kinds = np.full(len(targets), "", dtype=object)
@@ -3208,17 +3227,43 @@ def _codes(
 
 
 def _session_counts(
-    scores: ConditionScores, level: float | None, sessions: Collection[str] | None = None
+    scores: ConditionScores,
+    level: float,
+    sessions: Collection[str] | None = None,
+    *,
+    main: bool = False,
 ) -> pd.DataFrame:
     """``scores.counts`` at one ``minimum_iou`` (point methods at every
-    level: they have none), of some sessions (default all), with each
-    session's ``condition_id``, ``replicate``, ``minutes`` and ``ran`` (1)."""
+    level: they have none), of some sessions (default all), of the main
+    settings alone when ``main``, with each session's ``condition_id``,
+    ``replicate``, ``minutes`` and ``ran`` (1).
+
+    Raises
+    ------
+    ValueError
+        A row read has no false-positive count (``load_scores`` counts them
+        only where a default analysis reads them): its rate is unknown, not
+        a target out of reach.
+    """
     counts = scores.counts
     if sessions is not None:
         counts = counts[counts["session_id"].isin(sessions)]
-    if level is not None:
-        counts = counts[(counts["minimum_iou"] == level) | counts["minimum_iou"].isna()]
+    counts = counts[(counts["minimum_iou"] == level) | counts["minimum_iou"].isna()]
+    if main:
+        counts = main_rows(counts)
     listed = scores.sessions.set_index("session_id")
+    uncounted = counts[counts["n_false_positives"].isna()]
+    if len(uncounted):
+        conditions = sorted(set(uncounted["session_id"].map(listed["condition_id"])))
+        first = uncounted.iloc[0]
+        msg = (
+            f"No false-positive count for {', '.join(conditions)} at minimum IoU {level:g} "
+            f"({len(uncounted)} rows, {first['method']} {first['setting']} among them): "
+            "load_scores counts them in the reference at every level and elsewhere at IoU 0 "
+            "for the main settings and the alternative models' sweeps, so this rate is "
+            "unknown, not out of reach."
+        )
+        raise ValueError(msg)
     return counts.assign(
         condition_id=counts["session_id"].map(listed["condition_id"]),
         replicate=counts["session_id"].map(listed["replicate"]),
@@ -3894,7 +3939,7 @@ def condition_pool(
     )
     sessions = scores.sessions[scores.sessions["condition_id"].isin(condition_ids)]
     sessions = set(sessions.loc[sessions["replicate"].isin(replicates), "session_id"])
-    counts = main_rows(_session_counts(scores, 0.0, sessions)).merge(
+    counts = _session_counts(scores, 0.0, sessions, main=True).merge(
         scores.participation, on=list(_KEY), how="left"
     )
     participation = ["n_events", "principal_fraction"]
@@ -4371,6 +4416,9 @@ def _nearest_settings(
     if curve is None:
         return [""] * len(targets)
     held, rates, floor = curve
+    held = held & np.isfinite(rates["fp_rate"])
+    if not held.any():
+        return [""] * len(targets)
     positions = np.flatnonzero(held)
     x = np.log(np.maximum(rates["fp_rate"][held], floor))
     wanted = np.log(np.asarray(targets, dtype=float))

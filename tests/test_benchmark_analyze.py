@@ -3834,6 +3834,48 @@ def two_condition_run(run, tmp_path_factory):
     return _write_run(run, root, sessions, condition_id="spike_model=refractory")
 
 
+def test_a_rate_is_never_read_where_it_was_not_counted(analyze, two_condition_run):
+    """The alternative model's sessions are matched again at IoU 0 alone, so
+    its curves at IoU 0.2 and 0.5 have no false positives: every reading of
+    them there raises, naming the condition and the level, rather than
+    reading the missing rate as a target out of reach."""
+    scores = analyze.load_scores(two_condition_run.parent)
+    alternative = "spike_model=refractory"
+    for read in (analyze.operating_curves, analyze.operating_points):
+        with pytest.raises(ValueError, match=rf"{re.escape(alternative)} at minimum IoU 0\.2"):
+            read(scores, condition=alternative)
+    # at IoU 0, which the other readings read, the rates are counted
+    counts = scores.counts[scores.counts.session_id.str.startswith(alternative)]
+    assert counts.loc[counts.minimum_iou.fillna(0) == 0, "n_false_positives"].notna().all()
+    analyze.held_out_thresholds(scores, condition=alternative, n_resamples=FEW)
+    analyze.operating_differences(scores, condition=alternative, n_resamples=FEW)
+    # a count missing at IoU 0 is refused by every reading at IoU 0
+    lost = scores.counts.session_id.str.startswith(alternative) & (
+        scores.counts.setting == KAY_SWEEP[1]
+    )
+    missing = dataclasses.replace(
+        scores,
+        counts=scores.counts.assign(
+            n_false_positives=scores.counts.n_false_positives.mask(lost)
+        ),
+    )
+    at_zero = rf"{re.escape(alternative)} at minimum IoU 0(?![.\d])"
+    for read in (analyze.held_out_thresholds, analyze.operating_differences):
+        with pytest.raises(ValueError, match=at_zero):
+            read(missing, condition=alternative, n_resamples=FEW)
+    with pytest.raises(ValueError, match=at_zero):
+        analyze.model_sensitivity(missing, n_resamples=FEW)
+
+
+def test_a_setting_without_a_rate_is_left_out_of_a_curve(analyze):
+    # the third setting's rate is undefined: never the best within budget
+    found, kinds = analyze._at_fp_rates(
+        [0.1, 0.3, np.nan], [0.5, 0.6, 0.9], [0.5, 0.6, 0.9], [1.0, 0.2], 0.01
+    )
+    assert kinds.tolist() == ["within budget", "interpolated"]
+    assert found[0, 0] == 0.6
+
+
 def test_the_command_writes_every_table_and_the_summary(analyze, two_condition_run, tmp_path):
     results = tmp_path / "results" / "tiny"
     seconds = analyze.analyze_run(
