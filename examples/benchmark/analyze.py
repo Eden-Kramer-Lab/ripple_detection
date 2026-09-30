@@ -607,15 +607,20 @@ def in_network_windows(times: ArrayLike, network: ArrayLike) -> np.ndarray[Any, 
     return inside
 
 
-def _point_false_positives(
-    windows: np.ndarray[Any, Any], rows: pd.DataFrame, network: np.ndarray[Any, Any]
-) -> int:
-    """A point method's false positives: its points (``events.csv`` rows, in
-    order) matching no window of ``windows``, shape (n_windows, 2), by peak
-    containment, whose times lie outside every ``network`` window."""
-    unmatched = np.ones(len(rows), dtype=bool)
-    unmatched[_matched_rows(windows, rows, point=True)[1]] = False
-    return int((~in_network_windows(event_times(rows)[unmatched], network)).sum())
+def _outside_events(rows: pd.DataFrame, union: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
+    """Whether each event (``events.csv`` rows) lies outside every network
+    window, ``in_network_windows``' rule on ``union``, a session's network
+    windows at 10 % joined (``interval_union``); shape (n_events,). Such an
+    event, if unmatched, is a false positive."""
+    inside = rd.intervals_to_mask(event_times(rows), union)
+    return ~inside
+
+
+def _false_positives(outside: np.ndarray[Any, Any], matched: ArrayLike) -> int:
+    """The false positives among a method's events: those outside every
+    network window (``outside``, shape (n_events,)) at none of the
+    ``matched`` positions (distinct, one to one)."""
+    return int(outside.sum() - outside[np.asarray(matched, dtype=int)].sum())
 
 
 # Loading a run
@@ -1019,7 +1024,7 @@ def match_session(
         WINDOW_COLUMNS,
     )
     labels = label_windows(event_table, non_event_table)
-    network = truth_bounds["network"][0]
+    union = interval_union(truth_bounds["network"][0])
     by_method = dict(tuple(events.groupby(["method", "setting"], sort=False)))
     pairs, overlaps, false_positives, peaks = [], [], [], []
     detected = {}
@@ -1027,10 +1032,13 @@ def match_session(
         rows = by_method.get((method, setting), events.iloc[:0]).sort_values("event_index")
         bounds, index = _bounds(rows), rows["event_index"].to_numpy()
         key = {"session_id": session_id, "method": method, "setting": setting}
+        outside = _outside_events(rows, union)
         if method in points:
-            outside = _point_false_positives(
-                truth_bounds[primary[method, setting]][0], rows, network
-            )
+            found = {
+                expression: _matched_rows(references[0], rows, point=True)[1]
+                for expression, references in truth_bounds.items()
+            }
+            n_false = _false_positives(outside, found[primary[method, setting]])
             for expression, references in truth_bounds.items():
                 peaks.append(
                     {
@@ -1038,8 +1046,8 @@ def match_session(
                         "expression": expression,
                         "n_reference": len(references[0]),
                         "n_detected": len(rows),
-                        "n_matched": len(_matched_rows(references[0], rows, point=True)[0]),
-                        "n_false_positives": outside,
+                        "n_matched": len(found[expression]),
+                        "n_false_positives": n_false,
                     }
                 )
             continue
@@ -1088,7 +1096,7 @@ def match_session(
                     "start_time": bounds[unmatched, 0],
                     "end_time": bounds[unmatched, 1],
                     "label": rd.label_by_overlap(bounds[unmatched], labels).to_numpy(),
-                    "in_events": in_network_windows(event_times(rows)[unmatched], network),
+                    "in_events": ~outside[unmatched],
                 },
                 columns=list(FALSE_POSITIVE_COLUMNS),
             )
@@ -1809,23 +1817,24 @@ def score_primary(
         expression: _bounds(rd.truth_windows(event_table, TRUTH_FRACTIONS[0], expression))
         for expression in expressions | {"network"}
     }
+    union = interval_union(windows["network"])
     by_method = dict(tuple(events.groupby(["method", "setting"], sort=False)))
     errors, points, false_positives = [], [], []
     for position, (method, setting, expression) in enumerate((*ran, *counted)):
         rows = by_method.get((method, setting), events.iloc[:0]).sort_values("event_index")
         reference = windows[expression]
         key = {"session_id": session_id, "method": method, "setting": setting}
+        outside = _outside_events(rows, union)
         if method in point_methods():
+            matched = _matched_rows(reference, rows, point=True)[1]
             points.append(
                 {
                     **key,
                     "minimum_iou": np.nan,
                     "n_reference": len(reference),
                     "n_detected": len(rows),
-                    "n_matched": len(_matched_rows(reference, rows, point=True)[0]),
-                    "n_false_positives": _point_false_positives(
-                        reference, rows, windows["network"]
-                    ),
+                    "n_matched": len(matched),
+                    "n_false_positives": _false_positives(outside, matched),
                 }
             )
             continue
@@ -1833,10 +1842,13 @@ def score_primary(
         paired = position < len(ran)
         for level in levels if paired else (0.0,):
             matching = rd.match_events(reference, bounds, minimum_iou=level)
-            unmatched = event_times(rows)[matching.unmatched_detected]
-            outside = ~in_network_windows(unmatched, windows["network"])
+            matched = matching.pairs["detected_index"].to_numpy()
             false_positives.append(
-                {**key, "minimum_iou": level, "n_false_positives": int(outside.sum())}
+                {
+                    **key,
+                    "minimum_iou": level,
+                    "n_false_positives": _false_positives(outside, matched),
+                }
             )
             if not paired:
                 continue
