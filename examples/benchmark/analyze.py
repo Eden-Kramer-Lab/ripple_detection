@@ -3218,6 +3218,18 @@ def _sweep_inputs(
     )
 
 
+def _held_curve(
+    pooled: Mapping[str, np.ndarray[Any, Any]],
+) -> tuple[np.ndarray[Any, Any], dict[str, np.ndarray[Any, Any]], float] | None:
+    """The settings of a pooled curve with scores (a mask), every setting's
+    rates (``_rates``) and the floor ``at_fp_rate`` reads it with, half of 1
+    / the most minutes of any of them; None when no setting has scores."""
+    held = pooled["ran"] > 0
+    if not held.any():
+        return None
+    return held, _rates(pooled), 0.5 / float(pooled["minutes"][held].max())
+
+
 def _read_off(
     pooled: Mapping[str, np.ndarray[Any, Any]],
     targets: Sequence[float],
@@ -3225,35 +3237,24 @@ def _read_off(
 ) -> np.ndarray[Any, Any]:
     """A pooled curve's ``columns`` (``recall`` or the pool's) at each target
     (``at_fp_rate``), shape (n_targets, n_columns), over the settings with
-    scores; the floor is half of 1 / the most minutes of any of them."""
-    held = pooled["ran"] > 0
-    if not held.any():
+    scores (``_held_curve``)."""
+    curve = _held_curve(pooled)
+    if curve is None:
         return np.full((len(targets), len(columns)), np.nan)
-    rates = _rates(pooled)
+    held, rates, floor = curve
     values = np.column_stack([{**pooled, **rates}[column][held] for column in columns])
-    return _at_fp_rates(
-        rates["fp_rate"][held],
-        rates["recall"][held],
-        values,
-        targets,
-        0.5 / pooled["minutes"][held].max(),
-    )
+    return _at_fp_rates(rates["fp_rate"][held], rates["recall"][held], values, targets, floor)
 
 
 def _read_off_kinds(
     pooled: Mapping[str, np.ndarray[Any, Any]], targets: Sequence[float]
 ) -> np.ndarray[Any, Any]:
     """``read_off_kinds`` of the curve ``_read_off`` reads, shape (n_targets,)."""
-    held = pooled["ran"] > 0
-    if not held.any():
+    curve = _held_curve(pooled)
+    if curve is None:
         return np.full(len(targets), "", dtype=object)
-    rates = _rates(pooled)
-    return read_off_kinds(
-        rates["fp_rate"][held],
-        rates["recall"][held],
-        targets,
-        0.5 / pooled["minutes"][held].max(),
-    )
+    held, rates, floor = curve
+    return read_off_kinds(rates["fp_rate"][held], rates["recall"][held], targets, floor)
 
 
 def _condition_sessions(scores: ConditionScores, condition: str) -> list[str]:
