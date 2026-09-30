@@ -942,6 +942,15 @@ def test_stand_in_inputs_are_the_inputs_not_observed(recipe_configs):
     )
 
 
+def test_a_configuration_is_found_by_its_method_name(recipe_configs):
+    for config in recipe_configs.RECIPES:
+        assert recipe_configs.config_for(f"recipe:{config.config_id}") is config
+    with pytest.raises(KeyError, match="recipe:not_configured is no configured recipe"):
+        recipe_configs.config_for("recipe:not_configured")
+    with pytest.raises(KeyError, match="karlsson_2009 is no configured recipe"):
+        recipe_configs.config_for("karlsson_2009")
+
+
 def test_assumptions_state_every_stand_in_and_unreported_value(recipe_configs, catalog):
     for config in recipe_configs.RECIPES:
         named = {re.match(r"[a-z_]+", text).group() for text in config.assumptions}

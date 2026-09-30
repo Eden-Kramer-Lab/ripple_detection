@@ -959,3 +959,32 @@ EXCLUSIONS: dict[str, str] = {
         "lists RMS windows among settings its source audit did not establish"
     ),
 }
+
+
+@functools.cache
+def _by_method() -> dict[str, RecipeConfig]:
+    """Each configuration of ``RECIPES`` by its method name."""
+    return {method_record(config)["method"]: config for config in RECIPES}
+
+
+def config_for(method: str) -> RecipeConfig:
+    """The configuration of ``RECIPES`` a benchmark method name stands for.
+
+    Parameters
+    ----------
+    method : str
+        ``"recipe:<config_id>"``, as ``method_record`` names it.
+
+    Returns
+    -------
+    config : RecipeConfig
+
+    Raises
+    ------
+    KeyError
+        No configuration has that method name.
+    """
+    if method not in _by_method():
+        msg = f"{method} is no configured recipe."
+        raise KeyError(msg)
+    return _by_method()[method]

@@ -104,7 +104,7 @@ from conditions import (
 )
 from conditions import conditions as benchmark_conditions
 from numpy.typing import ArrayLike
-from recipe_configs import RECIPES, RecipeConfig, stand_in_inputs
+from recipe_configs import RECIPES, config_for, stand_in_inputs
 from run import (
     _KEY,
     _PRINCIPAL,
@@ -5588,12 +5588,6 @@ COMPACT_HELD_OUT_COLUMNS = (
 MEASURED = "measured"
 
 
-@functools.cache
-def _configurations() -> dict[str, RecipeConfig]:
-    """Each configured recipe by its method name, ``"recipe:<config_id>"``."""
-    return {f"recipe:{config.config_id}": config for config in RECIPES}
-
-
 def method_stand_ins(method: str) -> tuple[str, ...]:
     """The inputs the benchmark serves a method by a stand-in.
 
@@ -5615,14 +5609,12 @@ def method_stand_ins(method: str) -> tuple[str, ...]:
     Raises
     ------
     KeyError
-        A ``"recipe:"`` name that is no configuration of ``RECIPES``.
+        A ``"recipe:"`` name that is no configuration of ``RECIPES``
+        (``config_for``).
     """
     if not method.startswith("recipe:"):
         return ()
-    if method not in _configurations():
-        msg = f"{method} is no configured recipe."
-        raise KeyError(msg)
-    return stand_in_inputs(_configurations()[method])
+    return stand_in_inputs(config_for(method))
 
 
 def _group_stand_ins(members: Sequence[str]) -> str:
