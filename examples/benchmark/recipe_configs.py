@@ -867,7 +867,6 @@ RECIPES: tuple[RecipeConfig, ...] = (
     configure("grosmark_2016", "network"),
     configure("ambrose_2016", "ripple"),
     configure("jadhav_2016", "ripple"),
-    configure("olafsdottir_2016", "burst"),
     configure("silva_2015", "burst"),
     configure("olafsdottir_2015", "burst"),
     configure(
@@ -926,6 +925,11 @@ _UNREPORTED_RMS = (
 )
 
 EXCLUSIONS: dict[str, str] = {
+    "olafsdottir_2016": (
+        "rest-session recording: the paper detects from a separate rest-enclosure "
+        "session, which this mixed awake-session simulator does not provide; no "
+        "speed cutoff is specified to substitute for that recording"
+    ),
     "bush_2022_ripples": f"input sampled at 4800 Hz: {_UNRESAMPLED}",
     "olafsdottir_2017_ripples": f"input sampled at 1200 Hz: {_UNRESAMPLED}",
     "gridchyn_2020_ripples": _UNREPORTED_RMS,

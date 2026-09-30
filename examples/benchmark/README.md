@@ -158,7 +158,12 @@ participation count or spiking veto applied to ripple events keeps them `ripple`
 ## Exclusions
 
 A catalog method without a configuration, and why. `check_method` reports each
-reason's missing option or rate on a recording built under the policy.
+missing option or sampling rate on a recording built under the policy; the
+rest-session scope exclusion cannot be detected from a method's inputs.
+
+- `olafsdottir_2016`: rest-session recording: the paper detects from a separate
+  rest-enclosure session, which this mixed awake-session simulator does not provide;
+  no speed cutoff is specified to substitute for that recording
 
 - `bush_2022_ripples`: input sampled at 4800 Hz: the method requires this rate, the
   simulated sessions are 1500 Hz, and resampling is not part of the input policy
@@ -259,6 +264,12 @@ stays 600; events stay under 2 GB, so every condition's events are written. Memo
 cores, sets the workers: at 3.56 GiB a session, `0.7 x available / peak` allows 12
 workers with 64 GB free and 4 with the 23 GB that were free that day. Sessions of the
 `n_units=120` and `n_channels=16` conditions need more of both.
+
+Those timings and the saved `v1` results describe the earlier 77-recipe run. Current
+configurations exclude `olafsdottir_2016` because the simulator has no separate rest
+session, so a new run makes 76 recipe calls. The saved run also predates the raw
+`unmatched_per_minute` column name; its `metrics.csv.gz` uses the old
+`false_positives_per_minute` name for that same unmatched-detection count.
 
 Look at single events before trusting any aggregate: `spot_check.py` simulates the
 smoke session again from its seed and draws six true events of each type with their
@@ -418,7 +429,8 @@ bounds (`event_times`, the time `rates_by_state` places events by), lies outside
 network window at 10 % of the peak, the windows closed (a time on a window's start or
 end is inside; `in_network_windows`). False positives per minute are those over the
 minutes outside every network window, so numerator and denominator cover the same time.
-That is the rate of every table (`false_positives_per_minute`, with `n_false_positives`
+That is the rate of every derived analysis table (`false_positives_per_minute`, with
+`n_false_positives`
 beside it where counts are shown) and the operating curves' axis. A curve at a higher
 minimum IoU (0.2, 0.5) counts the detections unmatched at that level the same way: a
 detection that overlaps a window below the level and whose time lies outside every
@@ -427,10 +439,11 @@ unmatched detection whose time lies inside a network window, such as a ripple me
 detection of a sharp-wave-only event, is no false positive: it counts against precision,
 which counts every unmatched detection, and the compact tables count it apart
 (`n_unmatched_in_events`). Point methods follow the same rule by their points' times.
-Every rate is re-counted from the saved events: matching again every setting in the
-reference at every minimum IoU, every setting in the six alternative models' conditions
-at IoU 0, whose sweeps the curves and model sensitivity read, and the main settings in
-every condition at IoU 0.
+Every rate is re-counted from the saved events at every minimum IoU in every condition.
+The runner's raw `metrics.csv.gz` keeps a separate `unmatched_per_minute` column: it
+counts every detection unmatched against that row's expression, including detections
+inside another network event. The derived false-positive rate uses the method's primary
+expression and excludes detections whose time falls inside any network event.
 
 - `failures`: each method's sessions with scores and without, and its scoring rule. A
   session without a method's scores is a failure, never zero events. Every per-method
@@ -445,7 +458,7 @@ every condition at IoU 0.
 - `point_inventories`: the point methods' recall, precision and false positives per
   minute (their unmatched points outside every network window).
 - `detection_profile`: recall per event type against the network truth.
-- `false_positive_classes`: what each method's unmatched detections (its events
+- `unmatched_classes`: what each method's unmatched detections (its events
   matching no window of its primary expression, every one, those inside a network
   window included) overlap longest: an event type's component (`swr:ripple`,
   `burst_only:burst`, ...), a non-event (`emg`, ...) or nothing (`background`).
@@ -549,10 +562,13 @@ three minimum IoUs 34 s, every condition's scores 20 s, the tables 1.9 minutes
 `boundary_errors` 13 s, `robustness_crossed` 9 s, the others under 7 s each, the compact
 tables under 1 s) and the figures 11 s. It wrote 72 files (42 CSV, 28 PNG, `compact.md`
 and `summary.md`), the largest 846 kB. Counting the false positives outside the network
-windows, which matches the six alternative models' sweeps again, left that unchanged
-within the machine's noise: on 2026-09-30, back to back, 3.4 minutes wall against 3.5
-before, every condition's scores 22.5 s against 19.5 s, and a peak of 4.4 GB resident in
-the main process against 4.9 GB.
+windows, which matched the six alternative models' sweeps again, left that older run
+unchanged within the machine's noise: on 2026-09-30, back to back, 3.4 minutes wall
+against 3.5 before, every condition's scores 22.5 s against 19.5 s, and a peak of
+4.4 GB resident in the main process against 4.9 GB. Those timings predate recounting
+every condition and minimum IoU. With the current code, a standalone `load_scores(v1)`
+took 79 s, peaked at 2.8 GiB resident and populated all 209,035 score rows; the full
+analysis wall time after this change has not been measured.
 
 ## Results
 
@@ -630,7 +646,7 @@ and taxonomy only.
 
 `detection_profile.png` is a heatmap of recall, method by event type, against the
 network truth (every component of an event joined), so a ripple detector can score on a
-`burst_only` event only by overlapping its burst. `false_positive_classes.png` stacks,
+`burst_only` event only by overlapping its burst. `unmatched_classes.png` stacks,
 per method, what its unmatched events overlap longest. Neither says why a method misses
 or fires: the spot checks show single events. A false positive over a non-event is a
 false positive by this benchmark's taxonomy (fast gamma, EMG, leaked spikes and theta
@@ -693,10 +709,9 @@ be established), an upper bound when B is (only a negative one), nothing when bo
 changes at a target, alternative minus reference; the orders' `supported`, `survives`
 and `reversed` in `model_sensitivity_orders.csv`, with each side's read-off kind and
 bound). `matching_sensitivity.csv` has `read_off_at_<target>` beside each
-`recall_at_<target>`. A reading at a condition or level whose false positives were not
-counted (anything but the reference at every level, or IoU 0 elsewhere for the main
-settings and the alternative models' sweeps) raises rather than reading the missing
-rate as out of reach.
+`recall_at_<target>`. The analysis recounts false positives for every condition,
+setting and minimum IoU. A reading with a missing count raises rather than treating
+the missing rate as a target out of reach.
 `operating_differences.csv` has, for two detectors of one primary expression, the
 difference in recall at each target, paired by session, with its interval and test: two
 recalls whose intervals overlap can still differ, and two whose estimates differ may
@@ -775,7 +790,7 @@ A trend goes into `summary.md` or this README only after its underlying events h
 been looked at. `candidate_trends.csv` lists candidates from the tables, each with its
 evidence and where to look; `select_events` picks the events (truth windows a method
 missed or found, or its unmatched detections, every one, those inside a network window
-included: the selection named `false_positive`, of one condition) and `spot_check` draws
+included: the selection named `unmatched`, of one condition) and `spot_check` draws
 six of
 them, the sessions simulated again from the run's parameters and seeds, with the
 signals, spikes, truth windows and the methods' events (a point event as a diamond, a

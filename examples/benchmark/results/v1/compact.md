@@ -2,6 +2,8 @@
 
 The reference condition's 20 simulated sessions (600 s each) and the main methods, each detector at its defaults and every recipe, each against its primary expression, one row per group of methods with identical detections. Estimates only: each number's 95 % interval and counts are in `compact_<target>.csv`. Held-out and interpolated operating values are in `compact_held_out.csv`, the point inventories, scored by peak containment, in `compact_points.csv`.
 
+Historical protocol limitation: this run includes `recipe:olafsdottir_2016` on a mixed awake session, although the paper used a separate rest-session recording. Its row does not measure the published recording protocol; current benchmark configurations exclude it until that input exists.
+
 ## Ripple
 
 35 methods in 29 groups.

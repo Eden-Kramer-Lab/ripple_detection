@@ -116,7 +116,7 @@ METRIC_COLUMNS = [
     "recall",
     "precision",
     "f1",
-    "false_positives_per_minute",
+    "unmatched_per_minute",
     "median_iou",
     "median_coverage",
     "median_temporal_precision",
@@ -524,7 +524,7 @@ def test_metrics_agree_with_match_events(run, written, session):
                 [matching.recall, matching.precision, matching.f1],
             )
             fp = len(matching.unmatched_detected) / minutes
-            assert row.false_positives_per_minute == pytest.approx(fp, rel=1e-12)
+            assert row.unmatched_per_minute == pytest.approx(fp, rel=1e-12)
             for column in ("iou", "coverage", "temporal_precision"):
                 np.testing.assert_equal(
                     row[f"median_{column}"], _median(matching.pairs[column])
@@ -563,7 +563,7 @@ def test_a_sliver_matches_at_zero_iou_only(run, session):
     assert scores.loc[("ripple", 0.0), "n_matched"] == 1
     assert scores.loc[("ripple", 0.2), "n_matched"] == 0
     assert scores.loc[("ripple", 0.5), "n_matched"] == 0
-    assert scores.loc[("ripple", 0.2), "false_positives_per_minute"] == 1.0
+    assert scores.loc[("ripple", 0.2), "unmatched_per_minute"] == 1.0
     assert scores.loc[("ripple", 0.0), "median_iou"] < 0.2
 
 

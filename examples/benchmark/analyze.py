@@ -886,7 +886,7 @@ class Matches:
         One row per network window: ``row``, ``type``, ``n_methods`` (main
         methods that matched it) and ``n_methods_run`` (main methods with
         scores on the session).
-    false_positive_groups : pandas.DataFrame
+    unmatched_groups : pandas.DataFrame
         The main methods' unmatched detections joined by overlap into connected
         groups, one row per group: ``n_methods`` it spans, ``n_events``,
         ``start_time``, ``end_time``.
@@ -912,7 +912,7 @@ class Matches:
     unmatched: pd.DataFrame
     comparisons: pd.DataFrame
     consensus: pd.DataFrame
-    false_positive_groups: pd.DataFrame
+    unmatched_groups: pd.DataFrame
     points: pd.DataFrame
     levels: tuple[float, ...]
 
@@ -924,7 +924,7 @@ _MATCH_COLUMNS = {
     "unmatched": UNMATCHED_COLUMNS,
     "comparisons": SESSION_COMPARISON_COLUMNS,
     "consensus": CONSENSUS_COLUMNS,
-    "false_positive_groups": GROUP_COLUMNS,
+    "unmatched_groups": GROUP_COLUMNS,
     "points": POINT_COLUMNS,
 }
 
@@ -1142,7 +1142,7 @@ def match_session(
         unmatched=unmatched_events,
         comparisons=comparisons,
         consensus=consensus,
-        false_positive_groups=groups,
+        unmatched_groups=groups,
         points=pd.DataFrame(peaks, columns=list(POINT_COLUMNS)),
         levels=levels,
     )
@@ -1714,9 +1714,8 @@ class ConditionScores:
         apart by. ``n_false_positives``: the events matching no window of the
         primary expression at the row's ``minimum_iou`` whose times
         (``event_times``) lie outside every network window at 10 %
-        (``in_network_windows``), matched again here where a default
-        analysis reads a rate (``_counts_false_positives``); NaN elsewhere,
-        which a pool refuses to sum.
+        (``in_network_windows``), matched again here for every condition,
+        setting and minimum IoU level.
     errors : pandas.DataFrame
         One row per matched pair of an interval method against its primary
         expression (``ERROR_ROW_COLUMNS``): ``onset_error`` and
@@ -1778,8 +1777,8 @@ def score_primary(
     levels : sequence of float
         The ``minimum_iou`` levels of an interval method's pairs.
     counted : sequence of (method, setting, primary expression)
-        More methods and settings whose false positives alone are counted,
-        at IoU 0, with no pair.
+        More methods and settings whose false positives alone are counted
+        at every minimum IoU, with no pair.
     categories : mapping of str to sequence of str
         The categories of ``session_id``, ``method`` and ``setting`` in the
         errors.
@@ -1792,8 +1791,8 @@ def score_primary(
     points : pandas.DataFrame
         ``COUNT_COLUMNS``, one row per point method, ``minimum_iou`` NaN.
     false_positives : pandas.DataFrame
-        One row per interval method, setting and level (``levels`` for
-        ``ran``, 0 for ``counted``): ``session_id``, ``method``, ``setting``,
+        One row per interval method, setting and minimum IoU level:
+        ``session_id``, ``method``, ``setting``,
         ``minimum_iou`` and ``n_false_positives``, its events matching no
         window of the primary expression at that minimum IoU whose times lie
         outside every network window at 10 % (``in_network_windows``).
@@ -1826,7 +1825,7 @@ def score_primary(
                 )
                 continue
             bounds = _bounds(rows)
-            for level in levels if paired else (0.0,):
+            for level in MATCH_IOU_LEVELS:
                 matching = rd.match_events(reference, bounds, minimum_iou=level)
                 pairs = matching.pairs
                 false_positives.append(
@@ -1838,7 +1837,7 @@ def score_primary(
                         ),
                     }
                 )
-                if paired:
+                if paired and level in levels:
                     errors.append(
                         pd.DataFrame(
                             {
@@ -1859,22 +1858,6 @@ def score_primary(
         pd.DataFrame(points, columns=list(COUNT_COLUMNS)),
         pd.DataFrame(false_positives, columns=[*_KEY, "minimum_iou", "n_false_positives"]),
     )
-
-
-# Where load_scores counts false positives: where a default analysis reads a rate.
-_COUNTED_WHERE = (
-    "in the reference at every minimum IoU, and elsewhere at IoU 0 for the main settings "
-    "and, in the model alternatives' conditions, every setting"
-)
-
-
-def _counts_false_positives(condition: str, main: bool, level: float) -> bool:
-    """Whether ``load_scores`` counts false positives in a condition, for a
-    main setting or a swept one, at a minimum IoU (``_COUNTED_WHERE``)."""
-    if condition == REFERENCE_CONDITION:
-        return True
-    alternatives = {condition for _, _, condition in MODEL_ALTERNATIVES}
-    return level == 0 and (main or condition in alternatives)
 
 
 def load_scores(run_directory: str | os.PathLike[str], *, workers: int = 1) -> ConditionScores:
@@ -1907,14 +1890,6 @@ def load_scores(run_directory: str | os.PathLike[str], *, workers: int = 1) -> C
     reference = set(
         sessions.loc[sessions["condition_id"] == REFERENCE_CONDITION, "session_id"]
     )
-    condition_of = sessions.set_index("session_id")["condition_id"]
-    # the sessions whose sweeps are counted: the reference's, for the curves,
-    # and the model alternatives', whose sweeps model sensitivity pools
-    swept = {
-        session_id
-        for session_id, condition in condition_of.items()
-        if _counts_false_positives(condition, False, 0.0)
-    }
     expression_counts = _by_intervals(metrics[metrics["session_id"].isin(reference)])[
         list(_METRIC_READ)
     ].reset_index(drop=True)
@@ -1922,20 +1897,14 @@ def load_scores(run_directory: str | os.PathLike[str], *, workers: int = 1) -> C
     ran = metrics[list(_KEY)].drop_duplicates().reset_index(drop=True)
     failures = _missing(sessions, methods, ran)
 
-    # every setting where a rate reads the sweeps, the main settings elsewhere
-    events = read_table(
-        combined / "events.csv.gz",
-        columns=_EVENT_READ,
-        keep=lambda rows: rows["setting"].isin(MAIN_SETTINGS) | rows["session_id"].isin(swept),
-    )
+    events = read_table(combined / "events.csv.gz", columns=_EVENT_READ)
     truth = load_truth(combined / "truth.csv.gz")
     scored = ran.merge(primary, on=["method", "setting"])
     main = scored["setting"].isin(MAIN_SETTINGS)
-    # the reference's sweeps are paired, for the curves; the alternatives'
-    # are counted for their rates alone
+    # Pair the reference's sweeps for curve errors; count every other sweep's
+    # false positives so operating curves work for any condition.
     paired = main | scored["session_id"].isin(reference)
-    counted = ~main & scored["session_id"].isin(swept - reference)
-    scored = scored[paired | counted].assign(paired=paired[paired | counted])
+    scored = scored.assign(paired=paired)
     fields = ["method", "setting", "expression"]
     # per session, its paired entries and its counted ones
     entries = {
@@ -1957,14 +1926,7 @@ def load_scores(run_directory: str | os.PathLike[str], *, workers: int = 1) -> C
         [by_session.get(s, events.iloc[:0]) for s in session_ids],
         [truth[s][0] for s in session_ids],
         [entries[s][0] for s in session_ids],
-        [
-            tuple(
-                level
-                for level in MATCH_IOU_LEVELS
-                if _counts_false_positives(condition_of[s], True, level)
-            )
-            for s in session_ids
-        ],
+        [MATCH_IOU_LEVELS if s in reference else (0.0,) for s in session_ids],
         [entries[s][1] for s in session_ids],
     )
     score = functools.partial(score_primary, categories=categories)
@@ -2236,8 +2198,8 @@ def detection_profile(
     return _per_method(profile, tables, grid, ("n_true", "n_found"))
 
 
-def _false_positive_labels(matches: Matches) -> list[str]:
-    """Every label a false positive can have: each event type's components
+def _unmatched_labels(matches: Matches) -> list[str]:
+    """Every label an unmatched detection can have: each event type's components
     that occur, in ``EVENT_TYPES`` and ``EXPRESSIONS`` order, each non-event
     type, and ``"background"``."""
     windows = matches.windows[matches.windows["expression"] != "network"]
@@ -2251,7 +2213,7 @@ def _false_positive_labels(matches: Matches) -> list[str]:
     return [*components, *rd.NON_EVENT_TYPES, BACKGROUND]
 
 
-def false_positive_classes(
+def unmatched_classes(
     tables: RunTables, matches: Matches, *, n_resamples: int = N_RESAMPLES
 ) -> pd.DataFrame:
     """What each method's unmatched detections overlap.
@@ -2279,7 +2241,7 @@ def false_positive_classes(
         ``fraction_high``, ``primary_expression``, ``n_sessions``,
         ``n_failures``.
     """
-    labels = _false_positive_labels(matches)
+    labels = _unmatched_labels(matches)
     counted = matches.unmatched.groupby([*_KEY, "label"]).size()
     frame = tables.intervals.ran.merge(pd.DataFrame({"label": labels}), how="cross")
     frame = frame.join(counted.rename("n_events"), on=[*_KEY, "label"]).fillna({"n_events": 0})
@@ -2311,7 +2273,7 @@ def consensus(tables: RunTables, matches: Matches) -> pd.DataFrame:
         One row per ``kind``, ``event_type`` and ``n_methods`` that occurs:
         for ``kind`` ``"true_event"``, network events of each type
         (``EVENT_TYPES`` order) that ``n_methods`` of the main methods
-        matched (IoU 0); for ``"false_positive_group"`` (``event_type``
+        matched (IoU 0); for ``"unmatched_group"`` (``event_type``
         ``"all"``), connected groups of overlapping unmatched detections
         (against each method's primary expression, those inside a network
         window included), spanning ``n_methods`` methods. ``count``,
@@ -2329,11 +2291,11 @@ def consensus(tables: RunTables, matches: Matches) -> pd.DataFrame:
         .assign(kind="true_event")
     )
     groups = (
-        matches.false_positive_groups.groupby("n_methods")
+        matches.unmatched_groups.groupby("n_methods")
         .size()
         .rename("count")
         .reset_index()
-        .assign(kind="false_positive_group", event_type="all")
+        .assign(kind="unmatched_group", event_type="all")
     )
     table = _concat([true, groups], ["kind", "event_type", "n_methods", "count"])
     table["fraction"] = table["count"] / table.groupby(["kind", "event_type"])[
@@ -3238,17 +3200,15 @@ class Pool:
 
 def _uncounted(rows: pd.DataFrame, column: str) -> str:
     """Why a pool refuses ``rows``, those missing ``column``: named by
-    condition and level, a false-positive count being made only where
-    ``_counts_false_positives`` says, so the rate is unknown, not out of
-    reach."""
+    condition and level. A missing count is an incomplete score, not zero."""
     conditions = sorted(set(rows["condition_id"].astype(str)))
     levels = sorted(set(rows["minimum_iou"].dropna()))
     first = rows.iloc[0]
     return (
         f"No {column} for {', '.join(conditions)} at minimum IoU "
         f"{', '.join(f'{level:g}' for level in levels)} ({len(rows)} rows, "
-        f"{first['method']} {first['setting']} among them): load_scores counts false "
-        f"positives {_COUNTED_WHERE}, so this rate is unknown, not out of reach."
+        f"{first['method']} {first['setting']} among them): the count is missing, "
+        "so this rate is unknown, not out of reach."
     )
 
 
@@ -6542,6 +6502,18 @@ def compact_page(
             "inventories, scored by peak containment, in `compact_points.csv`."
         ),
     ]
+    if "recipe:olafsdottir_2016" in set(tables.methods["method"]):
+        lines.extend(
+            [
+                "",
+                (
+                    "Historical protocol limitation: this run includes `recipe:olafsdottir_2016` "
+                    "on a mixed awake session, although the paper used a separate rest-session "
+                    "recording. Its row does not measure the published recording protocol; "
+                    "current benchmark configurations exclude it until that input exists."
+                ),
+            ]
+        )
     for target in COMPACT_TARGETS:
         table = results[COMPACT_NAMES[target]]
         lines += [
@@ -6754,13 +6726,13 @@ def plot_detection_profile(profile: pd.DataFrame) -> Figure:
     return figure
 
 
-def plot_false_positive_classes(classes: pd.DataFrame) -> Figure:
-    """``false_positive_classes``' fractions, stacked per method.
+def plot_unmatched_classes(classes: pd.DataFrame) -> Figure:
+    """``unmatched_classes``' fractions, stacked per method.
 
     Parameters
     ----------
     classes : pandas.DataFrame
-        ``false_positive_classes``' table.
+        ``unmatched_classes``' table.
 
     Returns
     -------
@@ -6859,8 +6831,8 @@ def plot_agreement_dendrogram(dendrogram: pd.DataFrame) -> Figure:
 
 
 def plot_consensus(table: pd.DataFrame) -> Figure:
-    """``consensus``: methods per true event by type, and per group of false
-    positives.
+    """``consensus``: methods per true event by type, and per group of
+    overlapping unmatched detections.
 
     Parameters
     ----------
@@ -6881,7 +6853,7 @@ def plot_consensus(table: pd.DataFrame) -> Figure:
     left.set_ylabel("fraction of the type's true events", fontsize=7)
     left.set_title("True events", fontsize=8)
     left.legend(fontsize=_FONT)
-    groups = table[table["kind"] == "false_positive_group"]
+    groups = table[table["kind"] == "unmatched_group"]
     right.bar(groups["n_methods"], groups["count"], color="0.4")
     right.set_yscale("log")
     right.set_xlabel("methods a group of overlapping unmatched detections spans", fontsize=7)
@@ -7621,7 +7593,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
     at a false-positive target, the setting read: nearest the target, or the
     best within budget), and which events (``"missed"`` or ``"found"`` truth
     events of the first method's primary expression, or its
-    ``"false_positive"`` events, every unmatched detection).
+    ``"unmatched"`` events, every unmatched detection).
 
     A value read within budget is a lower bound (``established_direction``):
     an order across models is a candidate only where it is established in
@@ -7893,7 +7865,7 @@ def candidate_trends(results: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
 
 # Spot checks
 
-SPOT_SELECTIONS = ("missed", "found", "false_positive")
+SPOT_SELECTIONS = ("missed", "found", "unmatched")
 SPOT_COLUMNS = ("session_id", "start_time", "end_time", "label")
 # Events drawn per spot check.
 SPOT_EVENTS = 6
@@ -7914,7 +7886,7 @@ def select_from(
     tables : RunTables
         Holding the method and setting.
     method, setting : str
-    selection : {"missed", "found", "false_positive"}
+    selection : {"missed", "found", "unmatched"}
         Truth windows of the method's primary expression at 10 % it matched
         no event of (IoU 0; peak containment for a point method), those it
         matched, or its events matching no window: every unmatched detection,
@@ -7928,7 +7900,7 @@ def select_from(
     -------
     selected : pandas.DataFrame
         ``session_id``, ``start_time``, ``end_time`` and ``label`` (the
-        window's event type, or the false positive's label), by session and
+        window's event type, or the unmatched detection's label), by session and
         time.
 
     Raises
@@ -7959,7 +7931,7 @@ def select_from(
         matched_truth, matched_events = _matched_rows(
             _bounds(truth), rows, method in point_methods()
         )
-        if selection == "false_positive":
+        if selection == "unmatched":
             unmatched = np.setdiff1d(np.arange(len(rows)), matched_events)
             bounds = _bounds(rows)[unmatched]
             labels = rd.label_by_overlap(bounds, label_windows(event_table, non_event_table))
@@ -8297,12 +8269,12 @@ ANALYSES: tuple[Analysis, ...] = (
         "Recall as a heatmap, method by event type.",
     ),
     Analysis(
-        "false_positive_classes",
-        _of_reference(false_positive_classes),
+        "unmatched_classes",
+        _of_reference(unmatched_classes),
         "What each method's unmatched detections (against its primary expression, every "
         "one, false positive or inside a network window) overlap longest: an event type's "
         "component, a non-event or nothing.",
-        plot_false_positive_classes,
+        plot_unmatched_classes,
         "Those fractions stacked per method.",
     ),
     Analysis(
@@ -8572,7 +8544,7 @@ def _point_lines(tables: RunTables) -> list[str]:
             "`appendix_expressions.csv` against every expression, and rows marked "
             "`peak_containment` in `rates_by_state.csv`, the robustness and model "
             "sensitivity tables and the recall changes below), never pooled with interval "
-            "scores; they are left out of the detection profile, false positive classes, "
+            "scores; they are left out of the detection profile, unmatched classes, "
             "agreement and its dendrogram, consensus, overlap, boundary errors, paired "
             "timing, method differences, error correlations, splits and merges, the "
             "operating curves, points, differences and held-out thresholds, the appendix "
@@ -8619,6 +8591,19 @@ def _summary(
             "every condition)."
         ),
         "",
+        *(
+            [
+                (
+                    "Historical protocol limitation: this run includes `recipe:olafsdottir_2016` "
+                    "on a mixed awake session, although the paper used a separate rest-session "
+                    "recording. Its row does not measure the published recording protocol; "
+                    "current benchmark configurations exclude it until that input exists."
+                ),
+                "",
+            ]
+            if "recipe:olafsdottir_2016" in set(main["method"])
+            else []
+        ),
         (
             "Events are matched one to one to the truth windows at 10 % of the peak (IoU "
             "0), each method against its primary expression unless a file says otherwise. "

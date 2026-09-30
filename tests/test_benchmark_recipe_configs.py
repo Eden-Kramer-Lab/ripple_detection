@@ -83,7 +83,6 @@ PRIMARY_EXPRESSIONS = {
     "grosmark_2016": "network",
     "ambrose_2016": "ripple",
     "jadhav_2016": "ripple",
-    "olafsdottir_2016": "burst",
     "silva_2015": "burst",
     "olafsdottir_2015": "burst",
     "olafsdottir_2015.bayesian_candidates": "burst",
@@ -373,6 +372,12 @@ def test_each_exclusion_is_what_check_method_reports(recipe_configs, session):
         problems = recipe_configs.check_recipe(
             config, *_call_inputs(recipe_configs, session, config)
         )
+        if method == "olafsdottir_2016":
+            # Its required signals are present, but the recording is the
+            # wrong experimental session; check_method cannot infer scope.
+            assert problems == []
+            assert "rest-session recording" in reason
+            continue
         # A reason starts with what it names ("rms_window, bound_threshold: ..."
         # or "input sampled at 4800 Hz: ..."): exactly what check_method reports.
         named = set(reason.split(": ", 1)[0].split(", "))

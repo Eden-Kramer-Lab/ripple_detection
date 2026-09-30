@@ -664,8 +664,8 @@ def test_profile_and_consensus_on_tiny_run(analyze, tiny_tables, tiny_matches):
         ("true_event", "sharp_wave_only", 0): 2,
         # Kay's three false positives in each session, Mallory's over the EMG,
         # and the two overlapping ones as one group
-        ("false_positive_group", "all", 1): 6,
-        ("false_positive_group", "all", 2): 1,
+        ("unmatched_group", "all", 1): 6,
+        ("unmatched_group", "all", 2): 1,
     }
     assert list(table.event_type.drop_duplicates()) == [*kinds, "all"]
     assert table.fraction.tolist()[-2:] == [6 / 7, 1 / 7]
@@ -674,8 +674,8 @@ def test_profile_and_consensus_on_tiny_run(analyze, tiny_tables, tiny_matches):
     ].drop_duplicates().to_numpy().tolist() == [[2, 1]]
 
 
-def test_false_positive_classes_on_tiny_run(analyze, tiny_tables, tiny_matches):
-    classes = analyze.false_positive_classes(tiny_tables, tiny_matches, n_resamples=FEW)
+def test_unmatched_classes_on_tiny_run(analyze, tiny_tables, tiny_matches):
+    classes = analyze.unmatched_classes(tiny_tables, tiny_matches, n_resamples=FEW)
     # every label for every method, zeros included
     assert len(classes) == 2 * classes.label.nunique()
     assert classes.label.iloc[-1] == "background"
@@ -1103,7 +1103,7 @@ def test_point_inventories_are_scored_apart(analyze, point_matched):
     # an interval rule never sees Davidson; Lee's single samples it does
     interval_tables = [
         analyze.detection_profile(tables, matches, n_resamples=FEW),
-        analyze.false_positive_classes(tables, matches, n_resamples=FEW),
+        analyze.unmatched_classes(tables, matches, n_resamples=FEW),
         analyze.overlap_quality(tables, matches, n_resamples=FEW),
         analyze.boundary_errors(tables, matches, n_resamples=FEW),
         analyze.splits_and_merges(tables, matches, n_resamples=FEW),
@@ -1147,7 +1147,7 @@ def test_a_method_that_never_ran_keeps_its_rows(analyze, failing_run):
     bouts["reference/1"] = bouts["reference/0"] + UNIX_ORIGIN
     per_method = {
         "detection_profile": analyze.detection_profile(tables, matches, **quick),
-        "false_positive_classes": analyze.false_positive_classes(tables, matches, **quick),
+        "unmatched_classes": analyze.unmatched_classes(tables, matches, **quick),
         "splits_and_merges": analyze.splits_and_merges(tables, matches, **quick),
         "overlap_quality": analyze.overlap_quality(tables, matches, **quick),
         "boundary_errors": analyze.boundary_errors(tables, matches, **quick),
@@ -1162,7 +1162,7 @@ def test_a_method_that_never_ran_keeps_its_rows(analyze, failing_run):
     }
     measured = {
         "detection_profile": "recall",
-        "false_positive_classes": "fraction",
+        "unmatched_classes": "fraction",
         "splits_and_merges": "split_rate",
         "overlap_quality": "median",
         "boundary_errors": "median",
@@ -1583,8 +1583,20 @@ def test_a_time_on_a_window_edge_to_the_timestamps_rounding_is_inside(analyze, r
     assert analyze.in_network_windows(times, windows).tolist() == [True] * 4 + [False] * 2
 
 
-def test_scores_count_event_free_false_positives(analyze, event_free_run):
+def test_scores_count_event_free_false_positives(analyze, run, event_free_run):
     scores = analyze.load_scores(event_free_run.parent)
+    raw = run.read_table(event_free_run / "metrics.csv.gz")
+    row = raw[
+        (raw.session_id == "reference/0")
+        & (raw.method == KAY[0])
+        & (raw.setting == "default")
+        & (raw.expression == "ripple")
+        & (raw.minimum_iou == 0)
+    ].iloc[0]
+    assert row.unmatched_per_minute == pytest.approx(
+        (row.n_detected - row.n_matched) / scores.sessions.minutes.iloc[0]
+    )
+    assert row.unmatched_per_minute > 1 / scores.sessions.minutes.iloc[0]
     # a point method has no level: -1 here
     counts = scores.counts.fillna({"minimum_iou": -1.0})
     counts = counts.groupby(["method", "setting", "minimum_iou"])
@@ -1618,24 +1630,24 @@ def test_scores_count_event_free_false_positives(analyze, event_free_run):
     )
 
 
-def test_false_positives_are_counted_again_where_a_rate_reads_them(analyze, run, tmp_path):
+def test_false_positives_are_counted_again_for_every_condition(analyze, run, tmp_path):
     for condition in ("reference", "spike_model=refractory", "ripple_snr=low"):
         _write_run(run, tmp_path, [_event_free_session(run, 0.0)], condition_id=condition)
     scores = analyze.load_scores(tmp_path)
     counts = scores.counts[scores.counts.minimum_iou.fillna(0) == 0]
     found = counts.set_index(["session_id", "method", "setting"]).n_false_positives
-    # every condition's main settings, and the sweeps of the reference and
-    # of the alternative models, which model sensitivity reads
+    # Every condition's main settings and sweeps, at every minimum IoU.
     assert found[("spike_model=refractory/0", *KAY_SWEEP)] == 2
     assert found[("ripple_snr=low/0", *KAY)] == 1
     assert found[("ripple_snr=low/0", *DAVIDSON)] == 1
-    # a sweep no rate reads is not matched again
-    assert np.isnan(found[("ripple_snr=low/0", *KAY_SWEEP)])
-    # nor a main setting at a level above 0 outside the reference
+    assert found[("ripple_snr=low/0", *KAY_SWEEP)] == 2
     above = scores.counts[scores.counts.minimum_iou == 0.5]
     above = above.set_index(["session_id", "method", "setting"]).n_false_positives
-    assert np.isnan(above[("ripple_snr=low/0", *KAY)])
+    assert above[("ripple_snr=low/0", *KAY)] == 2
     assert above[("reference/0", *KAY)] == 2
+    curves = analyze.operating_curves(scores, condition="ripple_snr=low")
+    assert set(curves.minimum_iou) == set(analyze.MATCH_IOU_LEVELS)
+    assert curves.n_false_positives.notna().all()
 
 
 def _design_at_fp_rate(curve, target, floor, columns):
@@ -3568,10 +3580,10 @@ def test_select_events_for_a_spot_check(analyze, tiny_tables, point_matched):
     assert missed.start_time.iloc[1] > UNIX_ORIGIN
     assert len(select(*KAY, "found")) == 6
     assert len(select(*KAY, "found", event_type="ripple_doublet")) == 2
-    false = select(*KAY, "false_positive")
-    assert false.label.tolist() == ["burst_only:burst", "spike_leakage", "background"] * 2
+    unmatched = select(*KAY, "unmatched")
+    assert unmatched.label.tolist() == ["burst_only:burst", "spike_leakage", "background"] * 2
     assert (
-        select(*KAY, "false_positive", event_type="burst_only").label.tolist()
+        select(*KAY, "unmatched", event_type="burst_only").label.tolist()
         == ["burst_only:burst"] * 2
     )
     # Mallory, on the session it ran: the weak ripple's burst
@@ -3579,7 +3591,7 @@ def test_select_events_for_a_spot_check(analyze, tiny_tables, point_matched):
         ["reference/0", "weak_ripple"]
     ]
     # a point method by containment
-    assert len(analyze.select_from(point_matched[0], *DAVIDSON, "false_positive")) == 4
+    assert len(analyze.select_from(point_matched[0], *DAVIDSON, "unmatched")) == 4
     with pytest.raises(ValueError, match="selection must be one of"):
         select(*KAY, "early")
     with pytest.raises(ValueError, match=r"no Kay_ripple_detector \(8\.0\)"):
@@ -4151,20 +4163,36 @@ def two_condition_run(run, tmp_path_factory):
 
 
 def test_a_rate_is_never_read_where_it_was_not_counted(analyze, two_condition_run):
-    """The alternative model's sessions are matched again at IoU 0 alone, so
-    its curves at IoU 0.2 and 0.5 have no false positives: every reading of
-    them there raises, naming the condition and the level, rather than
-    reading the missing rate as a target out of reach."""
+    """All levels of an alternative condition have rates; a missing rate is
+    still rejected with the condition and level where it was needed."""
     scores = analyze.load_scores(two_condition_run.parent)
     alternative = "spike_model=refractory"
-    for read in (analyze.operating_curves, analyze.operating_points):
-        with pytest.raises(ValueError, match=rf"{re.escape(alternative)} at minimum IoU 0\.2"):
-            read(scores, condition=alternative)
-    # at IoU 0, which the other readings read, the rates are counted
     counts = scores.counts[scores.counts.session_id.str.startswith(alternative)]
-    assert counts.loc[counts.minimum_iou.fillna(0) == 0, "n_false_positives"].notna().all()
+    assert counts.n_false_positives.notna().all()
+    assert set(counts.minimum_iou.dropna()) == set(analyze.MATCH_IOU_LEVELS)
+    curves = analyze.operating_curves(scores, condition=alternative)
+    assert set(curves.minimum_iou) == set(analyze.MATCH_IOU_LEVELS)
+    assert curves.n_false_positives.notna().all()
+    points = analyze.operating_points(scores, condition=alternative, n_resamples=FEW)
+    assert set(points.minimum_iou) == set(analyze.MATCH_IOU_LEVELS)
     analyze.held_out_thresholds(scores, condition=alternative, n_resamples=FEW)
     analyze.operating_differences(scores, condition=alternative, n_resamples=FEW)
+    lost_at_point_two = (
+        scores.counts.session_id.str.startswith(alternative)
+        & (scores.counts.minimum_iou == 0.2)
+        & (scores.counts.setting == KAY_SWEEP[1])
+    )
+    missing_at_point_two = dataclasses.replace(
+        scores,
+        counts=scores.counts.assign(
+            n_false_positives=scores.counts.n_false_positives.mask(lost_at_point_two)
+        ),
+    )
+    at_point_two = rf"{re.escape(alternative)} at minimum IoU 0\.2"
+    with pytest.raises(ValueError, match=at_point_two):
+        analyze.operating_curves(missing_at_point_two, condition=alternative)
+    with pytest.raises(ValueError, match=at_point_two):
+        analyze.operating_points(missing_at_point_two, condition=alternative, n_resamples=FEW)
     # a count missing at IoU 0 is refused by every reading at IoU 0
     lost = scores.counts.session_id.str.startswith(alternative) & (
         scores.counts.setting == KAY_SWEEP[1]

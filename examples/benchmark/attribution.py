@@ -1277,7 +1277,6 @@ FIXED_POINTS: dict[str, str] = {
     "yamamoto_2017": f"{_TEN_MS}, with a ripple partner of a squared single-channel envelope",
     "tang_2017": _KARLSSON,
     "jadhav_2016": f"{_KARLSSON}; SWRs within 1 s of the previous start dropped",
-    "olafsdottir_2016": _FRACTION,
     "olafsdottir_2015": _SILENCE,
     "olafsdottir_2015.bayesian_candidates": _SILENCE,
     "wu_2014": _TEN_MS,

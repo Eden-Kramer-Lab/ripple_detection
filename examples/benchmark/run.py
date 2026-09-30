@@ -96,7 +96,7 @@ Condition files, in ``conditions/<condition_id>/``, written into
 - ``metrics.csv.gz``, one row per session, method, setting, expression and
   ``minimum_iou``: ``session_id``, ``method``, ``setting``, ``expression``,
   ``minimum_iou``, ``n_reference``, ``n_detected``, ``n_matched``, ``recall``,
-  ``precision``, ``f1``, ``false_positives_per_minute`` (the unmatched detections,
+  ``precision``, ``f1``, ``unmatched_per_minute`` (the unmatched detections,
   wherever they lie, over the minutes of the session outside every network window
   at 0.1), ``median_iou``, ``median_coverage``, ``median_temporal_precision``, then,
   against the truth windows at ``f`` percent of the peak (matched at 10),
@@ -304,7 +304,7 @@ SCORE_COLUMNS = (
     "recall",
     "precision",
     "f1",
-    "false_positives_per_minute",
+    "unmatched_per_minute",
     "median_iou",
     "median_coverage",
     "median_temporal_precision",
@@ -707,8 +707,7 @@ def score_events(
                 "recall": matching.recall,
                 "precision": matching.precision,
                 "f1": matching.f1,
-                "false_positives_per_minute": len(matching.unmatched_detected)
-                / minutes_outside,
+                "unmatched_per_minute": len(matching.unmatched_detected) / minutes_outside,
                 "median_iou": _median(pairs.iou),
                 "median_coverage": _median(pairs.coverage),
                 "median_temporal_precision": _median(pairs.temporal_precision),
