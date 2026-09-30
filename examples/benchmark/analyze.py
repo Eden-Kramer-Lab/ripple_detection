@@ -6147,19 +6147,10 @@ def unmatched_by_state(
         how="left",
     )
     inside = unmatched["in_events"].astype(bool)
-    counts = [
-        "n_unmatched",
-        "n_unmatched_in_events",
-        "n_false_positives_rest",
-        "n_false_positives_running",
-    ]
-    counted = _count_by_state(unmatched[~inside], bouts)
-    counted.columns = counts[2:]
+    by_state = {"rest": "n_false_positives_rest", "running": "n_false_positives_running"}
+    counted = _count_by_state(unmatched[~inside], bouts).rename(columns=by_state)
     counted = counted.join(
-        [
-            unmatched.groupby(list(_KEY)).size().rename(counts[0]),
-            unmatched[inside].groupby(list(_KEY)).size().rename(counts[1]),
-        ],
+        unmatched[inside].groupby(list(_KEY)).size().rename("n_unmatched_in_events"),
         how="outer",
     )
     network = matches.windows[matches.windows["expression"] == "network"]
@@ -6180,8 +6171,12 @@ def unmatched_by_state(
                 "running_minutes": outside / 60,
             }
         )
-    frame = tables.intervals.ran.join(counted, on=list(_KEY)).fillna(dict.fromkeys(counts, 0))
+    # every unmatched detection: those inside the events and the false positives
+    parts = ["n_unmatched_in_events", *by_state.values()]
+    frame = tables.intervals.ran.join(counted, on=list(_KEY)).fillna(dict.fromkeys(parts, 0))
+    frame["n_unmatched"] = frame[parts].sum(axis=1)
     frame = frame.merge(pd.DataFrame(times), on="session_id")
+    counts = ["n_unmatched", *parts]
     sums = ["session_minutes", "rest_minutes", "running_minutes"]
     split = _pooled_ratios(
         frame,
