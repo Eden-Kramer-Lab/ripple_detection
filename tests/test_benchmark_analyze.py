@@ -3422,10 +3422,9 @@ def test_compact_tables_keep_one_row_per_group(analyze, compact_run):
 def test_compact_page_lists_groups_and_stand_ins(analyze, compact_run):
     compact = compact_run.compact.copy()
     compact.loc[compact.method == CAREY[0], "precision_iou0.5"] = np.nan
-    results = {
-        f"compact_{target}": compact[compact.primary_expression == target]
-        for target in analyze.COMPACT_TARGETS
-    }
+    results = analyze.split_by_target(compact)
+    assert list(results) == ["compact_ripple", "compact_burst", "compact_network"]
+    assert [len(table) for table in results.values()] == [1, 1, 1]
     page = analyze.compact_page("compact", compact_run.tables, results)
     burst = page.split("## Burst", 1)[1].split("## Network", 1)[0]
     assert "2 methods in 1 groups." in burst
@@ -3459,10 +3458,7 @@ def test_compact_page_lists_groups_and_stand_ins(analyze, compact_run):
 
 def test_compact_page_formats_every_number(analyze, tiny_tables, tiny_compact):
     compact = tiny_compact.compact
-    results = {
-        f"compact_{target}": compact[compact.primary_expression == target]
-        for target in analyze.COMPACT_TARGETS
-    }
+    results = analyze.split_by_target(compact)
     page = analyze.compact_page("tiny", tiny_tables, results, n_resamples=FEW, seed=3)
     # the resamples and seed the rebuild used
     assert f"({FEW} resamples, seed 3)" in page

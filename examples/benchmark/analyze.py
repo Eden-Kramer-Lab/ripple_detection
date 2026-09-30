@@ -5519,6 +5519,11 @@ COMPACT_LEVELS = (0.0, 0.5)
 COMPACT_PERCENTS = (10, 50)
 COMPACT = "compact"
 COMPACT_PAGE = "compact.md"
+# The compact tables' names: one per target, then the held-out values and
+# the point inventories.
+COMPACT_NAMES = {target: f"{COMPACT}_{target}" for target in COMPACT_TARGETS}
+COMPACT_HELD_OUT = f"{COMPACT}_held_out"
+COMPACT_POINTS = f"{COMPACT}_points"
 _GROUP_COLUMNS = ("method", "members", "n_members", "stand_in_inputs")
 _WITH_INTERVAL = ("", "_low", "_high")
 # The scores taken from matching_sensitivity at each level.
@@ -5902,6 +5907,25 @@ def compact_comparison(
     return table[list(COMPACT_COLUMNS)]
 
 
+def split_by_target(comparison: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """``compact_comparison``'s table as the tables written, one per target.
+
+    Parameters
+    ----------
+    comparison : pandas.DataFrame
+
+    Returns
+    -------
+    tables : dict of str to pandas.DataFrame
+        By ``COMPACT_NAMES``' names, in ``COMPACT_TARGETS``' order: the rows
+        of that primary expression, in their order.
+    """
+    return {
+        name: comparison[comparison["primary_expression"] == target].reset_index(drop=True)
+        for target, name in COMPACT_NAMES.items()
+    }
+
+
 def compact_points(groups: pd.DataFrame, points: pd.DataFrame) -> pd.DataFrame:
     """The point inventories' headline scores, one row per group.
 
@@ -6114,7 +6138,7 @@ def compact_page(
         ),
     ]
     for target in COMPACT_TARGETS:
-        table = results[f"{COMPACT}_{target}"]
+        table = results[COMPACT_NAMES[target]]
         lines += [
             "",
             f"## {target.capitalize()}",
@@ -7744,19 +7768,12 @@ def _compact(name: str) -> AnalysisTable:
             _of_reference(unmatched_by_state)(inputs),
         )
         return {
-            **{
-                f"{COMPACT}_{target}": comparison[
-                    comparison["primary_expression"] == target
-                ].reset_index(drop=True)
-                for target in COMPACT_TARGETS
-            },
-            f"{COMPACT}_held_out": compact_held_out(
+            **split_by_target(comparison),
+            COMPACT_HELD_OUT: compact_held_out(
                 _of_scores(held_out_thresholds)(inputs),
                 _of_scores(operating_points)(inputs),
             ),
-            f"{COMPACT}_points": compact_points(
-                groups, _of_reference(point_inventories)(inputs)
-            ),
+            COMPACT_POINTS: compact_points(groups, _of_reference(point_inventories)(inputs)),
         }
 
     return lambda inputs: _cached(inputs, COMPACT, lambda: tables(inputs))[name]
@@ -8038,27 +8055,27 @@ ANALYSES: tuple[Analysis, ...] = (
     ),
     *(
         Analysis(
-            f"{COMPACT}_{target}",
-            _compact(f"{COMPACT}_{target}"),
+            name,
+            _compact(name),
             f"The headline comparison of the methods whose primary expression is {target}, "
             "one row per group of methods with identical detections, with its members and "
             "stand-in inputs: recall and precision at IoU 0 (predeclared) and 0.5 (post "
             "hoc), unmatched detections per minute overall and at rest, and median onset "
             "and offset errors at 10 and 50 %, each with its interval and counts.",
         )
-        for target in COMPACT_TARGETS
+        for target, name in COMPACT_NAMES.items()
     ),
     Analysis(
-        f"{COMPACT}_held_out",
-        _compact(f"{COMPACT}_held_out"),
+        COMPACT_HELD_OUT,
+        _compact(COMPACT_HELD_OUT),
         "Per detector and target rate, the recall and unmatched detections per minute "
         "measured on the held-out replicates at the setting chosen on the others, beside "
         "the operating point's recall read off the curve; `kind` measured, interpolated, "
         "tested, or empty where there is no value.",
     ),
     Analysis(
-        f"{COMPACT}_points",
-        _compact(f"{COMPACT}_points"),
+        COMPACT_POINTS,
+        _compact(COMPACT_POINTS),
         "The point inventories' recall, precision and unmatched detections per minute by "
         "peak containment, one row per group of identical detections, with its members and "
         "stand-in inputs.",
@@ -8462,7 +8479,7 @@ def analyze_run(
                 ),
             )
         )
-        if all(f"{COMPACT}_{target}" in results for target in COMPACT_TARGETS):
+        if all(name in results for name in COMPACT_NAMES.values()):
             page = compact_page(root.name, tables, results, n_resamples=n_resamples)
             write_result(partial / COMPACT_PAGE, page.encode())
             files.append(
