@@ -5961,33 +5961,17 @@ def compact_held_out(thresholds: pd.DataFrame, points: pd.DataFrame) -> pd.DataF
         its own: that is the target, by construction.
         ``n_sessions``: the sessions each value pools.
     """
-    measured = (thresholds["setting"] != "").to_numpy()
-    held = pd.DataFrame(
-        {
-            "method": thresholds["method"],
-            "primary_expression": thresholds["primary_expression"],
-            "fp_target": thresholds["fp_target"],
-            "source": "held_out",
-            "kind": np.where(measured, MEASURED, ""),
-            "setting": thresholds["setting"],
-            **{f"recall{part}": thresholds[f"recall{part}"] for part in _WITH_INTERVAL},
-            **{new: thresholds[old] for old, new in _UNMATCHED_NAMES.items()},
-            "n_sessions": thresholds["n_held_out_sessions"],
-        }
-    )
-    at_zero = points[points["minimum_iou"] == 0]
-    read = pd.DataFrame(
-        {
-            "method": at_zero["method"],
-            "primary_expression": at_zero["primary_expression"],
-            "fp_target": at_zero["fp_target"],
-            "source": "operating_point",
-            "kind": at_zero["read_off"],
-            "setting": "",
-            **{f"recall{part}": at_zero[f"recall{part}"] for part in _WITH_INTERVAL},
-            **{f"unmatched_per_minute{part}": np.nan for part in _WITH_INTERVAL},
-            "n_sessions": at_zero["n_sessions"],
-        }
+    held = thresholds.rename(
+        columns={**_UNMATCHED_NAMES, "n_held_out_sessions": "n_sessions"}
+    ).assign(source="held_out", kind=np.where(thresholds["setting"] != "", MEASURED, ""))
+    read = (
+        points[points["minimum_iou"] == 0]
+        .rename(columns={"read_off": "kind"})
+        .assign(
+            source="operating_point",
+            setting="",
+            **dict.fromkeys(_UNMATCHED_NAMES.values(), np.nan),
+        )
     )
     both = _concat([held, read], COMPACT_HELD_OUT_COLUMNS)
     order = ["method", "fp_target", "source"]
