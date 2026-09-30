@@ -693,6 +693,32 @@ def method_record(config: RecipeConfig) -> dict[str, str]:
     }
 
 
+def stand_in_inputs(config: RecipeConfig) -> tuple[str, ...]:
+    """The inputs the policy supplies ``config`` by a stand-in.
+
+    Parameters
+    ----------
+    config : RecipeConfig
+
+    Returns
+    -------
+    inputs : tuple of str
+        Those of ``policy_inputs(config)``, in its order, that are not an
+        observation of the session: rest for sleep, baseline or eligible
+        epochs, a unit selection by the simulator's labels, one template,
+        the zero reference, or an external or example ripple inventory.
+        Empty when every input is observed.
+
+    Raises
+    ------
+    KeyError
+        Unknown method.
+    TypeError
+        An option the method does not take.
+    """
+    return tuple(name for name in policy_inputs(config) if _POLICY[name].stand_in is not None)
+
+
 def _assumptions(config: RecipeConfig) -> tuple[str, ...]:
     """The benchmark choices ``config`` relies on: the stand-in for each
     input the policy supplies that is not an observation, and each
@@ -700,11 +726,10 @@ def _assumptions(config: RecipeConfig) -> tuple[str, ...]:
     requirements = _entry(config.method)["requirements"]
     meanings = {requirement["input"]: requirement["meaning"] for requirement in requirements}
     assumptions = [
-        f'{name}, for "{meanings[name]}": {stand_in}'
+        f'{name}, for "{meanings[name]}": {_POLICY[name].stand_in}'
         if meanings[name]
-        else f"{name}: {stand_in}"
-        for name in policy_inputs(config)
-        if (stand_in := _POLICY[name].stand_in) is not None
+        else f"{name}: {_POLICY[name].stand_in}"
+        for name in stand_in_inputs(config)
     ]
     unreported = {
         requirement["input"]
