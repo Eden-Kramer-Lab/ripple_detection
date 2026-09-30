@@ -5648,11 +5648,13 @@ def identical_groups(tables: RunTables) -> pd.DataFrame:
 
     Two methods are in one group when they share a scoring rule and a primary
     expression and, on every session, either both failed or both returned
-    the same events: the same start and end times, bit for bit, as pairs
-    sorted by start then end. A method that failed on some sessions is
-    grouped only with methods that failed on exactly those sessions and
-    agree on every other; no tolerance is applied, so events one unit in the
-    last place apart are different.
+    the same events: the same start and end times and the same event times
+    (``event_times``: the peak, else the bounds' midpoint, which places an
+    event at rest or running and inside or outside the network windows), bit
+    for bit, sorted by start, then end, then time. A method that failed on
+    some sessions is grouped only with methods that failed on exactly those
+    sessions and agree on every other; no tolerance is applied, so events
+    one unit in the last place apart are different.
 
     Parameters
     ----------
@@ -5669,9 +5671,10 @@ def identical_groups(tables: RunTables) -> pd.DataFrame:
     """
     ran = set(tables.ran[list(_KEY)].itertuples(index=False, name=None))
     events = {
-        key: _bounds(rows) for key, rows in tables.events.groupby(list(_KEY), sort=False)
+        key: np.column_stack([_bounds(rows), event_times(rows)])
+        for key, rows in tables.events.groupby(list(_KEY), sort=False)
     }
-    none = np.empty((0, 2))
+    none = np.empty((0, 3))
     groups: dict[tuple[Any, ...], list[str]] = {}
     firsts: dict[tuple[Any, ...], tuple[str, str]] = {}
     listed = tables.methods[["method", "setting", "primary_expression", "scoring"]]
@@ -5681,8 +5684,9 @@ def identical_groups(tables: RunTables) -> pd.DataFrame:
             if (session_id, method, setting) not in ran:
                 outputs.append(None)
                 continue
-            bounds = events.get((session_id, method, setting), none)
-            outputs.append(bounds[np.lexsort((bounds[:, 1], bounds[:, 0]))].tobytes())
+            found = events.get((session_id, method, setting), none)
+            order = np.lexsort((found[:, 2], found[:, 1], found[:, 0]))
+            outputs.append(found[order].tobytes())
         signature = (scoring, primary, tuple(outputs))
         firsts.setdefault(signature, (method, setting))
         groups.setdefault(signature, []).append(method)
@@ -6072,9 +6076,9 @@ COMPACT_DEFINITIONS = (
     ),
     (
         "- **Identical groups.** Methods sharing a primary expression whose detections are "
-        "identical on every session, start and end times equal exactly and the same "
-        "failures, are one row, named by the first in the methods' order; `n` counts its "
-        "members, and `members` in the CSV lists them."
+        "identical on every session, start, end and event times (peak, else midpoint) "
+        "equal exactly and the same failures, are one row, named by the first in the "
+        "methods' order; `n` counts its members, and `members` in the CSV lists them."
     ),
     (
         "- **Stand-ins.** The inputs the benchmark serves a recipe in place of something the "

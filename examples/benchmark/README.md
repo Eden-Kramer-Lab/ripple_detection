@@ -566,9 +566,9 @@ they agree with those files to the last digit.
   midpoint of its bounds) against the running bouts as closed intervals (a time on a
   bout's start or end is running), the bouts drawn again from each session's saved seed
   and checked against the run's saved rest time.
-- Methods whose detections are identical on every session, start and end times equal
-  exactly and the same failures, are one row (`members`, `n_members`), named by the
-  first in the methods' order.
+- Methods whose detections are identical on every session, start, end and event times
+  (the peak, else the bounds' midpoint) equal exactly and the same failures, are one
+  row (`members`, `n_members`), named by the first in the methods' order.
 - `stand_in_inputs` lists the inputs the benchmark serves a recipe in place of
   something the simulator lacks (rest for sleep, baseline or eligible epochs, units
   selected by the simulator's labels, one template, a zero reference, an external or

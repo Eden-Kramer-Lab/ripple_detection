@@ -3040,7 +3040,7 @@ def _hand_groups(tiny_tables):
             if bounds is None:
                 continue
             ran.append((session_id, method, setting))
-            events += [(session_id, method, setting, *pair) for pair in bounds]
+            events += [(session_id, method, setting, *pair, np.nan) for pair in bounds]
     return dataclasses.replace(
         tiny_tables,
         sessions=pd.DataFrame({"session_id": sessions}),
@@ -3050,7 +3050,8 @@ def _hand_groups(tiny_tables):
         ),
         ran=pd.DataFrame(ran, columns=["session_id", "method", "setting"]),
         events=pd.DataFrame(
-            events, columns=["session_id", "method", "setting", "start_time", "end_time"]
+            events,
+            columns=["session_id", "method", "setting", "start_time", "end_time", "peak_time"],
         ),
     )
 
@@ -3084,6 +3085,34 @@ def test_identical_groups_by_hand(analyze, tiny_tables):
         ],
         "n_members": [2, 2, 1, 2, 1, 1, 2, 1],
     }
+
+
+def test_identical_bounds_with_other_event_times_are_apart(analyze, tiny_tables):
+    """The key holds each event's time (its peak, else its bounds' midpoint),
+    which places it at rest or running and inside or outside the events."""
+    tables = _hand_groups(tiny_tables)
+    events, ran, methods = tables.events, tables.ran, tables.methods
+    a = events[(events.method == "a") & (events.setting == "default")]
+    copies = {
+        # the same bounds, each peak at its event's start
+        "k_other_peak": a.assign(peak_time=a.start_time),
+        # the same bounds, each peak the midpoint a's events are placed by
+        "l_midpoint_peak": a.assign(peak_time=(a.start_time + a.end_time) / 2),
+    }
+    for method, rows in copies.items():
+        events = pd.concat([events, rows.assign(method=method)], ignore_index=True)
+        ran = pd.concat(
+            [ran, ran[(ran.method == "a") & (ran.setting == "default")].assign(method=method)],
+            ignore_index=True,
+        )
+        methods = pd.concat(
+            [methods, methods[methods.method == "a"].iloc[:1].assign(method=method)],
+            ignore_index=True,
+        )
+    tables = dataclasses.replace(tables, events=events, ran=ran, methods=methods)
+    groups = analyze.identical_groups(tables).set_index(["method", "setting"])
+    assert groups.loc[("a", "default"), "members"] == ("a", "b_same_as_a", "l_midpoint_peak")
+    assert groups.loc[("k_other_peak", "default"), "members"] == ("k_other_peak",)
 
 
 def test_a_group_lists_its_stand_ins(analyze):
