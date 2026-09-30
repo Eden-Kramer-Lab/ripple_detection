@@ -3281,7 +3281,9 @@ def test_compact_page_formats_every_number(analyze, tiny_tables, tiny_compact):
         f"compact_{target}": compact[compact.primary_expression == target]
         for target in analyze.COMPACT_TARGETS
     }
-    page = analyze.compact_page("tiny", tiny_tables, results)
+    page = analyze.compact_page("tiny", tiny_tables, results, n_resamples=FEW, seed=3)
+    # the resamples and seed the rebuild used
+    assert f"({FEW} resamples, seed 3)" in page
     kay = compact.iloc[0]
     assert page.startswith("# Compact comparison: tiny\n")
     assert "reference condition's 2 simulated sessions (20 s each)" in page

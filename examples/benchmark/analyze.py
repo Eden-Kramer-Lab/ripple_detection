@@ -6072,8 +6072,8 @@ COMPACT_DEFINITIONS = (
         "group's when its members share them, else each member's."
     ),
     (
-        "- **Intervals.** 95 % paired-bootstrap intervals over sessions (2000 resamples, "
-        "seed 0), in the CSVs, not here."
+        "- **Intervals.** 95 % paired-bootstrap intervals over sessions ({n_resamples} "
+        "resamples, seed {seed}), in the CSVs, not here."
     ),
     (
         "- **Scope.** These numbers describe this simulator's reference sessions and its "
@@ -6083,7 +6083,14 @@ COMPACT_DEFINITIONS = (
 )
 
 
-def compact_page(run_name: str, tables: RunTables, results: Mapping[str, pd.DataFrame]) -> str:
+def compact_page(
+    run_name: str,
+    tables: RunTables,
+    results: Mapping[str, pd.DataFrame],
+    *,
+    n_resamples: int = N_RESAMPLES,
+    seed: int = SEED,
+) -> str:
     """``compact.md``: the three target tables at a readable width, then
     their definitions.
 
@@ -6095,6 +6102,9 @@ def compact_page(run_name: str, tables: RunTables, results: Mapping[str, pd.Data
     results : mapping of str to pandas.DataFrame
         The analyses' tables by name, ``compact_<target>`` for each of
         ``COMPACT_TARGETS`` among them.
+    n_resamples, seed : int, optional
+        The bootstrap resamples and seed the tables' intervals were drawn
+        with, as the definitions state them.
 
     Returns
     -------
@@ -6162,7 +6172,10 @@ def compact_page(run_name: str, tables: RunTables, results: Mapping[str, pd.Data
             f"- `{row.method}`: {row.stand_in_inputs}"
             for row in stand_ins.itertuples(index=False)
         ] or ["- none"]
-    lines += ["", "## Definitions", "", *COMPACT_DEFINITIONS]
+    definitions = [
+        line.format(n_resamples=n_resamples, seed=seed) for line in COMPACT_DEFINITIONS
+    ]
+    lines += ["", "## Definitions", "", *definitions]
     return "\n".join(lines) + "\n"
 
 
@@ -8456,7 +8469,7 @@ def analyze_run(
             )
         )
         if all(f"{COMPACT}_{target}" in results for target in COMPACT_TARGETS):
-            page = compact_page(root.name, tables, results)
+            page = compact_page(root.name, tables, results, n_resamples=n_resamples)
             write_result(partial / COMPACT_PAGE, page.encode())
             files.append(
                 (
