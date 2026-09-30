@@ -1127,7 +1127,9 @@ def match_session(
                 columns=list(OVERLAP_COLUMNS),
             )
         )
-    unmatched_events = _concat(false_positives, FALSE_POSITIVE_COLUMNS)
+    unmatched_events = _concat(false_positives, FALSE_POSITIVE_COLUMNS).astype(
+        {"in_events": bool}
+    )
     comparisons, consensus, groups = _compare_main(
         session_id,
         detected,
@@ -1255,13 +1257,12 @@ def match_run(
     else:
         with ProcessPoolExecutor(max_workers=workers) as pool:
             sessions = list(pool.map(match, *arguments))
-    return Matches(
-        **{
-            name: _concat([getattr(session, name) for session in sessions], columns)
-            for name, columns in _MATCH_COLUMNS.items()
-        },
-        levels=levels,
-    )
+    joined = {
+        name: _concat([getattr(session, name) for session in sessions], columns)
+        for name, columns in _MATCH_COLUMNS.items()
+    }
+    joined["false_positives"] = joined["false_positives"].astype({"in_events": bool})
+    return Matches(**joined, levels=levels)
 
 
 # Intervals over groups
@@ -1569,7 +1570,7 @@ def _false_positive_counts(matches: Matches) -> pd.Series:
     detections (``Matches.false_positives``) outside every network window,
     by ``session_id``, ``method`` and ``setting``; one without is absent."""
     found = matches.false_positives
-    outside = found[~found["in_events"].astype(bool)]
+    outside = found[~found["in_events"]]
     return outside.groupby(list(_KEY)).size().rename("n_false_positives")
 
 
@@ -6146,7 +6147,7 @@ def unmatched_by_state(
         on=[*_KEY, "event_index"],
         how="left",
     )
-    inside = unmatched["in_events"].astype(bool)
+    inside = unmatched["in_events"]
     by_state = {"rest": "n_false_positives_rest", "running": "n_false_positives_running"}
     counted = _count_by_state(unmatched[~inside], bouts).rename(columns=by_state)
     counted = counted.join(
