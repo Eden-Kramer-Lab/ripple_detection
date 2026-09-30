@@ -5028,15 +5028,17 @@ def session_bouts(sessions: pd.DataFrame) -> dict[str, np.ndarray[Any, Any]]:
     Raises
     ------
     ValueError
-        A session's rest is not its duration less the bouts drawn again, so
-        the schedule is not the one the run simulated.
+        A session's rest is not its duration less the bouts drawn again, to
+        the timestamps' rounding (8 units in the last place of the
+        duration), so the schedule is not the one the run simulated.
     """
     bouts = {}
     for row in sessions.itertuples(index=False):
         rng = np.random.default_rng(stage_seeds(int(row.replicate))[0])
-        drawn = running_schedule(float(row.duration_s), rng)
-        rest = float(row.duration_s) - float(np.sum(np.diff(drawn, axis=1)))
-        if not np.isclose(rest, float(row.rest_s), rtol=0, atol=1e-6):
+        duration = float(row.duration_s)
+        drawn = running_schedule(duration, rng)
+        rest = duration - float(np.sum(np.diff(drawn, axis=1)))
+        if abs(rest - float(row.rest_s)) > 8 * float(np.spacing(duration)):
             msg = (
                 f"{row.session_id}: the running schedule drawn again leaves {rest} s of "
                 f"rest, the run recorded {row.rest_s} s."

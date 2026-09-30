@@ -2196,8 +2196,12 @@ def test_session_bouts_are_the_simulated_schedule(analyze, benchmark_import):
     )
     assert len(expected)
     assert np.array_equal(analyze.session_bouts(sessions)["x/3"], expected)
-    with pytest.raises(ValueError, match="x/3: the running schedule drawn again"):
-        analyze.session_bouts(sessions.assign(rest_s=rest - 1))
+    # rest to the timestamps' rounding: a few units in the last place, not 1 us
+    ulp = np.spacing(200.0)
+    assert len(analyze.session_bouts(sessions.assign(rest_s=rest + 4 * ulp)))
+    for wrong in (rest - 1, rest + 1e-7):
+        with pytest.raises(ValueError, match="x/3: the running schedule drawn again"):
+            analyze.session_bouts(sessions.assign(rest_s=wrong))
 
 
 @pytest.fixture(scope="module")
