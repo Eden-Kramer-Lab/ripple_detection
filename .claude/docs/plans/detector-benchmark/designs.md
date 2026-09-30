@@ -1033,6 +1033,53 @@ the results correct but hard to read, the maintainer deciding:
   `matching_sensitivity`'s `recall_at_<target>` and model sensitivity's recalls at a target are
   read off curves too and carry no label.
 
+As implemented after a second review of the compact comparison (2026-09-30), the maintainer
+deciding to switch every rate at once:
+
+- **The old definition.** Every false-positive rate (`_detection_rates`, the curves' `_rates`,
+  the compact tables' `unmatched_per_minute`) divided all unmatched detections, `n_detected -
+  n_matched` at IoU 0 against the primary expression, by the minutes outside every network
+  window at 10 %. The numerator counted detections in time the denominator excluded. On v1, at
+  IoU 0 against each method's primary expression, 9.8 % of the main settings' 184,646 unmatched
+  detections had their event time inside a network window: Long's 59 of 59 and
+  `harvey_2023_code`'s 9 of 9 (its 0.449 per rest minute is 0 on event-free time),
+  `yamamoto_2017` 75 %, `igata_2021_ripples` 48 %, `muessig_2019_ripples` 29 %, the LFP
+  detectors about 1 %.
+- **The definition now.** A false positive is an unmatched detection whose event time
+  (`event_times`: peak, else the bounds' midpoint, `rates_by_state`'s rule) lies outside every
+  network window at 10 %, closed (`in_network_windows`); the rate is those over the minutes
+  outside every network window, the denominator unchanged. Unmatched detections inside a
+  window are no false positives for any rate; precision still counts every unmatched detection
+  and `false_positive_classes` and the consensus groups still classify every one. Points follow
+  the same rule by their times. Column names: `false_positives_per_minute` everywhere with
+  `n_false_positives` beside it; the compact tables add `n_unmatched_in_events` and the
+  unmatched burden, `unmatched_per_session_minute` (every unmatched detection over
+  `duration_s`), and their rest split is `false_positives_rest_per_rest_minute`; the
+  `unmatched_per_minute` names are gone.
+- **Where it is counted.** `match_session` flags each unmatched detection (`in_events`);
+  `load_scores` counts the false positives per session, method and setting while matching
+  again, for every setting in the reference's and the six alternative models' sessions and
+  the main settings everywhere (NaN for the other conditions' sweeps, which nothing reads).
+  The IoU-0 count serves every minimum IoU, so a curve at IoU 0.5 has the same false
+  positives as at 0 (before, a detection overlapping a window below the level counted as
+  one). On v1 that moves the IoU-0.5 operating points more than the event-free rule moves
+  IoU 0 (Shvartsman at 1 per minute 0.335 to 0.662); a level-specific event-free count
+  would have added 5,853 detections to the main settings' 166,639 false positives, most
+  from long-event recipes.
+- **What moved on v1.** At IoU 0 every operating point moved by 0.012 or less, but Long's
+  curve now has no false positive at any setting and reaches no target (0.737 at 0.5 per
+  minute before); no detector newly reaches a target. Three held-out settings changed
+  (Carey at 0.5 and 5, Long at 0.5); 20 of 22 significant operating differences stay (the
+  two lost are Long's); model sensitivity's supported orders go from 138 to 126, all 12
+  lost Long's at 0.5 per minute, with 13 reversals before and after. No statement of
+  `trends.md` changed; two of its numbers moved (Roumis's upper bound at 1 per minute 0.804
+  to 0.805, the Roumis-Kay p-value 0.29 to 0.25).
+- **Grouping.** `identical_groups` keys on each event's start, end and event time: two methods
+  with the same bounds but different peaks place events differently at rest or running and
+  inside or outside the windows. On v1 the ten groups are unchanged.
+- **Cost.** The rebuild took 3.4 minutes wall against 3.5 before, back to back; every
+  condition's scores 22.5 s against 19.5 s.
+
 ## Attribution
 
 Module `examples/benchmark/attribution.py`. This phase defines experimental `Step`,
