@@ -1485,10 +1485,12 @@ def test_at_fp_rate_keeps_one_setting(analyze):
     assert found.tolist() == pytest.approx([0.8, -0.01])
 
 
-def test_read_off_kinds_say_where_a_value_is_interpolated(analyze):
+def test_reading_off_says_where_a_value_is_interpolated(analyze):
     fp_rate, recall = [8.0, 2.0, 2.0, 0.5, 0.0], [0.9, 0.6, 0.7, 0.4, 0.2]
     targets = [0.2, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 9.0]
-    kinds = analyze.read_off_kinds(fp_rate, recall, targets, 0.25)
+    found, kinds = analyze._at_fp_rates(fp_rate, recall, recall, targets, 0.25)
+    # a value exactly where there is a label
+    assert (np.isnan(found[:, 0]) == (kinds == "")).all()
     # at a setting's rate (0 floored to 0.25, a repeated rate once), between
     # two, and outside the curve
     assert kinds.tolist() == [
@@ -1501,7 +1503,6 @@ def test_read_off_kinds_say_where_a_value_is_interpolated(analyze):
         "tested",
         "",
     ]
-    assert analyze.read_off_kinds([], [], [1.0], 0.25).tolist() == [""]
 
 
 def test_at_fp_rate_is_the_design(analyze):

@@ -2856,58 +2856,25 @@ FP_TARGETS = (0.5, 1.0, 2.0, 5.0)
 AT_TARGET = ("recall", "median_onset_error", "median_offset_error")
 
 
+# How a value read off a curve at a target was found.
+INTERPOLATED = "interpolated"
+TESTED = "tested"
+
+
 def _at_fp_rates(
     fp_rate: ArrayLike,
     recall: ArrayLike,
     values: ArrayLike,
     targets: ArrayLike,
     floor: float,
-) -> np.ndarray[Any, Any]:
-    """``at_fp_rate`` on arrays, every target at once: ``values``, shape
-    (n_settings, n_columns), read off at each target, shape (n_targets,
-    n_columns)."""
-    fp_rate = np.asarray(fp_rate, dtype=float)
-    values = np.asarray(values, dtype=float).reshape(len(fp_rate), -1)
-    targets = np.log(np.asarray(targets, dtype=float))
-    found = np.full((len(targets), values.shape[1]), np.nan)
-    if not len(fp_rate):
-        return found
-    kept, xs = _kept_settings(fp_rate, recall, floor)
-    inside = (xs[0] <= targets) & (targets <= xs[-1])
-    for column in range(values.shape[1]):
-        found[inside, column] = np.interp(targets[inside], xs, values[kept, column])
-    return found
-
-
-def _kept_settings(
-    fp_rate: np.ndarray[Any, Any], recall: ArrayLike, floor: float
 ) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
-    """The settings ``_at_fp_rates`` reads between, shape (n_kept,), one per
-    floored false-positive rate (the best recall, ties the first), by rate,
-    and their log rates."""
-    x = np.log(np.maximum(fp_rate, floor))
-    # FP rate up, then recall down (NaN last), then threshold order
-    order = np.lexsort((np.arange(len(x)), -np.asarray(recall, dtype=float), x))
-    ranked = x[order]
-    repeated = (ranked[1:] == ranked[:-1]) | (np.isnan(ranked[1:]) & np.isnan(ranked[:-1]))
-    kept = order[np.concatenate([[True], ~repeated])]
-    return kept, x[kept]
-
-
-# How a value read off a curve at a target was found.
-INTERPOLATED = "interpolated"
-TESTED = "tested"
-
-
-def read_off_kinds(
-    fp_rate: ArrayLike, recall: ArrayLike, targets: ArrayLike, floor: float
-) -> np.ndarray[Any, Any]:
-    """Whether ``at_fp_rate`` takes each target's value at a tested setting.
+    """``at_fp_rate`` on arrays, every target at once.
 
     Parameters
     ----------
     fp_rate, recall : array_like, shape (n_settings,)
-        A curve's settings, as ``at_fp_rate`` reads them.
+        A curve's settings, in threshold order.
+    values : array_like, shape (n_settings, n_columns)
     targets : array_like, shape (n_targets,)
         False positives per minute.
     floor : float
@@ -2915,24 +2882,34 @@ def read_off_kinds(
 
     Returns
     -------
+    found : ndarray, shape (n_targets, n_columns)
+        ``values`` read off at each target; NaN outside the curve's rates.
     kinds : ndarray of str, shape (n_targets,)
-        ``"tested"`` where the target is a kept setting's floored rate
-        (in log rate, as the curve is read), so the value is that
-        setting's; ``"interpolated"`` where it
-        lies strictly between two kept settings' rates, so the value is
-        read between them in log rate and no setting was run there; ``""``
-        where the curve does not reach the target and there is no value.
+        How each was read off: ``"tested"`` where the target is a kept
+        setting's floored rate (in log rate, as the curve is read), so the
+        value is that setting's; ``"interpolated"`` where it lies strictly
+        between two kept settings' rates, so no setting was run there;
+        ``""`` where the curve does not reach the target.
     """
     fp_rate = np.asarray(fp_rate, dtype=float)
-    logged = np.log(np.asarray(targets, dtype=float))
-    kinds = np.full(len(logged), "", dtype=object)
+    values = np.asarray(values, dtype=float).reshape(len(fp_rate), -1)
+    targets = np.log(np.asarray(targets, dtype=float))
+    found = np.full((len(targets), values.shape[1]), np.nan)
+    kinds = np.full(len(targets), "", dtype=object)
     if not len(fp_rate):
-        return kinds
-    _, xs = _kept_settings(fp_rate, recall, floor)
-    inside = (xs[0] <= logged) & (logged <= xs[-1])
-    tested = np.isin(logged, xs)
-    kinds[inside] = np.where(tested[inside], TESTED, INTERPOLATED)
-    return kinds
+        return found, kinds
+    x = np.log(np.maximum(fp_rate, floor))
+    # FP rate up, then recall down (NaN last), then threshold order
+    order = np.lexsort((np.arange(len(x)), -np.asarray(recall, dtype=float), x))
+    ranked = x[order]
+    repeated = (ranked[1:] == ranked[:-1]) | (np.isnan(ranked[1:]) & np.isnan(ranked[:-1]))
+    kept = order[np.concatenate([[True], ~repeated])]
+    xs = x[kept]
+    inside = (xs[0] <= targets) & (targets <= xs[-1])
+    for column in range(values.shape[1]):
+        found[inside, column] = np.interp(targets[inside], xs, values[kept, column])
+    kinds[inside] = np.where(np.isin(targets[inside], xs), TESTED, INTERPOLATED)
+    return found, kinds
 
 
 def at_fp_rate(
@@ -2963,7 +2940,7 @@ def at_fp_rate(
     found : pandas.Series
         Indexed by ``columns``; NaN outside the curve's range of rates.
     """
-    found = _at_fp_rates(
+    found, _ = _at_fp_rates(
         curve["fp_rate"], curve["recall"], curve[list(columns)], [target], floor
     )
     return pd.Series(found[0], index=list(columns))
@@ -3253,27 +3230,20 @@ def _read_off(
     pooled: Mapping[str, np.ndarray[Any, Any]],
     targets: Sequence[float],
     columns: Sequence[str],
-) -> np.ndarray[Any, Any]:
+) -> tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
     """A pooled curve's ``columns`` (``recall`` or the pool's) at each target
-    (``at_fp_rate``), shape (n_targets, n_columns), over the settings with
-    scores (``_held_curve``)."""
+    and how each was read off (``_at_fp_rates``), shapes (n_targets,
+    n_columns) and (n_targets,), over the settings with scores
+    (``_held_curve``)."""
     curve = _held_curve(pooled)
     if curve is None:
-        return np.full((len(targets), len(columns)), np.nan)
+        return (
+            np.full((len(targets), len(columns)), np.nan),
+            np.full(len(targets), "", dtype=object),
+        )
     held, rates, floor = curve
     values = np.column_stack([{**pooled, **rates}[column][held] for column in columns])
     return _at_fp_rates(rates["fp_rate"][held], rates["recall"][held], values, targets, floor)
-
-
-def _read_off_kinds(
-    pooled: Mapping[str, np.ndarray[Any, Any]], targets: Sequence[float]
-) -> np.ndarray[Any, Any]:
-    """``read_off_kinds`` of the curve ``_read_off`` reads, shape (n_targets,)."""
-    curve = _held_curve(pooled)
-    if curve is None:
-        return np.full(len(targets), "", dtype=object)
-    held, rates, floor = curve
-    return read_off_kinds(rates["fp_rate"][held], rates["recall"][held], targets, floor)
 
 
 def _condition_sessions(scores: ConditionScores, condition: str) -> list[str]:
@@ -3426,7 +3396,7 @@ def operating_points(
     points : pandas.DataFrame
         One row per detector, ``minimum_iou`` and target: ``method``,
         ``primary_expression``, ``minimum_iou``, ``fp_target``, ``read_off``
-        (``read_off_kinds``: ``"interpolated"`` between two tested settings,
+        (``_at_fp_rates``' kinds: ``"interpolated"`` between two tested settings,
         ``"tested"`` at one, ``""`` unreached), then for ``recall``,
         ``median_onset_error`` and ``median_offset_error`` (seconds,
         detected minus truth at 10 %) the estimate, ``_low`` and
@@ -3451,9 +3421,8 @@ def operating_points(
             complete, own_counts, own_errors = _sweep_inputs(counts, errors, method, settings)
             pool = _curve_pool(own_counts, own_errors, "session_id", sessions, settings)
             pooled = pool(np.ones(len(sessions)))
-            estimate = _read_off(pooled, targets, columns)
-            kinds = _read_off_kinds(pooled, targets)
-            draws = np.array([_read_off(pool(w), targets, columns) for w in weights])
+            estimate, kinds = _read_off(pooled, targets, columns)
+            draws = np.array([_read_off(pool(w), targets, columns)[0] for w in weights])
             low, high = _conditional_intervals(estimate, draws)
             attained = np.isfinite(draws[:, :, 0]).mean(axis=0)
             n_failures = _sweep_failures(failed, method, settings)
@@ -4205,7 +4174,7 @@ class SweepRecalls:
         target in log rate (``""`` for a curve with none), where a spot check
         of the operating point looks.
     read_off : ndarray of str, shape (n_conditions, n_detectors, n_targets)
-        How ``estimate`` was read off (``read_off_kinds``): ``"interpolated"``,
+        How ``estimate`` was read off (``_at_fp_rates``): ``"interpolated"``,
         ``"tested"`` or ``""``.
     """
 
@@ -4235,16 +4204,16 @@ def _nearest_settings(
 ) -> list[str]:
     """The setting of a sweep pool whose false-positive rate, pooled over
     every unit, is nearest each target in log rate; ``""`` for none."""
-    pooled = pool(np.ones(n_units))
-    held = np.flatnonzero(pooled["ran"] > 0)
-    if not len(held):
+    curve = _held_curve(pool(np.ones(n_units)))
+    if curve is None:
         return [""] * len(targets)
-    rates = _rates(pooled)["fp_rate"][held]
-    floor = 0.5 / pooled["minutes"][held].max()
+    held, rates, floor = curve
+    positions = np.flatnonzero(held)
     distance = np.abs(
-        np.log(np.maximum(rates, floor))[:, None] - np.log(np.asarray(targets))[None, :]
+        np.log(np.maximum(rates["fp_rate"][held], floor))[:, None]
+        - np.log(np.asarray(targets))[None, :]
     )
-    return [settings[held[position]] for position in np.argmin(distance, axis=0)]
+    return [settings[positions[position]] for position in np.argmin(distance, axis=0)]
 
 
 def _sweep_recalls(
@@ -4277,25 +4246,28 @@ def _sweep_recalls(
     def statistic(weights: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
         return np.array(
             [
-                [_read_off(pool(weights), targets, ["recall"])[:, 0] for pool in row]
+                [_read_off(pool(weights), targets, ["recall"])[0][:, 0] for pool in row]
                 for row in pools
             ]
         )
 
+    shape = (len(conditions), len(detectors), len(targets))
+    read = [
+        [_read_off(pool(np.ones(len(replicates))), targets, ["recall"]) for pool in row]
+        for row in pools
+    ]
+    estimate = np.array([[found[:, 0] for found, _ in row] for row in read]).reshape(shape)
+    read_off = np.array([[kinds for _, kinds in row] for row in read], dtype=object)
     weights = resample_weights(len(replicates), n_resamples=n_resamples)
     alone = np.array([statistic(w) for w in np.eye(len(replicates))])
-    read_off = np.full((len(conditions), len(detectors), len(targets)), "", dtype=object)
-    for c, row in enumerate(pools):
-        for d, pool in enumerate(row):
-            read_off[c, d] = _read_off_kinds(pool(np.ones(len(replicates))), targets)
     return SweepRecalls(
-        estimate=statistic(np.ones(len(replicates))),
+        estimate=estimate,
         draws=np.array([statistic(w) for w in weights]),
         defined=np.isfinite(alone).sum(axis=0),
         events=events,
         replicates=paired,
         nearest=nearest,
-        read_off=read_off,
+        read_off=read_off.reshape(shape),
     )
 
 
@@ -4678,7 +4650,7 @@ def operating_differences(
         looks), ``recall_a`` and ``recall_b``, ``reached_a`` and ``reached_b``
         (whether each curve reaches the target; a recall it does not reach
         is NaN, never the curve's end), ``read_off_a`` and ``read_off_b``
-        (``read_off_kinds``: each recall ``"interpolated"`` between two
+        (``_at_fp_rates``' kinds: each recall ``"interpolated"`` between two
         tested settings, ``"tested"`` at one, ``""`` unreached),
         ``difference`` (A minus B) with ``_low``, ``_high`` and ``_p``,
         ``n_draws`` (the resamples in which both pooled curves reach the
