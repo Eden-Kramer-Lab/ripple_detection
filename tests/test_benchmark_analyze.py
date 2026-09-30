@@ -1196,14 +1196,15 @@ def test_a_method_that_never_ran_keeps_its_rows(analyze, failing_run):
     timing = pairs["paired_timing_ripple"]
     assert timing.fraction.tolist() == [0.1, 0.25, 0.5]
     assert timing.onset_signed_estimate.isna().all()
+    groups = analyze.compact_groups(tables)
     compact = analyze.compact_comparison(
-        tables,
+        groups,
         per_method["matching_sensitivity"],
         per_method["boundary_errors"],
         analyze.appendix_expressions(tables, matches, **quick),
         per_method["unmatched_by_state"],
     ).set_index("method")
-    points = analyze.compact_points(tables, per_method["point_inventories"]).set_index(
+    points = analyze.compact_points(groups, per_method["point_inventories"]).set_index(
         "method"
     )
     for table, failed in ((compact, KARLSSON[0]), (points, DAVIDSON[0])):
@@ -2996,13 +2997,14 @@ def _compact_of(analyze, tables, matches, bouts=None):
     """The tables compact_comparison joins, and its table, of a run matched
     at every minimum IoU."""
     found = SimpleNamespace(
+        groups=analyze.compact_groups(tables),
         sensitivity=analyze.matching_sensitivity(tables, matches, n_resamples=FEW),
         errors=analyze.boundary_errors(tables, matches, n_resamples=FEW),
         appendix=analyze.appendix_expressions(tables, matches, n_resamples=FEW),
         split=analyze.unmatched_by_state(tables, matches, bouts=bouts, n_resamples=FEW),
     )
     found.compact = analyze.compact_comparison(
-        tables, found.sensitivity, found.errors, found.appendix, found.split
+        found.groups, found.sensitivity, found.errors, found.appendix, found.split
     )
     return found
 
@@ -3056,33 +3058,33 @@ def _hand_groups(analyze, tiny_tables):
 
 def test_identical_groups_by_hand(analyze, tiny_tables):
     groups = analyze.identical_groups(_hand_groups(analyze, tiny_tables))
-    # each group named by its first member's method and setting: two settings
-    # of one method with different events are two groups
-    assert list(zip(groups.group, groups.group_setting, strict=True)) == [
-        ("a", "default"),
-        ("a", "3.0"),
-        ("a", "default"),
-        ("a", "3.0"),
-        ("c_one_ulp_off", "default"),
-        ("d_failed_on_s1", "default"),
-        ("d_failed_on_s1", "default"),
-        ("f_none_on_s1", "default"),
-        ("g_burst", "default"),
-        ("h_none", "default"),
-        ("h_none", "default"),
-        ("j_points", "default"),
-    ]
-    assert groups.members.tolist()[:4] == [
-        "a b_same_as_a",
-        "a b_same_as_a_3",
-        "a b_same_as_a",
-        "a b_same_as_a_3",
-    ]
-    by = groups.set_index("method")
-    assert by.loc["e_same_as_d", "members"] == "d_failed_on_s1 e_same_as_d"
-    # a call that failed is not one that found nothing
-    assert by.loc["f_none_on_s1", "members"] == "f_none_on_s1"
-    assert groups.n_members.tolist() == [2, 2, 2, 2, 1, 2, 2, 1, 1, 2, 2, 1]
+    # one row per group, named by its first member's method and setting: two
+    # settings of one method with different events are two groups; a call
+    # that failed is not one that found nothing
+    assert groups.to_dict("list") == {
+        "method": [
+            "a",
+            "a",
+            "c_one_ulp_off",
+            "d_failed_on_s1",
+            "f_none_on_s1",
+            "g_burst",
+            "h_none",
+            "j_points",
+        ],
+        "setting": ["default", "3.0", *["default"] * 6],
+        "members": [
+            ("a", "b_same_as_a"),
+            ("a", "b_same_as_a_3"),
+            ("c_one_ulp_off",),
+            ("d_failed_on_s1", "e_same_as_d"),
+            ("f_none_on_s1",),
+            ("g_burst",),
+            ("h_none", "i_none"),
+            ("j_points",),
+        ],
+        "n_members": [2, 2, 1, 2, 1, 1, 2, 1],
+    }
 
 
 def test_a_group_lists_its_stand_ins(analyze):
@@ -3215,7 +3217,7 @@ def test_what_was_not_computed_is_refused(analyze, tiny_tables, tiny_compact):
     without = found.errors[~np.isclose(found.errors.fraction, 0.5)]
     with pytest.raises(ValueError, match=r"no errors at \[50\] % of the peak"):
         analyze.compact_comparison(
-            tiny_tables, found.sensitivity, without, found.appendix, found.split
+            found.groups, found.sensitivity, without, found.appendix, found.split
         )
 
 
@@ -3290,7 +3292,7 @@ def test_compact_comparison_takes_its_numbers_from_their_tables(analyze, tiny_co
 def test_compact_points_are_the_point_inventories(analyze, point_matched):
     tables, matches = point_matched
     points = analyze.point_inventories(tables, matches, n_resamples=FEW)
-    compact = analyze.compact_points(tables, points)
+    compact = analyze.compact_points(analyze.compact_groups(tables), points)
     assert list(compact.columns) == list(analyze.COMPACT_POINT_COLUMNS)
     row, source = compact.iloc[0], points.iloc[0]
     assert len(compact) == 1
@@ -3375,7 +3377,7 @@ def compact_run(analyze, run, tmp_path_factory):
     found = _compact_of(analyze, tables, matches, bouts)
     points = analyze.point_inventories(tables, matches, n_resamples=FEW)
     found.tables = tables
-    found.points = analyze.compact_points(tables, points)
+    found.points = analyze.compact_points(found.groups, points)
     return found
 
 

@@ -5628,8 +5628,8 @@ def _group_stand_ins(members: Sequence[str]) -> str:
     share them, else each member's as ``"<member> (<inputs>)"`` joined by
     ``"; "`` (``"none"`` for a member with none)."""
     found = {member: method_stand_ins(member) for member in members}
-    if len(set(found.values())) <= 1:
-        return " ".join(next(iter(found.values()), ()))
+    if len(set(found.values())) == 1:
+        return " ".join(found[members[0]])
     return "; ".join(
         f"{member} ({' '.join(inputs) or 'none'})" for member, inputs in found.items()
     )
@@ -5653,20 +5653,19 @@ def identical_groups(tables: RunTables) -> pd.DataFrame:
     Returns
     -------
     groups : pandas.DataFrame
-        One row per method and setting of ``tables.methods``, in its order:
-        ``method``, ``setting``, ``group`` and ``group_setting`` (the
-        method and setting of the group's first member in that order, so two
+        One row per group, in ``tables.methods``' order of their first
+        members: ``method`` and ``setting``, the first member's (so two
         settings of one method with different events are two groups),
-        ``members`` (every member's method, in that order, space-separated)
-        and ``n_members``.
+        ``members`` (a tuple of every member's method, in that order) and
+        ``n_members``.
     """
     ran = set(tables.ran[list(_KEY)].itertuples(index=False, name=None))
     events = {
         key: _bounds(rows) for key, rows in tables.events.groupby(list(_KEY), sort=False)
     }
     none = np.empty((0, 2))
-    first: dict[tuple[Any, ...], tuple[str, str]] = {}
-    rows = []
+    groups: dict[tuple[Any, ...], list[str]] = {}
+    firsts: dict[tuple[Any, ...], tuple[str, str]] = {}
     listed = tables.methods[["method", "setting", "primary_expression", "scoring"]]
     for method, setting, primary, scoring in listed.itertuples(index=False):
         outputs: list[bytes | None] = []
@@ -5674,16 +5673,34 @@ def identical_groups(tables: RunTables) -> pd.DataFrame:
             if (session_id, method, setting) not in ran:
                 outputs.append(None)
                 continue
-            bounds = np.asarray(events.get((session_id, method, setting), none), dtype=float)
-            ordered = bounds[np.lexsort((bounds[:, 1], bounds[:, 0]))]
-            outputs.append(np.ascontiguousarray(ordered).tobytes())
-        group = first.setdefault((scoring, primary, tuple(outputs)), (method, setting))
-        rows.append((method, setting, *group))
-    columns = ["method", "setting", "group", "group_setting"]
-    groups = pd.DataFrame(rows, columns=columns)
-    members = groups.groupby(["group", "group_setting"], sort=False)["method"]
-    found = pd.DataFrame({"members": members.agg(" ".join), "n_members": members.size()})
-    return groups.join(found, on=["group", "group_setting"]).astype({"n_members": int})
+            bounds = events.get((session_id, method, setting), none)
+            outputs.append(bounds[np.lexsort((bounds[:, 1], bounds[:, 0]))].tobytes())
+        signature = (scoring, primary, tuple(outputs))
+        firsts.setdefault(signature, (method, setting))
+        groups.setdefault(signature, []).append(method)
+    return pd.DataFrame(
+        [(*firsts[key], tuple(members), len(members)) for key, members in groups.items()],
+        columns=["method", "setting", "members", "n_members"],
+    )
+
+
+def compact_groups(tables: RunTables) -> pd.DataFrame:
+    """``identical_groups`` with each group's ``stand_in_inputs``
+    (``_group_stand_ins``; empty for detectors), the rows the compact tables
+    are one per.
+
+    Parameters
+    ----------
+    tables : RunTables
+
+    Returns
+    -------
+    groups : pandas.DataFrame
+        ``method``, ``setting``, ``members`` (a tuple), ``n_members`` and
+        ``stand_in_inputs``.
+    """
+    groups = identical_groups(tables)
+    return groups.assign(stand_in_inputs=groups["members"].map(_group_stand_ins))
 
 
 def unmatched_by_state(
@@ -5774,17 +5791,6 @@ def unmatched_by_state(
     return _per_method(split, tables, grid, counts).fillna(dict.fromkeys(sums, 0.0))
 
 
-def _first_members(tables: RunTables) -> pd.DataFrame:
-    """Each group's first member (``identical_groups``), with the group's
-    ``members``, ``n_members`` and ``stand_in_inputs`` (``_group_stand_ins``)."""
-    groups = identical_groups(tables)
-    first = groups[
-        (groups["method"] == groups["group"]) & (groups["setting"] == groups["group_setting"])
-    ].drop(columns=["group", "group_setting"])
-    stand_ins = first["members"].map(lambda members: _group_stand_ins(members.split()))
-    return first.assign(stand_in_inputs=stand_ins.to_numpy())
-
-
 def _in_target_order(frame: pd.DataFrame) -> pd.DataFrame:
     """``frame``'s rows by primary expression in ``COMPACT_TARGETS``' order,
     each expression's in their own order."""
@@ -5793,7 +5799,7 @@ def _in_target_order(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def compact_comparison(
-    tables: RunTables,
+    groups: pd.DataFrame,
     sensitivity: pd.DataFrame,
     errors: pd.DataFrame,
     appendix: pd.DataFrame,
@@ -5813,9 +5819,10 @@ def compact_comparison(
 
     Parameters
     ----------
-    tables : RunTables
+    groups : pandas.DataFrame
+        ``compact_groups``' table of the run's tables.
     sensitivity : pandas.DataFrame
-        ``matching_sensitivity``' table of ``tables``.
+        ``matching_sensitivity``' table of those tables.
     errors : pandas.DataFrame
         ``boundary_errors``' table of them.
     appendix : pandas.DataFrame
@@ -5828,10 +5835,9 @@ def compact_comparison(
     comparison : pandas.DataFrame
         ``COMPACT_COLUMNS``, one row per group of interval methods whose
         primary expression is in ``COMPACT_TARGETS``, by expression in that
-        order, then in ``tables.methods``' order: ``primary_expression``,
-        ``method`` (the group's first member), ``members``, ``n_members``,
-        ``stand_in_inputs`` (``_group_stand_ins``; empty for a detector),
-        ``n_sessions``, ``n_failures``, ``n_reference``, ``n_detected``;
+        order, then in the groups' order: ``primary_expression``,
+        ``method`` (the group's first member), ``members`` (space-separated),
+        ``n_members``, ``stand_in_inputs``, ``n_sessions``, ``n_failures``, ``n_reference``, ``n_detected``;
         at each level of ``COMPACT_LEVELS`` (``iou0``, ``iou0.5``)
         ``n_matched_<level>`` (a count, with no interval), ``recall_<level>``
         and ``precision_<level>``, each with ``_low`` and ``_high``;
@@ -5857,13 +5863,13 @@ def compact_comparison(
         msg = f"The boundary errors hold no errors at {absent} % of the peak."
         raise ValueError(msg)
     key = ["method", "setting"]
-    groups = _first_members(tables).merge(failure_counts(tables), on=key)
-    groups = groups[
-        (groups["scoring"] == INTERVAL) & groups["primary_expression"].isin(COMPACT_TARGETS)
+    # matching sensitivity has a row per interval method, whether it ran or not
+    listed = sensitivity.loc[
+        sensitivity["minimum_iou"] == COMPACT_LEVELS[0],
+        [*key, "primary_expression", "n_sessions", "n_failures"],
     ]
-    table = groups[
-        [*key, "primary_expression", *_GROUP_COLUMNS[1:], "n_sessions", "n_failures"]
-    ]
+    table = groups.assign(members=groups["members"].map(" ".join)).merge(listed, on=key)
+    table = table[table["primary_expression"].isin(COMPACT_TARGETS)]
     for level in COMPACT_LEVELS:
         at = sensitivity[sensitivity["minimum_iou"] == level]
         renamed = {
@@ -5905,7 +5911,7 @@ def compact_comparison(
     return _in_target_order(table)[list(COMPACT_COLUMNS)]
 
 
-def compact_points(tables: RunTables, points: pd.DataFrame) -> pd.DataFrame:
+def compact_points(groups: pd.DataFrame, points: pd.DataFrame) -> pd.DataFrame:
     """The point inventories' headline scores, one row per group.
 
     Kept apart from the interval methods: scored by peak containment, with
@@ -5913,21 +5919,22 @@ def compact_points(tables: RunTables, points: pd.DataFrame) -> pd.DataFrame:
 
     Parameters
     ----------
-    tables : RunTables
+    groups : pandas.DataFrame
+        ``compact_groups``' table of the run's tables.
     points : pandas.DataFrame
-        ``point_inventories``' table of ``tables``.
+        ``point_inventories``' table of those tables.
 
     Returns
     -------
     points : pandas.DataFrame
         ``COMPACT_POINT_COLUMNS``, one row per group of point methods with
-        identical detections (``identical_groups``), in ``tables.methods``'
-        order, with the first member's numbers as ``point_inventories``
+        identical detections (``identical_groups``), in the groups' order,
+        members space-separated, with the first member's numbers as ``point_inventories``
         gives them: its ``false_positives_per_minute`` is
         ``unmatched_per_minute`` here, over the same ``minutes``, and
         ``n_unmatched`` is ``n_detected`` less ``n_matched``.
     """
-    table = _first_members(tables).merge(
+    table = groups.assign(members=groups["members"].map(" ".join)).merge(
         points.rename(columns=_UNMATCHED_NAMES), on=["method", "setting"]
     )
     table["n_unmatched"] = table["n_detected"] - table["n_matched"]
@@ -7753,8 +7760,9 @@ def _compact(name: str) -> AnalysisTable:
     ``compact_points``), all built once from the tables they read."""
 
     def tables(inputs: Inputs) -> dict[str, pd.DataFrame]:
+        groups = compact_groups(inputs.tables)
         comparison = compact_comparison(
-            inputs.tables,
+            groups,
             _matching(inputs),
             _of_reference(boundary_errors)(inputs),
             _of_reference(appendix_expressions)(inputs),
@@ -7772,7 +7780,7 @@ def _compact(name: str) -> AnalysisTable:
                 _of_scores(operating_points)(inputs),
             ),
             f"{COMPACT}_points": compact_points(
-                inputs.tables, _of_reference(point_inventories)(inputs)
+                groups, _of_reference(point_inventories)(inputs)
             ),
         }
 
