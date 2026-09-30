@@ -121,7 +121,7 @@ from run import (
 from run import _PERCENTS as PERCENTS
 from scipy.cluster.hierarchy import linkage
 from scipy.spatial.distance import squareform
-from validate_simulator import replace_directory
+from validate_simulator import interval_union, replace_directory
 
 import ripple_detection as rd
 from ripple_detection.evaluate import COMPARISON_COLUMNS
@@ -5768,7 +5768,7 @@ def false_positive_rates(
     times = []
     for session_id in tables.sessions["session_id"]:
         own = windows.get(session_id, np.empty((0, 2)))
-        union = rd.merge_close_events(own[np.argsort(own[:, 0], kind="stable")])
+        union = interval_union(own)
         bout = np.asarray(bouts[session_id], dtype=float).reshape(-1, 2)
         overlap = rd.intersect_intervals(union, bout)
         outside = float(np.sum(np.diff(bout, axis=1)) - np.sum(np.diff(overlap, axis=1)))
