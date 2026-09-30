@@ -95,7 +95,8 @@ def _write_run(run, root, sessions, condition_id="reference"):
 
     Each session is a dict: its ``events`` and ``non_events`` tables,
     ``duration`` in seconds, ``detected``, each (method, setting)'s
-    ``[start, end]`` rows, None for a call that failed, and optionally
+    ``[start, end]`` rows (each event's peak its midpoint) or ``[start,
+    end, peak]`` rows, None for a call that failed, and optionally
     ``spikes`` (``time``, ``multiunit``, ``unit_types``), from which the
     runner's own counters count the active units of every event and truth
     window. Scores come from the runner's own ``score_events``."""
@@ -117,17 +118,17 @@ def _write_run(run, root, sessions, condition_id="reference"):
             if bounds is None:
                 failures.append({**key, "error": "ValueError: made to fail"})
                 continue
-            detected = pd.DataFrame(
-                np.reshape(bounds, (-1, 2)), columns=["start_time", "end_time"]
-            )
+            given = np.asarray(bounds, dtype=float)
+            given = given.reshape(-1, given.shape[-1] if given.ndim == 2 else 2)
+            detected = pd.DataFrame(given[:, :2], columns=["start_time", "end_time"])
             active = (0, 0)
             if "spikes" in spec:
-                active = run.active_counts(np.reshape(bounds, (-1, 2)), spec["spikes"])
+                active = run.active_counts(given[:, :2], spec["spikes"])
             events.append(
                 detected.assign(
                     **key,
                     event_index=np.arange(len(detected)),
-                    peak_time=detected.mean(axis=1),
+                    peak_time=given[:, 2] if given.shape[1] == 3 else detected.mean(axis=1),
                     n_active_units=active[0],
                     n_active_principal=active[1],
                 )[list(run.EVENT_COLUMNS)]
@@ -589,6 +590,7 @@ def test_an_event_over_one_doublet_ripple_is_not_merged(analyze, run):
             "event_index": [0, 1],
             "start_time": [7.97, 7.97],
             "end_time": [8.03, 8.13],
+            "peak_time": np.nan,
         }
     )
     for bounds, merged in (([0], 0), ([1], 1)):
@@ -1092,8 +1094,11 @@ def test_point_inventories_are_scored_apart(analyze, point_matched):
     # in each session: four ripple windows, five points, three matched
     assert [row.n_reference, row.n_detected, row.n_matched] == [8, 10, 6]
     assert [row.recall, row.precision] == [0.75, 0.6]
+    # of the two unmatched per session, the one inside the doublet's network
+    # window is no false positive, the one on the leakage burst is
     minutes = ((20.0 - tables.sessions.event_time_s) / 60).sum()
-    assert row.false_positives_per_minute == pytest.approx(4 / minutes)
+    assert row.n_false_positives == 2
+    assert row.false_positives_per_minute == pytest.approx(2 / minutes)
     assert row.recall_low == row.recall_high == 0.75
     # an interval rule never sees Davidson; Lee's single samples it does
     interval_tables = [
@@ -1166,7 +1171,7 @@ def test_a_method_that_never_ran_keeps_its_rows(analyze, failing_run):
         "matching_sensitivity": "recall",
         "rates_by_state": "rate",
         "point_inventories": "recall",
-        "unmatched_by_state": "unmatched_rest_per_rest_minute",
+        "unmatched_by_state": "false_positives_rest_per_rest_minute",
     }
     for name, table in per_method.items():
         failed = (
@@ -1342,10 +1347,20 @@ def test_scores_of_every_condition_match_the_runner(analyze, run, tiny_run, tiny
     key = ["session_id", "method", "setting", "minimum_iou"]
     got = scores.counts.sort_values(key).reset_index(drop=True)
     pd.testing.assert_frame_equal(
-        got,
-        expected[list(analyze.COUNT_COLUMNS)].sort_values(key).reset_index(drop=True),
+        got[list(analyze.COUNT_COLUMNS[:-1])],
+        expected[list(analyze.COUNT_COLUMNS[:-1])].sort_values(key).reset_index(drop=True),
         check_dtype=False,
     )
+    # per session, Kay's leakage and last events and Mallory's two are false
+    # positives; Kay's over the burst-only event lies inside its network window
+    fp = got[got.minimum_iou == 0].set_index(["session_id", "method", "setting"])
+    assert fp.n_false_positives.to_dict() == {
+        ("reference/0", *KAY): 2,
+        ("reference/0", *KAY_SWEEP): 0,
+        ("reference/0", *MALLORY): 2,
+        ("reference/1", *KAY): 2,
+        ("reference/1", *KAY_SWEEP): 0,
+    }
     assert scores.failures.to_dict("records") == [
         {"session_id": "reference/1", "method": MALLORY[0], "setting": MALLORY[1]}
     ]
@@ -1388,8 +1403,11 @@ def test_appendix_scores_every_method_against_every_expression(analyze, point_ma
     ripple = kay.loc["ripple"]
     assert [ripple.n_reference, ripple.n_detected, ripple.n_matched] == [8, 12, 6]
     assert [ripple.recall, ripple.precision] == [0.75, 0.5]
+    # of Kay's three unmatched per session, the one over the burst-only event
+    # lies inside its network window: two false positives per session
     minutes = ((20.0 - tables.sessions.event_time_s) / 60).sum()
-    assert ripple.false_positives_per_minute == pytest.approx(6 / minutes)
+    assert ripple.n_false_positives == 4
+    assert ripple.false_positives_per_minute == pytest.approx(4 / minutes)
     assert (ripple.n_pairs, ripple.median_iou) == (6, pytest.approx(0.8, abs=1e-5))
     assert ripple.recall_low == ripple.recall_high == 0.75
     assert kay.primary.to_dict() == {
@@ -1432,6 +1450,148 @@ def test_appendix_curves_read_every_expression(analyze, run, tiny_run):
             "default": "default",
             "literature": "recipe",
         }
+
+
+def _event_free_session(run, origin):
+    """Two sharp-wave ripples (2 and 10 s) and two sharp-wave-only events (4
+    and 6 s), from ``origin``. Kay (ripple) matches both ripples, the second
+    by an event whose peak (10.25 s) lies outside every network window, and
+    leaves three events unmatched: inside the first sharp-wave-only event,
+    with its peak on the second's end, and over nothing (16 s); only the last
+    is a false positive. Its sweep point has the first and last of those and
+    one more over nothing. Davidson's ripple peaks lie on the first ripple's,
+    inside the first sharp-wave-only event, on the second's end and over
+    nothing."""
+    events = _event_table(
+        run,
+        [
+            (0, "swr", "ripple", 0, 2.0, 0.05),
+            (0, "swr", "sharp_wave", 0, 2.0, 0.04),
+            (0, "swr", "burst", 0, 2.0, 0.06),
+            (1, "sharp_wave_only", "sharp_wave", 0, 4.0, 0.04),
+            (2, "sharp_wave_only", "sharp_wave", 0, 6.0, 0.04),
+            (3, "swr", "ripple", 0, 10.0, 0.05),
+            (3, "swr", "sharp_wave", 0, 10.0, 0.04),
+            (3, "swr", "burst", 0, 10.0, 0.06),
+        ],
+        origin,
+    )
+    network = rd.truth_windows(events, 0.1, "network")
+    edge = network.loc[network["id"] == 2, "end_time"].iloc[0]
+    kay = [
+        (origin + 1.95, origin + 2.05, origin + 2.0),
+        (origin + 3.97, origin + 4.0, origin + 3.985),
+        (edge, edge + 0.05, edge),
+        (origin + 9.96, origin + 10.3, origin + 10.25),
+        (origin + 16.0, origin + 16.1, origin + 16.05),
+    ]
+    sweep = [kay[1], kay[4], (origin + 17.0, origin + 17.1, origin + 17.05)]
+    peaks = np.array([origin + 2.0, origin + 4.0, edge, origin + 16.05])
+    return {
+        "events": events,
+        "non_events": _non_event_tables(
+            _one_non_event_table("emg", center_time=origin + 14.0)
+        ),
+        "duration": 20.0,
+        "detected": {
+            KAY: np.array(kay),
+            KAY_SWEEP: np.array(sweep),
+            DAVIDSON: np.column_stack([peaks, peaks, peaks]),
+        },
+    }
+
+
+@pytest.fixture(scope="module")
+def event_free_run(run, tmp_path_factory):
+    sessions = [_event_free_session(run, 0.0), _event_free_session(run, UNIX_ORIGIN)]
+    return _write_run(run, tmp_path_factory.mktemp("event_free"), sessions)
+
+
+@pytest.fixture(scope="module")
+def event_free_matched(analyze, event_free_run):
+    tables = analyze.load_run(event_free_run)
+    return tables, analyze.match_run(tables, levels=(0.0, 0.2, 0.5))
+
+
+def test_a_false_positive_lies_outside_every_network_window(analyze, event_free_matched):
+    tables, matches = event_free_matched
+    unmatched = matches.false_positives
+    kay = unmatched[unmatched.method == KAY[0]].sort_values(["session_id", "event_index"])
+    # the matched event whose peak lies outside every window (3) is neither;
+    # inside a sharp-wave-only event and on its end (closed) are in the events
+    assert kay.event_index.tolist() == [1, 2, 4] * 2
+    assert kay.in_events.tolist() == [True, True, False] * 2
+    minutes = ((20.0 - tables.sessions.event_time_s) / 60).sum()
+    appendix = analyze.appendix_expressions(tables, matches, n_resamples=FEW)
+    rows = appendix[appendix.method == KAY[0]].set_index("expression")
+    ripple = rows.loc["ripple"]
+    assert [ripple.n_detected, ripple.n_matched, ripple.n_false_positives] == [10, 4, 2]
+    # one count per method, whichever expression a row scores
+    assert (rows.n_false_positives == 2).all()
+    # the sessions are alike, so every resample pools the same rate
+    for part in ("", "_low", "_high"):
+        assert ripple[f"false_positives_per_minute{part}"] == pytest.approx(2 / minutes)
+    # a point is placed by its time the same way
+    points = analyze.point_inventories(tables, matches, n_resamples=FEW).iloc[0]
+    assert [points.n_detected, points.n_matched, points.n_false_positives] == [8, 2, 2]
+    assert points.false_positives_per_minute == pytest.approx(2 / minutes)
+
+
+def test_unmatched_detections_in_events_are_counted_apart(analyze, event_free_matched):
+    tables, matches = event_free_matched
+    found = _compact_of(analyze, tables, matches)
+    kay = found.split.set_index("method").loc[KAY[0]]
+    # too short for a running bout: every false positive at rest
+    assert [
+        kay.n_unmatched,
+        kay.n_unmatched_in_events,
+        kay.n_false_positives_rest,
+        kay.n_false_positives_running,
+    ] == [6, 4, 2, 0]
+    assert kay.session_minutes == pytest.approx(40 / 60)
+    assert kay.unmatched_per_session_minute == pytest.approx(6 / (40 / 60))
+    assert kay.false_positives_rest_per_rest_minute == pytest.approx(2 / kay.rest_minutes)
+    row = found.compact.set_index("method").loc[KAY[0]]
+    assert row.n_false_positives + row.n_unmatched_in_events == row.n_unmatched
+    assert row.n_false_positives_rest + row.n_false_positives_running == row.n_false_positives
+
+
+def test_scores_count_event_free_false_positives(analyze, event_free_run):
+    scores = analyze.load_scores(event_free_run.parent)
+    # a point method has no level: -1 here
+    counts = scores.counts.fillna({"minimum_iou": -1.0})
+    counts = counts.groupby(["method", "setting", "minimum_iou"])
+    # per session one false positive at the default, two in the sweep point,
+    # one of Davidson's points: the count at IoU 0, at every level
+    assert counts.n_false_positives.sum().to_dict() == {
+        (*DAVIDSON, -1.0): 2,
+        **{(KAY[0], "3.0", level): 4 for level in (0.0, 0.2, 0.5)},
+        **{(KAY[0], "default", level): 2 for level in (0.0, 0.2, 0.5)},
+    }
+    curves = analyze.operating_curves(scores)
+    sweep = curves[(curves.setting == KAY_SWEEP[1]) & (curves.minimum_iou == 0)].iloc[0]
+    assert [sweep.n_detected, sweep.n_matched, sweep.n_false_positives] == [6, 0, 4]
+    # the unmatched events inside a sharp-wave-only event are not in the rate
+    rate = 4 / scores.sessions.minutes.sum()
+    assert sweep.false_positives_per_minute == pytest.approx(rate)
+    network = analyze.expression_curves(scores, "network")
+    at_zero = network[(network.setting == KAY_SWEEP[1]) & (network.minimum_iou == 0)]
+    assert at_zero.false_positives_per_minute.tolist() == pytest.approx([rate])
+
+
+def test_false_positives_are_counted_again_where_a_rate_reads_them(analyze, run, tmp_path):
+    for condition in ("reference", "spike_model=refractory", "ripple_snr=low"):
+        _write_run(run, tmp_path, [_event_free_session(run, 0.0)], condition_id=condition)
+    scores = analyze.load_scores(tmp_path)
+    counts = scores.counts[scores.counts.minimum_iou.fillna(0) == 0]
+    found = counts.set_index(["session_id", "method", "setting"]).n_false_positives
+    # every condition's main settings, and the sweeps of the reference and
+    # of the alternative models, which model sensitivity reads
+    assert found[("spike_model=refractory/0", *KAY_SWEEP)] == 2
+    assert found[("ripple_snr=low/0", *KAY)] == 1
+    assert found[("ripple_snr=low/0", *DAVIDSON)] == 1
+    # a sweep no rate reads is not matched again
+    assert np.isnan(found[("ripple_snr=low/0", *KAY_SWEEP)])
 
 
 def _design_at_fp_rate(curve, target, floor, columns):
@@ -1520,9 +1680,16 @@ def _hand_scores(analyze, counts, errors=(), minutes=10.0):
     """ConditionScores built by hand: ``counts`` and ``errors`` are dicts
     with ``condition_id`` and ``replicate`` in place of a session, every
     session ``minutes`` long outside the network windows, every method's
-    primary expression ripple but Mallory's (burst)."""
+    primary expression ripple but Mallory's (burst). A count without
+    ``n_false_positives`` has every unmatched event outside the windows."""
     counts = pd.DataFrame(list(counts)).assign(
         session_id=lambda f: f.condition_id + "/" + f.replicate.astype(str)
+    )
+    unmatched = counts.n_detected - counts.n_matched
+    counts["n_false_positives"] = (
+        counts.n_false_positives.fillna(unmatched)
+        if "n_false_positives" in counts
+        else unmatched
     )
     counts = (
         counts.fillna({"minimum_iou": 0.0})
@@ -1826,6 +1993,29 @@ def test_paired_changes_use_only_replicates_run_in_every_condition(analyze):
     assert (kay.n_events, kay.n_events_reference) == (18, 18)
     roumis = changes.loc[("Roumis", "ripple_snr=low")]
     assert (roumis.n_replicates, roumis.n_dropped, roumis.n_failures) == (4, 0, 0)
+
+
+def test_a_false_positive_change_counts_event_free_detections(analyze):
+    # seven unmatched events on every session of both conditions, four of
+    # them outside the network windows in the reference and two under low SNR
+    counts = []
+    for replicate in range(4):
+        for condition, outside in (("reference", 4), ("ripple_snr=low", 2)):
+            found = _kay(condition, replicate, "default", 5, 12)
+            counts.append({**found, "n_false_positives": outside})
+    changes = analyze.paired_changes(
+        _hand_scores(analyze, counts),
+        ["reference", "ripple_snr=low"],
+        "reference",
+        measures=("false_positives_per_minute",),
+        n_resamples=FEW,
+    ).set_index("condition_id")
+    low = changes.loc["ripple_snr=low"]
+    # 10 minutes per session outside the windows
+    assert [low.value, low.change, low.change_low, low.change_high] == pytest.approx(
+        [0.2, -0.2, -0.2, -0.2]
+    )
+    assert (low.n_events, low.n_events_reference) == (8, 16)
 
 
 def _two_curves(condition, replicate, method=KAY[0]):
@@ -2444,7 +2634,8 @@ def test_model_sensitivity_keeps_failures_apart_from_unreachable_targets(analyze
         counts.setting == "3.0"
     )
     counts = counts.assign(
-        n_detected=np.where(shifted, counts.n_matched + 10, counts.n_detected)
+        n_detected=np.where(shifted, counts.n_matched + 10, counts.n_detected),
+        n_false_positives=np.where(shifted, 10, counts.n_false_positives),
     )
     scores = dataclasses.replace(scores, counts=counts)
     # under refractory spiking Kay's whole sweep fails, and Karlsson's default
@@ -3139,7 +3330,7 @@ def test_a_group_lists_its_stand_ins(analyze):
 @pytest.fixture(scope="module")
 def tiny_levels(analyze, tiny_tables):
     """The tiny run matched at every minimum IoU, and running bouts: one ends
-    where Kay's first false positive's time is (its peak, here its bounds'
+    where Kay's first unmatched event's time is (its peak, here its bounds'
     midpoint), one where its last's is, and one starts 0.5 ms past its middle
     one's, each session's from its own clock origin."""
     matches = analyze.match_run(tiny_tables, levels=(0.0, 0.2, 0.5))
@@ -3162,20 +3353,23 @@ def test_unmatched_detections_are_placed_by_their_time(analyze, tiny_tables, tin
     matches, bouts = tiny_levels
     split = analyze.unmatched_by_state(tiny_tables, matches, bouts=bouts, n_resamples=FEW)
     split = split.set_index("method")
-    # Kay, per session: the false positive over the burst-only event and the
-    # last one peak where a bout ends (closed: running); the leakage one
-    # starts before the second bout, its peak 0.5 ms before it (rest)
+    # Kay, per session: the unmatched event over the burst-only event lies
+    # inside its network window, no false positive; the last one peaks where a
+    # bout ends (closed: running); the leakage one starts before the second
+    # bout, its peak 0.5 ms before it (rest)
     kay = split.loc[KAY[0]]
-    assert [kay.n_unmatched_rest, kay.n_unmatched_running] == [2, 4]
+    assert [kay.n_unmatched, kay.n_unmatched_in_events] == [6, 2]
+    assert [kay.n_false_positives_rest, kay.n_false_positives_running] == [2, 2]
     minutes = (20.0 - tiny_tables.sessions.event_time_s.to_numpy()) / 60
     # the bouts last 2.1495 s, 0.1 s of it inside the burst-only event's window
     running = 2 * 2.0495 / 60
     assert kay.running_minutes == pytest.approx(running, abs=1e-6)
     assert kay.rest_minutes == pytest.approx(minutes.sum() - running, abs=1e-6)
-    assert kay.unmatched_rest_per_rest_minute == pytest.approx(2 / kay.rest_minutes)
+    assert kay.false_positives_rest_per_rest_minute == pytest.approx(2 / kay.rest_minutes)
+    assert kay.session_minutes == pytest.approx(40 / 60)
     # Mallory, on the session it ran: the EMG's and the last, both at rest
     mallory = split.loc[MALLORY[0]]
-    assert [mallory.n_unmatched_rest, mallory.n_unmatched_running] == [2, 0]
+    assert [mallory.n_false_positives_rest, mallory.n_false_positives_running] == [2, 0]
     assert mallory.rest_minutes == pytest.approx(minutes[0] - running / 2, abs=1e-6)
     assert (mallory.n_sessions, mallory.n_failures) == (1, 1)
 
@@ -3189,7 +3383,8 @@ def test_unmatched_detections_are_placed_by_peak_else_midpoint(
     kay = events.method == KAY[0]
     # the leakage false positive (11.999 to 12.001 s) peaks at its end, inside
     # the bout that starts 0.5 ms past its midpoint; the last has no peak, so
-    # its midpoint, on a bout's end, places it
+    # its midpoint, on a bout's end, places it; the one over the burst-only
+    # event is no false positive
     leakage = kay & np.isclose(events.start_time % 100, 11.999)
     last = kay & np.isclose(events.start_time % 100, 16.0)
     assert leakage.sum() == last.sum() == 2
@@ -3198,7 +3393,7 @@ def test_unmatched_detections_are_placed_by_peak_else_midpoint(
     moved = dataclasses.replace(tiny_tables, events=events)
     split = analyze.unmatched_by_state(moved, matches, bouts=bouts, n_resamples=FEW)
     kay = split.set_index("method").loc[KAY[0]]
-    assert [kay.n_unmatched_rest, kay.n_unmatched_running] == [0, 6]
+    assert [kay.n_false_positives_rest, kay.n_false_positives_running] == [0, 4]
 
 
 def test_unmatched_detections_by_default_draw_the_bouts_again(
@@ -3206,7 +3401,7 @@ def test_unmatched_detections_by_default_draw_the_bouts_again(
 ):
     # the tiny run's sessions are too short for a running bout: all rest
     split = analyze.unmatched_by_state(tiny_tables, tiny_matches, n_resamples=FEW)
-    assert (split.n_unmatched_running == 0).all()
+    assert (split.n_false_positives_running == 0).all()
     assert (split.running_minutes == 0).all()
     wrong = dataclasses.replace(tiny_tables, sessions=tiny_tables.sessions.assign(rest_s=19.0))
     with pytest.raises(ValueError, match="the running schedule drawn again"):
@@ -3219,22 +3414,23 @@ def tiny_compact(analyze, tiny_tables, tiny_levels):
     return _compact_of(analyze, tiny_tables, matches, bouts)
 
 
-# The compact columns unmatched_by_state gives, and those the appendix does
-# under their compact names.
+# The compact columns unmatched_by_state gives, and those the appendix does.
 _SPLIT_COLUMNS = (
-    "n_unmatched_rest",
-    "n_unmatched_running",
+    "n_unmatched",
+    "n_unmatched_in_events",
+    "n_false_positives_rest",
+    "n_false_positives_running",
+    "session_minutes",
     "rest_minutes",
     "running_minutes",
-    *(f"unmatched_rest_per_rest_minute{part}" for part in ("", "_low", "_high")),
+    *(f"unmatched_per_session_minute{part}" for part in ("", "_low", "_high")),
+    *(f"false_positives_rest_per_rest_minute{part}" for part in ("", "_low", "_high")),
 )
-_OVERALL_COLUMNS = {
-    "minutes": "minutes",
-    **{
-        f"false_positives_per_minute{part}": f"unmatched_per_minute{part}"
-        for part in ("", "_low", "_high")
-    },
-}
+_OVERALL_COLUMNS = (
+    "n_false_positives",
+    "minutes",
+    *(f"false_positives_per_minute{part}" for part in ("", "_low", "_high")),
+)
 
 
 def test_what_was_not_computed_is_refused(analyze, tiny_tables, tiny_matches, tiny_compact):
@@ -3257,17 +3453,23 @@ def test_compact_comparison_takes_its_numbers_from_their_tables(analyze, tiny_co
     # given, Kay's running ones among them
     split = found.split.set_index("method").loc[compact.method, list(_SPLIT_COLUMNS)]
     pd.testing.assert_frame_equal(by_method[list(_SPLIT_COLUMNS)], split, check_dtype=False)
-    assert compact.n_unmatched_running.tolist() == [4, 0]
-    # every unmatched detection: the appendix's against the primary expression
+    assert compact.n_false_positives_running.tolist() == [2, 0]
+    # the false positives: the appendix's against the primary expression
     appendix = found.appendix[found.appendix.primary].set_index("method")
-    overall = appendix.loc[compact.method, list(_OVERALL_COLUMNS)].rename(
-        columns=_OVERALL_COLUMNS
-    )
+    overall = appendix.loc[compact.method, list(_OVERALL_COLUMNS)]
     pd.testing.assert_frame_equal(
-        by_method[list(_OVERALL_COLUMNS.values())], overall, check_dtype=False
+        by_method[list(_OVERALL_COLUMNS)], overall, check_dtype=False
     )
+    # every unmatched detection, those inside the events and the false
+    # positives, and those at rest and running, add up
     unmatched = appendix.loc[compact.method].eval("n_detected - n_matched")
     assert compact.n_unmatched.tolist() == unmatched.tolist() == [6, 2]
+    assert compact.n_unmatched_in_events.tolist() == [2, 0]
+    assert compact.n_false_positives.tolist() == [4, 2]
+    assert (compact.n_false_positives_rest + compact.n_false_positives_running).tolist() == [
+        4,
+        2,
+    ]
     assert list(compact.columns) == list(analyze.COMPACT_COLUMNS)
     assert compact[
         ["primary_expression", "method", "members", "n_members"]
@@ -3326,13 +3528,10 @@ def test_compact_points_are_the_point_inventories(analyze, point_matched):
     assert len(compact) == 1
     assert (row.method, row.members, row.stand_in_inputs) == (DAVIDSON[0], DAVIDSON[0], "")
     assert [row.n_reference, row.n_detected, row.n_matched, row.n_unmatched] == [8, 10, 6, 4]
-    for name in ("recall", "precision"):
+    assert [row.n_false_positives, row.n_unmatched_in_events] == [2, 2]
+    for name in ("recall", "precision", "false_positives_per_minute"):
         for part in ("", "_low", "_high"):
             assert row[f"{name}{part}"] == source[f"{name}{part}"]
-    for part in ("", "_low", "_high"):
-        assert (
-            row[f"unmatched_per_minute{part}"] == source[f"false_positives_per_minute{part}"]
-        )
 
 
 def test_compact_held_out_sets_measured_beside_interpolated(analyze):
@@ -3346,7 +3545,7 @@ def test_compact_held_out_sets_measured_beside_interpolated(analyze):
     held = rows.loc[(KAY[0], 1.0, "held_out")]
     chosen = thresholds[(thresholds.method == KAY[0]) & (thresholds.fp_target == 1.0)].iloc[0]
     assert (held.kind, held.setting) == ("measured", chosen.setting)
-    assert [held.recall, held.unmatched_per_minute, held.n_sessions] == [
+    assert [held.recall, held.false_positives_per_minute, held.n_sessions] == [
         chosen.recall,
         chosen.false_positives_per_minute,
         chosen.n_held_out_sessions,
@@ -3360,7 +3559,7 @@ def test_compact_held_out_sets_measured_beside_interpolated(analyze):
         at_one.recall_low,
         at_one.recall_high,
     ]
-    assert np.isnan(read.unmatched_per_minute)
+    assert np.isnan(read.false_positives_per_minute)
     # Roumis's curve never comes down to 1 per minute; 5 is a setting's rate
     assert rows.loc[(ROUMIS, 1.0, "held_out"), "kind"] == ""
     assert rows.loc[(ROUMIS, 1.0, "operating_point"), "kind"] == ""
@@ -3436,10 +3635,17 @@ def test_compact_tables_keep_one_row_per_group(analyze, compact_run):
     assert carey.onset_error_10 == network["median"]
     # Carey has a false positive on the first session alone: the second
     # counts none, and its minutes count, in the rate and its interval
-    assert [carey.n_unmatched, carey.n_unmatched_rest, carey.n_unmatched_running] == [1, 1, 0]
-    assert carey.unmatched_per_minute == pytest.approx(1 / carey.minutes)
-    assert np.isfinite([carey.unmatched_per_minute_low, carey.unmatched_per_minute_high]).all()
-    rest = ["unmatched_rest_per_rest_minute" + part for part in ("", "_low", "_high")]
+    assert [carey.n_unmatched, carey.n_unmatched_in_events, carey.n_false_positives] == [
+        1,
+        0,
+        1,
+    ]
+    assert [carey.n_false_positives_rest, carey.n_false_positives_running] == [1, 0]
+    assert carey.false_positives_per_minute == pytest.approx(1 / carey.minutes)
+    assert np.isfinite(
+        [carey.false_positives_per_minute_low, carey.false_positives_per_minute_high]
+    ).all()
+    rest = ["false_positives_rest_per_rest_minute" + part for part in ("", "_low", "_high")]
     assert carey[rest[0]] == pytest.approx(1 / carey.rest_minutes)
     assert np.isfinite(carey[rest].to_numpy(float)).all()
     # the bout's 0.5 s less the 0.35 s of the two overlapping windows' union
@@ -3474,11 +3680,12 @@ def test_compact_page_lists_groups_and_stand_ins(analyze, compact_run):
             "are identical on every session"
         ),
         (
-            "**Unmatched / min.** Every detection matching no truth window of its primary "
-            "expression at IoU 0, at rest or running, over the minutes outside every network "
-            "window at 10 % (`minutes`), the denominator of every other false-positive rate "
-            "in these results."
+            "**FP / min.** A false positive is a detection matching no truth window of its "
+            "primary expression at IoU 0 whose time, its peak, else the midpoint of its "
+            "bounds, lies outside every network window at 10 % (closed: a time on a "
+            "window's start or end is inside)."
         ),
+        "**Unmatched / session min.** Every unmatched detection, false positive or not,",
         (
             "**Stand-ins.** The inputs the benchmark serves a recipe in place of something "
             "the simulator lacks"
@@ -3499,7 +3706,9 @@ def test_compact_page_formats_every_number(analyze, tiny_tables, tiny_compact):
     assert (
         f"| `{KAY[0]}` | 1 | {kay.recall_iou0:.2f} / {kay['recall_iou0.5']:.2f} "
         f"| {kay.precision_iou0:.2f} / {kay['precision_iou0.5']:.2f} "
-        f"| {kay.unmatched_per_minute:#.3g} | {kay.unmatched_rest_per_rest_minute:#.3g} "
+        f"| {kay.false_positives_per_minute:#.3g} "
+        f"| {kay.false_positives_rest_per_rest_minute:#.3g} "
+        f"| {kay.unmatched_per_session_minute:#.3g} "
         f"| {1000 * kay.onset_error_10:+.1f} / {1000 * kay.onset_error_50:+.1f} "
         f"| {1000 * kay.offset_error_10:+.1f} / {1000 * kay.offset_error_50:+.1f} |"
     ) in page
@@ -3514,7 +3723,8 @@ def test_compact_page_formats_every_number(analyze, tiny_tables, tiny_compact):
         "its peak, else the midpoint of its bounds",
         "`interpolated`",
         "this simulator's reference sessions",
-        "`n_unmatched_running`",
+        "`n_false_positives_running`",
+        "`n_unmatched_in_events`",
     ):
         assert phrase in page
     # formatted numbers only, never a float's full repr
@@ -3578,6 +3788,10 @@ def test_the_command_writes_every_table_and_the_summary(analyze, two_condition_r
     ):
         assert heading in summary
     assert "Point inventories (none in this run;" in summary
+    assert (
+        "A false positive is an event matching none at IoU 0 whose time (its peak, else "
+        "its bounds' midpoint) lies outside every network window at 10 %"
+    ) in " ".join(summary.split())
     assert (
         "Across every condition, 1 calls failed (sweeps included), by method, setting and "
         f"condition:\n\n- `{MALLORY[0]}` (literature), `reference`: 1 sessions" in summary

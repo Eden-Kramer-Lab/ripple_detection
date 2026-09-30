@@ -412,6 +412,23 @@ bounds, overlap, timing, agreement, consensus, splits and merges, participation,
 or minimum IoU leaves them out. A method whose intervals happen to be one sample long,
 such as `lee_2002`'s, keeps the interval rule: the catalog decides, not the events.
 
+False positives. A false positive is a detection matching no truth window of its
+method's primary expression at IoU 0 whose time, its peak, else the midpoint of its
+bounds (`event_times`, the time `rates_by_state` places events by), lies outside every
+network window at 10 % of the peak, the windows closed (a time on a window's start or
+end is inside; `in_network_windows`). False positives per minute are those over the
+minutes outside every network window, so numerator and denominator cover the same time.
+That is the rate of every table (`false_positives_per_minute`, with `n_false_positives`
+beside it where counts are shown) and the operating curves' axis at every minimum IoU:
+the IoU-0 count, so a curve at IoU 0.5 has the same false positives as at 0. An
+unmatched detection whose time lies inside a network window, such as a ripple method's
+detection of a sharp-wave-only event, is no false positive: it counts against precision,
+which counts every unmatched detection, and the compact tables count it apart
+(`n_unmatched_in_events`). Point methods follow the same rule by their points' times.
+Every rate is re-counted from the saved events: matching again every setting in the
+reference and in the six alternative models' conditions, whose sweeps the curves and
+model sensitivity read, and the main settings in every condition.
+
 - `failures`: each method's sessions with scores and without, and its scoring rule. A
   session without a method's scores is a failure, never zero events. Every per-method
   table has a row for every method, one that never ran included (its counts 0, its
@@ -423,18 +440,19 @@ such as `lee_2002`'s, keeps the interval rule: the catalog decides, not the even
   `n_failures`. The dendrogram and consensus count the methods compared and the calls
   that failed.
 - `point_inventories`: the point methods' recall, precision and false positives per
-  minute.
+  minute (their unmatched points outside every network window).
 - `detection_profile`: recall per event type against the network truth.
-- `false_positive_classes`: what each method's false positives (its events matching no
-  window of its primary expression) overlap longest: an event type's component
-  (`swr:ripple`, `burst_only:burst`, ...), a non-event (`emg`, ...) or nothing
-  (`background`).
+- `false_positive_classes`: what each method's unmatched detections (its events
+  matching no window of its primary expression, every one, those inside a network
+  window included) overlap longest: an event type's component (`swr:ripple`,
+  `burst_only:burst`, ...), a non-event (`emg`, ...) or nothing (`background`).
 - `pairwise_agreement` and `agreement_dendrogram`: Jaccard indices of every pair of
   methods against the network truth, the one every method is scored on (of all their
   events, of those matching a true event, of those matching none, and of the true
   events found), and the methods clustered by average linkage on `1 - jaccard`.
 - `consensus`: how many methods found each true event, by type, and how many methods
-  each group of overlapping false positives spans.
+  each group of overlapping unmatched detections spans (every unmatched detection,
+  those inside a network window included).
 - `overlap_quality`: IoU, coverage and temporal precision of the matched pairs.
 - `boundary_errors`: signed and absolute onset and offset errors against the truth at
   10, 25 and 50 % of the peak, each median beside its pair count and the method's
@@ -472,7 +490,8 @@ such as `lee_2002`'s, keeps the interval rule: the catalog decides, not the even
   detectors, under each of the simulator's six alternative models.
 - `appendix_expressions`: every main method against every expression (network, ripple,
   sharp wave, burst), not only its primary one: recall, precision, false positives per
-  minute, median IoU and median signed and absolute errors at 10 %, with intervals.
+  minute (against the primary expression: one count per method, on every row), median
+  IoU and median signed and absolute errors at 10 %, with intervals.
 - `appendix_curves_<expression>`: every interval method's curve against one expression,
   one file per expression.
 - `compact_<target>` (ripple, burst, network), `compact_held_out` and `compact_points`,
@@ -523,7 +542,11 @@ three minimum IoUs 34 s, every condition's scores 20 s, the tables 1.9 minutes
 (`robustness` 28 s, `appendix_expressions` 18 s, `model_sensitivity` 16 s,
 `boundary_errors` 13 s, `robustness_crossed` 9 s, the others under 7 s each, the compact
 tables under 1 s) and the figures 11 s. It wrote 72 files (42 CSV, 28 PNG, `compact.md`
-and `summary.md`), the largest 846 kB.
+and `summary.md`), the largest 846 kB. Counting the false positives outside the network
+windows, which matches the six alternative models' sweeps again, left that unchanged
+within the machine's noise: on 2026-09-30, back to back, 3.4 minutes wall against 3.5
+before, every condition's scores 22.5 s against 19.5 s, and a peak of 4.4 GB resident in
+the main process against 4.9 GB.
 
 ## Results
 
@@ -544,28 +567,35 @@ with the spot check behind it.
 
 `compact.md` is the place to start: one table per primary expression (ripple, burst,
 network) of the reference condition's main methods, each against its primary
-expression, with recall and precision at IoU 0 and 0.5, unmatched detections per minute
-overall and at rest, and the median signed onset and offset errors at 10 and 50 % of the
-peak, estimates only. `compact_<target>.csv` has each number's interval and counts. The
-tables compute nothing new but the split into rest and running: every other number is
-copied from the table it comes from (recall, precision and their counts from
-`matching_sensitivity`, the errors from `boundary_errors`; the overall rate equals
-`appendix_expressions`' false positives per minute against the primary expression), so
-they agree with those files to the last digit.
+expression, with recall and precision at IoU 0 and 0.5, false positives per minute
+overall and at rest, every unmatched detection per session minute, and the median signed
+onset and offset errors at 10 and 50 % of the peak, estimates only.
+`compact_<target>.csv` has each number's interval and counts. The tables compute nothing
+new but the split into rest and running, the unmatched detections inside the events and
+the unmatched burden (`unmatched_by_state`): every other number is copied from the table
+it comes from (recall, precision and their counts from `matching_sensitivity`, the
+errors from `boundary_errors`; the overall false-positive rate equals
+`appendix_expressions`' against the primary expression), so they agree with those files
+to the last digit.
 
 - IoU 0 (any overlap) is the predeclared primary matching; IoU >= 0.5 is reported beside
   it as a second headline, added after run v1's results had been seen: post hoc, not
   predeclared.
-- Two false-positive rates, each with its numerator and denominator in the CSV:
-  `unmatched_per_minute` is every unmatched detection, at rest or running, over the
-  minutes outside every network window (the denominator of every other false-positive
-  rate in these results); `unmatched_rest_per_rest_minute` is the unmatched detections at
-  rest over the minutes of rest outside every network window, those while running
-  counted beside it (`n_unmatched_running` over `running_minutes`). A detection is at
-  rest or running by its time as `rates_by_state` places events (its peak, else the
-  midpoint of its bounds) against the running bouts as closed intervals (a time on a
-  bout's start or end is running), the bouts drawn again from each session's saved seed
-  and checked against the run's saved rest time.
+- Two false-positive rates and the unmatched burden, each with its numerator and
+  denominator in the CSV: `false_positives_per_minute` is the false positives
+  (`n_false_positives`), at rest or running, over the minutes outside every network
+  window (`minutes`), as every other table has it;
+  `false_positives_rest_per_rest_minute` is those at rest over the minutes of rest
+  outside every network window, those while running counted beside it
+  (`n_false_positives_running` over `running_minutes`; rest and running add up to
+  `n_false_positives`); `unmatched_per_session_minute` is every unmatched detection
+  (`n_unmatched`), false positive or not, over the sessions' whole minutes
+  (`session_minutes`), with `n_unmatched_in_events`, those whose times lie inside a
+  network window, beside it (`n_false_positives + n_unmatched_in_events =
+  n_unmatched`). A detection is at rest or running by its time as `rates_by_state`
+  places events (its peak, else the midpoint of its bounds) against the running bouts
+  as closed intervals (a time on a bout's start or end is running), the bouts drawn
+  again from each session's saved seed and checked against the run's saved rest time.
 - Methods whose detections are identical on every session, start, end and event times
   (the peak, else the bounds' midpoint) equal exactly and the same failures, are one
   row (`members`, `n_members`), named by the first in the methods' order.
@@ -581,8 +611,9 @@ they agree with those files to the last digit.
   settings, or `tested` at one, which happens only when a pooled rate equals the target
   exactly, so in practice every reached value is interpolated. Only the held-out value
   is one a threshold recommendation may quote.
-- `compact_points.csv` keeps the point inventories apart: recall, precision and
-  unmatched detections per minute by peak containment.
+- `compact_points.csv` keeps the point inventories apart: recall, precision and false
+  positives per minute by peak containment, with `n_unmatched` and
+  `n_unmatched_in_events`.
 
 Like everything here, the compact tables describe this simulator's reference sessions
 and taxonomy only.
@@ -603,7 +634,7 @@ bursts are declared non-events), not a claim about what a recording's event was.
 order (`agreement_dendrogram.png`, average linkage on `1 - jaccard`), all against the
 network truth: two methods can agree on events that are false. `consensus.png` shows
 how many methods found each true event, by type, and how many methods each group of
-overlapping false positives spans. `overlap_quality.png` draws the IoU, coverage (the
+overlapping unmatched detections spans. `overlap_quality.png` draws the IoU, coverage (the
 fraction of the true event found) and temporal precision (the fraction of the event
 that is true) of the matched pairs, 5-95 % whiskers and the interquartile box. They
 cannot show agreement on events no method found.
@@ -629,8 +660,10 @@ compare methods with one convention, not with an observable onset.
 `operating_curves.png` plots recall against false positives per minute (log scale; a
 rate of 0 drawn at the resolution, half of one false positive over the minutes counted)
 along each detector's sweep, its default an open circle and each recipe a grey point on
-the panel of its primary expression. False positives are counted over the minutes
-outside every network window, so a rate is per minute of time without events.
+the panel of its primary expression. False positives, the unmatched detections whose
+times lie outside every network window, are counted over the minutes outside every
+network window, so a rate is per minute of time without events and counts only what
+fired there.
 `operating_points.png` gives recall at 0.5, 1, 2 and 5 per minute: a target a curve does
 not reach is missing, never its nearest end, and `attained` in the CSV says in what
 share of resamples it is reached. Such a value is read off the curve, not measured:
