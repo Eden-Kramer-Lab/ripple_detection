@@ -4712,14 +4712,11 @@ def model_sensitivity(
         found["n_failures"] += found.pop("reference_failures")
         found["status"] = _status(found["change"], found["n_failures"], "compared")
         # a main setting's measure is read off no curve: its interval decides
-        _, direction = established_direction(
-            [""] * len(found), [""] * len(found), found["change_low"], found["change_high"]
-        )
         found = found.assign(
             read_off_reference="",
             read_off="",
             bound="",
-            established=direction != 0,
+            established=_excludes(found, "change_low", "change_high"),
             fp_target=np.nan,
         )
         changes.append(
