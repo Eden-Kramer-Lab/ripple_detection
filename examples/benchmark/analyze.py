@@ -5592,9 +5592,18 @@ def method_stand_ins(method: str) -> tuple[str, ...]:
         simulator's labels, one template, a zero reference, an external or
         example ripple inventory). Empty for a detector, which takes only
         observed signals.
+
+    Raises
+    ------
+    KeyError
+        A ``"recipe:"`` name that is no configuration of ``RECIPES``.
     """
-    config = _configurations().get(method)
-    return () if config is None else stand_in_inputs(config)
+    if not method.startswith("recipe:"):
+        return ()
+    if method not in _configurations():
+        msg = f"{method} is no configured recipe."
+        raise KeyError(msg)
+    return stand_in_inputs(_configurations()[method])
 
 
 def _group_stand_ins(members: Sequence[str]) -> str:

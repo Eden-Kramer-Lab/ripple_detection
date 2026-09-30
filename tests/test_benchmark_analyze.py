@@ -3024,6 +3024,8 @@ def test_identical_groups_by_hand(analyze, tiny_tables):
 
 def test_a_group_lists_its_stand_ins(analyze):
     assert analyze.method_stand_ins(KAY[0]) == ()
+    with pytest.raises(KeyError, match="recipe:not_configured is no configured recipe"):
+        analyze.method_stand_ins("recipe:not_configured")
     assert analyze.method_stand_ins("recipe:liu_2019_awake") == (
         "pyramidal",
         "behavior_intervals",
