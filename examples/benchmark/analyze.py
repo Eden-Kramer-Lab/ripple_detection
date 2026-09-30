@@ -17,8 +17,9 @@ PNG for each with a figure (all but ``failures``, ``operating_differences``,
 readable width, then their definitions) and ``summary.md``, which names each file
 with one sentence on what it shows and lists the methods that failed.
 ``trends.md`` and ``spot_checks/``, written there by hand, and ``attribution/``,
-written by ``attribution.py``, are carried over (``KEPT``). No file may pass ``SIZE_LIMIT`` (1 MB): the command stops before writing
-one, leaving the previous results as they were.
+written by ``attribution.py``, are carried over (``KEPT``). No file may pass
+``SIZE_LIMIT`` (1 MB): the command stops before writing one, leaving the previous
+results as they were.
 
 What is analysed. Most tables read the reference condition's sessions and the rows
 whose ``setting`` is ``"default"`` or ``"literature"`` (``main_rows``): each detector
