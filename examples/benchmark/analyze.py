@@ -4395,6 +4395,38 @@ _RELATIVE_ROOM, _ABSOLUTE_ROOM = 0.01, 0.001
 
 
 @dataclasses.dataclass(frozen=True)
+class Difference:
+    """A minus B of two sides of ``SweepRecalls``, read at the targets.
+
+    Every array has ``SweepRecalls.estimate``'s shape without the axis the
+    sides were taken along; ``draws`` has the resamples first.
+
+    Attributes
+    ----------
+    estimate, draws, low, high : ndarray
+        The difference, its resamples and its 95 % interval over them
+        (``_conditional_intervals``).
+    p : ndarray
+    n_draws : ndarray of int
+        ``bootstrap_p`` of the same resamples and the resamples it is over
+        (``_tested``).
+    bound : ndarray of str
+    direction : ndarray of int
+        ``established_direction`` of the two sides' read-off kinds: which
+        way the difference is established.
+    """
+
+    estimate: np.ndarray[Any, Any]
+    draws: np.ndarray[Any, Any]
+    low: np.ndarray[Any, Any]
+    high: np.ndarray[Any, Any]
+    p: np.ndarray[Any, Any]
+    n_draws: np.ndarray[Any, Any]
+    bound: np.ndarray[Any, Any]
+    direction: np.ndarray[Any, Any]
+
+
+@dataclasses.dataclass(frozen=True)
 class SweepRecalls:
     """Detectors' recalls at target false-positive rates, read off their sweeps.
 
@@ -4429,6 +4461,22 @@ class SweepRecalls:
     replicates: list[set[Any]]
     nearest: np.ndarray[Any, Any]
     read_off: np.ndarray[Any, Any]
+
+    def difference(self, axis: int, a: int = 0, b: int = 1) -> Difference:
+        """A minus B, the sides ``a`` and ``b`` along ``axis`` of ``estimate``
+        (0: conditions, 1: detectors), with its interval, test and bound."""
+
+        def side(array: np.ndarray[Any, Any], index: int, offset: int = 0) -> Any:
+            return np.take(array, index, axis=axis + offset)
+
+        estimate = side(self.estimate, a) - side(self.estimate, b)
+        draws = side(self.draws, a, 1) - side(self.draws, b, 1)
+        low, high = _conditional_intervals(estimate, draws)
+        p, n_draws = _tested(estimate, draws)
+        bound, direction = established_direction(
+            side(self.read_off, a), side(self.read_off, b), low, high
+        )
+        return Difference(estimate, draws, low, high, p, n_draws, bound, direction)
 
     def pair(self, a: int, b: int) -> SweepRecalls:
         """Two detectors' slices, A (``a``) at index 0 and B at 1."""
@@ -4735,15 +4783,9 @@ def model_sensitivity(
             for detector in detectors
         }
         found = _sweep_recalls(scores, pair, replicates, detectors, targets, n_resamples)
-        estimate, draws = found.estimate, found.draws
-        complete = found.replicates
-        difference = estimate[1] - estimate[0]
-        low, high = _conditional_intervals(difference, draws[:, 1] - draws[:, 0])
-        p, n_draws = _tested(difference, draws[:, 1] - draws[:, 0])
+        estimate, complete = found.estimate, found.replicates
         # the change is the alternative (A) minus the reference (B)
-        bound, direction = established_direction(
-            found.read_off[1], found.read_off[0], low, high
-        )
+        change = found.difference(axis=0, a=1, b=0)
         rows = []
         for d, detector in enumerate(detectors):
             for t, target in enumerate(targets):
@@ -4751,7 +4793,7 @@ def model_sensitivity(
                     {
                         "alternative": alternative,
                         "status": _status(
-                            difference[d, t], sweep_failures[detector], "unattainable"
+                            change.estimate[d, t], sweep_failures[detector], "unattainable"
                         ),
                         "method": detector,
                         "setting": "sweep",
@@ -4764,13 +4806,13 @@ def model_sensitivity(
                         "value": estimate[1, d, t],
                         "read_off_reference": found.read_off[0, d, t],
                         "read_off": found.read_off[1, d, t],
-                        "change": difference[d, t],
-                        "change_low": low[d, t],
-                        "change_high": high[d, t],
-                        "change_p": p[d, t],
-                        "bound": bound[d, t],
-                        "established": bool(direction[d, t] != 0),
-                        "n_draws": int(n_draws[d, t]),
+                        "change": change.estimate[d, t],
+                        "change_low": change.low[d, t],
+                        "change_high": change.high[d, t],
+                        "change_p": change.p[d, t],
+                        "bound": change.bound[d, t],
+                        "established": bool(change.direction[d, t] != 0),
+                        "n_draws": int(change.n_draws[d, t]),
                         "n_defined": int(found.defined[1, d, t]),
                         "n_defined_reference": int(found.defined[0, d, t]),
                         "n_events": int(found.events[1, d, t]),
@@ -4820,13 +4862,10 @@ def _orders(
     rows = []
     for (a, b), found in pairs.items():
         paired = found.replicates[0]
-        observed = found.estimate[:, 0] - found.estimate[:, 1]
-        resampled = found.draws[:, :, 0] - found.draws[:, :, 1]
-        low, high = _conditional_intervals(observed, resampled)
-        # each condition's order established the way its values' bounds allow
-        bound, direction = established_direction(
-            found.read_off[:, 0], found.read_off[:, 1], low, high
-        )
+        # A minus B in each condition, established the way its bounds allow
+        order = found.difference(axis=1)
+        observed, resampled, low, high = order.estimate, order.draws, order.low, order.high
+        bound, direction = order.bound, order.direction
         supported = direction[0] != 0
         survives = supported & (direction[1] == direction[0])
         # reversed: established in the alternative the other way, so no order
@@ -4968,13 +5007,15 @@ def operating_differences(
         scores, [condition], detectors, found, targets, n_resamples
     ):
         estimate, paired = own.estimate, own.replicates[0]
-        difference = estimate[0, 0] - estimate[0, 1]
-        resampled = own.draws[:, 0, 0] - own.draws[:, 0, 1]
-        low, high = _conditional_intervals(difference, resampled)
-        p, n_draws = _tested(difference, resampled)
-        bound, direction = established_direction(
-            own.read_off[0, 0], own.read_off[0, 1], low, high
+        compared = own.difference(axis=1)
+        difference, low, high, p, n_draws = (
+            compared.estimate[0],
+            compared.low[0],
+            compared.high[0],
+            compared.p[0],
+            compared.n_draws[0],
         )
+        bound, direction = compared.bound[0], compared.direction[0]
         for t, target in enumerate(targets):
             rows.append(
                 {
