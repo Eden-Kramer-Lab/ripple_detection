@@ -613,9 +613,9 @@ to the last digit.
   the sessions every setting ran on (`n_sessions`): `interpolated` between two tested
   settings, `tested` at one, which happens only when a pooled rate equals the target
   exactly, or `within budget` where every setting's rate is below the target, so the
-  best recall of any setting is read. Only the held-out value is one a threshold
-  recommendation may quote; its setting is the best recall among those within the target
-  on the calibration replicates.
+  best recall of any setting is read, a lower bound on the recall at that budget. Only
+  the held-out value is one a threshold recommendation may quote; its setting is the
+  best recall among those within the target on the calibration replicates.
 - `compact_points.csv` keeps the point inventories apart: recall, precision and false
   positives per minute by peak containment, with `n_unmatched` and
   `n_unmatched_in_events`.
@@ -671,7 +671,10 @@ network window, so a rate is per minute of time without events and counts only w
 fired there.
 `operating_points.png` gives recall at 0.5, 1, 2 and 5 per minute. A target is a budget:
 where every setting of a curve keeps within it (Long's detector, with no false positive
-at any setting), the value is that of the setting with the best recall; a target below
+at any setting), the value is that of the setting with the best recall, the recall at
+the best tested setting. Settings with more false positives were not tested, so it is a
+lower bound on the recall at that budget: Long's lowest swept threshold, 1.5, already
+has no false positive, and a lower one might find more. A target below
 every setting's rate, which the curve does not come down to, is missing, never its
 nearest end, and `attained` in the CSV says in what share of resamples it is reached.
 The same rule reads every curve at a target, in every resample: the operating points and

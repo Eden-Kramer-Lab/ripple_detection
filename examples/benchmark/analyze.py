@@ -3035,7 +3035,9 @@ def _at_fp_rates(
         between two kept settings' rates, so no setting was run there;
         ``"within budget"`` where it lies past every setting's rate, so
         every setting keeps to it and the value is the setting with the best
-        recall's (ties: the first in threshold order); ``""`` where it lies
+        recall's (ties: the first in threshold order), a lower bound on the
+        recall at that budget, since no setting with more false positives was
+        tested; ``""`` where it lies
         below every setting's rate, so the curve does not reach it.
     """
     fp_rate = np.asarray(fp_rate, dtype=float)
@@ -6288,7 +6290,9 @@ COMPACT_DEFINITIONS = (
         "setting's rate, which happens only when a pooled rate equals the target exactly, or "
         "`within budget` where every setting's rate is below the target, so the best "
         "recall of any setting is read (Long's detector, with no false positive at any "
-        "setting). Only a held-out value is a number a threshold recommendation may quote; "
+        "setting): the recall at the best tested setting, a lower bound on the recall at "
+        "that budget, since settings with more false positives were not tested. Only a "
+        "held-out value is a number a threshold recommendation may quote; "
         "its setting is the best recall among those within the target on the even "
         "replicates."
     ),
@@ -8405,8 +8409,9 @@ def _summary(
             "precision only (`n_unmatched_in_events` in the compact tables). A curve is read "
             "at a target false-positive rate by interpolating in log rate between the "
             "settings around it; where every setting's rate is below the target, the best "
-            "recall of any setting is read (`within budget`); a target below every setting's "
-            "rate is missing. Times are "
+            "recall of any setting is read (`within budget`), a lower bound on the recall at "
+            "that budget: settings with more false positives were not tested. A target below "
+            "every setting's rate is missing. Times are "
             "seconds; a signed error is detected minus truth (negative: early), a "
             "difference between methods A minus B, A named first, a change between "
             "conditions the other condition minus the reference. Intervals are 95 % "

@@ -3883,6 +3883,12 @@ def test_the_command_writes_every_table_and_the_summary(analyze, two_condition_r
         "is read (`within budget`)"
     ) in " ".join(summary.split())
     assert (
+        "a lower bound on the recall at that budget: settings with more false positives "
+        "were not tested"
+    ) in " ".join(summary.split())
+    page = (results / "compact.md").read_text()
+    assert "a lower bound on the recall at that budget" in " ".join(page.split())
+    assert (
         "Across every condition, 1 calls failed (sweeps included), by method, setting and "
         f"condition:\n\n- `{MALLORY[0]}` (literature), `reference`: 1 sessions" in summary
     )
