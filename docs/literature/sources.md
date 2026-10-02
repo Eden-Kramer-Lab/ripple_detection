@@ -72,7 +72,7 @@ Reading a repository is not a replication of its pipeline. Complete inventories 
 
 Yang 2024: [winnieyangwannan/Selection-of-experience-for-memory-by-hippocampal-sharp-wave-ripples@2fa5468](https://github.com/winnieyangwannan/Selection-of-experience-for-memory-by-hippocampal-sharp-wave-ripples/tree/2fa546845defbdd750c9059e7d54489782fed57c)
 
-Tagged release 2: complete tree, README, main.py and stored ripple_HSE MAT metadata. main.py is a template; the stored detector name is find_HSE but detectionparms is empty. MAT blob identities match the inspected snapshot. No original independent LFP caller established.
+Tagged release 2: complete tree, README and main.py. The stored ripple_HSE MAT file, `Data/e13_26m1_210913.rippleHSE.events.mat`, is not in tag 2's tree: it was added in [f1bc2fb](https://github.com/winnieyangwannan/Selection-of-experience-for-memory-by-hippocampal-sharp-wave-ripples/tree/f1bc2fb34de4a5b68ff0aad6849c2ea22e9c5cf3) (2025-02-23), which the dataset catalog pins (checked October 2, 2026). main.py is a template; the stored detector name is find_HSE but detectionparms is empty. MAT blob identities match the inspected snapshot. No original independent LFP caller established.
 
 ### yang-buzcode
 
@@ -306,7 +306,7 @@ Inspected MATLAB source files and complete file inventories. Decoder/event crite
 
 [Michon OSF smzby](https://osf.io/smzby/)
 
-API inventory and behavior/place-code notebooks inspected. The code folder is empty in the API listing; notebooks import missing code.options and other modules. No event-preprocessing caller or dependency lock found.
+API inventory and behavior/place-code notebooks inspected. The code folder is empty in the API listing; notebooks import missing code.options and other modules. No event-preprocessing caller or dependency lock found. A recursive API walk on October 2, 2026 found no components or other storage providers; the data CSVs hold per-session and per-unit SWR counts, rates and PSTHs, no event times and no LFP (see [dataset-catalog-checks](#dataset-catalog-checks)).
 
 ### michon-toolbox
 
@@ -574,6 +574,57 @@ September 26, after the catalog was merged there (PR #25), so the links work
 from an installed package. `tests/test_literature.py` checks their paths and
 anchors in the repository.
 
+A fourth pass on October 2, 2026 opened files in the deposits whose rows
+still rested on metadata, looking for released events next to the recordings
+they came from. CRCNS moved its downloads to `download.crcns.org` in June 2026;
+file lists there need an account, and were fetched with one.
+
+- CRCNS hc-14: `unpacked_filelist.txt` lists the contents of every archive.
+  45 of 65 sessions (Rat08, Rat10 and Rat11; no Rat09 session) have
+  `{session}.rip.evt` in their `_clu` archive, which the data description
+  calls "detected hippocampal ripples". `Rat08-20130713.rip.evt`, from that
+  session's `_clu` archive (114 MB), holds 6835 NeuroScope events labelled
+  `Ripple start 23`, `Ripple peak 23` and `Ripple stop 23`, in milliseconds on
+  the 1250 Hz grid: 20.0-129.6 ms, every peak inside its event, none
+  overlapping, from 24.3 to 22634.5 s of a 22680 s session (`cat.evt`); its
+  `.xml` gives 166 channels. Girardeau et al. 2017's Methods give 20-130 ms
+  limits. DANDI 000061, the NWB conversion, has LFP and no ripple table in the
+  one file opened (`sub-Rat11_ses-Rat11-20150403`).
+- CRCNS hc-3, pfc-2 and hc-18: the file lists give one archive per session (442
+  for hc-3; 6.0-12.4 GB each for hc-18's five). The hc-3 data description,
+  processing flowchart and metadata tables and the pfc-2 data description
+  (v0.7) document no ripple or event files; no archive's contents were listed.
+  hc-18's `code.zip` holds `BatchFindRipples.m` (Ralitsa Todorova, 2016):
+  thresholds 1 and 3 SD, a peak threshold of 4 for rat 272 and 5 for rat 291,
+  20-110 ms, a 30 ms minimum interval, and its event-saving lines commented
+  out. DANDI 000067 (pfc-2 in NWB) has no ripple table in the one file opened.
+- Yang 2024's repository: `Data/e13_26m1_210913.rippleHSE.events.mat` is in
+  commit f1bc2fb, not tag 2 (see [yang-analysis](#yang-analysis)). Its
+  `ripple_HSE` holds 4266 events (37-406 ms) with `detectorname='find_HSE'`
+  and empty `detectionparms`. DANDI 000552 has no e13-26m1 session from
+  210913. The repository's binned inventory for e15_13f1_220118 (4088 events on
+  20 ms bins) was compared with that session's processed NWB file in 000552
+  (asset 576ed4dd, read remotely), whose `Ripples` table has 9502 rows: 4087 of
+  the 4088 events contain a ripple start.
+- Maboudi's `fig1.nel`, parsed inertly again: the 457 MUA epochs equal the runs
+  of the stored 1 kHz multiunit trace above its mean whose peak is at least
+  3 SD above it, lasting from 80 ms to a maximum between 0.70 and 0.81 s (the
+  six longer runs, 0.81-1.14 s, are absent). The 117 stored units, smoothed,
+  give about 400 Hz against the trace's 2420 Hz mean, so the trace came from a
+  larger spike set. The file also holds one unlabelled 1252 Hz LFP channel
+  covering the session's 2587.8 s.
+- [Michon OSF](#michon-osf): all ten data CSVs and the readme. Their SWR and
+  replay columns are counts, rates and PSTHs per session or unit; the only
+  `start`/`end` columns are place-field bounds.
+- [Igata Mendeley](https://data.mendeley.com/datasets/4xk5w69yr5/2): both
+  versions' file lists, `readme.txt`, the version-2 `Learning_data.zip`
+  central directory, and eight `.npz` files. The Learning files hold a 2 kHz
+  LFP channel, tetrode LFPs, spikes of 114, 72, 68, 79 and 22 cells and 25 Hz
+  position, in trial segments with their own time origins; no event times.
+- [Wilson lab archive](https://github.com/wilsonlab/CRCNS_Shared_Data), every
+  file at master a04d78f: `JiWilson_dataset.zip` has rats 1-3, run-epoch
+  spikes, lap events and sorted units; no sleep epochs, LFP or ripple files.
+
 ## Artifact fingerprints
 
 SHA-256 and byte counts identify the inspected copies. `*_listing.txt` and `dandi_internal_check.json` are inspection records, not hashes of the complete remote datasets. The two user-supplied supplements are identified by filename, DOI and fingerprint, without machine-specific paths.
@@ -608,6 +659,17 @@ SHA-256 and byte counts identify the inspected copies. `*_listing.txt` and `dand
 | `replayEvents_cellIDshuffle_sameEvents.mat` | [dataset-catalog-checks](#dataset-catalog-checks) | `1b96e39779ab554c299f4a8282b3f4fba6556b24e031b3e5186f7d7cd8281442` | 11021526 |
 | `replayEvents_rippleFieldStats_allCells_sigReplays.mat` | [dataset-catalog-checks](#dataset-catalog-checks) | `9735778165d343ca2d7f1a8bea861b57dbed4dc16bf632d9d3eca657001eb112` | 157609245 |
 | `replayEvents_eventStats_rippleThr2sd_wShiftComparison_075secPostReplay_spkDensityAllClusters_sigReplays.mat` | [dataset-catalog-checks](#dataset-catalog-checks) | `4ea5ee696411bfba309b4197348dae9c89a428a668bdfec320f02702aebe38e9` | 548372103 |
+| `crcns_hc-14_unpacked_filelist.txt` | [dataset-catalog-checks](#dataset-catalog-checks) | `187e0bfb16e0e33621fdefb7c39bac045efe8765de58c165575a643bd62a42aa` | 599424 |
+| `Rat08-20130713_clu.tar.gz (hc-14)` | [dataset-catalog-checks](#dataset-catalog-checks) | `d1085c653d9f49850376a331c3bb4711e18418e2bc0f6efed5f9e426e7b26059` | 119845871 |
+| `Rat08-20130713.rip.evt` | [dataset-catalog-checks](#dataset-catalog-checks) | `d8181b8de47f47ad90506f0cf1d9e8f14c3c7d8773f1da7437476c7d90ce1015` | 631864 |
+| `crcns_hc-3_filelist.txt` | [dataset-catalog-checks](#dataset-catalog-checks) | `9875852dbd6e15cd11d161642379d172a523691a138e3f4bed691564904e443f` | 29020 |
+| `crcns_pfc-2_filelist.txt` | [dataset-catalog-checks](#dataset-catalog-checks) | `c7b95e27ca8452f338aaeea0095465b49d5154121ecd7424700c7408528a03b5` | 7168 |
+| `crcns_hc-18_filelist.txt` | [dataset-catalog-checks](#dataset-catalog-checks) | `ed15850441b18cd1dee1e08728cfe4b7a28311050eee100433b1b88291cf265b` | 721 |
+| `hc-18 code.zip` | [dataset-catalog-checks](#dataset-catalog-checks) | `06e5ace7141572252e74870b88757f9b16a48bb353c52f31d18520c681c46415` | 108361 |
+| `yang_f1bc2fb/Data/e13_26m1_210913.rippleHSE.events.mat` | [dataset-catalog-checks](#dataset-catalog-checks) | `b791c9e0d310eb673b47dc54bf62d2250ff9312a5a4f68f44bebcec807dc3acb` | 101782 |
+| `JiWilson_dataset.zip` | [dataset-catalog-checks](#dataset-catalog-checks) | `b155b2baf11e62e680a1c3a61ef81b311818bc322879f57362405321b830547d` | 94966399 |
+| `michon_osf/SWR_units.csv` | [dataset-catalog-checks](#dataset-catalog-checks) | `f0c3d721b96b88020338a4f2ada6e561b91198b1118f0d2948b9e558257cf858` | 11287726 |
+| `igata_mendeley/readme.txt` | [dataset-catalog-checks](#dataset-catalog-checks) | `e8f87335591db16159abeb20f7923066a38e433c220b092ea14e43eaf484c42a` | 1954 |
 
 ## Code-availability search scope
 
