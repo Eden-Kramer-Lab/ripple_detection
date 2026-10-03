@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `best_ripple_channel(lfps, sampling_frequency, time=...)` chooses one ripple
+  channel as buzcode's `bz_GetBestRippleChan` does: the channel whose 140-180 Hz
+  moving RMS has the highest mean over median. It returns the column and every
+  channel's score. At 1250 Hz it agrees with a transcription of the original to
+  1e-9. It differs from the original in three ways: the filter is designed for
+  the given rate (the original's is right only at 1250 Hz), no channel is
+  excluded by a level in ADC counts, and missing samples and gaps are handled
+  block-wise as in the detectors.
 - `Carey_candidate_detector` takes `normalization_mask`, as every other detector
   but Long does. It selects the samples the joint score's scaling (z-score, or
   mean with `threshold_method="mean"`) and the theta envelope's z-score come

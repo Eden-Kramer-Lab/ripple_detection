@@ -74,6 +74,7 @@ the events first and `time` after the signal. Required positional arguments:
 - Unit selections (`units=`) are boolean masks or integer indices; an integer 0/1 array is rejected as ambiguous.
 - Intervals: `intervals_to_mask(time, intervals)`, `intersect_intervals(intervals, other_intervals)`; inclusive, sorted, disjoint `[start, end]` pairs.
 - State: `theta_delta_ratio(lfp, sampling_frequency, time=...)`, `state_intervals(values, time, threshold)`, `two_cluster_threshold(values)`, `histogram_minimum_threshold(values)`.
+- One ripple channel: `channel, scores = best_ripple_channel(raw_lfps, sampling_frequency, time=...)`, buzcode's `bz_GetBestRippleChan` score (mean over median of the 140-180 Hz moving RMS) on raw LFP; pass CA1 pyramidal-layer candidates only.
 - Every detector's result has `peak_time`, as does every `literature_methods` result.
 
 ## Surveyed papers' methods

@@ -27,6 +27,7 @@ REGISTRY = [
 ]
 HELPERS = [
     "DEFAULT_RIPPLE_BAND",
+    "best_ripple_channel",
     "detect_events_from_trace",
     "carey_spectral_ripple_score",
     "detect_silence_bounded_events",
