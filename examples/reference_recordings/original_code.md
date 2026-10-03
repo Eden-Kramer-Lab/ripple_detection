@@ -42,8 +42,12 @@ GNU Octave 11.3.0 is installed but has no packages. Its core lacks `hilbert`, `f
      go on the path.
    - MS10 checked buzcode's uncapped copy through a Python transcription. The capped merge the
      package follows has never been run.
-   - Run `harvey_2023_no_radiatum` in the same comparison. Harvey's released caller uses
-     buzcode's `bz_FindRipples`, which needs the signal package and `'EMGThresh',0`.
+   - Run `harvey_2023_no_radiatum` in the same comparison against its released callers: buzcode
+     `bz_FindRipples` for the Kenji sessions and neurocode `FindRipples` (@4b33b2a) for the
+     Girardeau sessions. Both merge uncapped and filter with butter order 3, and both need
+     Octave's signal package.
+   - Harvey's callers pass `'EMGFromLFP'`, so their EMG step is active. Setting `EMGThresh` 0
+     would be the comparison's own choice, to isolate the detector, and is not Harvey's setting.
 2. **Frank-lab family against the shared `extractevents.cpp` MEX (droumis/FFPhy@fce2048; compiles
    with `mkoctfile --mex`).**
    - A driver must feed traces directly, because the extractors read filter-framework files.
