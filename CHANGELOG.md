@@ -15,8 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   channel's score. At 1250 Hz it agrees with a transcription of the original to
   1e-9. It differs from the original in three ways: the filter is designed for
   the given rate (the original's is right only at 1250 Hz), no channel is
-  excluded by a level in ADC counts, and missing samples and gaps are handled
-  block-wise as in the detectors.
+  excluded by a level in ADC counts (only a dead, disconnected or railed one,
+  whose median RMS is negligible beside its own values), and missing samples and
+  gaps are handled block-wise as in the detectors.
 
 ### Documentation
 

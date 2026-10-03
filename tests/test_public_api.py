@@ -207,6 +207,7 @@ class TestCallsWrittenFor1x:
         ripple_detection.detect_silence_bounded_events,
         ripple_detection.carey_spectral_ripple_score,
         ripple_detection.theta_delta_ratio,
+        ripple_detection.best_ripple_channel,
         ripple_detection.filter_ripple_band,
         ripple_detection.normalize_signal,
         ripple_detection.simulate_LFP,
