@@ -178,7 +178,8 @@
       "passed": true,
       "detail": {
         "stored_zero_based": 46,
-        "tag_one_based": 47
+        "tag_one_based": 47,
+        "n_tag_channels": 1
       },
       "reason": ""
     },

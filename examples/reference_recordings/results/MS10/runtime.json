@@ -28,13 +28,13 @@
     "peak_rss_bytes": 2436186112
   },
   "stage": {
-    "seconds": 1.52371595823206,
-    "peak_rss_bytes": 1592377344
+    "seconds": 1.3408268748316914,
+    "peak_rss_bytes": 1594785792
   },
   "detect": {
-    "seconds_total": 1.3655895409174263,
-    "seconds_transcription_segmentation": 0.022077374858781695,
-    "seconds_package_detector": 0.7393215831834823,
-    "peak_rss_bytes": 2067726336
+    "seconds_total": 1.1408029168378562,
+    "seconds_transcription_segmentation": 0.019072042079642415,
+    "seconds_package_detector": 0.6080507091246545,
+    "peak_rss_bytes": 2069544960
   }
 }
