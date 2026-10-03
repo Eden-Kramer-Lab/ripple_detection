@@ -110,6 +110,16 @@ class TestEvt:
             ([(1, "R stop 1")], "without a preceding"),
             ([(1, "R start 1"), (2, "R start 1"), (3, "R stop 1")], "is open"),
             ([(1, "R start 1"), (2, "R stop 2")], "differs"),
+            (
+                [
+                    (1, "R start 1"),
+                    (2, "R peak 1"),
+                    (3, "R stop 1"),
+                    (4, "R start 1"),
+                    (5, "R stop 1"),
+                ],
+                "1 of 2 events",
+            ),
             ([(1, "R start 1"), (2, "R peak 1"), (3, "R peak 1"), (4, "R stop 1")], "second"),
             ([(1, "R start 1"), (5, "R peak 1"), (3, "R stop 1")], "out of order"),
             ([(1, "R begin 1"), (3, "R stop 1")], "exactly one"),
@@ -129,6 +139,17 @@ class TestEvt:
         )
         with pytest.raises(ValueError, match=match):
             readers.evt_intervals(events)
+
+    def test_label_without_trailing_token(self, readers):
+        events = pd.DataFrame(
+            {
+                "time": [1.0, 1.5, 2.0],
+                "label": ["Ripple start", "Ripple peak", "Ripple stop"],
+            }
+        )
+        out = readers.evt_intervals(events)
+        assert out.loc[0, "label"] == ""
+        assert out.loc[0, "peak_time"] == 1.5
 
     def test_touching_intervals_allowed(self, readers):
         events = pd.DataFrame(
@@ -191,6 +212,17 @@ class TestXml:
         path.write_text("<parameters><acquisitionSystem/></parameters>", encoding="utf-8")
         with pytest.raises(ValueError, match="nChannels"):
             readers.read_xml(path)
+
+    def test_rates_read_from_their_own_sections(self, readers, tmp_path):
+        path = _write_xml(tmp_path / "s.xml", [[0, 1]])
+        text = path.read_text(encoding="utf-8")
+        decoy = (
+            "<programs><program><samplingRate>1</samplingRate><nChannels>99</nChannels>"
+            "<lfpSamplingRate>5</lfpSamplingRate></program></programs>"
+        )
+        path.write_text(text.replace("<parameters>", f"<parameters>{decoy}"), encoding="utf-8")
+        out = readers.read_xml(path)
+        assert (out.n_channels, out.sampling_rate, out.lfp_sampling_rate) == (8, 20000, 1250)
 
     def test_helper_writes_well_formed_xml(self, tmp_path):
         ET.parse(_write_xml(tmp_path / "s.xml", [[0]]))
@@ -405,6 +437,22 @@ class TestBuzcode:
         with pytest.raises(ValueError, match="no 'ripples' struct"):
             readers.read_buzcode_events(tmp_path / "c.mat")
 
+    @pytest.mark.parametrize("what", ["channel", "stdev"])
+    def test_multi_valued_scalar_refused(self, readers, tmp_path, what):
+        times, peaks = _times()
+        ripples = {
+            "timestamps": times,
+            "peaks": peaks,
+            "detectorinfo": {"detectionchannel": 12},
+        }
+        if what == "channel":
+            ripples["detectorinfo"]["detectionchannel"] = np.array([12, 13])
+        else:
+            ripples["stdev"] = np.array([1.0, 2.0])
+        scipy.io.savemat(tmp_path / "e.mat", {"ripples": ripples})
+        with pytest.raises(ValueError, match="expected a scalar"):
+            readers.read_buzcode_events(tmp_path / "e.mat")
+
     def test_peak_count_mismatch(self, readers, tmp_path):
         times, peaks = _times()
         scipy.io.savemat(tmp_path / "d.mat", {"ripples": {"times": times, "peaks": peaks[:3]}})
@@ -534,10 +582,29 @@ class TestWaybackLength:
             fetch.wayback_original_length({ORIG: "abc"}, 3)
 
 
+class TestWaybackCaptureTimestamp:
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("https://web.archive.org/web/20231129113529id_/https://h/x", "20231129113529"),
+            ("https://web.archive.org/web/20231129113529/https://h/x", "20231129113529"),
+            ("https://web.archive.org/web/20240101000000if_/http://h/x", "20240101000000"),
+            ("https://h/x", None),
+            ("https://web.archive.org/web/2023id_/https://h/x", None),
+        ],
+    )
+    def test_parse(self, fetch, url, expected):
+        assert fetch.wayback_capture_timestamp(url) == expected
+
+
 class _FakeResponse(io.BytesIO):
-    def __init__(self, body, headers):
+    def __init__(self, body, headers, url=""):
         super().__init__(body)
         self.headers = headers
+        self.url = url
+
+    def geturl(self):
+        return self.url
 
     def __enter__(self):
         return self
@@ -547,10 +614,10 @@ class _FakeResponse(io.BytesIO):
 
 
 class TestFetchWayback:
-    def _patch(self, monkeypatch, fetch, body, headers, seen):
+    def _patch(self, monkeypatch, fetch, body, headers, seen, served=None):
         def fake_urlopen(request, timeout=None):
             seen.append(request)
-            return _FakeResponse(body, headers)
+            return _FakeResponse(body, headers, served or request.full_url)
 
         monkeypatch.setattr(fetch.urllib.request, "urlopen", fake_urlopen)
 
@@ -566,6 +633,8 @@ class TestFetchWayback:
         )
         assert (tmp_path / "w" / "x.mat").read_bytes() == PAYLOAD
         assert record["wayback_timestamp"] == "20231129113529"
+        assert record["requested_timestamp"] == "20231129113529"
+        assert record["served_url"] == seen[0].full_url
         assert record["original_content_length"] == len(PAYLOAD)
         assert record["original_length_header"] == ORIG
         assert record["original_last_modified"] == "Wed, 09 Jan 2019"
@@ -605,12 +674,70 @@ class TestFetchWayback:
         assert record["path"] == "w/x.dat.head"
         assert record["bytes"] == 64
 
+    def test_other_capture_refused_by_default(self, fetch, monkeypatch, tmp_path):
+        served = "https://web.archive.org/web/20240101000000id_/https://h/x"
+        self._patch(monkeypatch, fetch, PAYLOAD, {ORIG: str(len(PAYLOAD))}, [], served)
+        with pytest.raises(ValueError, match="not the requested 20231129113529"):
+            fetch.fetch_wayback("https://h/x", "20231129113529", "w/x", cache=tmp_path)
+        assert not [p for p in tmp_path.rglob("*") if p.is_file()]
+
+    def test_other_capture_recorded_when_allowed(self, fetch, monkeypatch, tmp_path):
+        served = "https://web.archive.org/web/20240101000000id_/https://h/x"
+        self._patch(monkeypatch, fetch, PAYLOAD, {ORIG: str(len(PAYLOAD))}, [], served)
+        record = fetch.fetch_wayback(
+            "https://h/x", "20231129113529", "w/x", allow_other_capture=True, cache=tmp_path
+        )
+        assert record["requested_timestamp"] == "20231129113529"
+        assert record["wayback_timestamp"] == "20240101000000"
+        assert record["served_url"] == served
+
+    def test_head_short_read_refused(self, fetch, monkeypatch, tmp_path):
+        self._patch(monkeypatch, fetch, PAYLOAD[:10], {CRAWLER: "123456789"}, [])
+        with pytest.raises(ValueError, match="expected 64"):
+            fetch.fetch_wayback(
+                "https://h/x", "2023" + "0" * 10, "x", head_bytes=64, cache=tmp_path
+            )
+        assert not [p for p in tmp_path.rglob("*") if p.is_file()]
+
+    def test_head_longer_than_original_needs_exactly_the_original(
+        self, fetch, monkeypatch, tmp_path
+    ):
+        self._patch(monkeypatch, fetch, PAYLOAD[:10], {CRAWLER: "10"}, [])
+        record = fetch.fetch_wayback(
+            "https://h/x", "20230000000000", "x", head_bytes=64, cache=tmp_path
+        )
+        assert record["bytes"] == 10
+        self._patch(monkeypatch, fetch, PAYLOAD[:9], {CRAWLER: "10"}, [])
+        with pytest.raises(ValueError, match="expected 10"):
+            fetch.fetch_wayback(
+                "https://h/y", "20230000000000", "y", head_bytes=64, cache=tmp_path
+            )
+
+    def test_head_mode_reads_in_pieces(self, fetch, monkeypatch, tmp_path):
+        class Trickle(_FakeResponse):
+            def read(self, n=-1):
+                return super().read(min(n, 7) if n > 0 else n)
+
+        def fake_urlopen(request, timeout=None):
+            return Trickle(PAYLOAD, {CRAWLER: "123456789"}, request.full_url)
+
+        monkeypatch.setattr(fetch.urllib.request, "urlopen", fake_urlopen)
+        record = fetch.fetch_wayback(
+            "https://h/x", "20230000000000", "x", head_bytes=64, cache=tmp_path
+        )
+        assert (tmp_path / "x.head").read_bytes() == PAYLOAD[:64]
+        assert record["bytes"] == 64
+
     def test_head_mode_without_length_header_and_bad_size(self, fetch, monkeypatch, tmp_path):
         self._patch(monkeypatch, fetch, PAYLOAD, {}, [])
-        record = fetch.fetch_wayback("https://h/x", "2023", "x", head_bytes=8, cache=tmp_path)
+        record = fetch.fetch_wayback(
+            "https://h/x", "20230000000000", "x", head_bytes=8, cache=tmp_path
+        )
         assert record["original_content_length"] is None
         with pytest.raises(ValueError, match="positive"):
-            fetch.fetch_wayback("https://h/x", "2023", "x", head_bytes=0, cache=tmp_path)
+            fetch.fetch_wayback(
+                "https://h/x", "20230000000000", "x", head_bytes=0, cache=tmp_path
+            )
 
 
 # --- CRCNS helpers -----------------------------------------------------------------------
@@ -619,7 +746,7 @@ FILELIST = (
     "# CRCNS.org 'hc-18' dataset files\n"
     "# To use this for fetching files, comment out files that are\n"
     " code.zip\t108361 (105.8 KB)\n"
-    " data/Train-242-20140124.tar.gz\t1339391098 (1.2 GB)\n"
+    " data/Train-242-20140124.tar.gz\t7647029986 (7.1 GB)\n"
     "#data/skipped.tar.gz\t42\n"
 )
 CHECKSUMS = (
@@ -634,7 +761,7 @@ class TestCrcnsHelpers:
         sizes = fetch.parse_crcns_filelist(FILELIST)
         assert sizes == {
             "code.zip": 108361,
-            "data/Train-242-20140124.tar.gz": 1339391098,
+            "data/Train-242-20140124.tar.gz": 7647029986,
             "data/skipped.tar.gz": 42,
         }
 
@@ -720,3 +847,82 @@ class TestExtractMembers:
         tar = _make_tar(tmp_path / "s.tar", {"m": b"z"}, mode="w")
         with pytest.raises(ValueError, match="no member matches"):
             fetch.extract_members(tar, ["q*"], tmp_path / "out", cache=tmp_path / "c")
+
+
+class _CrcnsResponse(_FakeResponse):
+    def __init__(self, body, content_type="application/octet-stream"):
+        super().__init__(
+            body, {"Content-Type": content_type, "Content-Length": str(len(body))}
+        )
+
+
+class _CrcnsOpener:
+    def __init__(self, bodies):
+        self.bodies = bodies
+
+    def open(self, request, timeout=None):
+        name = request.full_url.removesuffix("?agent=1").rsplit("download.crcns.org/", 1)[1]
+        return _CrcnsResponse(self.bodies[name])
+
+
+class TestCrcnsFetch:
+    BODY = b"spike data" * 100
+
+    def _session(self, fetch, bodies):
+        session = fetch.CrcnsSession()
+        session.opener = _CrcnsOpener(bodies)
+        return session
+
+    def _index(self, size, md5):
+        return {
+            "hc-x/filelist.txt": f" d/a.bin\t{size} (1 KB)\n".encode(),
+            "hc-x/checksums.md5": f"{md5}  d/a.bin\n".encode(),
+        }
+
+    def test_download_verified_before_rename_and_recorded(self, fetch, tmp_path):
+        md5 = hashlib.md5(self.BODY).hexdigest()
+        bodies = {**self._index(len(self.BODY), md5), "hc-x/d/a.bin": self.BODY}
+        records = fetch.crcns_fetch(
+            "hc-x", ["d/*.bin"], cache=tmp_path, session=self._session(fetch, bodies)
+        )
+        out = tmp_path / "crcns" / "hc-x" / "d" / "a.bin"
+        assert out.read_bytes() == self.BODY
+        assert records[0]["md5"] == md5
+        assert records[0]["expected"]["md5"] == md5
+        assert not list(tmp_path.rglob("*.part"))
+
+    def test_mismatch_never_reaches_final_name(self, fetch, tmp_path):
+        md5 = hashlib.md5(self.BODY).hexdigest()
+        bodies = {**self._index(len(self.BODY), md5), "hc-x/d/a.bin": b"X" * len(self.BODY)}
+        with pytest.raises(ValueError, match="removed"):
+            fetch.crcns_fetch(
+                "hc-x", ["d/a.bin"], cache=tmp_path, session=self._session(fetch, bodies)
+            )
+        assert not (tmp_path / "crcns" / "hc-x" / "d" / "a.bin").exists()
+        assert not list(tmp_path.rglob("*.part"))
+        assert fetch.read_manifest(tmp_path) == []
+
+    def test_wrong_size_never_reaches_final_name(self, fetch, tmp_path):
+        bodies = {
+            **self._index(len(self.BODY) + 1, hashlib.md5(self.BODY).hexdigest()),
+            "hc-x/d/a.bin": self.BODY,
+        }
+        with pytest.raises(ValueError, match="removed"):
+            fetch.crcns_fetch(
+                "hc-x", ["d/a.bin"], cache=tmp_path, session=self._session(fetch, bodies)
+            )
+        assert not (tmp_path / "crcns" / "hc-x" / "d" / "a.bin").exists()
+
+    def test_cached_file_is_reverified(self, fetch, tmp_path):
+        md5 = hashlib.md5(self.BODY).hexdigest()
+        bodies = {**self._index(len(self.BODY), md5), "hc-x/d/a.bin": self.BODY}
+        fetch.crcns_fetch(
+            "hc-x", ["d/a.bin"], cache=tmp_path, session=self._session(fetch, bodies)
+        )
+        cached = tmp_path / "crcns" / "hc-x" / "d" / "a.bin"
+        cached.write_bytes(b"Y" * len(self.BODY))
+        with pytest.raises(ValueError, match="cached file"):
+            fetch.crcns_fetch(
+                "hc-x", ["d/a.bin"], cache=tmp_path, session=self._session(fetch, bodies)
+            )
+        assert not cached.exists()

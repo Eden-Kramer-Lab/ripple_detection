@@ -269,6 +269,26 @@ def _wayback_declared_length(headers: Mapping[str, str]) -> tuple[int, str] | No
     return None
 
 
+def wayback_capture_timestamp(url: str) -> str | None:
+    """The 14-digit capture timestamp in a ``web.archive.org/web/<timestamp>[id_]/...`` URL.
+
+    Wayback redirects a request to the nearest capture, so the URL a response was
+    served from (``response.geturl()``) names the capture actually returned.
+
+    Parameters
+    ----------
+    url : str
+        A Wayback URL.
+
+    Returns
+    -------
+    str or None
+        The timestamp, or None when the URL has none.
+    """
+    match = re.search(r"/web/(\d{14})(?:[a-z]{2}_)?/", url)
+    return match.group(1) if match else None
+
+
 def wayback_original_length(headers: Mapping[str, str], n_received: int) -> tuple[int, str]:
     """Apply the Wayback length rule and return the original length and its header.
 
@@ -323,6 +343,7 @@ def fetch_wayback(
     expected_sha256: str | None = None,
     expected_source: str | None = None,
     head_bytes: int | None = None,
+    allow_other_capture: bool = False,
     cache: Path | None = None,
 ) -> dict[str, Any]:
     """Download an Internet Archive capture's unmodified bytes, refusing truncated ones.
@@ -348,14 +369,19 @@ def fetch_wayback(
     expected_source : str, optional
         Where ``expected_sha256`` came from.
     head_bytes : int, optional
-        Fetch only this many leading bytes (head mode).
+        Fetch only this many leading bytes (head mode); a short read raises (the
+        original length, when smaller, is the expected size).
+    allow_other_capture : bool
+        Wayback redirects to the nearest capture. By default a response served from a
+        different capture than ``timestamp`` raises; with True it is kept and both
+        timestamps are recorded.
     cache : pathlib.Path, optional
         Cache directory; default `cache_dir()`.
 
     Returns
     -------
     dict
-        The manifest record, with the capture URL, timestamp, original length and
+        The manifest record, with the requested and served capture URL and timestamp, original length and
         the header it came from, and the original ``Last-Modified``; head mode adds
         ``head=true`` and ``range``.
     """
@@ -373,19 +399,37 @@ def fetch_wayback(
         request_headers["Range"] = f"bytes=0-{head_bytes - 1}"
     request = urllib.request.Request(capture_url, headers=request_headers)
     with urllib.request.urlopen(request, timeout=120) as response:
+        served_url = response.geturl()
         if head_bytes is None:
             n = _stream_to_part(response, partial)
         else:
             partial.parent.mkdir(parents=True, exist_ok=True)
-            partial.write_bytes(response.read(head_bytes))
+            chunks, remaining = [], head_bytes
+            while remaining:
+                chunk = response.read(remaining)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            partial.write_bytes(b"".join(chunks))
             n = partial.stat().st_size
         headers = dict(response.headers.items())
+    served_timestamp = wayback_capture_timestamp(served_url)
+    if served_timestamp != timestamp and not allow_other_capture:
+        partial.unlink(missing_ok=True)
+        msg = (
+            f"{capture_url}: served from capture {served_timestamp} ({served_url}), "
+            f"not the requested {timestamp}; the download was removed"
+        )
+        raise ValueError(msg)
     lowered = {k.lower(): v for k, v in headers.items()}
     record: dict[str, Any] = {
         "kind": "wayback",
         "url": capture_url,
+        "served_url": served_url,
         "original_url": original_url,
-        "wayback_timestamp": timestamp,
+        "requested_timestamp": timestamp,
+        "wayback_timestamp": served_timestamp,
         "original_last_modified": lowered.get("x-archive-orig-last-modified"),
     }
     if head_bytes is None:
@@ -401,8 +445,13 @@ def fetch_wayback(
     else:
         declared = _wayback_declared_length(headers)
         original_length, length_header = declared or (None, None)
-        size, sha = n, digests(partial)[0]
-        md5 = digests(partial)[1]
+        wanted = head_bytes if original_length is None else min(head_bytes, original_length)
+        if n != wanted:
+            partial.unlink(missing_ok=True)
+            msg = f"{capture_url}: head read {n} bytes, expected {wanted}; the download was removed"
+            raise ValueError(msg)
+        size = n
+        sha, md5 = digests(partial)
         expected = _expected_record(None, None, None, None)
         record["head"] = True
         record["range"] = f"bytes=0-{head_bytes - 1}"
@@ -673,15 +722,28 @@ class CrcnsSession:
             msg = "CRCNS login was not accepted by either form; check the account"
             raise RuntimeError(msg)
 
-    def download(self, url: str, out: Path, max_bytes: int | None) -> int:
-        """Download ``url`` (with ``?agent=1``) to ``out`` through ``out.part``.
+    def download(
+        self,
+        url: str,
+        out: Path,
+        max_bytes: int | None,
+        expected_size: int | None = None,
+        expected_md5: str | None = None,
+    ) -> tuple[int, str, str]:
+        """Download ``url`` (with ``?agent=1``) to ``out.part``, verify it, then rename.
+
+        Returns
+        -------
+        size, sha256, md5 : int, str, str
+            Of the verified file.
 
         Raises
         ------
         RuntimeError
             If the server returns the login page.
         ValueError
-            If the file passes ``max_bytes``.
+            If the file passes ``max_bytes``, or its size or MD5 differs from the
+            expected one (the ``.part`` file is removed).
         """
         partial = out.with_name(out.name + ".part")
         request = urllib.request.Request(f"{url}?agent=1")
@@ -708,8 +770,9 @@ class CrcnsSession:
             except BaseException:
                 partial.unlink(missing_ok=True)
                 raise
+        result = _verify(partial, expected_size, None, expected_md5, url)
         partial.replace(out)
-        return n
+        return result
 
 
 def crcns_fetch(
@@ -768,14 +831,17 @@ def crcns_fetch(
             raise ValueError(msg)
         out = folder / path
         out.parent.mkdir(parents=True, exist_ok=True)
-        if not (out.exists() and out.stat().st_size == sizes[path]):
-            session.download(f"{CRCNS_DOWNLOAD_BASE}/{dataset}/{path}", out, cap)
-        size, sha, md5 = digests_and_size(out)
         listed = sums.get(path)
-        if size != sizes[path] or (listed is not None and md5 != listed):
-            out.unlink()
-            msg = f"{path}: size {size} (listed {sizes[path]}) md5 {md5} (listed {listed}); removed"
-            raise ValueError(msg)
+        if out.exists() and out.stat().st_size == sizes[path]:
+            size, sha, md5 = digests_and_size(out)
+            if listed is not None and md5 != listed:
+                out.unlink()
+                msg = f"{path}: cached file has md5 {md5}, listed {listed}; removed"
+                raise ValueError(msg)
+        else:
+            size, sha, md5 = session.download(
+                f"{CRCNS_DOWNLOAD_BASE}/{dataset}/{path}", out, cap, sizes[path], listed
+            )
         record = {
             "kind": "crcns",
             "url": f"{CRCNS_DOWNLOAD_BASE}/{dataset}/{path}",

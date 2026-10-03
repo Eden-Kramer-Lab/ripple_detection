@@ -70,8 +70,8 @@ def evt_intervals(
     """Pair labelled rows such as ``Ripple start 23`` / ``Ripple peak 23`` / ``Ripple stop 23``.
 
     A label is split into words; the word equal to ``start``, ``peak`` or ``stop``
-    marks the row's role, and the last word is kept as the trailing label (for
-    example the channel). Rows must come as start, [peak,] stop, repeated, with the
+    marks the row's role, and the last word after it is kept as the trailing label
+    (for example the channel; empty when the role word is last). Rows must come as start, [peak,] stop, repeated, with the
     same trailing label in a triple.
 
     Parameters
@@ -91,7 +91,7 @@ def evt_intervals(
     ------
     ValueError
         If the sequence is not start, [peak,] stop in order, the counts of the roles
-        differ, a peak is outside its event, or the intervals are unsorted or overlap
+        differ (some events with a peak row and some without), a peak is outside its event, or the intervals are unsorted or overlap
         (closed intervals touching at one time are allowed).
     """
     rows: list[tuple[float, float, float, str]] = []
@@ -104,7 +104,9 @@ def evt_intervals(
         if len(roles) != 1:
             msg = f"row {position}: label {label!r} does not hold exactly one of {(start, peak, stop)}"
             raise ValueError(msg)
-        role, tail = roles[0], words[-1]
+        role = roles[0]
+        after = words[words.index(role) + 1 :]
+        tail = after[-1] if after else ""
         if role == start:
             if pending is not None:
                 msg = f"row {position}: {start!r} while the event at row {pending['row']} is open"
@@ -137,6 +139,10 @@ def evt_intervals(
         pending = None
     if pending is not None:
         msg = f"row {pending['row']}: {start!r} without a {stop!r}"
+        raise ValueError(msg)
+    n_peaks = sum(not np.isnan(row[1]) for row in rows)
+    if 0 < n_peaks < len(rows):
+        msg = f"{n_peaks} of {len(rows)} events have a {peak!r} row; every event needs one, or none"
         raise ValueError(msg)
     frame = pd.DataFrame(rows, columns=[*_INTERVAL_COLUMNS, "label"])
     frame[_INTERVAL_COLUMNS] = frame[_INTERVAL_COLUMNS].astype(np.float64)
@@ -194,20 +200,23 @@ def read_xml(path: str | Path) -> NeuroScopeParameters:
     root = ET.parse(path).getroot()
 
     def number(tag: str) -> float | None:
-        element = root.find(f".//{tag}")
+        element = root.find(tag)
         return (
             None
             if element is None or not (element.text or "").strip()
             else float(element.text or "")
         )
 
-    n_channels, sampling_rate = number("nChannels"), number("samplingRate")
+    n_channels, sampling_rate = (
+        number("acquisitionSystem/nChannels"),
+        number("acquisitionSystem/samplingRate"),
+    )
     if n_channels is None or sampling_rate is None:
         msg = f"{path}: nChannels or samplingRate is missing"
         raise ValueError(msg)
     groups: list[list[int]] = []
     skip: dict[int, bool] = {}
-    for group in root.findall(".//anatomicalDescription/channelGroups/group"):
+    for group in root.findall("anatomicalDescription/channelGroups/group"):
         members = []
         for channel in group.findall("channel"):
             index = int((channel.text or "").strip())
@@ -217,7 +226,7 @@ def read_xml(path: str | Path) -> NeuroScopeParameters:
                 skip[index] = flag.strip() not in ("0", "false", "False")
         groups.append(members)
     return NeuroScopeParameters(
-        int(n_channels), sampling_rate, number("lfpSamplingRate"), groups, skip
+        int(n_channels), sampling_rate, number("fieldPotentials/lfpSamplingRate"), groups, skip
     )
 
 
@@ -350,6 +359,9 @@ def _field(struct: Any, *names: str) -> Any:
 
 def _scalar(value: Any) -> float | None:
     array = np.asarray(value, dtype=np.float64).ravel() if value is not None else np.empty(0)
+    if array.size > 1:
+        msg = f"expected a scalar, got {array.size} values: {array.tolist()}"
+        raise ValueError(msg)
     return float(array[0]) if array.size else None
 
 
