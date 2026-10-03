@@ -36,6 +36,69 @@ def open_nwb(url: str) -> Any:
     return h5py.File(remfile.File(url), "r")
 
 
+class CountingReader:
+    """A read-only file-like wrapper that counts the bytes read through it.
+
+    Parameters
+    ----------
+    raw : file-like
+        Has ``read``, ``seek`` and ``tell`` (a ``remfile.File``).
+
+    Attributes
+    ----------
+    bytes_read, n_reads : int
+        Bytes returned by ``read`` and the number of calls.
+    """
+
+    def __init__(self, raw: Any) -> None:
+        self.raw = raw
+        self.bytes_read = 0
+        self.n_reads = 0
+
+    def read(self, size: int = -1) -> bytes:
+        """Read and count."""
+        data: bytes = self.raw.read(size)
+        self.bytes_read += len(data)
+        self.n_reads += 1
+        return data
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        """Delegate to the wrapped file; return the new position (remfile returns None)."""
+        self.raw.seek(offset, whence)
+        return self.tell()
+
+    def tell(self) -> int:
+        """Delegate to the wrapped file."""
+        return int(self.raw.tell())
+
+    def close(self) -> None:
+        """Close the wrapped file."""
+        self.raw.close()
+
+
+def open_nwb_counted(url: str) -> tuple[Any, CountingReader]:
+    """Like `open_nwb`, also returning a counter of the bytes h5py reads.
+
+    Parameters
+    ----------
+    url : str
+        The asset's S3 content URL.
+
+    Returns
+    -------
+    file : h5py.File
+        Read-only.
+    counter : CountingReader
+        ``bytes_read`` counts what h5py asked for (chunks and metadata); remfile's
+        read-ahead may transfer somewhat more.
+    """
+    import h5py
+    import remfile
+
+    counter = CountingReader(remfile.File(url))
+    return h5py.File(counter, "r"), counter
+
+
 def describe(file: Any, n_rows: int = 4000) -> list[dict[str, Any]]:
     """Shape, dtype and chunking of each 2-D ``data`` dataset, and its first rows' range.
 
