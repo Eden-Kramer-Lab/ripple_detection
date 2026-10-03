@@ -1669,3 +1669,54 @@ class TestFailureRecords:
             "declared": 123,
             "table": session.lfp_head.length,
         }
+
+
+# --- original-code inventory -----------------------------------------------------------
+
+ORIGINAL_CODE = (
+    Path(__file__).resolve().parents[1]
+    / "examples"
+    / "reference_recordings"
+    / "original_code.csv"
+)
+
+
+@pytest.fixture(scope="module")
+def inventory():
+    return pd.read_csv(ORIGINAL_CODE, dtype=str, keep_default_na=False, encoding="utf-8")
+
+
+class TestOriginalCodeInventory:
+    def test_detector_rows_are_the_registered_detectors(self, inventory):
+        from ripple_detection.registry import DETECTORS
+
+        detectors = inventory.loc[inventory.kind == "detector", "implementation"]
+        assert sorted(detectors) == sorted(DETECTORS)
+
+    def test_method_rows_are_the_listed_methods(self, inventory):
+        from ripple_detection.literature_methods import list_methods
+
+        methods = inventory.loc[inventory.kind == "method", "implementation"]
+        assert sorted(methods) == sorted(list_methods().name)
+
+    def test_building_blocks_are_public_detector_functions(self, inventory):
+        import ripple_detection.detectors as detectors
+
+        blocks = inventory.loc[inventory.kind == "building_block", "implementation"]
+        assert len(blocks) > 0
+        assert all(callable(getattr(detectors, name, None)) for name in blocks)
+
+    def test_no_extra_kinds_or_duplicate_rows(self, inventory):
+        assert set(inventory.kind) == {"detector", "building_block", "method"}
+        assert not inventory.implementation.duplicated().any()
+
+    def test_public_rows_pin_a_full_commit(self, inventory):
+        assert set(inventory.public) <= {"yes", "no", "partial"}
+        pinned = inventory.loc[inventory.public == "yes", "pinned_commit"]
+        assert pinned.str.fullmatch(r"[0-9a-f]{40}").all()
+
+    def test_every_row_states_its_basis(self, inventory):
+        assert (inventory.public_basis.str.strip() != "").all()
+
+    def test_file_is_small(self):
+        assert ORIGINAL_CODE.stat().st_size < 1_000_000
