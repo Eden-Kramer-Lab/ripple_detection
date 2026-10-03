@@ -1,0 +1,41 @@
+{
+  "saved_with_ripple_detection_version": "1.7.2.dev405+g8763f0602.d20260927",
+  "columns": {
+    "start_time": "float64",
+    "end_time": "float64",
+    "duration": "float64",
+    "n_samples": "int64",
+    "max_sustained_zscore": "float64",
+    "mean_zscore": "float64",
+    "median_zscore": "float64",
+    "max_zscore": "float64",
+    "min_zscore": "float64",
+    "area": "float64",
+    "total_energy": "float64",
+    "speed_at_start": "float64",
+    "speed_at_end": "float64",
+    "max_speed": "float64",
+    "min_speed": "float64",
+    "median_speed": "float64",
+    "mean_speed": "float64",
+    "clipped_start": "bool",
+    "clipped_end": "bool",
+    "peak_time": "float64"
+  },
+  "attrs": {
+    "method": "Zugaro_ripple_detector",
+    "ripple_detection_version": "1.7.2.dev405+g8763f0602.d20260927",
+    "options": {
+      "sampling_frequency": 1250.0,
+      "speed_threshold": null,
+      "low_threshold": 2.0,
+      "high_threshold": 5.0,
+      "minimum_inter_ripple_interval": 0.05,
+      "minimum_duration": 0.0,
+      "maximum_duration": 0.15,
+      "smoothing_window": 0.0088,
+      "normalization_mask": null
+    },
+    "notes": "speed_threshold null means np.inf (no speed rule)"
+  }
+}

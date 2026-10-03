@@ -1,0 +1,1032 @@
+"""The benchmark's simulator validation (examples/benchmark/validate_simulator.py):
+measurements on hand-built envelopes and spike trains, the pooling of targets and
+readiness, a short report built without any detector, the preflight a benchmark
+run makes against a report, and the simulation fingerprint."""
+
+import ast
+import hashlib
+import importlib
+import json
+import re
+import shutil
+from collections.abc import Iterator, Mapping
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+from scipy import optimize, special
+
+import ripple_detection as rd
+from ripple_detection import evaluate, literature_methods, registry
+
+UNIX_ORIGIN = 1_700_000_000.0
+DURATION = 120.0  # two noise-modulation periods, so every check is measurable
+OVERRIDES = {"session.duration_s": DURATION}
+PACKAGE = Path(rd.__file__).resolve().parent
+
+
+@pytest.fixture(scope="module")
+def validate(benchmark_import):
+    return benchmark_import("validate_simulator")
+
+
+@pytest.fixture(scope="module")
+def conditions(benchmark_import):
+    return benchmark_import("conditions")
+
+
+class _Refuses(Mapping):
+    """A detector registry that fails on any lookup."""
+
+    def __getitem__(self, name):
+        msg = f"detector {name} looked up while validating the simulator"
+        raise AssertionError(msg)
+
+    def __iter__(self) -> Iterator[str]:
+        msg = "detector registry read while validating the simulator"
+        raise AssertionError(msg)
+
+    def __len__(self) -> int:
+        msg = "detector registry read while validating the simulator"
+        raise AssertionError(msg)
+
+
+def _refuse(name):
+    def refused(*args, **kwargs):
+        msg = f"{name} called while validating the simulator"
+        raise AssertionError(msg)
+
+    return refused
+
+
+@pytest.fixture(scope="module")
+def report(validate, tmp_path_factory):
+    """A one-replicate reference report, built with every detector, the
+    literature methods and event matching made to fail if called."""
+    root = tmp_path_factory.mktemp("validation")
+    with pytest.MonkeyPatch.context() as patch:
+        for name, spec in rd.DETECTORS.items():
+            patch.setattr(rd, name, _refuse(name))
+            patch.setattr(rd.detectors, name, _refuse(name))
+            patch.setattr(
+                importlib.import_module(spec.detector.__module__), name, _refuse(name)
+            )
+        patch.setattr(rd, "DETECTORS", _Refuses())
+        patch.setattr(registry, "DETECTORS", _Refuses())
+        patch.setattr(literature_methods, "run_method", _refuse("run_method"))
+        patch.setattr(evaluate, "match_events", _refuse("match_events"))
+        patch.setattr(rd, "match_events", _refuse("match_events"))
+        exit_code = validate.main(
+            [
+                "--validation-id",
+                "short",
+                "--conditions",
+                "reference",
+                "--replicates",
+                "1",
+                "--duration",
+                str(DURATION),
+                "--output-root",
+                str(root),
+                "--no-figures",
+            ]
+        )
+    directory = root / "short"
+    spec = json.loads((directory / "spec.json").read_text())
+    return {"directory": directory, "spec": spec, "exit_code": exit_code}
+
+
+@pytest.fixture(scope="module")
+def measured(validate, conditions):
+    """The report's one session, measured again."""
+    reference = conditions.conditions()[0]
+    return validate.measure_session(reference, validate.FIRST_REPLICATE, OVERRIDES)
+
+
+@pytest.fixture
+def ready_copy(report, tmp_path):
+    """The short report copied, its status set to ready and its replicates
+    to the predeclared count."""
+    directory = tmp_path / "copy"
+    shutil.copytree(report["directory"], directory)
+    _edit_spec(directory, status="ready", reasons=[], replicates=list(range(10000, 10020)))
+    return directory
+
+
+@pytest.fixture
+def resolved(conditions):
+    reference = conditions.conditions()[0]
+    return {"reference": conditions.resolve(reference, OVERRIDES)}
+
+
+@pytest.fixture(scope="module")
+def package_copy(tmp_path_factory):
+    """A copy of the package's source elsewhere, never edited."""
+    return _copy_package(tmp_path_factory.mktemp("elsewhere"))
+
+
+def _sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def _edit_spec(directory, **changes):
+    """Set ``changes`` in the report's spec.json in ``directory``; return its path."""
+    path = directory / "spec.json"
+    spec = json.loads(path.read_text())
+    spec.update(changes)
+    path.write_text(json.dumps(spec))
+    return path
+
+
+def _copy_package(directory):
+    """A copy of the package's source in ``directory``."""
+    copy = directory / "ripple_detection"
+    shutil.copytree(PACKAGE, copy, ignore=shutil.ignore_patterns("__pycache__"))
+    return copy
+
+
+class TestMeasurements:
+    """Hand-computed widths, participation, silent gaps and intervals, at a
+    Unix-time clock origin where the helpers read timestamps."""
+
+    def test_envelope_widths_by_hand(self, validate):
+        time = UNIX_ORIGIN + np.arange(9) / 1000.0
+        envelope = np.array([0.0, 1.0, 2.0, 4.0, 8.0, 4.0, 2.0, 1.0, 0.0])
+        widths = validate.envelope_widths(time, envelope, (0.5, 0.1))
+        # half maximum 4: samples 3-5; 10% of peak 0.8: samples 1-7
+        np.testing.assert_allclose(widths, [0.002, 0.006], atol=1e-6)
+
+    @pytest.mark.parametrize("power", [2, 4])
+    def test_sampled_envelope_widths_match_the_threshold_distance(self, validate, power):
+        rate, sigma = 1500.0, 0.012
+        time = UNIX_ORIGIN + np.arange(-300, 301) / rate
+        offset = np.arange(-300, 301) / rate
+        envelope = np.exp(
+            -np.log(2) * (np.abs(offset) / (np.sqrt(2 * np.log(2)) * sigma)) ** power
+        )
+        widths = validate.envelope_widths(time, envelope, (0.5, 0.1))
+        expected = [2 * validate.threshold_distance(f, power) * sigma for f in (0.5, 0.1)]
+        # closed sample bounds fall inside the continuous crossing, within a sample each side
+        assert np.all(widths <= np.asarray(expected) + 1e-6)
+        assert np.all(widths >= np.asarray(expected) - 2 / rate - 1e-6)
+
+    def test_threshold_distance(self, validate):
+        assert validate.threshold_distance(0.5, 2) == pytest.approx(np.sqrt(2 * np.log(2)))
+        assert validate.threshold_distance(0.5, 4) == pytest.approx(np.sqrt(2 * np.log(2)))
+        assert validate.threshold_distance(0.1, 2) == pytest.approx(np.sqrt(2 * np.log(10)))
+
+    def test_observed_participation_by_hand(self, validate):
+        time = UNIX_ORIGIN + np.arange(400) / 1000.0
+        # units 0-2 are the candidates, unit 3 is not; a centre at sample 100
+        samples = np.array([80, 125, 126, 100, 300])
+        units = np.array([0, 1, 2, 3, 0])
+        centers = time[[100, 250]]
+        fractions = validate.observed_participation(
+            time, samples, units, np.array([0, 1, 2]), centers, 0.025
+        )
+        # 20 ms before and exactly 25 ms after count, 26 ms after does not;
+        # nothing within 25 ms of the second centre
+        np.testing.assert_allclose(fractions, [2 / 3, 0.0])
+
+    def test_observed_participation_counts_units_to_the_timestamps_rounding(self, validate):
+        rate = 1500.0
+        time = UNIX_ORIGIN + np.arange(400) / rate
+        centers = time[[101, 52]]
+        # 30 samples (20 ms) from each centre lies beyond it by 20 ms in
+        # floating point: the timestamps' rounding, which still counts
+        assert time[131] > centers[0] + 0.02
+        assert time[22] < centers[1] - 0.02
+        # around the first centre unit 0 spikes twice and unit 1 at the edge;
+        # unit 2 a sample beyond it; around the second, unit 3 at the edge
+        samples = np.array([95, 101, 131, 132, 22])
+        units = np.array([0, 0, 1, 2, 3])
+        fractions = validate.observed_participation(
+            time, samples, units, np.array([0, 1, 2, 3]), centers, 0.02
+        )
+        np.testing.assert_allclose(fractions, [2 / 4, 1 / 4])
+
+    def test_observed_participation_of_no_units(self, validate):
+        time = np.arange(10) / 1000.0
+        fractions = validate.observed_participation(
+            time, np.array([1]), np.array([0]), np.array([], dtype=int), time[[2]], 0.01
+        )
+        assert np.isnan(fractions).all()
+
+    def test_silent_gaps_by_hand(self, validate):
+        time = UNIX_ORIGIN + np.arange(100) / 1000.0
+        samples = np.array([10, 12, 12, 20, 55, 60])  # a sample may hold two units' spikes
+        intervals = np.array([[time[5], time[30]], [time[50], time[70]]])
+        gaps = validate.silent_gaps(time, samples, intervals)
+        # the gap from 20 to 55 spans the two intervals and is left out
+        np.testing.assert_allclose(gaps, [0.002, 0.008, 0.005], atol=1e-6)
+
+    def test_unit_intervals_stay_within_one_unit_and_one_stretch(self, validate):
+        time = np.arange(100) / 1000.0
+        samples = np.array([10, 14, 11, 60, 65, 70])
+        units = np.array([0, 0, 1, 1, 0, 0])
+        rest = np.array([[0.005, 0.030], [0.050, 0.080]])
+        intervals = validate._unit_intervals(time, samples, units, rest)
+        np.testing.assert_allclose(np.sort(intervals), [0.004, 0.005])
+
+    def test_run_around(self, validate):
+        values = np.array([0.0, 2.0, 3.0, 2.0, 0.0, 3.0])
+        assert validate.run_around(values, 2, 2.0) == (1, 3)
+        assert validate.run_around(values, 2, 2.0, strict=True) == (2, 2)
+        assert validate.run_around(values, 5, 1.0) == (5, 5)
+        assert validate.run_around(values, 0, 1.0) is None
+
+    def test_intervals(self, validate):
+        union = validate.interval_union(
+            np.array([[5.0, 6.0], [0.0, 2.0], [1.0, 3.0], [3.0, 4.0]])
+        )
+        np.testing.assert_array_equal(union, [[0.0, 4.0], [5.0, 6.0]])
+        time = UNIX_ORIGIN + np.arange(10.0)
+        mask = validate.interval_mask(time, UNIX_ORIGIN + np.array([[7.0, 8.0], [1.0, 3.0]]))
+        np.testing.assert_array_equal(np.flatnonzero(mask), [1, 2, 3, 7, 8])
+        rest = validate.rest_intervals(time, UNIX_ORIGIN + np.array([[3.0, 4.0], [6.5, 9.5]]))
+        np.testing.assert_allclose(rest - UNIX_ORIGIN, [[1.0, 3.0], [4.0, 6.5]])
+
+    def test_rms_duration_of_a_noise_free_ripple(self, validate):
+        """A Gaussian-windowed 200 Hz ripple, alone on the channel: its RMS
+        run above the noise's mean + 2 SD is the analytic crossing width, to a
+        sample. The squared ripple averages A^2 / 2 exp(-u^2 / sigma^2), and a
+        window of W seconds integrates it, so the RMS crosses a level T where
+        (A^2 / 2) sigma sqrt(pi) / (2 W) [erf((t + W/2) / sigma) - erf((t - W/2)
+        / sigma)] = T^2."""
+        rate, amplitude, sigma = 1500.0, 20.0, 0.015
+        offset = np.arange(round(6 * rate)) / rate
+        time = UNIX_ORIGIN + offset
+        noise = np.random.default_rng(0).normal(size=offset.size)
+        # a strong ripple at 2 s and one too weak to cross at 4 s
+        channel = sum(
+            a
+            * np.exp(-((offset - c) ** 2) / (2 * sigma**2))
+            * np.sin(2 * np.pi * 200 * (offset - c))
+            for a, c in ((amplitude, 2.0), (0.05, 4.0))
+        )
+        events = pd.DataFrame(
+            {
+                "expression": "ripple",
+                "center_time": UNIX_ORIGIN + np.array([2.0, 4.0]),
+                "event_type": "swr",
+            }
+        )
+        out = validate._Collector()
+        validate._rms_durations(out, time, events, channel, noise, rate)
+        samples = pd.DataFrame(out.samples, columns=["quantity", "group", "x", "y"])
+        duration = samples[samples.quantity == "ripple_duration"].x.to_numpy()
+        # the threshold, from the noise alone, in a 17 ms window
+        n_window = round(0.017 * rate)
+        noise_rms = validate.moving_rms(
+            rd.filter_ripple_band(noise, sampling_frequency=rate, band=(100.0, 250.0)),
+            n_window,
+        )
+        level = noise_rms.mean() + 2 * noise_rms.std()
+        window = n_window / rate
+
+        def excess(t):
+            power = (amplitude**2 / 2) * sigma * np.sqrt(np.pi) / (2 * window)
+            spread = special.erf((t + window / 2) / sigma) - special.erf(
+                (t - window / 2) / sigma
+            )
+            return power * spread - level**2
+
+        width = 2 * optimize.brentq(excess, 0.0, 1.0)
+        assert abs(duration[0] / 1e3 - width) <= 1 / rate
+        assert np.isnan(duration[1])
+        # far above mean + 5 SD and longer than 20 ms: Patel's convention keeps it
+        sleep = samples[samples.quantity == "ripple_duration_sleep"].x.to_numpy()
+        assert sleep[0] == duration[0]
+        assert np.isnan(sleep[1])
+        never = pd.DataFrame(
+            out.measurements, columns=["quantity", "group", "statistic", "value", "n"]
+        )
+        assert never.set_index("statistic").loc["fraction_never_crossing", "value"] == 0.5
+
+    def test_moving_rms_of_a_constant(self, validate):
+        rms = validate.moving_rms(np.full(20, -3.0), 5)
+        np.testing.assert_allclose(rms[2:-2], 3.0)
+
+    def test_fft_peak_and_instantaneous_frequency_of_a_tone(self, validate):
+        rate = 1500.0
+        time = UNIX_ORIGIN + np.arange(1500) / rate
+        tone = np.sin(2 * np.pi * 180.0 * np.arange(1500) / rate) * np.hanning(1500)
+        assert validate.fft_peak_frequency(tone, rate) == pytest.approx(180.0, abs=0.25)
+        frequency = validate.instantaneous_frequency(time, tone)
+        np.testing.assert_allclose(frequency[500:1000], 180.0, atol=0.5)
+
+    def test_fractional_shift_of_a_band_limited_burst(self, validate):
+        n = np.arange(400)
+
+        def burst(shift):
+            u = n - 200 - shift
+            return np.exp(-0.5 * (u / 20) ** 2) * np.sin(2 * np.pi * 0.12 * u)
+
+        np.testing.assert_allclose(
+            validate.fractional_shift(burst(0.0), 2.4), burst(2.4), atol=1e-9
+        )
+
+    def test_refractory_rate(self, validate):
+        step = 1 / 1500
+        p = -np.expm1(-10.0 * step)
+        # 2 ms is three samples at 1500 Hz: the two samples after a spike are blocked
+        assert validate.refractory_rate(np.array([10.0]), step, 0.002)[0] == pytest.approx(
+            p / (step * (1 + 2 * p))
+        )
+        assert validate.refractory_rate(np.array([10.0]), step, 0.0)[0] == pytest.approx(
+            p / step
+        )
+
+    def test_refractory_check_counts_violations(self, validate):
+        rate = 1500.0
+        time = UNIX_ORIGIN + np.arange(3000) / rate
+        # a leakage burst of five spikes 4 ms apart around sample 2000
+        leaks = pd.DataFrame(
+            {
+                "non_event_type": ["spike_leakage"],
+                "center_time": [time[2000]],
+                "n_spikes": [5],
+                "isi": [0.004],
+            }
+        )
+        # unit 0: two spikes a sample apart (a violation), then one well after;
+        # unit 1: two spikes in one sample (a violation); unit 2: three samples,
+        # 2 ms apart to the timestamps' rounding (none); unit 3: two leaked
+        # spikes a sample apart (left out)
+        samples = np.array([100, 101, 110, 200, 250, 253, 2000, 2001])
+        units = np.array([0, 0, 0, 1, 2, 2, 3, 3])
+        counts = np.array([1.0, 1.0, 1.0, 2.0, 1.0, 1.0, 1.0, 1.0])
+        assert time[253] - time[250] < 0.002
+        out = validate._Collector()
+        validate._check_refractory(
+            out, time, leaks, samples, units, counts, {"refractory_period": 0.002}
+        )
+        assert out.checks == [("refractory_spiking", 2.0, 6, "")]
+
+    def test_isolated_groups_do_not_overlap(self, validate):
+        rows = pd.DataFrame(
+            {
+                "center_time": [1.0, 1.1, 1.2, 3.0],
+                "rise_sigma": [0.01] * 4,
+                "decay_sigma": [0.01] * 4,
+            }
+        )
+        groups = validate.isolated_groups(rows, 0.0)
+        assert sorted(i for g in groups for i in g.index) == [0, 1, 2, 3]
+        for group in groups:
+            starts = group.center_time - 0.08
+            ends = group.center_time + 0.08
+            assert (starts.to_numpy()[1:] > ends.to_numpy()[:-1]).all()
+        # rows 0 and 2 each overlap row 1 only: two groups suffice
+        assert len(groups) == 2
+
+
+class TestTargets:
+    def test_every_target_has_a_measurement(self, validate):
+        assert validate.target_table_problems(validate.load_targets()) == []
+
+    def test_target_table_problems(self, validate):
+        targets = validate.load_targets().iloc[:2].copy()
+        targets.loc[0, "evidence_status"] = "verify"
+        targets.loc[1, "quantity"] = "ripple_amplitude"
+        targets.loc[1, "target_statistic"] = "mode_hz"
+        targets.loc[1, "conditions"] = "reference; sleep"
+        problems = validate.target_table_problems(targets)
+        assert any("'verify' is unresolved" in p for p in problems)
+        assert any("no measurement is defined" in p for p in problems)
+        assert any("no pooling rule" in p for p in problems)
+        assert any("sleep" in p for p in problems)
+
+    def test_target_conditions(self, validate):
+        assert validate.target_conditions("reference; coupled; quartic") == (
+            "reference",
+            "strength_correlation=coupled",
+            "envelope_power=quartic",
+        )
+        assert validate.target_conditions("none (state differs; reported beside it)") == ()
+        with pytest.raises(ValueError, match="Unknown condition labels"):
+            validate.target_conditions("reference; sleep")
+
+    def test_the_labels_name_the_alternative_models(self, validate):
+        assert validate.MODEL_LABELS == {
+            "coupled": "strength_correlation=coupled",
+            "local": "spatial_profile=local",
+            "varying": "noise_modulation=varying",
+            "nearby": "fast_gamma_band=nearby",
+            "refractory": "spike_model=refractory",
+            "quartic": "envelope_power=quartic",
+        }
+
+    @pytest.mark.parametrize(
+        ("statistic", "expected"),
+        [
+            ("rate_per_s", (2 + 4) / (10 + 20)),
+            ("median_ms", 3.0),
+            ("mean_fraction", 3.0),
+            ("p95_fraction", np.percentile([2.0, 4.0], 95)),
+        ],
+    )
+    def test_pooling(self, validate, statistic, expected):
+        samples = pd.DataFrame(
+            {"quantity": "q", "group": "g", "x": [2.0, 4.0, np.nan], "y": [10.0, 20.0, 0.0]}
+        )
+        if statistic == "rate_per_s":
+            samples = samples.iloc[:2]
+        value, _ = validate._pooling(statistic)(samples)
+        assert value == pytest.approx(expected)
+
+    def test_ripple_duration_pools_swr_ripples_alone(self, validate):
+        targets = validate.load_targets().set_index("quantity", drop=False)
+        target = next(targets.loc[["ripple_duration"]].itertuples())
+        samples = pd.DataFrame(
+            {
+                "quantity": "ripple_duration",
+                "group": ["swr", "weak_ripple", "swr", "weak_ripple", "swr", "weak_ripple"],
+                "x": [40.0, 10.0, 50.0, 10.0, 60.0, 10.0],
+                "y": np.nan,
+            }
+        )
+        assert validate.pooled_target(target, samples) == (50.0, 3)
+
+    def test_target_checks_are_their_measurements(self, validate, report, measured):
+        """The report's observed targets, recomputed from the measured samples
+        by each target's convention."""
+        checks = pd.read_csv(report["directory"] / "checks.csv").set_index("check")
+        samples = measured.samples
+        durations = samples[(samples.quantity == "ripple_duration") & (samples.group == "swr")]
+        finite = durations.x[np.isfinite(durations.x)]
+        assert checks.loc["ripple_duration", "observed"] == pytest.approx(
+            np.median(finite), rel=1e-12
+        )
+        assert checks.loc["ripple_duration", "n"] == len(finite)
+        rate = samples[samples.quantity == "ripple_event_rate"]
+        assert checks.loc["ripple_event_rate", "observed"] == pytest.approx(
+            rate.x.sum() / rate.y.sum(), rel=1e-12
+        )
+        interneurons = samples[samples.quantity == "interneuron_baseline_rate"]
+        assert checks.loc["interneuron_baseline_rate", "observed"] == pytest.approx(
+            np.mean(interneurons.x), rel=1e-12
+        )
+
+    def test_ratio_and_correlation_pooling(self, validate):
+        ratio = pd.DataFrame(
+            {
+                "group": ["window", "window", "baseline"],
+                "x": [3.0, 1.0, 10.0],
+                "y": [1.0, 1.0, 20.0],
+            }
+        )
+        assert validate._pooling("ratio")(ratio)[0] == pytest.approx((4 / 2) / (10 / 20))
+        pairs = pd.DataFrame({"x": [1.0, 2.0, 3.0, 4.0], "y": [2.0, 4.0, 6.0, 9.0]})
+        assert validate._pooling("pearson_r")(pairs)[0] == pytest.approx(
+            np.corrcoef(pairs.x, pairs.y)[0, 1]
+        )
+        assert validate._pooling("spearman_r")(pairs)[0] == pytest.approx(1.0)
+        assert np.isnan(validate._pooling("pearson_r")(pairs.iloc[:2])[0])
+
+    def test_readiness_gates_only_applicable_checks(self, validate):
+        checks = pd.DataFrame(
+            {
+                "check": ["a", "b", "c", "d"],
+                "kind": ["target", "target", "rendering", "target"],
+                "condition_id": "reference",
+                "applies": [True, False, True, True],
+                "statistic": "median",
+                "observed": [5.0, 50.0, 1.0, 40.0 - 1e-12],
+                "lower": [0.0, 0.0, 0.0, 40.0],
+                "upper": [10.0, 10.0, 0.0, 60.0],
+                "note": "",
+                "passed": [True, False, False, True],
+            }
+        )
+        reasons = validate.readiness(checks, validate.load_targets())
+        assert len(reasons) == 1
+        assert "rendering check c" in reasons[0]
+
+
+class TestRenderingChecks:
+    """Which rendering checks gate a condition, and that nothing measured, or
+    a NaN in any replicate, fails a check that applies."""
+
+    CONDITIONS = (
+        "reference",
+        "n_channels=1",
+        "fast_gamma_rate=0",
+        "spike_model=refractory",
+    )
+
+    @staticmethod
+    def _session(validate, condition_id, replicate, changed):
+        """A session whose every rendering check passes with n = 5, but for
+        ``changed``: check -> (observed, n)."""
+        rows = dict.fromkeys(validate.RENDERING_CHECKS, (0.0, 5))
+        del rows["interneuron_rate_realization"]  # pooled from the samples
+        if condition_id != "spike_model=refractory":
+            del rows["refractory_spiking"]  # measured under that model alone
+        rows.update(changed)
+        return validate.SessionResult(
+            condition_id=condition_id,
+            replicate=replicate,
+            samples=pd.DataFrame(
+                [("interneuron_rate_realization", "interneuron", 50.0, 50.0)],
+                columns=["quantity", "group", "x", "y"],
+            ),
+            measurements=pd.DataFrame(),
+            checks=pd.DataFrame(
+                [(name, observed, n, "") for name, (observed, n) in rows.items()],
+                columns=["check", "observed", "n", "note"],
+            ),
+        )
+
+    @pytest.fixture
+    def checks(self, validate, conditions):
+        by_id = {c.condition_id: c for c in conditions.conditions()}
+        selected = [by_id[i] for i in self.CONDITIONS]
+        changed = {
+            ("reference", 1): {"ripple_sizing": (np.nan, 5)},
+            ("n_channels=1", 0): {"channel_profile_rendering": (0.0, 0)},
+            ("n_channels=1", 1): {"channel_profile_rendering": (0.0, 0)},
+            ("fast_gamma_rate=0", 0): {"gamma_sizing": (0.0, 0)},
+            ("fast_gamma_rate=0", 1): {"gamma_sizing": (0.0, 0)},
+            ("spike_model=refractory", 0): {"sharp_wave_truth_crossings": (0.0, 0)},
+            ("spike_model=refractory", 1): {"sharp_wave_truth_crossings": (0.0, 0)},
+        }
+        results = [
+            self._session(validate, c, r, changed.get((c, r), {}))
+            for c in self.CONDITIONS
+            for r in (0, 1)
+        ]
+        parameters = {c.condition_id: conditions.resolve(c) for c in selected}
+        found = validate.build_checks(
+            results, selected, parameters, validate.load_targets().iloc[:0]
+        )
+        return found.set_index(["condition_id", "check"])
+
+    def test_every_check_has_a_row_saying_whether_it_applies(self, validate, checks):
+        for condition_id in self.CONDITIONS:
+            assert set(checks.loc[condition_id].index) == set(validate.RENDERING_CHECKS)
+        not_applicable = {
+            (c, name)
+            for c in self.CONDITIONS
+            for name in validate.RENDERING_CHECKS
+            if not checks.loc[(c, name), "applies"]
+        }
+        assert not_applicable == {
+            ("reference", "refractory_spiking"),
+            ("n_channels=1", "refractory_spiking"),
+            ("fast_gamma_rate=0", "refractory_spiking"),
+            ("n_channels=1", "channel_profile_rendering"),
+            ("fast_gamma_rate=0", "gamma_sizing"),
+        }
+        assert (
+            "one channel" in checks.loc[("n_channels=1", "channel_profile_rendering"), "note"]
+        )
+        assert "no gamma" in checks.loc[("fast_gamma_rate=0", "gamma_sizing"), "note"]
+
+    def test_an_unknown_scope_raises(self, validate, conditions):
+        parameters = conditions.resolve(conditions.conditions()[0])
+        assert validate.rendering_check_applies("all", parameters) == (True, "")
+        with pytest.raises(ValueError, match="Unknown scope 'everywhere'"):
+            validate.rendering_check_applies("everywhere", parameters)
+
+    def test_nothing_measured_or_a_nan_fails(self, validate, checks):
+        gated = checks[checks.applies]
+        failed = set(gated.index[~gated.passed])
+        assert failed == {
+            ("reference", "ripple_sizing"),
+            ("spike_model=refractory", "sharp_wave_truth_crossings"),
+        }
+        assert np.isnan(checks.loc[("reference", "ripple_sizing"), "observed"])
+        row = checks.loc[("spike_model=refractory", "sharp_wave_truth_crossings")]
+        assert (row.n, row.observed) == (0, 0.0)
+        assert "nothing measured" in row.note
+        reasons = validate.readiness(checks.reset_index(), validate.load_targets().iloc[:0])
+        assert len(reasons) == 2
+
+
+class TestReport:
+    def test_it_is_built_without_a_detector(self, report, validate):
+        # the fixture failed any detector, literature method or matching call;
+        # the module does not import them either
+        tree = ast.parse(Path(validate.__file__).read_text())
+        imported = {
+            node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+        } | {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        }
+        assert (
+            not {
+                "ripple_detection.detectors",
+                "ripple_detection.registry",
+                "ripple_detection.literature_methods",
+                "ripple_detection.evaluate",
+                "recipe_configs",
+                "run",
+            }
+            & imported
+        )
+        assert report["spec"]["status"] in ("ready", "not_ready")
+        assert report["exit_code"] == (0 if report["spec"]["status"] == "ready" else 1)
+
+    def test_spec_records_settings_seeds_and_hashes(self, report, validate, resolved):
+        spec, directory = report["spec"], report["directory"]
+        assert spec["conditions"] == json.loads(json.dumps(resolved))
+        assert spec["replicates"] == [validate.FIRST_REPLICATE]
+        assert spec["seeds"] == {"10000": validate.session_seed(10000)}
+        assert spec["simulation_fingerprint"] == validate.simulation_fingerprint()
+        assert spec["target_table_hash"] == _sha256(validate.TARGETS)
+        files = {p.name for p in directory.iterdir()} - {"spec.json"}
+        assert (
+            files == set(spec["artifacts"]) == {"measurements.csv", "checks.csv", "report.md"}
+        )
+        for name, digest in spec["artifacts"].items():
+            assert _sha256(directory / name) == digest
+        assert (spec["status"] == "ready") == (not spec["reasons"])
+
+    def test_parameter_revisions_are_listed(self, report, validate, conditions):
+        recorded = validate.revision_records(conditions.REFERENCE_REVISIONS)
+        assert report["spec"]["reference_revisions"] == recorded
+        text = (report["directory"] / "report.md").read_text()
+        for line in validate._revision_lines(conditions.REFERENCE_REVISIONS):
+            assert line in text
+        assert validate._revision_lines([]) == ["None: every reference value is as first set."]
+        revision = conditions.ReferenceRevision(
+            "events.ripple_duration",
+            (0.03, 0.15),
+            (0.03, 0.1),
+            "calibrated span",
+            "calibration c1",
+        )
+        assert validate.revision_records([revision]) == [
+            {
+                "key": "events.ripple_duration",
+                "previous": [0.03, 0.15],
+                "revised": [0.03, 0.1],
+                "reason": "calibrated span",
+                "evidence": "calibration c1",
+            }
+        ]
+        lines = validate._revision_lines([revision])
+        assert lines[-1] == (
+            "| `events.ripple_duration` | [0.03, 0.15] | [0.03, 0.1] | calibrated span | "
+            "calibration c1 |"
+        )
+
+    def test_checks_cover_every_target_and_rendering_check(self, report, validate):
+        checks = pd.read_csv(report["directory"] / "checks.csv")
+        targets = validate.load_targets()
+        assert set(checks.check) == set(targets.quantity) | set(validate.RENDERING_CHECKS)
+        assert (checks.condition_id == "reference").all()
+        gated = checks[checks.kind == "target"].set_index("check").applies
+        for row in targets.itertuples():
+            applies = row.evidence_status == "supported" and "reference" in str(
+                row.conditions
+            ).split("; ")
+            assert gated[row.quantity] == applies, row.quantity
+        rendering = checks[checks.kind == "rendering"].set_index("check")
+        # Poisson spiking has no refractory period; every other check applies,
+        # measured something and passes on the reference
+        assert list(rendering.index[~rendering.applies]) == ["refractory_spiking"]
+        applicable = rendering[rendering.applies]
+        assert applicable.passed.all(), applicable[~applicable.passed]
+        assert (applicable.n > 0).all()
+
+    def test_status_follows_the_gated_checks(self, report):
+        checks = pd.read_csv(report["directory"] / "checks.csv")
+        assert list(checks.columns) == [
+            "check",
+            "kind",
+            "condition_id",
+            "applies",
+            "evidence_status",
+            "statistic",
+            "observed",
+            "lower",
+            "upper",
+            "n",
+            "note",
+            "passed",
+        ]
+        failing = checks[checks.applies & ~checks.passed]
+        assert (report["spec"]["status"] == "ready") == failing.empty
+        assert len(report["spec"]["reasons"]) == len(failing)
+
+    def test_measurements_are_per_condition_replicate_and_group(self, report):
+        measurements = pd.read_csv(report["directory"] / "measurements.csv")
+        assert list(measurements.columns) == [
+            "condition_id",
+            "replicate",
+            "group",
+            "quantity",
+            "statistic",
+            "value",
+            "n",
+        ]
+        assert set(measurements.replicate) == {10000}
+        quantities = set(measurements.quantity)
+        for quantity in (
+            "event_rate",
+            "event_type_proportion",
+            "latent_width_ms_half_maximum",
+            "ripple_hilbert_width_ms_0.5",
+            "ripple_snr_anchor",
+            "ripple_snr_recording_wide",
+            "background_band_power",
+            "windowed_ripple_band_power",
+            "channel_occupancy",
+            "channel_coherence",
+            "count_fano_10ms",
+            "inter_spike_interval_ms",
+            "population_silent_gap_ms",
+            "observed_participation",
+            "latent_recruitment",
+            "sharp_wave_ripple_power",
+        ):
+            assert quantity in quantities, quantity
+
+    def test_participation_counts_spikes_not_recruitment(self, validate, conditions, measured):
+        reference = conditions.conditions()[0]
+        session = conditions.simulate_condition(reference, validate.FIRST_REPLICATE, OVERRIDES)
+        events = session.events
+        first = events[(events.expression == "ripple") & (events.component == 0)]
+        principal = np.flatnonzero(np.isin(session.unit_types, ["place", "pyramidal"]))
+        samples, units = np.nonzero(session.multiunit)
+        expected = validate.observed_participation(
+            session.time, samples, units, principal, first.center_time.to_numpy(), 0.025
+        )
+        observed = measured.samples[measured.samples.quantity == "observed_participation"]
+        by_type = np.concatenate(
+            [expected[first.event_type.to_numpy() == t] for t in observed.group.unique()]
+        )
+        np.testing.assert_allclose(observed.x.to_numpy(), by_type)
+        bursts = events[events.expression == "burst"].set_index("event_id")
+        latent = bursts.loc[first.event_id, "n_participants"].to_numpy() / principal.size
+        assert not np.allclose(expected, latent)
+
+    def test_rendering_seed_reproduces_the_session(self, conditions):
+        reference = conditions.conditions()[0]
+        overrides = {"session.duration_s": 40.0}
+        session = conditions.simulate_condition(reference, 3, overrides)
+        again = conditions.render_tables(
+            conditions.resolve(reference, overrides),
+            3,
+            session.time,
+            session.events,
+            session.non_events,
+            session.running_intervals,
+        )
+        np.testing.assert_array_equal(again.lfps, session.lfps)
+        np.testing.assert_array_equal(again.multiunit, session.multiunit)
+
+    def test_the_command_line_takes_a_crossed_cell(self, validate, tmp_path, monkeypatch):
+        chosen = []
+
+        def validated(validation_id, selected, **options):
+            chosen.append([c.condition_id for c in selected])
+            spec = tmp_path / "spec.json"
+            spec.write_text(json.dumps({"status": "ready", "reasons": []}))
+            return spec
+
+        monkeypatch.setattr(validate, "validate", validated)
+        for text in ("ripple_snr=low,participation=low", "reference,participation=low"):
+            assert validate.main(["--validation-id", "x", "--conditions", text]) == 0
+        assert chosen == [
+            ["ripple_snr=low,participation=low"],
+            ["reference", "participation=low"],
+        ]
+        with pytest.raises(SystemExit):
+            validate.main(["--validation-id", "x", "--conditions", "reference,nope"])
+        assert len(chosen) == 2
+
+    def test_validate_rejects_empty_requests(self, validate, conditions, tmp_path):
+        with pytest.raises(ValueError, match="n_replicates"):
+            validate.validate(
+                "x",
+                conditions.conditions()[:1],
+                n_replicates=0,
+                output_root=tmp_path,
+            )
+        with pytest.raises(ValueError, match="No condition"):
+            validate.validate("x", (), output_root=tmp_path)
+
+
+class TestPreflight:
+    def test_a_matching_report_passes(self, validate, report, ready_copy, resolved):
+        spec = ready_copy / "spec.json"
+        assert validate.require_ready_report(spec, resolved) == {
+            "path": str(spec),
+            "sha256": _sha256(spec),
+            "simulation_fingerprint": validate.simulation_fingerprint(),
+            "target_table_hash": _sha256(validate.TARGETS),
+            "sessions": report["spec"]["sessions"],
+        }
+        assert [s["replicate"] for s in report["spec"]["sessions"]] == [10000]
+        assert set(report["spec"]["sessions"][0]) == {
+            "condition_id",
+            "replicate",
+            "seconds",
+            "peak_rss_bytes",
+        }
+
+    def test_the_runner_reads_a_ready_report(
+        self, benchmark_import, validate, ready_copy, resolved
+    ):
+        run = benchmark_import("run")
+        spec = ready_copy / "spec.json"
+        assert run._require_report(spec, resolved) == validate.require_ready_report(
+            spec, resolved
+        )
+        with pytest.raises(validate.ReportNotReady, match="No simulator validation report"):
+            run._require_report(ready_copy / "other.json", resolved)
+
+    def test_a_missing_report(self, validate, tmp_path, resolved):
+        with pytest.raises(validate.ReportNotReady, match="No simulator validation report"):
+            validate.require_ready_report(tmp_path / "spec.json", resolved)
+        (tmp_path / "spec.json").write_text("{not json")
+        with pytest.raises(validate.ReportNotReady, match="cannot be read"):
+            validate.require_ready_report(tmp_path / "spec.json", resolved)
+
+    def test_too_few_replicates(self, validate, ready_copy, resolved):
+        assert validate.DEFAULT_REPLICATES == 20
+        spec = _edit_spec(ready_copy, replicates=list(range(10000, 10019)))
+        with pytest.raises(
+            validate.ReportNotReady, match=re.escape("19 replicates, fewer than the 20")
+        ):
+            validate.require_ready_report(spec, resolved)
+
+    def test_a_failed_report(self, validate, ready_copy, resolved):
+        spec = _edit_spec(
+            ready_copy, status="not_ready", reasons=["target check x fails in reference"]
+        )
+        with pytest.raises(validate.ReportNotReady, match="target check x fails"):
+            validate.require_ready_report(spec, resolved)
+
+    def test_stale_simulation_source(
+        self, validate, ready_copy, resolved, tmp_path, monkeypatch
+    ):
+        package = _copy_package(tmp_path)
+        simulate = package / "simulate.py"
+        simulate.write_text(
+            simulate.read_text().replace("_SPIKE_BLOCK = 8", "_SPIKE_BLOCK = 4")
+        )
+        monkeypatch.setattr(validate, "PACKAGE", package)
+        with pytest.raises(validate.ReportNotReady, match="simulation code has changed"):
+            validate.require_ready_report(ready_copy / "spec.json", resolved)
+
+    def test_changed_validator(self, validate, ready_copy, resolved, tmp_path, monkeypatch):
+        spec = json.loads((ready_copy / "spec.json").read_text())
+        assert spec["validator_hash"] == _sha256(validate.__file__)
+        edited = tmp_path / "validate_simulator.py"
+        edited.write_text(Path(validate.__file__).read_text() + "\n# edited\n")
+        monkeypatch.setattr(validate, "__file__", str(edited))
+        with pytest.raises(
+            validate.ReportNotReady, match=re.escape("validate_simulator.py has changed")
+        ):
+            validate.require_ready_report(ready_copy / "spec.json", resolved)
+
+    def test_changed_targets(self, validate, ready_copy, resolved, tmp_path):
+        edited = tmp_path / "targets.csv"
+        edited.write_text(validate.TARGETS.read_text().replace(",0.13,0.40,", ",0.10,0.40,"))
+        spec = _edit_spec(ready_copy, target_table_hash=_sha256(edited))
+        with pytest.raises(
+            validate.ReportNotReady, match=re.escape("simulator_targets.csv has changed")
+        ):
+            validate.require_ready_report(spec, resolved)
+
+    def test_uncovered_settings(self, validate, conditions, ready_copy, resolved):
+        local = next(
+            c for c in conditions.conditions() if c.condition_id == "spatial_profile=local"
+        )
+        longer = conditions.resolve(conditions.conditions()[0], {"session.duration_s": 600.0})
+        wanted = {**resolved, "spatial_profile=local": conditions.resolve(local, OVERRIDES)}
+        with pytest.raises(
+            validate.ReportNotReady, match="spatial_profile=local is not covered"
+        ):
+            validate.require_ready_report(ready_copy / "spec.json", wanted)
+        with pytest.raises(
+            validate.ReportNotReady, match=re.escape("other settings: session.duration_s")
+        ):
+            validate.require_ready_report(ready_copy / "spec.json", {"reference": longer})
+
+    def test_tampered_artifacts(self, validate, ready_copy, resolved):
+        checks = ready_copy / "checks.csv"
+        checks.write_text(checks.read_text().replace("True", "False", 1))
+        (ready_copy / "report.md").unlink()
+        measurements = ready_copy / "measurements.csv"
+        measurements.write_text(measurements.read_text() + "\n")
+        with pytest.raises(validate.ReportNotReady) as raised:
+            validate.require_ready_report(ready_copy / "spec.json", resolved)
+        message = str(raised.value)
+        assert "artifact checks.csv does not match" in message
+        assert "artifact report.md is missing" in message
+        assert "artifact measurements.csv does not match" in message
+
+    def test_measurements_need_not_be_kept(self, validate, ready_copy, resolved):
+        """measurements.csv is too large to commit; a report without it still
+        backs a run, and a copy that is present must match."""
+        (ready_copy / "measurements.csv").unlink()
+        spec = ready_copy / "spec.json"
+        assert validate.require_ready_report(spec, resolved)["sha256"] == _sha256(spec)
+
+    def test_every_problem_is_listed_at_once(self, validate, ready_copy, resolved):
+        spec = _edit_spec(
+            ready_copy,
+            status="not_ready",
+            reasons=["r"],
+            simulation_fingerprint="0" * 64,
+            artifacts={},
+        )
+        with pytest.raises(validate.ReportNotReady) as raised:
+            validate.require_ready_report(spec, {**resolved, "other": {}})
+        message = str(raised.value)
+        for part in (
+            "status is 'not_ready'",
+            "simulation code has changed",
+            "records no artifact hashes",
+            "condition other is not covered",
+        ):
+            assert part in message
+        assert isinstance(raised.value, ValueError)
+
+
+class TestFingerprint:
+    @pytest.fixture
+    def package(self, validate, tmp_path, monkeypatch):
+        """A copy of the package and of conditions.py, to edit, in their place."""
+        copy = _copy_package(tmp_path)
+        conditions_copy = tmp_path / "conditions.py"
+        shutil.copy(validate.CONDITIONS_SOURCE, conditions_copy)
+        monkeypatch.setattr(validate, "PACKAGE", copy)
+        monkeypatch.setattr(validate, "CONDITIONS_SOURCE", conditions_copy)
+        return copy
+
+    @staticmethod
+    def _edit(path, old, new):
+        text = path.read_text()
+        assert text.count(old) == 1, old
+        path.write_text(text.replace(old, new))
+
+    def test_a_copy_has_the_same_fingerprint(self, validate, package_copy, monkeypatch):
+        real = validate.simulation_fingerprint()
+        assert len(real) == 64
+        monkeypatch.setattr(validate, "PACKAGE", package_copy)
+        assert validate.simulation_fingerprint() == real
+
+    def test_the_covered_sources(self, validate, package_copy):
+        labels = [
+            label
+            for label, _ in validate._simulation_sources(
+                package_copy, validate.CONDITIONS_SOURCE
+            )
+        ]
+        assert labels[:3] == [
+            "conditions.py",
+            "ripple_detection/simulate.py",
+            "ripple_detection/ripplefilter.mat",
+        ]
+        assert "ripple_detection.core:filter_ripple_band" in labels
+        assert "ripple_detection.core:_fir_filtfilt" in labels
+        assert not [label for label in labels if "detectors._lfp" in label]
+        assert not [label for label in labels if "_call_hints" in label]
+
+    def test_detector_edits_leave_it(self, validate, package):
+        before = validate.simulation_fingerprint()
+        self._edit(
+            package / "detectors" / "_lfp.py",
+            "def Kay_ripple_detector(",
+            "def _unused() -> None:\n    pass\n\n\ndef Kay_ripple_detector(",
+        )
+        self._edit(
+            package / "core.py",
+            "def exclude_close_events(",
+            "def _unused() -> None:\n    pass\n\n\ndef exclude_close_events(",
+        )
+        self._edit(
+            package / "_call_hints.py",
+            "def explain_call_errors(",
+            "def _unused() -> None:\n    pass\n\n\ndef explain_call_errors(",
+        )
+        assert validate.simulation_fingerprint() == before
+
+    @pytest.mark.parametrize(
+        ("path", "old", "new"),
+        [
+            ("simulate.py", "_SPIKE_BLOCK = 8", "_SPIKE_BLOCK = 4"),
+            (
+                "core.py",
+                "padlen = len(filter_numerator) - 1",
+                "padlen = len(filter_numerator)",
+            ),
+            ("core.py", "DEFAULT_TRANSITION_WIDTH = 25.0", "DEFAULT_TRANSITION_WIDTH = 20.0"),
+            ("conditions", '"duration_s": 600.0', '"duration_s": 300.0'),
+        ],
+    )
+    def test_simulation_edits_change_it(self, validate, package, path, old, new):
+        before = validate.simulation_fingerprint()
+        target = validate.CONDITIONS_SOURCE if path == "conditions" else package / path
+        self._edit(target, old, new)
+        assert validate.simulation_fingerprint() != before

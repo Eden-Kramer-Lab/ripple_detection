@@ -85,19 +85,17 @@ def make_recording(duration: float = 90.0, rng: int = 0) -> methods.Recording:
 
 
 def score(events: pd.DataFrame | np.ndarray, ripple_windows: np.ndarray) -> dict[str, float]:
-    """Check ripple overlap; false_positives counts events with no such overlap.
+    """Events matched one-to-one to the simulated ripples: recall, and as
+    false_positives the events matched to none.
 
-    This smoke check uses any overlap, without one-to-one matching. A population
-    event without a simulated ripple is not necessarily a detection error.
+    A population event without a simulated ripple is not necessarily a
+    detection error.
     """
-    found = methods.bounds(events)
-    n_ripples = len(ripple_windows)
+    matching = rd.match_events(ripple_windows, events)
     return {
-        "n_events": len(found),
-        "recall": len(rd.require_overlap(ripple_windows, found)) / n_ripples
-        if len(found)
-        else 0.0,
-        "false_positives": len(rd.exclude_overlap(found, ripple_windows)),
+        "n_events": len(matching.detected),
+        "recall": matching.recall,
+        "false_positives": len(matching.unmatched_detected),
     }
 
 

@@ -1,0 +1,7 @@
+factor,kind,levels,caveat
+channels,categorical,"[3, null]","rests on 4 methods, below the design's 8; the maintainer chose to run it"
+normalization_period,categorical,"[""speed<5"", ""session""]","rests on 4 methods, below the design's 8; the maintainer chose to run it"
+threshold,continuous,"[2.0, 3.0]","rests on 4 methods, below the design's 8; the maintainer chose to run it"
+minimum_event_duration,continuous,"[0.0, 0.05]","rests on 4 methods, below the design's 8; the maintainer chose to run it"
+maximum_duration,categorical,"[2.0, null]","rests on 4 methods, below the design's 8; the maintainer chose to run it"
+speed,categorical,"[""endpoints<=5"", ""restrict<5""]","rests on 4 methods, below the design's 8; the maintainer chose to run it"

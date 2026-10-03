@@ -22,7 +22,13 @@ from ripple_detection.detectors import (
     Roumis_ripple_detector,
     multiunit_HSE_detector,
 )
-from ripple_detection.simulate import simulate_LFP
+from ripple_detection.simulate import (
+    draw_network_events,
+    draw_non_events,
+    simulate_LFP,
+    simulate_network_session,
+    simulate_time,
+)
 
 
 @pytest.fixture
@@ -414,3 +420,47 @@ class TestNewDetectorSnapshots:
         lfps, multiunit = _synthetic_joint_inputs(n, self.FS, (3000, 7000, 11000, 15000))
         events = Carey_candidate_detector(time, lfps, multiunit, np.full(n, 2.0), self.FS)
         _pin(snapshot, events, "carey")
+
+
+class TestNetworkSessionSnapshot:
+    """Pins a seeded network session: its signals at every 997th sample, each
+    unit's total spike count, the participants and the baseline rates; and
+    a seeded non-event table and the same session rendered with it."""
+
+    TIME = simulate_time(8 * 1500, 1500)
+    RUNNING = ((3.0, 4.5),)
+
+    def _render(self, non_events=None):
+        events = draw_network_events(
+            self.TIME, event_rate=1.0, running_intervals=self.RUNNING, rng=0
+        )
+        return simulate_network_session(
+            self.TIME, events, non_events=non_events, running_intervals=self.RUNNING, rng=1
+        )
+
+    def _pin_signals(self, snapshot, session):
+        rows = np.arange(0, self.TIME.size, 997)
+        snapshot.assert_match(str(np.round(session.lfps[rows], 6).tolist()), "lfps")
+        snapshot.assert_match(
+            str(np.round(session.sharp_wave_lfp[rows], 6).tolist()), "sharp_wave_lfp"
+        )
+        spike_counts = session.multiunit.sum(axis=0).astype(int).tolist()
+        snapshot.assert_match(str(spike_counts), "spike_counts")
+
+    def test_network_session(self, snapshot):
+        session = self._render()
+        self._pin_signals(snapshot, session)
+        snapshot.assert_match(str(session.events.n_participants.tolist()), "n_participants")
+        snapshot.assert_match(
+            str(np.round(session.baseline_rates, 6).tolist()), "baseline_rates"
+        )
+
+    def test_network_session_with_non_events(self, snapshot):
+        rates = {"spike_leakage": 60.0, "emg": 30.0, "fast_gamma": 60.0, "theta_burst": 240.0}
+        non_events = draw_non_events(
+            self.TIME, rates=rates, running_intervals=self.RUNNING, rng=2
+        )
+        numbers = non_events.drop(columns="non_event_type").round(6)
+        snapshot.assert_match(non_events.non_event_type.str.cat(sep=" "), "types")
+        snapshot.assert_match(numbers.to_csv(index=False), "table")
+        self._pin_signals(snapshot, self._render(non_events))

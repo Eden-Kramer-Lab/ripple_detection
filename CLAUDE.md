@@ -46,8 +46,30 @@ jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --exec
 jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/ripple_detection_tutorial.ipynb
 jupyter nbconvert --to notebook --ExecutePreprocessor.kernel_name=python3 --execute examples/simulation_study.ipynb
 
-# Re-run the simulation study sweep the notebook reads (about two minutes)
+# Re-run the simulation study sweep the notebook reads (about three minutes)
 uv run python examples/simulation_study.py
+
+# The detector benchmark (examples/benchmark/README.md, "Running the benchmark"): a ready
+# simulator report first, then the smoke test and, by hand in tmux, the full run (hours;
+# outputs git-ignored under examples/benchmark/output/). The runner refuses a report until
+# it is ready. Validation: 20 replicates per condition, about 10-11 s and 1.6 GB per 600 s
+# session (860 sessions for all; --workers N), --duration of at least 120 s. --conditions
+# takes all or ids separated by commas; a crossed cell's id holds a comma, and the longest
+# known id is taken
+uv run python examples/benchmark/validate_simulator.py --validation-id v1 --conditions all
+uv run python examples/benchmark/run.py --run-name smoke --smoke \
+    --validation-report examples/benchmark/validation/v1/spec.json
+uv run python examples/benchmark/run.py --run-name v1 --conditions all --workers N \
+    --validation-report examples/benchmark/validation/v1/spec.json
+# Analyse a finished run's combined/ into examples/benchmark/results/<run_name>/ (a CSV
+# per analysis, a PNG per figure, each under 1 MB, candidate_trends.csv, compact.md,
+# the headline comparison, and summary.md; trends.md and spot_checks/, written by hand,
+# and attribution.py's attribution/ are kept; the README gives its runtime)
+uv run python examples/benchmark/analyze.py --run-name v1 --workers N
+# Attribute the literature methods' disagreement to their rule components (the reference
+# condition's sessions; minutes per family; --smoke prints each analysis's cost first;
+# a family below eight represented methods needs --below-minimum)
+uv run python examples/benchmark/attribution.py --run-name v1 --family spikes --analysis all
 
 # Run every surveyed paper's packaged method on a simulated session (seconds;
 # overwrites examples/literature_recipes_results.csv). Widloski 2022 has none:
@@ -62,7 +84,7 @@ uv run python examples/measured_walkthrough.py
 
 ### Core Module Structure
 
-The package lives under `src/` (the Scientific Python guide's layout, so tests import the installed package, never the checkout) and is organized into six modules, one of them a package:
+The package lives under `src/` (the Scientific Python guide's layout, so tests import the installed package, never the checkout) and is organized into seven modules, one of them a package:
 
 1. **[src/ripple_detection/core.py](src/ripple_detection/core.py)** - Low-level signal processing utilities, and the event and interval rules (`merge_close_events`, `require_overlap`, `require_inside`, `intervals_to_mask`, `intersect_intervals`, ...). Intervals are inclusive, sorted and disjoint; event bounds are closed intervals on recorded timestamps
 
@@ -88,6 +110,7 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
    - `simulate_sharp_wave_ripple_pair`: the raw pyramidal-layer and stratum radiatum channels the Long detector takes
    - `simulate_multiunit`: Poisson units that burst with the ripples
    - `simulate_session`: all of the above from one draw of per-ripple durations and frequencies, returned with the ground truth as a `SimulatedSession` (`ripple_windows` are the intervals a detected event should overlap); `running_intervals` gives it running bouts (`simulate_speed`) and `theta_amplitude`/`delta_amplitude` add theta while running and delta at rest to every channel, radiatum included (`simulate_theta_delta`), all after the random draws so the defaults are unchanged
+   - `draw_network_events`, `simulate_network_session`, `truth_windows`: latent network events of five types (`EVENT_TYPES`) as a table of ripple, sharp-wave and burst components, rendered with the same noise, slow field and speed as `simulate_session` (which it does not replace) plus unit types, baseline rates and per-channel ripple gains; the event draw uses fixed per-event blocks of variates and the renderer separate seeded streams, so each model option (coupled strengths, envelope power 4, local ripples, varying noise, refractory spiking) is paired with the reference; truth windows at any envelope fraction keep one row order. The reference values and their sources are in `draw_network_events`' Notes, the validation targets in `examples/benchmark/simulator_targets.csv`. Non-events (`NON_EVENT_TYPES`: spike leakage, EMG, fast gamma, theta-state bursts) are a second table, drawn by `draw_non_events` from one stream per kind and rendered from the renderer's own non-event stream, so adding them changes no other draw, except that under Poisson spiking a theta burst changes the spike counts drawn after it
    - The basis of the integration tests and of `examples/simulation_study.py`
 
 4. **[src/ripple_detection/registry.py](src/ripple_detection/registry.py)** - `DETECTORS`, `get_detector`, `DetectorSpec`
@@ -107,6 +130,12 @@ The package lives under `src/` (the Scientific Python guide's layout, so tests i
    - Each method declares its requirements (`Requirement`) once, in its registration; `list_methods` reports them and `check_method`/`run_method` check them, and a test runs every method with exactly its declared inputs and with each removed. `behavior_intervals` are a per-call argument, not a `Recording` field
    - Every result starts with the same six columns, and its `attrs` (method, options, grid, inputs, diagnostics) are plain JSON types
    - The simulation script only supplies demonstration inputs; [implementation.md](docs/literature/implementation.md) owns usage and current implementation limits
+
+7. **[src/ripple_detection/evaluate.py](src/ripple_detection/evaluate.py)** - Comparing event inventories
+   - `match_events` and `EventMatching`: one-to-one matching, the most pairs then the largest summed IoU, solved exactly per connected component of the overlap graph (`linear_sum_assignment` with a per-pair bonus), so pair counts are symmetric; per-pair IoU, coverage, temporal precision and signed errors (detected minus reference), recall, precision, F1, split and merged events, `boundary_errors` against other bounds for the same reference rows
+   - `compare_detectors` (every pair of methods, a minus b, optional truth columns), `consensus_counts`, `label_by_overlap`
+   - A minimum IoU and ties between overlaps are judged to the timestamps' rounding, so results do not change with the clock origin
+   - The examples' scoring (`simulation_study.py`, `literature_recipes.py`) goes through `match_events`
 
 Two private modules serve callers rather than detection: [_call_hints.py](src/ripple_detection/_call_hints.py) wraps the public functions so a call written for 1.x fails with the 2.0 change behind it (add a removed or renamed argument to `REMOVED_ARGUMENTS` there, keyed by function, and only for a name a release shipped: users upgrade from a release, so a name that changed between releases gets no hint; `SAME_ROLE` maps other detectors' and libraries' names for a parameter by what it does), and [_descriptions.py](src/ripple_detection/_descriptions.py) holds what `describe()` reports. Warnings go through `core._warn_at_caller`, which attributes them to the first frame outside the package, so no function passes a `stacklevel`.
 

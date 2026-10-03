@@ -1,0 +1,13 @@
+factor,kind,levels,caveat
+units,categorical,"[""pyramidal"", ""all"", ""place""]",
+smoothing_sigma,continuous,"[0.005, 0.08]",
+normalization_period,categorical,"[""rest"", ""session"", ""speed<5"", ""speed<4""]",
+threshold,continuous,"[2.0, 4.0]",
+bound_fraction,categorical,"[0.0, 1.0, 0.3333333333333333, 0.5]",
+minimum_event_duration,continuous,"[0.0, 0.1]",
+maximum_duration,categorical,"[0.5, 2.0, 0.8, null, 0.75]",
+merge_gap,continuous,"[0.0, 0.05]",
+speed,categorical,"[""none"", ""all<=3"", ""restrict<5"", ""endpoints<5"", ""all<=5"", ""endpoints<4""]",
+minimum_active_units,integer,"[0, 1, 2, 3, 4, 5]",
+state,categorical,"[""inside:rest"", ""none"", ""restrict:rest"", ""overlap:running_30s""]",
+coincidence,categorical,"[""peak_inside:external_ripples"", ""overlap:long_swrs"", ""none"", ""overlap:muessig_2019_ripples""]",

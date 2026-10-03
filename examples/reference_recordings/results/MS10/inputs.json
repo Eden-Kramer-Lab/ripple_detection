@@ -1,0 +1,264 @@
+{
+  "session": "MS10",
+  "databank_path": "PetersenP/MS10/Peter_MS10_170307_154746_concat",
+  "released_events": {
+    "file": "https://buzsakilab.nyumc.org/datasets/PetersenP/MS10/Peter_MS10_170307_154746_concat/Peter_MS10_170307_154746_concat.ripples.events.mat",
+    "wayback_timestamp": "20231129113529",
+    "sha256": "d28e4f4dab23319de87372b44f4af3165fd7c8959bb1cad24a4594291975e628",
+    "detector": "bz_FindRipples",
+    "parameters": {
+      "basepath": "Z:\\Buzsakilabspace\\Datasets\\PetersenP\\MS10\\Peter_MS10_170307_154746_concat",
+      "channel": 46,
+      "durations": [
+        50,
+        150
+      ],
+      "frequency": 1250,
+      "passband": [
+        120,
+        180
+      ],
+      "restrict": [],
+      "saveMat": 1,
+      "show": "off",
+      "stdev": [],
+      "thresholds": [
+        2,
+        5
+      ]
+    },
+    "channel_stored": 46,
+    "stdev": 202112.1139640921,
+    "n_events": 429,
+    "n_noise_events": 0,
+    "duration_ms_range": [
+      19.19999999972788,
+      148.79999999993743
+    ]
+  },
+  "recording": {
+    "dandiset": "000059",
+    "dandiset_version": "0.250624.0444",
+    "asset_id": "8941eed3-5cb3-4a81-be34-a37a211a4ebd",
+    "series": "/processing/ecephys/LFP/LFP",
+    "shape": [
+      23613750,
+      64
+    ],
+    "chunks": [
+      81920,
+      64
+    ],
+    "rate": 1250.0,
+    "starting_time": 0.0,
+    "duration_s": 18891.0,
+    "conversion_to_volts": 1.9499999999999999e-07,
+    "units": "int16 counts as in the .lfp (the head match compares them exactly); the source filtered these counts, so they are used unscaled",
+    "lfp_head_capture": "20231129114227",
+    "lfp_original_bytes": 3022560000,
+    "detection_column": 46
+  },
+  "checks": [
+    {
+      "name": "sampling_rate",
+      "passed": true,
+      "detail": {
+        "xml": 1250.0,
+        "nwb": 1250.0,
+        "stored": 1250.0
+      },
+      "reason": ""
+    },
+    {
+      "name": "lfp_length",
+      "passed": true,
+      "detail": {
+        "original_bytes": 3022560000,
+        "n_channels": 64,
+        "dandi_shape": [
+          23613750,
+          64
+        ],
+        "lfp_samples": 23613750
+      },
+      "reason": ""
+    },
+    {
+      "name": "channel_count",
+      "passed": true,
+      "detail": {
+        "xml": 64,
+        "dandi_columns": 64,
+        "dandi_keeps_every_channel": true,
+        "note": "a DANDI copy may keep a subset; the head match finds the stored channel"
+      },
+      "reason": ""
+    },
+    {
+      "name": "head_match",
+      "passed": true,
+      "detail": {
+        "rows_compared": 512,
+        "column_to_channel": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63
+        ],
+        "identity": true,
+        "channels_absent": [],
+        "ambiguous_columns": [],
+        "stored_channel": 46,
+        "stored_channel_column": 46
+      },
+      "reason": ""
+    },
+    {
+      "name": "channel_tag",
+      "passed": true,
+      "detail": {
+        "stored_zero_based": 46,
+        "tag_one_based": 47,
+        "n_tag_channels": 1
+      },
+      "reason": ""
+    },
+    {
+      "name": "events_in_recording",
+      "passed": true,
+      "detail": {
+        "n_events": 429,
+        "first_start_sample": 5953,
+        "last_end_sample": 23602582,
+        "n_samples": 23613750,
+        "largest_grid_deviation_samples": 3.725290298461914e-09,
+        "grid_tolerance_samples": 3.309105522930622e-08
+      },
+      "reason": ""
+    }
+  ],
+  "gaps": {
+    "nan": "none possible: the LFP is int16",
+    "timestamps": "the series stores starting_time and rate, so no timestamp gap can be represented; the .lfp is one concatenated file",
+    "epochs": [
+      {
+        "name": "Peter_MS10_170307_154746",
+        "start_time": 0.0,
+        "stop_time": 2807.424
+      },
+      {
+        "name": "Peter_MS10_170307_164726",
+        "start_time": 2807.424,
+        "stop_time": 3486.636
+      },
+      {
+        "name": "Peter_MS10_170307_175258",
+        "start_time": 3486.636,
+        "stop_time": 5497.416
+      },
+      {
+        "name": "Peter_MS10_170307_183503",
+        "start_time": 5497.416,
+        "stop_time": 18891.0
+      }
+    ],
+    "events_spanning_an_epoch_boundary": [],
+    "note": "the concatenation points are epoch boundaries, not gaps in samples: the source treated the session as one continuous signal, and so does this run"
+  },
+  "speed": "the source applies no speed rule; the package runs with speed_threshold=np.inf",
+  "clock": "released times are seconds from the first LFP sample (bz_GetLFP timestamps from 0); NWB starting_time is 0, so the two share one clock",
+  "source_code": {
+    "repository": "https://github.com/petersenpeter/buzcode",
+    "commit": "bc3fc91fab1ab1a626022d8efbf0c101e7b8d1b7",
+    "path": "analysis/lfp/bz_FindRipples.m",
+    "committed": "2021-01-14T08:51:09-05:00",
+    "filter_kind": "cheby2",
+    "filter_order": 4,
+    "filter_stopband_db": 20.0,
+    "filter_nyquist": 625.0,
+    "smoothing_samples": 11,
+    "minimum_duration_ms": null,
+    "evidence": [
+      "The MAT header says the file was created on Thu Oct 15 16:03:31 2020 (Wayback orig_last_modified Thu, 15 Oct 2020 20:03:30 GMT).",
+      "The struct holds times, detectorName, peaks, peakNormedPower, stdev, noise and detectorParams (inputParser Results: basepath, channel, durations, frequency, passband, restrict, saveMat, show, stdev, thresholds; noise removed).",
+      "buzsakilab/buzcode's version current in October 2020 (analysis/SharpWaveRipples/bz_FindRipples.m at eec82c13, 2020-04-14) cannot have written it: it saves timestamps and detectorinfo and has EMGThresh, minDuration (default 20 ms) and plotType parameters. No version on any branch of buzsakilab/buzcode combines a passband parameter with the times/detectorParams layout: the layout is last used at 01061cc (2017-08-24), and passband became a parameter at c57269b (2018-02-20).",
+      "petersenpeter/buzcode's analysis/lfp/bz_FindRipples.m at bc3fc91 is the only version found with exactly that parameter set and layout: it adds the passband parameter, makes saveMat default to true and saves '.ripples.events.mat' (its parent 5a0b450, 2019-07-05, has no passband parameter, so cannot have stored passband [120 180], and saves '.ripples.event.mat'). It was committed on 2021-01-14, three months after the file was written, so the file came from that change in a working copy; the lines it changes are the only ones that differ from 5a0b450.",
+      "At bc3fc91 the filter is bz_FilterLFP(double(lfp.data),'passband',passband) -> bz_Filter with its defaults: cheby2, order 4, ripple 20 dB, nyquist 625, filtfilt (bz_Filter last changed at b6c55fe, 2019-03-21; bz_FilterLFP at 5a0b450, 2019-07-05). Not the butter order-3 filter of buzsakilab/buzcode.",
+      "The same file at bc3fc91: windowLength = 11; Filter0 (a centred 11-sample moving average, zero-padded at both ends); unity over all samples (restrict empty), std with N-1; crossings of > low with diff (start = last sample at or below, stop = last sample above), incomplete edge runs dropped; merge while next start - current stop < durations(1)/1000*frequency samples, with no cap; keep if max(normalized) > high; peak = the trough (minimum) of the filtered signal; drop duration > durations(2)/1000 s; no minimum duration, no noise channel given, no EMG rule.",
+      "bz_GetLFP at bc3fc91 reads int16 counts (bz_LoadBinary) without scaling, and builds timestamps from 0 in steps of 1/1250 s."
+    ]
+  },
+  "assumptions": [
+    "Code version: https://github.com/petersenpeter/buzcode analysis/lfp/bz_FindRipples.m at bc3fc91 (see source_code's evidence); the file was written by that change before it was committed.",
+    "Filter: scipy.signal.cheby2(4, 20.0, passband/625.0, 'bandpass') in transfer-function form and filtfilt with MATLAB's padding (odd reflection of 3*(n_coefficients-1) samples); assumed equal to MATLAB's cheby2/filtfilt to rounding (not run in MATLAB); the stage check tests it.",
+    "Smoothing: Filter0 with ones(11)/11, a centred moving average zero-padded at both ends; the package's default smoothing_window is the same 11 samples at 1250.0 Hz (np.convolve 'same').",
+    "Normalization: unity over all samples (restrict empty); MATLAB std uses N-1, the package's z-score N (relative difference 1/(2N), about 2e-8 here).",
+    "Merge: the source merges while the next start minus the current stop is below 50.0/1000*frequency samples, with no cap; the package merges only while the merged span stays under maximum_duration (150.0 ms): a rule difference, run as the detector implements it.",
+    "Minimum duration: the dated source has none; the package runs with minimum_duration=0 (accepted; the shortest event possible is 2 samples).",
+    "Maximum duration: the source drops (t_stop - t_start) > 0.15 s; the package keeps sample counts <= round-half-up(0.15*1250.0) = 188, the same events (stop - start <= 187 samples) unless 0.15*1250.0 is a whole number.",
+    "Edges: the source drops runs missing a crossing at the record's ends; the package keeps them flagged clipped_start/clipped_end (none expected away from the ends).",
+    "Peak: the source's peak is the first minimum of the filtered signal within the event; the package's is the maximum normalized power. Peak errors are reported with each side's definition named.",
+    "Speed: none in the source; the package gets zero speed with speed_threshold=np.inf.",
+    "Noise and EMG: the stored file has no noise events and the dated version no EMG rule; nothing is vetoed."
+  ]
+}

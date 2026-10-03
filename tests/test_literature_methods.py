@@ -806,6 +806,51 @@ def test_arbitrary_session_objects_cannot_enable_simulation_fallbacks(
         rec.sleep(4, 1)
 
 
+@pytest.mark.parametrize(
+    ("name", "field"),
+    [
+        ("lee_2002_ripples", "sleep_intervals"),
+        ("liu_2019", "sleep_intervals"),
+        ("kaefer_2020", "baseline_intervals"),
+    ],
+)
+def test_empty_curated_intervals_are_unmet(name, field):
+    rec = lm.Recording.from_arrays(**{**_measured_inputs(), field: np.empty((0, 2))})
+    problems = lm.check_method(name, rec)
+    assert len(problems) == 1
+    assert problems[0].startswith(field)
+    assert "no interval" in problems[0]
+    with pytest.raises(ValueError, match=f"{field}.*no interval"):
+        lm.run_method(name, rec)
+
+
+def test_empty_sleep_intervals_are_unmet_where_a_simulation_proxy_applies():
+    time = np.arange(20 * 1500) / 1500
+    session = rd.simulate_session(time, RIPPLE_TIMES, n_channels=3, n_units=20, rng=21)
+    every_unit = np.ones(20, dtype=bool)
+    proxied = lm.Recording(session, every_unit, every_unit)
+    assert lm.check_method("liu_2019", proxied) == []
+    emptied = lm.Recording(session, every_unit, every_unit, sleep_intervals=[])
+    problems = lm.check_method("liu_2019", emptied)
+    assert len(problems) == 1
+    assert problems[0].startswith("sleep_intervals")
+    assert "no interval" in problems[0]
+
+
+@pytest.mark.parametrize("name", ["chenani_2019", "pfeiffer_2013_ripples"])
+def test_empty_behavior_intervals_are_a_problem(measured, name):
+    """chenani_2019 declares its eligible epochs; pfeiffer_2013_ripples only
+    filters by them. Either way no event could be kept."""
+    problems = lm.check_method(name, measured, behavior_intervals=[])
+    assert len(problems) == 1
+    assert problems[0].startswith("behavior_intervals")
+    assert "no interval" in problems[0]
+    with pytest.raises(ValueError, match=r"behavior_intervals.*no interval"):
+        lm.run_method(name, measured, behavior_intervals=[])
+    with pytest.raises(ValueError, match=r"behavior_intervals.*no interval"):
+        getattr(lm, name)(measured, behavior_intervals=np.empty((0, 2)))
+
+
 @pytest.mark.parametrize("name", ["pfeiffer_2015", "bendor_2012", "mallory_2025_ripples"])
 def test_direct_methods_and_registry_apply_identical_behavior_filters(measured, name):
     unrestricted = lm.run_method(name, measured)

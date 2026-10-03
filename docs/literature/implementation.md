@@ -84,7 +84,9 @@ running it, and `run_method` uses it: a call missing several inputs fails once,
 listing all of them. A test runs each
 method on a recording holding exactly its declared inputs, then removes each in
 turn and checks the call fails naming it, so the catalog neither understates nor
-overstates what a method needs.
+overstates what a method needs. Intervals supplied with no row (sleep, baseline
+or a call's `behavior_intervals`) count as missing, not as an input: they would
+leave nothing eligible, and a supplied array replaces any simulation proxy.
 
 `Recording.from_arrays` copies inputs, validates selections, and masks artifact
 intervals. It holds every signal as float64, so NaN can mark missing samples:
@@ -200,7 +202,9 @@ The demo produces 59 configurations: the 57 default inventories and two addition
 The 2017 `trajectory` row uses `analysis="trajectory"`; its default remains the
 arm-reactivation inventory. These rows apply candidate-selection rules only;
 decoding and replay significance are not implemented by selecting them.
-`false_positives` counts detected events with no overlap with a simulated ripple.
+Events are matched one-to-one to the simulated ripples (`match_events`): `recall`
+is the fraction of ripples matched and `false_positives` counts detected events
+matched to none, including a second event over an already matched ripple.
 For population-event inventories this alone does not establish a detection error.
 Other inventories are exercised with their required settings in the tests.
 

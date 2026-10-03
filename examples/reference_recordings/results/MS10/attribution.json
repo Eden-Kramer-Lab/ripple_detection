@@ -1,0 +1,87 @@
+{
+  "differences": {
+    "unmatched_reference": 0,
+    "unmatched_detected": 120,
+    "poorly_aligned": 0
+  },
+  "source_events_over_the_ceiling": {
+    "what": "the transcription with no duration ceiling: events the source merged and then dropped for exceeding 150.0 ms",
+    "n": 48,
+    "duration_ms_range": [
+      152.00000000000102,
+      912.7999999982421
+    ],
+    "n_holding_package_only_events": 48,
+    "package_only_events_per_dropped_event": {
+      "1": 5,
+      "2": 26,
+      "3": 10,
+      "4": 4,
+      "5": 2,
+      "7": 1
+    }
+  },
+  "package_only_events": {
+    "n": 120,
+    "n_inside_a_dropped_source_event": 120,
+    "rows_not_inside_one": [],
+    "duration_ms_range": [
+      22.399999999997533,
+      149.6000000006461
+    ],
+    "peak_normalized_power_min": 5.303775871994152
+  },
+  "package_without_the_merge_cap": {
+    "what": "Zugaro_ripple_detector with maximum_duration=None (no merge cap), then events of more than 188 samples dropped, against the released events",
+    "n_before_ceiling": 477,
+    "n": 429,
+    "comparison": {
+      "reference": "released",
+      "detected": "package_uncapped_then_ceiling",
+      "minimum_iou": 0.0,
+      "n_reference": 429,
+      "n_detected": 429,
+      "n_matched": 429,
+      "recall": 1.0,
+      "precision": 1.0,
+      "f1": 1.0,
+      "median_iou": 0.9999999999708495,
+      "iou_q25": 0.9999999999071945,
+      "n_identical_bounds": 429,
+      "onset_error_q25_ms": 0.0,
+      "onset_error_median_ms": 0.0,
+      "onset_error_q75_ms": 1.8189894035458565e-09,
+      "offset_error_q25_ms": 0.0,
+      "offset_error_median_ms": 0.0,
+      "offset_error_q75_ms": 1.8189894035458565e-09,
+      "peak_definitions": "trough vs max normalized power",
+      "peak_error_q25_ms": -9.094947017729282e-10,
+      "peak_error_median_ms": 0.0,
+      "peak_error_q75_ms": 0.800000001618173,
+      "n_split_reference": 0,
+      "n_merged_detected": 0,
+      "n_unmatched_reference": 0,
+      "n_unmatched_detected": 0
+    }
+  },
+  "peak_definition": {
+    "what": "package peak (max normalized power) minus released peak (trough of the filtered signal) over the matched pairs, ms",
+    "n_pairs": 429,
+    "n_within_half_a_sample": 235,
+    "quantiles_0_5_25_50_75_95_100": [
+      -24.800000000141154,
+      -3.2000000010157237,
+      -9.094947017729282e-10,
+      0.0,
+      0.800000001618173,
+      3.200000002834713,
+      47.19999999997526
+    ]
+  },
+  "saturation": {
+    "what": "samples of the detection channel at the int16 limits",
+    "n_samples": 520,
+    "fraction": 2.202106823355037e-05,
+    "n_released_events_with_one": 94
+  }
+}

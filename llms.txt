@@ -75,6 +75,8 @@ the events first and `time` after the signal. Required positional arguments:
 - Intervals: `intervals_to_mask(time, intervals)`, `intersect_intervals(intervals, other_intervals)`; inclusive, sorted, disjoint `[start, end]` pairs.
 - State: `theta_delta_ratio(lfp, sampling_frequency, time=...)`, `state_intervals(values, time, threshold)`, `two_cluster_threshold(values)`, `histogram_minimum_threshold(values)`.
 - Every detector's result has `peak_time`, as does every `literature_methods` result.
+- Scoring events (`ripple_detection.evaluate`; DataFrame or (n, 2) array): `m = match_events(truth, events)` pairs them one-to-one (`minimum_iou=`), with `m.recall`, `m.precision`, `m.f1`, `m.pairs` (`iou`, `coverage`, `temporal_precision`, `onset_error`, `offset_error`, `peak_error`: detected minus reference, negative is early), `m.split_reference`, `m.merged_detected`, `m.boundary_errors(other_bounds)`; `compare_detectors({"a": events_a, "b": events_b}, truth=...)` (differences a minus b), `consensus_counts(events_by_name, truth)`, `label_by_overlap(events, windows_with_label_column)`.
+- Simulated truth by event type: `events = draw_network_events(time, running_intervals=...)`, `session = simulate_network_session(time, events, running_intervals=...)`, `truth_windows(session.events, fraction=0.1, expression="ripple" | "sharp_wave" | "burst" | "network")`; rows pair up across fractions. Non-events a detector should not report: `non_events = draw_non_events(time, running_intervals=...)`, `simulate_network_session(..., non_events=non_events)`, `truth_windows(session.non_events)`.
 
 ## Surveyed papers' methods
 

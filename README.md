@@ -41,7 +41,7 @@ different events on the same recording, so pick the one that matches your questi
   - `Roumis_ripple_detector` - Per-channel envelopes averaged across channels (Frank-lab variant, unpublished)
   - `Yu_ripple_detector` - Median consensus with a data-driven noise-percentile threshold (Yu et al. 2017)
   - `Carey_candidate_detector` - Joint ripple-power x multiunit candidate events (Carey, Tanaka & van der Meer 2019); takes LFP and spikes
-  - `Zugaro_ripple_detector` - The FMAToolbox/buzcode `FindRipples` two-threshold algorithm (Hirase; Zugaro)
+  - `Zugaro_ripple_detector` - The FMAToolbox `FindRipples` two-threshold algorithm (Hirase; Zugaro); buzcode's `bz_FindRipples` merges close events without its duration cap (see the docstring)
   - `Long_sharp_wave_ripple_detector` - Two-channel detector using the sharp wave on a stratum radiatum channel (J. D. Long II, buzcode `bz_DetectSWR`); takes **raw** LFP
   - `multiunit_HSE_detector` - High Synchrony Event detection from multiunit activity (population rate, no LFP)
 
@@ -300,7 +300,8 @@ and frequency, sized by `ripple_snr` (their filtered peak over the filtered back
 Poisson units bursting with each ripple for Carey and HSE; three seeds per condition. Further
 conditions put the ripple on only a quarter or half of 32 channels, sweep the thresholds of
 Kay, Karlsson and Zugaro, shrink the population to 20 units, and add 20 common-mode artifacts.
-An event is a hit when it overlaps the ripple's window. The
+An event is a hit when it is matched one-to-one (`match_events`) to a ripple window it
+overlaps, so a second event on one ripple counts against precision. The
 [notebook](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/simulation_study.ipynb) plots the whole sweep; 16 channels, means over
 seeds:
 
@@ -310,9 +311,9 @@ seeds:
 | Karlsson | 0.30 | 0.98 | 2 / 9 / 19 | 0.64 | 0.02 |
 | Roumis | 0.48 | 0.99 | 21 / 23 / 26 | 0.11 | 0.00 |
 | Shvartsman | 0.13 | 0.93 | 0 / 0.7 / 2 | 0.48 | 0.00 |
-| Yu | 0.58 | 1.00 | 15 / 25 / 70 | 0.17 | 0.30 |
+| Yu | 0.58 | 1.00 | 15 / 25 / 70 | 0.17 | 0.29 |
 | Zugaro | 0.32 | 0.93 | 11 / 14 / 16 | 0.07 | 0.00 |
-| Long | 0.42 | 0.83 | 8 / 8 / 8 | 0.61 | 0.93 |
+| Long | 0.43 | 0.83 | 8 / 8 / 8 | 0.61 | 0.93 |
 | Carey | 0.96 | 0.99 | 0.7 / 0.5 / 0.2 | 0.86 | 0.79 |
 | HSE | 0.99 | 0.99 | 50 / 50 / 53 | 0.98 | 0.85 |
 
@@ -349,6 +350,11 @@ sharp wave a Gaussian, its units Poisson, its noise stationary 1/f with no theta
 changes, and its artifacts crude; every ripple has a sharp wave and a population burst, which
 builds in the advantage of the detectors that read them. The numbers rank the defaults and
 expose their mechanics; they are not the recall or precision to expect on a recording.
+
+The full benchmark, every detector along its threshold sweep and every packaged literature
+method on network sessions with five event types, non-events and running bouts under 43
+simulation conditions, is described in
+[`examples/benchmark/README.md`](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/benchmark/README.md).
 
 ## Output Format
 
@@ -460,6 +466,40 @@ clean = exclude_overlap(ripples, artifact_intervals + np.array([-0.1, 0.1]))
 A zero-length interval has no duration to overlap, so point events, such as
 the peak times of interictal spikes, veto nothing until widened into windows:
 `exclude_overlap(ripples, peak_times[:, np.newaxis] + [-0.1, 0.1])`.
+
+### Evaluating detections
+
+`match_events` pairs two event inventories one-to-one, detections against a truth (hand
+labels, or simulated windows) or one detector against another. Two events overlap when they
+share time of positive length; each event is in at most one pair, and the matching keeps the
+most pairs and, among those, the largest summed intersection over union (IoU). Every signed
+error is detected minus reference, so negative means early:
+
+```python
+from ripple_detection import compare_detectors, match_events
+
+# true_windows: (n_true, 2) start and end times of events known to be there
+matching = match_events(true_windows, ripples)
+matching.recall, matching.precision, matching.f1
+matching.pairs  # per pair: iou, coverage, temporal_precision, onset_error, offset_error, ...
+matching.split_reference  # true events overlapped by two or more detections
+matching.merged_detected  # detections overlapping two or more true events
+
+# how two detectors differ on one recording: a minus b, per matched pair
+comparison = compare_detectors({"Kay": ripples, "HSE": bursts}, truth=true_windows)
+comparison[["jaccard", "median_onset_difference", "fraction_a_earlier_onset"]]
+```
+
+Both take a detector's DataFrame or an `(n_events, 2)` array; rows need not be sorted, and
+`pairs` refers to them by row position. `minimum_iou` drops pairs that overlap too little to
+count. With a truth, `compare_detectors` also gives whether the two detectors found the same
+true events (`jaccard_truth_ids`), how their detections agree on true and on false events, and
+the correlation of their errors on the true events both found.
+`consensus_counts` marks, per true event, which detectors found it, and `label_by_overlap`
+names each detection by the `label` of the window it overlaps longest (for the event types of
+`truth_windows`, below, rename its `type` column `label`). To measure boundary errors against
+other bounds for the same true events without matching again, as `truth_windows` at another
+fraction gives them, pass them to `matching.boundary_errors`.
 
 ### Detecting on a trace you build
 
@@ -672,6 +712,67 @@ The z-score a detector reports is larger
 than `ripple_snr` by a factor that depends on its smoothing and consensus rule; measure it for
 the detector you use rather than assuming a mapping. The
 [simulation study](https://github.com/Eden-Kramer-Lab/ripple_detection/blob/master/examples/simulation_study.ipynb) runs every detector on these sessions.
+
+### Simulating sessions with known event types
+
+`simulate_session` gives every ripple a sharp wave and a population burst. To see which kinds
+of event a detector finds and which it misses, draw latent network events of five types
+(`EVENT_TYPES`): a sharp-wave ripple with its burst (`swr`), a weak ripple that recruits few
+cells, a burst with no ripple, a ripple doublet or triplet under one long burst, and a sharp
+wave with no ripple. Edit the table if you like, render it, and take the truth at any fraction
+of each envelope's peak:
+
+```python
+from ripple_detection import (
+    draw_network_events,
+    simulate_network_session,
+    simulate_time,
+    truth_windows,
+)
+
+time = simulate_time(60 * 1500, 1500)
+running = [(20.0, 35.0)]
+events = draw_network_events(time, running_intervals=running, rng=0)  # one row per component
+events.loc[events.expression == "ripple", "amplitude"] *= 0.5  # e.g. halve every ripple's SNR
+session = simulate_network_session(time, events, running_intervals=running, rng=1)
+
+ripples = truth_windows(session.events, fraction=0.1, expression="ripple")
+cores = truth_windows(session.events, fraction=0.5, expression="ripple")  # same rows, narrower
+network = truth_windows(session.events, expression="network")  # one row per latent event
+print(list(network.columns))  # ['id', 'type', 'start_time', 'end_time', 'peak_time']
+```
+
+The session holds the detectors' inputs as `simulate_session`'s does, plus `session.events`
+(with the number of place and other pyramidal units each burst recruited), `session.unit_types` (place, other pyramidal,
+interneuron), `session.baseline_rates` and, per ripple and channel, `session.ripple_channels`.
+Windows at two fractions pair up by row. `draw_network_events`' Notes give each reference
+value and its source; the options cover alternatives to the reference model: coupled event
+strengths (`strength_correlation`), a flatter envelope (`envelope_power=4`), ripples on only
+some channels with delays (`spatial_profile="local"` with `channel_occupancy` below 1 and
+`channel_delay` above 0), slowly varying background noise
+(`noise_log_amplitude`) and refractory spiking (`spike_model="refractory"`).
+
+To see what a detector reports that it should not, add non-events (`NON_EVENT_TYPES`): spikes
+of a few units leaking into one LFP channel at rest, broadband EMG on every channel, fast-gamma
+bursts, and bursts of place-cell firing while running. Each has a row and a truth window, so a
+false positive can be traced to its cause:
+
+```python
+from ripple_detection import draw_non_events
+
+non_events = draw_non_events(time, running_intervals=running, rng=2)  # one row per non-event
+session = simulate_network_session(
+    time, events, non_events=non_events, running_intervals=running, rng=1
+)
+decoys = truth_windows(session.non_events, fraction=0.1)  # 'id', 'type', 'start_time', ...
+```
+
+`draw_non_events`' docstring says how each kind is rendered and where its values come from.
+Fast gamma is sized like a ripple but in its own band (60-100 Hz by default); give
+`fast_gamma_frequency` and `fast_gamma_band` both `(90, 140)` for gamma just below the ripple
+band. With the same seed, a session rendered with non-events has the same noise, ripples and
+burst participants as one without. On timestamps far from zero (a Unix time), give the draws
+and `simulate_network_session` the same `sampling_frequency`.
 
 See the [examples](https://github.com/Eden-Kramer-Lab/ripple_detection/tree/master/examples/) directory for Jupyter notebooks demonstrating:
 

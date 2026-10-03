@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Documentation
+
+- `Zugaro_ripple_detector` now says that its merge follows FMAToolbox, merging
+  close events only while the merged event stays under `maximum_duration`,
+  whereas buzcode's `bz_FindRipples` and neurocode's `FindRipples` merge on the
+  gap alone and then drop over-long events. Settings copied from buzcode
+  therefore give more events here: on one Buzsáki-lab session, 549 against
+  buzcode's 429. The docstring gives the call that reproduces buzcode's rule.
+
+### Fixed
+
+- `literature_methods.check_method` and `run_method` treated intervals supplied
+  with no row as present. An empty `behavior_intervals` returned no events
+  without a word, and empty `sleep_intervals` or `baseline_intervals` on a method
+  that requires them passed the check and then failed on an unrelated error (or,
+  on a simulated recording, displaced the simulation proxy). Each is now listed
+  as a problem, naming the input, and `run_method` raises `ValueError`.
+
 ## [2.0.0] - 2026-09-22
 
 Results and calls change: the same recording gives different events, so detect
@@ -115,6 +135,41 @@ here is relative to 1.7.1.
   truth. `simulate_speed` and `simulate_theta_delta`, and `running_intervals`,
   `theta_amplitude` and `delta_amplitude` on `simulate_session`, give a session
   running bouts with theta and rest with delta.
+- Simulated sessions with known event types: `draw_network_events` draws latent
+  network events (sharp-wave ripples, weak ripples, bursts without a ripple,
+  ripple doublets, sharp waves without a ripple; `EVENT_TYPES`, with
+  `EXPRESSIONS`, `UNIT_TYPES` and `NON_EVENT_TYPES`) as a table of
+  their ripple, sharp-wave and burst components; `simulate_network_session`
+  renders it into every detector input, with options for coupled event strengths,
+  a second envelope shape, local ripples, varying background noise and refractory
+  spiking; `truth_windows` gives each component's or event's window at any
+  fraction of its envelope's peak. `SimulatedSession` gains `events`,
+  `non_events`, `unit_types`, `baseline_rates`, `running_intervals` and
+  `ripple_channels`; `simulate_session` fills `running_intervals` and leaves
+  the others empty, and its signals are unchanged. `draw_non_events` draws
+  non-events, activity a detector should not report (spikes leaking into one
+  LFP channel, EMG, fast-gamma bursts, place-cell bursts while running);
+  `simulate_network_session` renders them when given `non_events`, and
+  `truth_windows` gives their windows as it does for events. The draws and the
+  renderer take `sampling_frequency` for timestamps far from zero.
+- `ripple_detection.evaluate`, for comparing event inventories against a truth
+  or each other: `match_events` pairs them one-to-one (the most pairs, then the
+  largest summed intersection over union, solved exactly) and returns an
+  `EventMatching` with each pair's IoU, coverage, temporal precision and signed
+  onset, offset and peak errors (detected minus reference: negative is early),
+  recall, precision, F1, the split and merged events, and errors against other
+  bounds for the same true events; `compare_detectors` gives every pair of
+  methods' agreement and signed differences, and with a truth whether they
+  found the same true events, how their detections agree on true and false
+  events, and the correlation of their errors;
+  `consensus_counts` which methods found each true event; `label_by_overlap` the
+  window each event overlaps longest.
+- `examples/benchmark/recipe_configs.py`, the benchmark's configurations of the
+  packaged literature methods: each names a method, its options and the event
+  expression it is to be scored against first, builds the method's recording from a
+  simulated network session with `Recording.from_arrays` under one stated input
+  policy, and runs it through `run_method`. The methods it does not configure are
+  listed with the reason in `examples/benchmark/README.md`.
 - `load_literature_parameters`, the detection parameters of 57 replay papers,
   and a simulation study comparing every detector (`examples/simulation_study.py`).
 - `load_literature_datasets`, a separate packaged catalog of public recording
@@ -176,6 +231,11 @@ here is relative to 1.7.1.
   -> 1.1 s on 10 min of 16 channels), and the per-event statistics use
   bisection (5.5 s -> 0.03 s for 30 min with 500 events).
 - Warnings name the caller's line, not a line inside the package.
+- The simulation study and the literature-recipes example score with
+  `match_events`, one-to-one: an event counts toward recall and precision only
+  as a ripple's one match, where any overlap counted before, so precision falls
+  (and the recipes' false positives rise) where several events overlapped one
+  ripple. The study adds `f1`, `n_split` and `n_merged`.
 
 ### Removed
 
