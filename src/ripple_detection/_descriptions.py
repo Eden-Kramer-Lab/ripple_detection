@@ -174,7 +174,8 @@ PARAMETERS = {
         "s",
         (
             "Events closer than this are merged, when the merged event stays within "
-            "maximum_duration."
+            "maximum_duration (FMAToolbox's rule; buzcode and neurocode merge "
+            "without that cap)."
         ),
     ),
     "smoothing_window": (

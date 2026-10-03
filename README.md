@@ -41,7 +41,7 @@ different events on the same recording, so pick the one that matches your questi
   - `Roumis_ripple_detector` - Per-channel envelopes averaged across channels (Frank-lab variant, unpublished)
   - `Yu_ripple_detector` - Median consensus with a data-driven noise-percentile threshold (Yu et al. 2017)
   - `Carey_candidate_detector` - Joint ripple-power x multiunit candidate events (Carey, Tanaka & van der Meer 2019); takes LFP and spikes
-  - `Zugaro_ripple_detector` - The FMAToolbox/buzcode `FindRipples` two-threshold algorithm (Hirase; Zugaro)
+  - `Zugaro_ripple_detector` - The FMAToolbox `FindRipples` two-threshold algorithm (Hirase; Zugaro); buzcode's `bz_FindRipples` merges close events without its duration cap (see the docstring)
   - `Long_sharp_wave_ripple_detector` - Two-channel detector using the sharp wave on a stratum radiatum channel (J. D. Long II, buzcode `bz_DetectSWR`); takes **raw** LFP
   - `multiunit_HSE_detector` - High Synchrony Event detection from multiunit activity (population rate, no LFP)
 

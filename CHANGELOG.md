@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- `Zugaro_ripple_detector` now says that its merge follows FMAToolbox, merging
+  close events only while the merged event stays under `maximum_duration`,
+  whereas buzcode's `bz_FindRipples` and neurocode's `FindRipples` merge on the
+  gap alone and then drop over-long events. Settings copied from buzcode
+  therefore give more events here: on one Buzsáki-lab session, 549 against
+  buzcode's 429. The docstring gives the call that reproduces buzcode's rule.
+
 ### Fixed
 
 - `literature_methods.check_method` and `run_method` treated intervals supplied
