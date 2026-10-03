@@ -322,6 +322,21 @@ def stationary(request):
 # Modules in examples/benchmark are imported by name (``import
 # recipe_configs``), as an interpreter started in that directory imports them.
 BENCHMARK = Path(__file__).resolve().parents[1] / "examples" / "benchmark"
+REFERENCE_RECORDINGS = (
+    Path(__file__).resolve().parents[1] / "examples" / "reference_recordings"
+)
+
+
+def _import_from(directory):
+    """Yield ``importlib.import_module`` with ``directory`` on ``sys.path``; undo on exit."""
+    sys.path.insert(0, str(directory))
+    try:
+        yield importlib.import_module
+    finally:
+        sys.path.remove(str(directory))
+        for name, module in list(sys.modules.items()):
+            if Path(getattr(module, "__file__", None) or "").parent == directory:
+                del sys.modules[name]
 
 
 @pytest.fixture(scope="module")
@@ -331,11 +346,13 @@ def benchmark_import():
     The directory leaves ``sys.path``, and its modules ``sys.modules``, when
     the requesting test module finishes, so no other module sees them.
     """
-    sys.path.insert(0, str(BENCHMARK))
-    try:
-        yield importlib.import_module
-    finally:
-        sys.path.remove(str(BENCHMARK))
-        for name, module in list(sys.modules.items()):
-            if Path(getattr(module, "__file__", None) or "").parent == BENCHMARK:
-                del sys.modules[name]
+    yield from _import_from(BENCHMARK)
+
+
+@pytest.fixture(scope="module")
+def reference_recordings_import():
+    """``importlib.import_module`` with examples/reference_recordings on ``sys.path``.
+
+    Removed, with its modules, when the requesting test module finishes.
+    """
+    yield from _import_from(REFERENCE_RECORDINGS)
