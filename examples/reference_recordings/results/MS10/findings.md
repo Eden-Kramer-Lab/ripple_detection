@@ -155,19 +155,21 @@ Nothing was tuned toward agreement.
 
 ## Cost (runtime.json, this machine)
 
-**Stream.** A 10-minute slice read 10 HDF5 chunks: 90.2 MB in 52-54 s, with a peak RSS of
-0.49-0.52 GB. That extrapolates to 24 min for the whole column's 289 chunks, whose exact
-stored size is 2.55 GB.
+**Stream.** A 10-minute slice read 10 HDF5 chunks: 90.2 MB through h5py (90,171,060 bytes) in
+54.2 s, with a peak RSS of 0.52 GB. Scaled by stored chunk bytes, that extrapolates to 1533 s
+(25.6 min) for the whole column's 289 chunks. Their exact stored size is 2.55 GB
+(2,550,710,021 bytes).
 
-The whole read took 76 s for 2.55 GB, with a peak RSS of 2.44 GB. remfile grows its requests
-on long sequential reads, so the slice overstated the time by about 19 times. Its cache of up
-to 1 GB put the memory above the slice's.
+The whole read took 75.8 s for 2,550,737,789 bytes, with a peak RSS of 2.44 GB. remfile grows
+its requests on long sequential reads, so the slice overstated the time by about 20 times
+(1533 / 75.8 = 20.2). Its cache of up to 1 GB put the memory above the slice's.
 
 **Cache.** The column is kept in `<cache>/sessions/MS10/lfp_column46.npy` (47 MB), so reruns
 do not stream again.
 
-**Other steps.** Stage 1.5-1.8 s (1.6 GB), detect 1.4-1.8 s (2.0-2.1 GB: package 1.0 s,
-transcription segmentation 0.03 s), compare under 0.1 s, explain 1.9 s.
+**Other steps.** Stage 1.34 s (1.59 GB). Detect 1.14 s (2.07 GB), of which the package detector
+took 0.61 s and the transcription's segmentation 0.019 s. runtime.json does not record compare
+or explain.
 
 ## Reproduce
 
