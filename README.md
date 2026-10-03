@@ -56,6 +56,8 @@ different events on the same recording, so pick the one that matches your questi
   - Envelope extraction via Hilbert transform
   - Gaussian smoothing with configurable parameters
   - Movement exclusion based on speed thresholds
+  - `best_ripple_channel` - one ripple channel chosen as buzcode's `bz_GetBestRippleChan`
+    chooses it, for the rules that run on a single channel
 
 - **Combining Detectors**
   - `require_overlap` - keep the events of one detector that overlap another's,
@@ -584,6 +586,26 @@ events = Carey_candidate_detector(
     ripple_score=score, threshold_method="mean", low_threshold=4.0, high_threshold=4.0,
     theta_lfp=theta_lfp,
 )
+```
+
+### Choosing one ripple channel
+
+Buzsáki-lab detection runs on one channel. `best_ripple_channel` chooses it as buzcode's
+`bz_GetBestRippleChan` does: each raw channel is band-passed to 140-180 Hz, its moving RMS
+taken over 12 ms, and the channel whose RMS has the highest mean over median wins. That
+favours large, occasional ripples over a quiet baseline, not the loudest channel. Pass
+only candidate channels in the CA1 pyramidal layer, since the score knows no anatomy.
+Unlike the original, the filter is designed for your sampling rate, no channel is excluded
+by a level in ADC counts, and missing samples and gaps are handled block-wise as in every
+detector (the docstring gives the details):
+
+```python
+from ripple_detection import Zugaro_ripple_detector, best_ripple_channel, filter_ripple_band
+
+# raw_lfps: (n_time, n_channels) raw LFP from the CA1 pyramidal-layer channels
+channel, scores = best_ripple_channel(raw_lfps, sampling_frequency, time=time)
+filtered = filter_ripple_band(raw_lfps[:, [channel]], sampling_frequency, time=time)
+events = Zugaro_ripple_detector(time, filtered, speed, sampling_frequency)
 ```
 
 ### Restricting detection to a brain state

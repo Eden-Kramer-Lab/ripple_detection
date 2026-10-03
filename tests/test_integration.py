@@ -606,6 +606,17 @@ class TestTimeOrigin:
         )
 
     @pytest.mark.parametrize("origin", ORIGINS)
+    def test_best_ripple_channel(self, origin, moving_session):
+        """Time only splits the recording, so the scores are identical."""
+        time = moving_session.time
+        channel, scores = rd.best_ripple_channel(moving_session.lfps, FS, time=time)
+        shifted_channel, shifted_scores = rd.best_ripple_channel(
+            moving_session.lfps, FS, time=time + origin
+        )
+        assert shifted_channel == channel
+        np.testing.assert_array_equal(shifted_scores, scores)
+
+    @pytest.mark.parametrize("origin", ORIGINS)
     def test_spiking_state_and_score(self, origin, moving_session, base):
         _, _, events = base
         time, shifted = moving_session.time, moving_session.time + origin
