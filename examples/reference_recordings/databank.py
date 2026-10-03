@@ -44,7 +44,7 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import fetch
 import numpy as np
@@ -432,32 +432,55 @@ def check_head_match(
     return Check("head_match", not problems, detail, "; ".join(problems))
 
 
-def check_channel_tag(stored_zero_based: int, tag_one_based: int | None) -> Check:
+def check_channel_tag(
+    stored_zero_based: int, tag_one_based: int | Sequence[int] | None
+) -> Check:
     """The stored detection channel against ``session.mat``'s channel tag.
 
     buzcode stores the channel 0-based (``bz_GetLFP``: "0-indexing, a la
-    Neuroscope"); CellExplorer's ``session.mat`` channel tags are 1-based. They
-    agree when ``stored + 1 == tag``.
+    Neuroscope"); CellExplorer's ``session.mat`` channel tags are 1-based. A
+    one-channel tag agrees when ``stored + 1 == tag``. A tag listing several
+    channels does not single out the detection channel: it agrees when
+    ``stored + 1`` is among them, and the detail says the tag had several.
 
     Parameters
     ----------
     stored_zero_based : int
         ``detectorParams.channel``.
-    tag_one_based : int or None
-        The tag's channel, None when the tag is absent.
+    tag_one_based : int, sequence of int or None
+        The tag's channels; None when ``session.mat`` has no such tag.
     """
-    detail = {
+    channels = (
+        None
+        if tag_one_based is None
+        else [int(c) for c in np.atleast_1d(np.asarray(tag_one_based)).ravel()]
+    )
+    detail: dict[str, Any] = {
         "stored_zero_based": int(stored_zero_based),
-        "tag_one_based": None if tag_one_based is None else int(tag_one_based),
+        "tag_one_based": channels[0] if channels and len(channels) == 1 else channels,
+        "n_tag_channels": None if channels is None else len(channels),
     }
-    if tag_one_based is None:
+    if channels is None:
         return Check("channel_tag", False, detail, "session.mat has no such channel tag")
-    passed = int(stored_zero_based) + 1 == int(tag_one_based)
+    if not channels:
+        return Check("channel_tag", False, detail, "the channel tag lists no channels")
+    wanted = int(stored_zero_based) + 1
+    if len(channels) == 1:
+        passed = wanted == channels[0]
+        reason = (
+            ""
+            if passed
+            else f"stored channel {stored_zero_based} (0-based) is not the tag's "
+            f"{channels[0]} (1-based)"
+        )
+        return Check("channel_tag", passed, detail, reason)
+    detail["rule"] = "a tag of several channels agrees when stored + 1 is among them"
+    passed = wanted in channels
     reason = (
         ""
         if passed
-        else f"stored channel {stored_zero_based} (0-based) is not the tag's "
-        f"{tag_one_based} (1-based)"
+        else f"stored channel {stored_zero_based} (0-based) is not among the tag's "
+        f"{len(channels)} channels {channels} (1-based)"
     )
     return Check("channel_tag", passed, detail, reason)
 
@@ -1135,12 +1158,20 @@ def step_fetch(session: DatabankSession, cache: Path) -> dict[str, Any]:
         )
     records["dandi"] = dandi
     head_record = records[session.lfp_head.suffix + ".head"]
-    if head_record.get("original_content_length") != session.lfp_head.length:
-        msg = (
-            f"the .lfp head capture declares {head_record.get('original_content_length')} "
-            f"bytes, the table {session.lfp_head.length}"
+    declared = head_record.get("original_content_length")
+    if declared != session.lfp_head.length:
+        stop_session(
+            session,
+            cache,
+            "fetch",
+            Check(
+                "lfp_head_length",
+                False,
+                {"declared": declared, "table": session.lfp_head.length},
+                f"the .lfp head capture declares {declared} bytes, the table "
+                f"{session.lfp_head.length}",
+            ),
         )
-        raise InputCheckFailed(msg)
     return records
 
 
@@ -1148,12 +1179,13 @@ def _load_mat(path: Path, name: str) -> Any:
     return scipy.io.loadmat(str(path), struct_as_record=False, squeeze_me=True)[name]
 
 
-def _channel_tag(session_mat: Any, tag: str) -> int | None:
+def channel_tag(session_mat: Any, tag: str) -> list[int] | None:
+    """The 1-based channels of one of ``session.mat``'s channel tags, None when absent."""
     tags = getattr(session_mat, "channelTags", None)
-    if tags is None or tag not in tags._fieldnames:
+    if tags is None or tag not in getattr(tags, "_fieldnames", ()):
         return None
-    channels = np.atleast_1d(np.asarray(getattr(tags, tag).channels)).ravel()
-    return int(channels[0]) if channels.size == 1 else None
+    channels = np.atleast_1d(np.asarray(getattr(getattr(tags, tag), "channels", []))).ravel()
+    return [int(c) for c in channels]
 
 
 def _open_lfp(session: DatabankSession, cache: Path) -> tuple[Any, Any, Any]:
@@ -1168,11 +1200,17 @@ def _open_lfp(session: DatabankSession, cache: Path) -> tuple[Any, Any, Any]:
     return file, file[session.lfp_series], counter
 
 
-def _nwb_rate(series: Any) -> tuple[float, float]:
-    """The series' rate and starting time; timestamps are refused (not expected here)."""
+def nwb_rate(series: Any) -> tuple[float, float] | None:
+    """The series' rate and starting time, or None when it stores timestamps instead.
+
+    Parameters
+    ----------
+    series : h5py.Group or mapping
+        An ElectricalSeries with ``starting_time`` (its ``rate`` attribute) or
+        ``timestamps``.
+    """
     if "starting_time" not in series:
-        msg = "the series has timestamps rather than a rate; check them for gaps first"
-        raise InputCheckFailed(msg)
+        return None
     start = series["starting_time"]
     return float(start.attrs["rate"]), float(start[()])
 
@@ -1192,7 +1230,21 @@ def step_verify(session: DatabankSession, cache: Path) -> dict[str, Any]:
     try:
         data = series["data"]
         shape = tuple(int(n) for n in data.shape)
-        rate, starting_time = _nwb_rate(series)
+        clock = nwb_rate(series)
+        if clock is None:
+            stop_session(
+                session,
+                cache,
+                "verify",
+                Check(
+                    "nwb_rate",
+                    False,
+                    {"series": session.lfp_series, "shape": list(shape)},
+                    "the series has timestamps rather than a rate; they need a gap "
+                    "check this script does not make",
+                ),
+            )
+        rate, starting_time = clock
         dandi_head = np.asarray(data[: head.shape[0], :])
         conversion = float(data.attrs.get("conversion", np.nan))
         chunks = list(data.chunks) if data.chunks else None
@@ -1203,8 +1255,17 @@ def step_verify(session: DatabankSession, cache: Path) -> dict[str, Any]:
     parameters = released.parameters
     stored_channel = released.channel
     if stored_channel is None:
-        msg = "the event file stores no detection channel"
-        raise InputCheckFailed(msg)
+        stop_session(
+            session,
+            cache,
+            "verify",
+            Check(
+                "stored_channel",
+                False,
+                {"parameters": parameters},
+                "the event file stores no detection channel",
+            ),
+        )
     n_samples = shape[0]
     boundaries = epoch_boundaries(session_mat)
     inner_edges = [e["start_time"] for e in boundaries[1:]]
@@ -1212,7 +1273,7 @@ def step_verify(session: DatabankSession, cache: Path) -> dict[str, Any]:
         check_rates(xml.lfp_sampling_rate, rate, float(parameters["frequency"])),
         check_length(session.lfp_head.length, xml.n_channels, shape),
         check_head_match(head, dandi_head, stored_channel),
-        check_channel_tag(stored_channel, _channel_tag(session_mat, session.channel_tag)),
+        check_channel_tag(stored_channel, channel_tag(session_mat, session.channel_tag)),
         check_events_in_recording(released.events, starting_time, n_samples, rate),
     ]
     n_channels_check = Check(
@@ -1354,6 +1415,40 @@ def assumptions(session: DatabankSession, parameters: Mapping[str, Any]) -> list
             "rule; nothing is vetoed."
         ),
     ]
+
+
+def stop_session(
+    session: DatabankSession, cache: Path, step: str, failed: Check, **context: Any
+) -> NoReturn:
+    """Record a check that stops the session in inputs.json (cache and results), then raise.
+
+    Parameters
+    ----------
+    session : DatabankSession
+    cache : pathlib.Path
+    step : str
+        The step that stopped.
+    failed : Check
+        The failed check.
+    **context
+        Anything already known, written beside the check.
+
+    Raises
+    ------
+    InputCheckFailed
+        Always, with the check's reason.
+    """
+    record = {
+        "session": session.key,
+        "stopped_at": step,
+        **context,
+        "checks": [asdict(failed)],
+    }
+    text = dump_json(record)
+    (session_dir(session, cache) / "inputs.json").write_text(text, encoding="utf-8")
+    write_small(text, results_dir(session) / "inputs.json")
+    msg = f"{failed.name}: {failed.reason}"
+    raise InputCheckFailed(msg)
 
 
 def _verified_inputs(session: DatabankSession, cache: Path) -> dict[str, Any]:
@@ -1747,6 +1842,68 @@ def containing_rows(inner: pd.DataFrame, outer: pd.DataFrame) -> NDArray[np.int6
     return np.where(held, candidate, -1).astype(np.int64)
 
 
+def merge_cap_diagnostic(
+    normalized: ArrayLike,
+    filtered: ArrayLike,
+    timestamps: ArrayLike,
+    parameters: Mapping[str, Any],
+    code: SourceCode,
+    package_only: pd.DataFrame,
+) -> dict[str, Any]:
+    """Test whether the merge cap is what separates the package from the source.
+
+    Parameters
+    ----------
+    normalized, filtered, timestamps : array_like, shape (n_time,)
+        The source's normalized trace, filtered signal and sample times.
+    parameters : mapping
+        The stored ``detectorParams`` (``thresholds``, ``durations``, ``frequency``,
+        ``restrict``).
+    code : SourceCode
+        The dated source.
+    package_only : pandas.DataFrame
+        The package events the source lacks (``start_time``, ``end_time``).
+
+    Returns
+    -------
+    dict
+        ``too_long``: the transcription's events before the duration ceiling that
+        exceed it (merged with no cap, then dropped by the source); ``holder``:
+        for each package-only event, the ``too_long`` row holding it, or -1;
+        ``uncapped``: the package with ``maximum_duration=None`` (no merge cap);
+        ``ceiling``: the package's sample count for the maximum duration;
+        ``uncapped_then_ceiling``: ``uncapped`` with at most ``ceiling`` samples.
+    """
+    from ripple_detection import minimum_sample_count
+
+    low, high = (float(v) for v in np.asarray(parameters["thresholds"]).ravel())
+    interval_ms, maximum_ms = (float(v) for v in np.asarray(parameters["durations"]).ravel())
+    before_ceiling = source_segmentation(
+        normalized,
+        filtered,
+        timestamps,
+        low_threshold=low,
+        high_threshold=high,
+        minimum_inter_ripple_interval_ms=interval_ms,
+        maximum_duration_ms=np.inf,
+        frequency=float(parameters["frequency"]),
+        minimum_duration_ms=code.minimum_duration_ms,
+    )
+    too_long = before_ceiling[
+        (before_ceiling.end_time - before_ceiling.start_time) > maximum_ms / 1000
+    ].reset_index(drop=True)
+    options = package_options(parameters, code)
+    uncapped = run_package(filtered, timestamps, {**options, "maximum_duration": None})
+    ceiling = int(minimum_sample_count(np.asarray(timestamps), maximum_ms / 1000))
+    return {
+        "too_long": too_long,
+        "holder": containing_rows(package_only, too_long),
+        "uncapped": uncapped,
+        "ceiling": ceiling,
+        "uncapped_then_ceiling": uncapped[uncapped["n_samples"] <= ceiling],
+    }
+
+
 def step_explain(session: DatabankSession, cache: Path, per_class: int = 4) -> dict[str, Any]:
     """Attribute the differences to a stage (attribution.json) and plot a few of each class.
 
@@ -1757,38 +1914,28 @@ def step_explain(session: DatabankSession, cache: Path, per_class: int = 4) -> d
     inside one), and the package without a ceiling (so its merge has no cap)
     with the ceiling applied afterwards, compared with the released events.
     """
-    from ripple_detection import match_events, minimum_sample_count
+    from ripple_detection import match_events
 
     inventories = _inventories(session, cache)
     raw, filtered, normalized, _sd, _mean, timestamps, inputs = _source_trace(session, cache)
     parameters = _released(session, cache).parameters
     low, high = (float(v) for v in np.asarray(parameters["thresholds"]).ravel())
-    interval_ms, maximum_ms = (float(v) for v in np.asarray(parameters["durations"]).ravel())
+    maximum_ms = float(np.asarray(parameters["durations"]).ravel()[1])
     rate = float(inputs["recording"]["rate"])
-    before_ceiling = source_segmentation(
-        normalized,
-        filtered,
-        timestamps,
-        low_threshold=low,
-        high_threshold=high,
-        minimum_inter_ripple_interval_ms=interval_ms,
-        maximum_duration_ms=np.inf,
-        frequency=rate,
-        minimum_duration_ms=session.source_code.minimum_duration_ms,
-    )
-    too_long = before_ceiling[
-        (before_ceiling.end_time - before_ceiling.start_time) > maximum_ms / 1000
-    ].reset_index(drop=True)
     released, package = inventories["released"], inventories["package"]
     classes = difference_classes(released, package)
     extras = package.iloc[classes["unmatched_detected"]]
-    holder = containing_rows(extras, too_long)
+    diagnostic = merge_cap_diagnostic(
+        normalized, filtered, timestamps, parameters, session.source_code, extras
+    )
+    too_long, holder = diagnostic["too_long"], diagnostic["holder"]
+    uncapped, uncapped_then_ceiling = (
+        diagnostic["uncapped"],
+        diagnostic["uncapped_then_ceiling"],
+    )
+    ceiling = diagnostic["ceiling"]
     per_long = np.bincount(holder[holder >= 0], minlength=len(too_long))
 
-    options = package_options(parameters, session.source_code)
-    uncapped = run_package(filtered, timestamps, {**options, "maximum_duration": None})
-    ceiling = int(minimum_sample_count(timestamps, maximum_ms / 1000))
-    uncapped_then_ceiling = uncapped[uncapped["n_samples"] <= ceiling]
     columns = ["start_time", "end_time", "peak_time"]
     check = comparison_row(
         "released",

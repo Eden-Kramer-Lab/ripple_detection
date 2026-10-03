@@ -8,6 +8,7 @@ import io
 import json
 import tarfile
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -1057,6 +1058,41 @@ class TestInputChecks:
         assert not missing.passed
         assert "no such channel tag" in missing.reason
 
+    def test_channel_tag_with_several_channels(self, databank):
+        among = databank.check_channel_tag(46, [12, 47, 50])
+        assert among.passed, among.reason
+        assert among.detail["n_tag_channels"] == 3
+        assert "several" in among.detail["rule"]
+        absent = databank.check_channel_tag(46, [12, 46, 50])
+        assert not absent.passed
+        assert "not among the tag's 3 channels [12, 46, 50] (1-based)" in absent.reason
+        assert "no such channel tag" not in absent.reason
+        empty = databank.check_channel_tag(46, [])
+        assert not empty.passed
+        assert "lists no channels" in empty.reason
+
+    def test_channel_tag_read_from_session_mat(self, databank, tmp_path):
+        path = tmp_path / "s.session.mat"
+        scipy.io.savemat(
+            path,
+            {
+                "session": {
+                    "channelTags": {
+                        "Ripple": {"channels": 47},
+                        "RippleNoise": {"channels": np.array([19, 20])},
+                        "Cortical": {"channels": np.empty((0, 0))},
+                    }
+                }
+            },
+        )
+        session_mat = scipy.io.loadmat(path, struct_as_record=False, squeeze_me=True)[
+            "session"
+        ]
+        assert databank.channel_tag(session_mat, "Ripple") == [47]
+        assert databank.channel_tag(session_mat, "RippleNoise") == [19, 20]
+        assert databank.channel_tag(session_mat, "Cortical") == []
+        assert databank.channel_tag(session_mat, "Theta") is None
+
     def test_rates(self, databank):
         assert databank.check_rates(1250.0, 1250.0, 1250).passed
         check = databank.check_rates(1250.0, 1000.0, 1250)
@@ -1218,6 +1254,30 @@ class TestSourceTranscription:
         assert events.start_index.tolist() == [1]
         assert events.stop_index.tolist() == [3]
 
+    def _edges(self, databank, normalized):
+        return databank.source_segmentation(
+            np.asarray(normalized, dtype=float),
+            np.zeros(len(normalized)),
+            np.arange(len(normalized)) / self.FS,
+            low_threshold=2.0,
+            high_threshold=5.0,
+            minimum_inter_ripple_interval_ms=0.5,
+            maximum_duration_ms=10.0,
+            frequency=self.FS,
+        )
+
+    def test_only_first_run_incomplete(self, databank):
+        # one more stop than starts: the first stop goes, with its run (peak 6)
+        events = self._edges(databank, [6.0, 0, 0, 3.0, 6.0, 0, 0])
+        assert events.start_index.tolist() == [2]
+        assert events.stop_index.tolist() == [4]
+
+    def test_only_last_run_incomplete(self, databank):
+        # one more start than stops: the last start goes, with its run (peak 6)
+        events = self._edges(databank, [0, 3.0, 6.0, 0, 0, 6.0, 6.0])
+        assert events.start_index.tolist() == [0]
+        assert events.stop_index.tolist() == [2]
+
     def test_nothing_above_threshold(self, databank):
         events = databank.source_segmentation(
             np.zeros(10),
@@ -1274,8 +1334,69 @@ def detected(databank):
     return filtered, timestamps, databank.run_package(filtered, timestamps, options)
 
 
+@pytest.fixture(scope="module")
+def capped(databank):
+    """The `detected` signal plus two bursts 100 ms apart, which the source merges into
+    one event of more than 150 ms and then drops, while the package's capped merge
+    keeps the two fragments."""
+    rng = np.random.default_rng(3)
+    fs, n = 1250.0, 25_000
+    t = np.arange(n) / fs
+    lfp = rng.normal(0, 50, n)
+    for centre in (3.0, 8.0, 13.0, 18.0):
+        lfp += 600 * np.exp(-0.5 * ((t - centre) / 0.012) ** 2) * np.sin(2 * np.pi * 150 * t)
+    for centre in (10.5, 10.6):
+        lfp += 600 * np.exp(-0.5 * ((t - centre) / 0.02) ** 2) * np.sin(2 * np.pi * 150 * t)
+    code = databank.PETERSEN_FORK_2021
+    filtered = databank.source_filter(lfp, [120, 180], code)
+    normalized, _, _ = databank.normalized_squared_signal(filtered, 11)
+    timestamps = 1.7e9 + t
+    package = databank.run_package(
+        filtered, timestamps, databank.package_options(_STORED, code)
+    )
+    transcription = databank.source_segmentation(
+        normalized,
+        filtered,
+        timestamps,
+        low_threshold=2.0,
+        high_threshold=5.0,
+        minimum_inter_ripple_interval_ms=50.0,
+        maximum_duration_ms=150.0,
+        frequency=fs,
+    )
+    return normalized, filtered, timestamps, package, transcription
+
+
 class TestPackageRun:
     STORED = _STORED
+
+    def test_merge_cap_is_the_whole_difference(self, databank, capped):
+        normalized, filtered, timestamps, package, transcription = capped
+        # the source merges the two close bursts (gap under 50 ms) and drops the
+        # result for exceeding 150 ms; the package's cap keeps both fragments
+        assert len(transcription) == 4
+        assert len(package) == 6
+        classes = databank.difference_classes(transcription, package)
+        assert classes["unmatched_reference"] == []
+        assert classes["poorly_aligned"] == []
+        extras = package.iloc[classes["unmatched_detected"]]
+        assert len(extras) == 2
+        assert np.all(extras.start_time.to_numpy() - 1.7e9 > 10.4)
+        assert np.all(extras.end_time.to_numpy() - 1.7e9 < 10.7)
+
+        diagnostic = databank.merge_cap_diagnostic(
+            normalized, filtered, timestamps, self.STORED, databank.PETERSEN_FORK_2021, extras
+        )
+        too_long = diagnostic["too_long"]
+        assert len(too_long) == 1
+        assert (too_long.end_time - too_long.start_time).iloc[0] > 0.15
+        assert diagnostic["holder"].tolist() == [0, 0]
+        assert diagnostic["ceiling"] == 188  # round half up of 0.15 s * 1250 Hz
+        assert len(diagnostic["uncapped"]) == 5  # the four bursts and the merged pair
+        kept = diagnostic["uncapped_then_ceiling"]
+        np.testing.assert_array_equal(kept.start_time, transcription.start_time)
+        np.testing.assert_array_equal(kept.end_time, transcription.end_time)
+        np.testing.assert_array_equal(kept.peak_time, transcription.max_power_time)
 
     def test_options_from_stored_parameters(self, databank):
         options = databank.package_options(self.STORED, databank.PETERSEN_FORK_2021)
@@ -1298,7 +1419,8 @@ class TestPackageRun:
                 {**self.STORED, "frequency": 1000}, databank.PETERSEN_FORK_2021
             )
 
-    def test_package_and_transcription_agree_without_the_cap(self, databank, detected):
+    def test_package_and_transcription_agree_on_isolated_events(self, databank, detected):
+        # bursts 5 s apart: the merge cap never binds, so the two rules agree
         filtered, timestamps, package = detected
         normalized, _, _ = databank.normalized_squared_signal(filtered, 11)
         transcription = databank.source_segmentation(
@@ -1387,3 +1509,163 @@ class TestResults:
             [1.1, 1.7, 2.55, 4.0, 0.55],
         )
         assert databank.containing_rows(inner, outer).tolist() == [0, 0, -1, -1, -1]
+
+
+class _FakeData:
+    """An NWB data array: shape, dtype, chunks, attrs and slicing."""
+
+    def __init__(self, array):
+        self.array = array
+        self.shape, self.dtype = array.shape, array.dtype
+        self.chunks = (4096, array.shape[1])
+        self.attrs = {"conversion": 1.95e-7}
+
+    def __getitem__(self, key):
+        return self.array[key]
+
+
+class _FakeStart:
+    def __init__(self):
+        self.attrs = {"rate": 1250.0}
+
+    def __getitem__(self, key):
+        return 0.0
+
+
+class _FakeFile:
+    def close(self):
+        pass
+
+
+class TestFailureRecords:
+    N_CHANNELS, STORED = 8, 5
+
+    @pytest.fixture
+    def setup(self, databank, tmp_path, monkeypatch):
+        """A session whose inputs are small local files, its DANDI copy faked."""
+        import dataclasses
+
+        session = dataclasses.replace(databank.SESSIONS["MS10"], key="TEST")
+        cache = tmp_path / "cache"
+        monkeypatch.setattr(databank, "RESULTS_DIR", tmp_path / "results")
+        folder = cache / "buzsaki" / "TEST"
+        folder.mkdir(parents=True)
+        base = folder / session.basename
+        rng = np.random.default_rng(4)
+        lfp = rng.integers(-500, 500, size=(30_000, self.N_CHANNELS)).astype(np.int16)
+        Path(f"{base}.lfp.head").write_bytes(lfp[:16].astype("<i2").tobytes())
+        _write_xml(Path(f"{base}.xml"), [list(range(self.N_CHANNELS))], n_channels=8)
+        scipy.io.savemat(
+            f"{base}.session.mat",
+            {
+                "session": {
+                    "channelTags": {"Ripple": {"channels": self.STORED + 1}},
+                    "epochs": [
+                        {"name": "a", "startTime": 0.0, "stopTime": 12.0},
+                        {"name": "b", "startTime": 12.0, "stopTime": 24.0},
+                    ],
+                }
+            },
+        )
+        state = {"series": {"data": _FakeData(lfp), "starting_time": _FakeStart()}}
+        monkeypatch.setattr(
+            databank, "_open_lfp", lambda s, c: (_FakeFile(), state["series"], None)
+        )
+        monkeypatch.setattr(
+            databank,
+            "SESSIONS",
+            {
+                "TEST": dataclasses.replace(
+                    session,
+                    lfp_head=dataclasses.replace(
+                        session.lfp_head, length=30_000 * self.N_CHANNELS * 2
+                    ),
+                )
+            },
+        )
+        session = databank.SESSIONS["TEST"]
+
+        def write_events(channel):
+            times, peaks = _times(5)
+            params = {
+                "thresholds": np.array([2, 5]),
+                "durations": np.array([50, 150]),
+                "passband": np.array([120, 180]),
+                "frequency": 1250,
+                "restrict": np.empty((0, 0)),
+            }
+            if channel is not None:
+                params["channel"] = channel
+            scipy.io.savemat(
+                f"{base}{session.events.suffix}",
+                {
+                    "ripples": {
+                        "times": times,
+                        "peaks": peaks,
+                        "peakNormedPower": np.arange(5.0),
+                        "stdev": 1.0,
+                        "noise": np.empty((0, 0)),
+                        "detectorName": "bz_FindRipples",
+                        "detectorParams": params,
+                    }
+                },
+            )
+
+        return session, cache, state, write_events
+
+    def _inputs(self, databank, session, cache):
+        cached = json.loads((cache / "sessions" / session.key / "inputs.json").read_text())
+        committed = json.loads(
+            (databank.RESULTS_DIR / session.key / "inputs.json").read_text()
+        )
+        assert cached == committed
+        return cached
+
+    def test_verify_passes_on_consistent_inputs(self, databank, setup):
+        session, cache, _, write_events = setup
+        write_events(self.STORED)
+        inputs = databank.step_verify(session, cache)
+        assert all(c["passed"] for c in inputs["checks"])
+        assert inputs["recording"]["detection_column"] == self.STORED
+        assert self._inputs(databank, session, cache)["recording"]["rate"] == 1250.0
+
+    def test_missing_stored_channel_is_recorded(self, databank, setup):
+        session, cache, _, write_events = setup
+        write_events(None)
+        with pytest.raises(databank.InputCheckFailed, match="stores no detection channel"):
+            databank.step_verify(session, cache)
+        inputs = self._inputs(databank, session, cache)
+        assert inputs["stopped_at"] == "verify"
+        assert inputs["checks"][0]["name"] == "stored_channel"
+        assert not inputs["checks"][0]["passed"]
+        with pytest.raises(databank.InputCheckFailed, match="stored_channel"):
+            databank._verified_inputs(session, cache)
+
+    def test_timestamps_instead_of_a_rate_are_recorded(self, databank, setup):
+        session, cache, state, write_events = setup
+        write_events(self.STORED)
+        state["series"] = {"data": state["series"]["data"], "timestamps": None}
+        assert databank.nwb_rate(state["series"]) is None
+        with pytest.raises(databank.InputCheckFailed, match="timestamps rather than a rate"):
+            databank.step_verify(session, cache)
+        inputs = self._inputs(databank, session, cache)
+        assert inputs["checks"][0]["name"] == "nwb_rate"
+        assert inputs["checks"][0]["detail"]["shape"] == [30_000, self.N_CHANNELS]
+
+    def test_head_length_mismatch_in_fetch_is_recorded(self, databank, setup, monkeypatch):
+        session, cache, _, _ = setup
+        monkeypatch.setattr(
+            databank,
+            "_ensure_capture",
+            lambda s, capture, c, head=False: {"original_content_length": 123} if head else {},
+        )
+        monkeypatch.setattr(databank, "_manifest_record", lambda c, **match: {"kind": "x"})
+        with pytest.raises(databank.InputCheckFailed, match="declares 123 bytes"):
+            databank.step_fetch(session, cache)
+        inputs = self._inputs(databank, session, cache)
+        assert inputs["stopped_at"] == "fetch"
+        assert inputs["checks"][0]["name"] == "lfp_head_length"
+        assert inputs["checks"][0]["detail"] == {
+            "declared": 123,
+            "table": session.lfp_head.length,
+        }
