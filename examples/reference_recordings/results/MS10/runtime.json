@@ -1,0 +1,40 @@
+{
+  "platform": "darwin",
+  "stream_measure": {
+    "rows_read": 750000,
+    "minutes_read": 10.0,
+    "seconds": 54.19199933297932,
+    "bytes_read_through_h5py": 90171060,
+    "chunk_bytes_stored": 90143292,
+    "chunks_read": 10,
+    "peak_rss_bytes": 520421376,
+    "extrapolated_whole_column": {
+      "rows": 23613750,
+      "scale": "stored bytes of all chunks over those of the chunks read",
+      "seconds": 1533.426089615805,
+      "bytes_read_through_h5py": 2551495749.081277,
+      "chunk_bytes_stored_exact": 2550710021,
+      "column_bytes_in_memory": 47227500,
+      "note": "the slice's own peak memory is not a bound for the whole read: remfile keeps up to 1 GB of fetched bytes in memory and grows its requests on long sequential reads (which also makes the whole read faster per byte)"
+    }
+  },
+  "stream": {
+    "rows_read": 23613750,
+    "minutes_read": 314.85,
+    "seconds": 75.81824225001037,
+    "bytes_read_through_h5py": 2550737789,
+    "chunk_bytes_stored": 2550710021,
+    "chunks_read": 289,
+    "peak_rss_bytes": 2436186112
+  },
+  "stage": {
+    "seconds": 1.52371595823206,
+    "peak_rss_bytes": 1592377344
+  },
+  "detect": {
+    "seconds_total": 1.3655895409174263,
+    "seconds_transcription_segmentation": 0.022077374858781695,
+    "seconds_package_detector": 0.7393215831834823,
+    "peak_rss_bytes": 2067726336
+  }
+}

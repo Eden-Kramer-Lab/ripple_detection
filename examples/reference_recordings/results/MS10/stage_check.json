@@ -1,0 +1,28 @@
+{
+  "stored_stdev": 202112.1139640921,
+  "recomputed_stdev": 202112.11396500893,
+  "relative_difference": 4.536239065862781e-12,
+  "mean_of_smoothed_power": 8670.512672469233,
+  "population_sd_relative_to_sample_sd": 0.9999999788258956,
+  "sd_with_sos_form": {
+    "what": "the same design as second-order sections (sosfiltfilt, scipy's default padding), a check that the transfer-function arithmetic is not what differs",
+    "sd": 202112.11395407788,
+    "relative_difference_to_stored": -4.954784950849028e-11,
+    "relative_difference_to_transfer_function": -5.4084088574107725e-11
+  },
+  "sd_with_butter_order_3": {
+    "what": "buzsakilab/buzcode's filter (butter order 3, filtfilt) in place of the dated cheby2, everything else unchanged: what the code version is worth",
+    "sd": 283300.5390891341,
+    "relative_difference_to_stored": 0.40169994530593145
+  },
+  "n_samples": 23613750,
+  "peak_normed_power_check": {
+    "what": "max of the recomputed normalized trace within each released event's bounds against the stored peakNormedPower",
+    "n_events": 429,
+    "relative_difference_median": -2.1209426632343306e-13,
+    "relative_difference_max_abs": 9.868680264583414e-12,
+    "n_within_1e-6": 429
+  },
+  "seconds": 1.52371595823206,
+  "peak_rss_bytes": 1592377344
+}
