@@ -926,3 +926,464 @@ class TestCrcnsFetch:
                 "hc-x", ["d/a.bin"], cache=tmp_path, session=self._session(fetch, bodies)
             )
         assert not cached.exists()
+
+
+# --- databank sessions -----------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def databank(reference_recordings_import):
+    return reference_recordings_import("databank")
+
+
+class TestSessionTable:
+    def test_entries_are_complete_and_consistent(self, databank):
+        assert databank.SESSIONS
+        for key, session in databank.SESSIONS.items():
+            assert session.key == key
+            assert session.basename == session.databank_path.rsplit("/", 1)[1]
+            assert session.events.suffix == ".ripples.events.mat"
+            assert {c.suffix for c in session.support} == {
+                ".xml",
+                ".session.mat",
+                ".sessionInfo.mat",
+            }
+            for capture in (session.events, *session.support):
+                assert len(capture.sha256) == 64
+                int(capture.sha256, 16)
+                assert capture.length > 0
+            for capture in (session.events, *session.support, session.lfp_head):
+                assert len(capture.timestamp) == 14
+                assert capture.timestamp.isdigit()
+            assert session.lfp_head.suffix == ".lfp"
+            assert session.lfp_head.sha256 is None
+            assert session.lfp_head.length % 2 == 0
+            assert len(session.lfp_asset_id) == 36
+            assert session.lfp_asset_id.count("-") == 4
+            assert session.lfp_series.startswith("/")
+            assert len(session.source_code.commit) == 40
+            assert session.source_code.filter_kind in ("cheby2", "butter")
+            assert session.source_code.smoothing_samples % 2 == 1
+            assert session.url(session.events) == (
+                f"{databank.DATABANK_URL}/{session.databank_path}/"
+                f"{session.basename}.ripples.events.mat"
+            )
+            assert session.cache_path(session.events).startswith(f"buzsaki/{key}/")
+
+    def test_ms10_values(self, databank):
+        ms10 = databank.SESSIONS["MS10"]
+        assert ms10.lfp_head.length == 23_613_750 * 64 * 2
+        assert ms10.events.length == 11305
+        assert ms10.events.timestamp == "20231129113529"
+        assert ms10.lfp_head.timestamp == "20231129114227"
+        assert ms10.channel_tag == "Ripple"
+        assert ms10.noise_channel_tag is None
+        assert ms10.source_code.minimum_duration_ms is None
+
+
+class TestInputChecks:
+    N_ROWS, N_CHANNELS, STORED = 16, 8, 5
+
+    @pytest.fixture
+    def head(self):
+        rng = np.random.default_rng(0)
+        return rng.integers(-2000, 2000, size=(self.N_ROWS, self.N_CHANNELS)).astype(np.int16)
+
+    def test_identity_map(self, databank, head):
+        check = databank.check_head_match(head, head.copy(), self.STORED)
+        assert check.passed, check.reason
+        assert check.detail["identity"]
+        assert check.detail["stored_channel_column"] == self.STORED
+        assert check.detail["channels_absent"] == []
+
+    def test_permuted_map_is_reported_not_assumed(self, databank, head):
+        permutation = [3, 7, 0, 5, 1, 6, 2, 4]
+        check = databank.check_head_match(head, head[:, permutation], self.STORED)
+        assert check.passed, check.reason
+        assert check.detail["column_to_channel"] == permutation
+        assert not check.detail["identity"]
+        assert check.detail["stored_channel_column"] == permutation.index(self.STORED)
+
+    def test_subset_of_channels(self, databank, head):
+        kept = [0, 1, 2, 4, 5, 7]
+        check = databank.check_head_match(head, head[:, kept], self.STORED)
+        assert check.passed, check.reason
+        assert check.detail["channels_absent"] == [3, 6]
+        assert check.detail["stored_channel_column"] == kept.index(self.STORED)
+
+    def test_dropped_stored_channel_fails(self, databank, head):
+        check = databank.check_head_match(head, head[:, [0, 1, 2, 3, 4, 6, 7]], self.STORED)
+        assert not check.passed
+        assert "stored channel 5 is in no DANDI column" in check.reason
+
+    def test_changed_column_fails(self, databank, head):
+        dandi = head.copy()
+        dandi[3, 2] += 1
+        check = databank.check_head_match(head, dandi, self.STORED)
+        assert not check.passed
+        assert "DANDI columns [2] match no .lfp channel" in check.reason
+
+    def test_ambiguous_stored_channel_fails(self, databank, head):
+        twin = head.copy()
+        twin[:, 1] = twin[:, self.STORED]
+        check = databank.check_head_match(twin, twin.copy(), self.STORED)
+        assert not check.passed
+        assert "matches DANDI columns" in check.reason
+
+    def test_head_rows_must_align(self, databank, head):
+        with pytest.raises(ValueError, match="row counts differ"):
+            databank.head_column_map(head, head[:-1])
+
+    def test_length(self, databank):
+        check = databank.check_length(3_022_560_000, 64, (23_613_750, 64))
+        assert check.passed, check.reason
+        assert check.detail["lfp_samples"] == 23_613_750
+        short = databank.check_length(3_022_560_000, 64, (23_613_749, 64))
+        assert not short.passed
+        assert ".lfp holds 23613750 samples, DANDI 23613749 rows" in short.reason
+        odd = databank.check_length(3_022_560_001, 64, (23_613_750, 64))
+        assert not odd.passed
+        assert "not a multiple" in odd.reason
+        wide = databank.check_length(3_022_560_000, 64, (23_613_750, 65))
+        assert not wide.passed
+        assert "65 columns" in wide.reason
+
+    def test_channel_tag_is_one_based(self, databank):
+        assert databank.check_channel_tag(46, 47).passed
+        wrong = databank.check_channel_tag(46, 46)
+        assert not wrong.passed
+        assert "stored channel 46 (0-based) is not the tag's 46 (1-based)" in wrong.reason
+        missing = databank.check_channel_tag(46, None)
+        assert not missing.passed
+        assert "no such channel tag" in missing.reason
+
+    def test_rates(self, databank):
+        assert databank.check_rates(1250.0, 1250.0, 1250).passed
+        check = databank.check_rates(1250.0, 1000.0, 1250)
+        assert not check.passed
+        assert "disagree" in check.reason
+        assert not databank.check_rates(None, 1250.0, 1250).passed
+
+    @staticmethod
+    def _events(origin, samples, fs=1250.0):
+        samples = np.asarray(samples, dtype=float)
+        return pd.DataFrame(
+            {
+                "start_time": origin + samples[:, 0] / fs,
+                "peak_time": origin + samples[:, 1] / fs,
+                "end_time": origin + samples[:, 2] / fs,
+            }
+        )
+
+    @pytest.mark.parametrize("origin", [0.0, 1.7e9])
+    def test_events_on_the_grid_pass_at_any_origin(self, databank, origin):
+        events = self._events(
+            origin, [(0, 3, 10), (5000, 5010, 5020), (99_990, 99_995, 99_999)]
+        )
+        check = databank.check_events_in_recording(events, origin, 100_000, 1250.0)
+        assert check.passed, check.reason
+        assert check.detail["last_end_sample"] == 99_999
+
+    @pytest.mark.parametrize("origin", [0.0, 1.7e9])
+    def test_event_outside_the_recording_fails(self, databank, origin):
+        events = self._events(origin, [(0, 3, 10), (99_990, 99_995, 100_000)])
+        check = databank.check_events_in_recording(events, origin, 100_000, 1250.0)
+        assert not check.passed
+        assert "events [1] lie outside the 100000 recorded samples" in check.reason
+
+    @pytest.mark.parametrize("origin", [0.0, 1.7e9])
+    def test_event_off_the_grid_fails(self, databank, origin):
+        events = self._events(origin, [(0, 3, 10), (500.5, 505, 510)])
+        check = databank.check_events_in_recording(events, origin, 100_000, 1250.0)
+        assert not check.passed
+        assert "events [1] are off the 1250.0 Hz grid" in check.reason
+
+    def test_unordered_event_fails(self, databank):
+        events = self._events(0.0, [(10, 3, 20)])
+        check = databank.check_events_in_recording(events, 0.0, 100, 1250.0)
+        assert not check.passed
+        assert "not start <= peak <= end" in check.reason
+
+    def test_events_spanning_closed_bounds(self, databank):
+        origin = 1.7e9
+        events = self._events(origin, [(0, 1, 10), (10, 12, 20), (30, 31, 40)])
+        assert databank.events_spanning(events, [origin + 10 / 1250]) == [0, 1]
+        assert databank.events_spanning(events, [origin + 25 / 1250]) == []
+
+
+class TestSourceTranscription:
+    FS = 1000.0  # one sample per millisecond, so bounds read as milliseconds
+    ORIGIN = 1.7e9
+
+    def test_filter0_is_a_zero_padded_centred_average(self, databank):
+        x = np.random.default_rng(1).normal(size=200)
+        window = np.ones(11) / 11
+        np.testing.assert_allclose(
+            databank.filter0(window, x), np.convolve(x, window, mode="same"), atol=1e-12
+        )
+        with pytest.raises(ValueError, match="odd"):
+            databank.filter0(np.ones(4) / 4, x)
+
+    def test_normalization_uses_n_minus_one_or_the_given_sd(self, databank):
+        signal = np.random.default_rng(2).normal(size=500)
+        normalized, sd, mean = databank.normalized_squared_signal(signal, 11)
+        smoothed = np.convolve(signal**2, np.ones(11) / 11, mode="same")
+        assert sd == pytest.approx(np.std(smoothed, ddof=1), rel=1e-12)
+        assert mean == pytest.approx(smoothed.mean(), rel=1e-12)
+        np.testing.assert_allclose(normalized, (smoothed - mean) / sd, atol=1e-10)
+        fixed, used, _ = databank.normalized_squared_signal(signal, 11, sd=2.0)
+        assert used == 2.0
+        np.testing.assert_allclose(fixed, (smoothed - mean) / 2.0, atol=1e-10)
+
+    @pytest.fixture
+    def case(self):
+        normalized = np.zeros(60)
+        normalized[0] = 3.0  # incomplete first run: dropped
+        normalized[5:8] = [3.0, 6.0, 3.0]  # A: start 4, stop 7
+        normalized[10:12] = 3.0  # B: start 9, stop 11; gap 2 < 5 merges with A
+        normalized[20:23] = [3.0, 4.0, 3.0]  # C: peak 4 is not above 5
+        normalized[30:45] = 3.0  # D: 29..44 is 15 ms, over 12
+        normalized[37] = 7.0
+        normalized[50:54] = [3.0, 5.5, 3.0, 3.0]  # E: start 49, stop 53
+        normalized[59] = 3.0  # incomplete last run: dropped
+        signal = np.zeros(60)
+        signal[[6, 10]] = -2.0  # tied troughs: the first is the peak
+        signal[52] = -1.0
+        timestamps = self.ORIGIN + np.arange(60) / self.FS
+        return normalized, signal, timestamps
+
+    def _run(self, databank, case, **overrides):
+        normalized, signal, timestamps = case
+        settings = {
+            "low_threshold": 2.0,
+            "high_threshold": 5.0,
+            "minimum_inter_ripple_interval_ms": 5.0,
+            "maximum_duration_ms": 12.0,
+            "frequency": self.FS,
+        }
+        return databank.source_segmentation(
+            normalized, signal, timestamps, **(settings | overrides)
+        )
+
+    def test_hand_built_case(self, databank, case):
+        events = self._run(databank, case)
+        assert list(events.columns) == databank.SOURCE_EVENT_COLUMNS
+        assert events.start_index.tolist() == [4, 49]
+        assert events.stop_index.tolist() == [11, 53]
+        assert events.trough_index.tolist() == [6, 52]
+        assert events.max_index.tolist() == [6, 51]
+        assert events.peak_normed_power.tolist() == [6.0, 5.5]
+        timestamps = case[2]
+        assert events.start_time.tolist() == timestamps[[4, 49]].tolist()
+        assert events.end_time.tolist() == timestamps[[11, 53]].tolist()
+        assert events.peak_time.tolist() == timestamps[[6, 52]].tolist()
+        assert events.max_power_time.tolist() == timestamps[[6, 51]].tolist()
+
+    def test_gap_equal_to_the_interval_does_not_merge(self, databank, case):
+        # A stops at 7, B starts at 9: a gap of 2 samples merges below 3 ms, not at 2
+        merged = self._run(databank, case, minimum_inter_ripple_interval_ms=3.0)
+        assert merged.start_index.tolist()[0] == 4
+        assert merged.stop_index.tolist()[0] == 11
+        apart = self._run(databank, case, minimum_inter_ripple_interval_ms=2.0)
+        assert apart.start_index.tolist() == [4, 49]
+        assert apart.stop_index.tolist() == [7, 53]  # B alone has no peak above 5
+
+    def test_merge_has_no_cap(self, databank, case):
+        # A+B spans 7 ms; with a 6 ms ceiling the merged event is dropped, not left unmerged
+        events = self._run(databank, case, maximum_duration_ms=6.0)
+        assert events.start_index.tolist() == [49]
+
+    def test_peak_test_is_strict(self, databank, case):
+        events = self._run(databank, case, high_threshold=5.5)
+        assert events.start_index.tolist() == [4]
+
+    def test_duration_limits(self, databank, case):
+        longer = self._run(databank, case, maximum_duration_ms=15.0)
+        assert longer.start_index.tolist() == [4, 29, 49]
+        shortest = self._run(databank, case, minimum_duration_ms=5.0)
+        assert shortest.start_index.tolist() == [4]
+
+    def test_both_edges_incomplete(self, databank):
+        normalized = np.array([3.0, 0, 3.0, 6.0, 0, 0, 3.0])
+        events = databank.source_segmentation(
+            normalized,
+            np.zeros(7),
+            np.arange(7) / self.FS,
+            low_threshold=2.0,
+            high_threshold=5.0,
+            minimum_inter_ripple_interval_ms=0.5,
+            maximum_duration_ms=10.0,
+            frequency=self.FS,
+        )
+        assert events.start_index.tolist() == [1]
+        assert events.stop_index.tolist() == [3]
+
+    def test_nothing_above_threshold(self, databank):
+        events = databank.source_segmentation(
+            np.zeros(10),
+            np.zeros(10),
+            np.arange(10) / self.FS,
+            low_threshold=2.0,
+            high_threshold=5.0,
+            minimum_inter_ripple_interval_ms=1.0,
+            maximum_duration_ms=10.0,
+            frequency=self.FS,
+        )
+        assert events.empty
+        assert list(events.columns) == databank.SOURCE_EVENT_COLUMNS
+
+    @pytest.mark.parametrize("kind", ["cheby2", "butter"])
+    def test_source_filter_passes_the_band(self, databank, kind):
+        code = databank.SourceCode(
+            **{
+                **databank.PETERSEN_FORK_2021.__dict__,
+                "filter_kind": kind,
+                "filter_order": 4 if kind == "cheby2" else 3,
+            }
+        )
+        t = np.arange(12_500) / 1250
+        inside = databank.source_filter(np.sin(2 * np.pi * 150 * t), [120, 180], code)
+        below = databank.source_filter(np.sin(2 * np.pi * 40 * t), [120, 180], code)
+        middle = slice(1000, -1000)
+        assert np.std(inside[middle]) == pytest.approx(np.sqrt(0.5), rel=0.05)
+        assert np.std(below[middle]) < 0.01 * np.sqrt(0.5)
+
+    def test_source_filter_unknown_kind(self, databank):
+        code = databank.SourceCode(
+            **{**databank.PETERSEN_FORK_2021.__dict__, "filter_kind": "x"}
+        )
+        with pytest.raises(ValueError, match="unknown filter kind"):
+            databank.source_filter(np.zeros(100), [120, 180], code)
+
+
+_STORED = {"thresholds": [2, 5], "durations": [50, 150], "frequency": 1250, "restrict": []}
+
+
+@pytest.fixture(scope="module")
+def detected(databank):
+    """A 20 s source-filtered signal with four bursts, and the package's events on it."""
+    rng = np.random.default_rng(3)
+    fs, n = 1250.0, 25_000
+    t = np.arange(n) / fs
+    lfp = rng.normal(0, 50, n)
+    for centre in (3.0, 8.0, 13.0, 18.0):
+        lfp += 600 * np.exp(-0.5 * ((t - centre) / 0.012) ** 2) * np.sin(2 * np.pi * 150 * t)
+    filtered = databank.source_filter(lfp, [120, 180], databank.PETERSEN_FORK_2021)
+    options = databank.package_options(_STORED, databank.PETERSEN_FORK_2021)
+    timestamps = 1.7e9 + t
+    return filtered, timestamps, databank.run_package(filtered, timestamps, options)
+
+
+class TestPackageRun:
+    STORED = _STORED
+
+    def test_options_from_stored_parameters(self, databank):
+        options = databank.package_options(self.STORED, databank.PETERSEN_FORK_2021)
+        assert options["low_threshold"] == 2.0
+        assert options["high_threshold"] == 5.0
+        assert options["minimum_inter_ripple_interval"] == 0.05
+        assert options["maximum_duration"] == 0.15
+        assert options["minimum_duration"] == 0.0
+        assert options["speed_threshold"] == np.inf
+        assert options["normalization_mask"] is None
+        assert round(options["smoothing_window"] * 1250) == 11
+
+    def test_restrict_and_window_refused(self, databank):
+        with pytest.raises(ValueError, match="restrict"):
+            databank.package_options(
+                {**self.STORED, "restrict": [[0, 10]]}, databank.PETERSEN_FORK_2021
+            )
+        with pytest.raises(ValueError, match="smoothing_window"):
+            databank.package_options(
+                {**self.STORED, "frequency": 1000}, databank.PETERSEN_FORK_2021
+            )
+
+    def test_package_and_transcription_agree_without_the_cap(self, databank, detected):
+        filtered, timestamps, package = detected
+        normalized, _, _ = databank.normalized_squared_signal(filtered, 11)
+        transcription = databank.source_segmentation(
+            normalized,
+            filtered,
+            timestamps,
+            low_threshold=2.0,
+            high_threshold=5.0,
+            minimum_inter_ripple_interval_ms=50.0,
+            maximum_duration_ms=150.0,
+            frequency=1250.0,
+        )
+        assert len(package) == len(transcription) == 4
+        np.testing.assert_array_equal(package.start_time, transcription.start_time)
+        np.testing.assert_array_equal(package.end_time, transcription.end_time)
+        np.testing.assert_array_equal(package.peak_time, transcription.max_power_time)
+
+    def test_saved_layout_round_trips(self, databank, detected, tmp_path):
+        from ripple_detection.literature_methods import load_events
+
+        package = detected[2]
+        sidecar = databank.save_detector_events(package, tmp_path / "package_events.csv")
+        assert sidecar == tmp_path / "package_events.json"
+        loaded = load_events(tmp_path / "package_events.csv")
+        assert list(loaded.columns) == list(package.columns)
+        np.testing.assert_array_equal(loaded.start_time, package.start_time)
+        assert loaded.attrs["method"] == databank.DETECTOR
+        assert loaded.attrs["options"]["speed_threshold"] is None
+        assert loaded.attrs["options"]["minimum_duration"] == 0.0
+
+
+class TestResults:
+    ORIGIN = 1.7e9
+
+    def _inventory(self, bounds, peaks):
+        bounds = np.asarray(bounds, dtype=float)
+        return pd.DataFrame(
+            {
+                "start_time": self.ORIGIN + bounds[:, 0],
+                "end_time": self.ORIGIN + bounds[:, 1],
+                "peak_time": self.ORIGIN + np.asarray(peaks, dtype=float),
+            }
+        )
+
+    def test_comparison_row(self, databank):
+        reference = self._inventory([(1.0, 1.1), (2.0, 2.1), (3.0, 3.05)], [1.05, 2.05, 3.02])
+        detected = self._inventory([(1.0, 1.1), (2.008, 2.1), (5.0, 5.1)], [1.05, 2.06, 5.05])
+        row = databank.comparison_row("a", reference, "b", detected, 0.0, 1250.0, "x vs y")
+        assert list(row) == databank.COMPARISON_COLUMNS
+        assert row["n_matched"] == 2
+        assert row["recall"] == pytest.approx(2 / 3)
+        assert row["precision"] == pytest.approx(2 / 3)
+        assert row["n_identical_bounds"] == 1
+        assert row["onset_error_q75_ms"] == pytest.approx(6.0, abs=1e-3)
+        assert row["peak_error_q75_ms"] == pytest.approx(7.5, abs=1e-3)
+        assert row["n_unmatched_reference"] == row["n_unmatched_detected"] == 1
+        assert row["peak_definitions"] == "x vs y"
+        table = pd.DataFrame([row], columns=databank.COMPARISON_COLUMNS)
+        assert list(table.columns) == databank.COMPARISON_COLUMNS
+
+    def test_difference_classes(self, databank):
+        reference = self._inventory([(1.0, 1.1), (2.0, 2.1), (3.0, 3.1)], [1.05, 2.05, 3.05])
+        detected = self._inventory([(1.0, 1.1), (2.0, 2.3), (6.0, 6.1)], [1.05, 2.1, 6.05])
+        classes = databank.difference_classes(reference, detected)
+        assert classes == {
+            "unmatched_reference": [2],
+            "unmatched_detected": [2],
+            "poorly_aligned": [1],
+        }
+
+    def test_write_small_refuses_a_megabyte(self, databank, tmp_path):
+        path = databank.write_small("x" * 10, tmp_path / "a.txt")
+        assert path.read_text() == "x" * 10
+        with pytest.raises(ValueError, match="over the 1000000-byte limit"):
+            databank.write_small("x" * 1_000_000, tmp_path / "b.txt")
+        assert not (tmp_path / "b.txt").exists()
+
+    def test_dump_json_is_strict(self, databank):
+        text = databank.dump_json({"a": np.float64(np.inf), "b": np.arange(2), "c": (1, 2.5)})
+        assert json.loads(text) == {"a": None, "b": [0, 1], "c": [1, 2.5]}
+
+    def test_containing_rows_closed_bounds(self, databank):
+        outer = self._inventory([(1.0, 2.0), (3.0, 4.0)], [1.5, 3.5])
+        inner = self._inventory(
+            [(1.0, 1.2), (1.5, 2.0), (2.5, 2.6), (3.9, 4.1), (0.5, 0.6)],
+            [1.1, 1.7, 2.55, 4.0, 0.55],
+        )
+        assert databank.containing_rows(inner, outer).tolist() == [0, 0, -1, -1, -1]
