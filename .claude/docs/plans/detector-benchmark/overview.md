@@ -127,7 +127,7 @@ figures use matplotlib from the existing `examples` extra.
 One exception, for phase 7 only: its scripts stream DANDI NWB files with `remfile` and `h5py`,
 which are not declared anywhere in `pyproject.toml`. They run in an isolated environment
 (`uv run --with remfile --with h5py ...`) and record the versions used; no package or test
-imports them, so CI and the dependency-floors job are unaffected.
+imports them, so CI and the dependency-floors job are unaffected. GNU Octave, which runs the original MATLAB code for phase 7's original-code comparisons, is a system tool the maintainer installed (2026-10-03), not a dependency; no test runs it.
 
 ## Metrics
 

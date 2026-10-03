@@ -10,6 +10,15 @@ output, not ground truth ([decision 12](overview.md#decisions-settled-with-the-m
 agreement is evidence that the package reproduces the source, and a disagreement is traced to a
 stage (filter, trace, normalization, threshold, bounds, post-processing) before anything changes.
 
+**Goal (maintainer, 2026-10-03):** establish that the package's implementations of the detectors
+and paper methods are faithful to their sources. Two kinds of evidence serve it. Released events
+on real recordings (the sessions below) test a method end to end where an author published both.
+Comparisons with the original code (see [Original-code comparisons](#original-code-comparisons))
+run the source's own code and the package on the same input; they need no released events, so
+they reach the detectors no deposit covers. MS10 showed the second is the sharper test: the
+source's steps, rerun, gave its 429 events exactly, and isolated the one rule (the merge cap) in
+which the package departs. Sessions are chosen for distinct methods, not repeats of one.
+
 Scripts and a README live in `examples/reference_recordings/`, never in the installed package.
 Data are downloaded or streamed to a cache outside the repository; nothing large is committed.
 
@@ -49,9 +58,8 @@ matching recordings are on DANDI.
 | Carey 2019, R050-2014-03-29 | DataLad MotivationalT session, over https: 20 `.ncs` (`CSC03a` is 20 MB), 30 `.t`, `VT1.nvt` (272 MB), `Events.nev`, `metadata.mat` (`SWRtimes`: 50 template examples; `SWRfreqs`: the `amSWR` settings; `taskvars`) | `R050-2014-03-29-candidates.mat` in vandermeerlab/papers@3aebc8e: 1654 candidates and their stored configuration (threshold 4 on the joint score rescaled to mean 0.5; at least 20 ms and 5 cells; speed below 10 in pixel units; theta z below 2) | `carey_2019` with `example_ripples` from `SWRtimes` | position units and the pixel speed threshold; that the 30 released units are the ones the 5-cell rule counted; one clock for `.ncs`, `.t`, `.nvt` and the candidates; whether the 2017 `SWRtimes` are the examples behind the 2015 candidates (compare the template spectrum with `SWRfreqs.freqs1`) |
 | Huszár et al. 2022, reused by Yang 2024: DANDI 000552 v0.230630.2304 | 13 sessions have a raw recording (`*-raw_ecephys.nwb`, 5.6-184 GB, streamed in slices) and a processed file of the same subject and date | `/processing/ecephys/Ripples`: TimeIntervals with `start_time`, `stop_time`, `peaks` and a raw snippet per event (seen in two other sessions) | the detector Huszár 2022 describes, if the package has it | that the 13 paired processed files hold a `Ripples` table; the ripple channel; the detection method and its settings in Huszár 2022's Methods; the raw-to-table clock (the per-event `ripple_raw` snippets can check it) |
 | Yang 2024 on Huszár's e15_13f1_220118 (DANDI 000552) | the same session's raw file (183.6 GB, streamed) and processed file (363 units, `SleepStates`, `Ripples`, 9502 rows) | the repository's binned inventory for that session at f1bc2fb: 4088 events on 20 ms bins; 4087 contain a Huszár ripple start | `yang_2024` with `external_ripples` from the NWB `Ripples` table | which units Yang used (the NWB has no cell types); normalization over all bins or NREM only; the package requires a ripple peak inside an event where Yang's code tests the start; the later filters behind the binned inventory; bounds known only to 20 ms |
-| Girardeau et al. 2017: CRCNS hc-14, 45 sessions with `rip.evt` (Rat08, Rat10, Rat11) | per session `{session}.lfp.tar.gz` (6.5-8.2 GB; 1250 Hz, 166 channels in Rat08-20130713's `.xml`), `cat.evt` subsession bounds; or the DANDI 000061 NWB conversion, streamed | `{session}.rip.evt` in the `_clu` archive: NeuroScope start, peak and stop in ms; Rat08-20130713 has 6835 events on channel 23, 20.0-129.6 ms | `Zugaro_ripple_detector` with the Methods' thresholds and 20-130 ms limits | the detection channel (23 in the event labels, 0- or 1-based); the Methods' thresholds and band; the non-hippocampal control channel whose coincident events were removed (the package has no such veto: compare with and without removing them); the `.lfp` against DANDI 000061's columns (one file had 160 channels where the description gives 134 or 166) |
-| Petersen, databank MS10 (`Peter_MS10_170307_154746_concat`), DANDI 000059 | raw 20 kHz (377820000 x 64) and LFP 1250 Hz (23613750 x 64); the first rows of both equal the archived `.dat` and `.lfp` exactly | Wayback `ripples.events.mat` (11305 B, complete): 429 events from `bz_FindRipples`, channel 46 (0-based; Ripple tag 47), thresholds [2 5] SD, durations [50 150] ms, 120-180 Hz, stored `stdev` 202112.11 | `Zugaro_ripple_detector(low_threshold=2, high_threshold=5, minimum_inter_ripple_interval=0.05, maximum_duration=0.15, speed_threshold=np.inf)` on column 46 filtered 120-180 Hz (order-3 Butterworth, from the `bz_Filter` code) | the code version (no minimum duration is stored; events go down to 19.2 ms); merge-then-drop versus the package's merge rule; stage check: the recomputed SD against the stored `stdev` |
-| Girardeau, databank Rat09-20140402, DANDI 000061 | LFP 1250 Hz; DANDI keeps 127 of the `.lfp`'s 166 channels (columns 0-122 and 124-127 by head match) | Wayback `ripples.events.mat` (60619 B, complete): 568 events and 1867 `noise` events from `bz_FindRipples`, channel 2, [2 5] SD, [50 150] ms, 120-180 Hz, `stdev` 1827.0 | as MS10 | the noise channel is not stored (the RippleNoise tag, channel 16, is likely): compare the kept plus noise events, the set before the veto, first; `session.mat`'s duration is stale; DANDI's `epochs` look like ms |
+| Girardeau et al. 2017: CRCNS hc-14, 45 sessions with `rip.evt` (Rat08, Rat10, Rat11) | per session `{session}.lfp.tar.gz` (6.5-8.2 GB; 1250 Hz, 166 channels in Rat08-20130713's `.xml`), `cat.evt` subsession bounds; or the DANDI 000061 NWB conversion, streamed | `{session}.rip.evt` in the `_clu` archive: NeuroScope start, peak and stop in ms; Rat08-20130713 has 6835 events on channel 23, 20.0-129.6 ms | `Zugaro_ripple_detector` with the Methods' thresholds and 20-130 ms limits; run only if the events prove to come from FMAToolbox's `FindRipples` (the capped merge the package follows, complementing MS10's uncapped buzcode), otherwise listed as a repeat of MS10 | the detection channel (23 in the event labels, 0- or 1-based); the Methods' thresholds and band; the non-hippocampal control channel whose coincident events were removed (the package has no such veto: compare with and without removing them); the `.lfp` against DANDI 000061's columns (one file had 160 channels where the description gives 134 or 166) |
+| Petersen, databank MS10 (`Peter_MS10_170307_154746_concat`), DANDI 000059 | raw 20 kHz (377820000 x 64) and LFP 1250 Hz (23613750 x 64); the first rows of both equal the archived `.dat` and `.lfp` exactly | Wayback `ripples.events.mat` (11305 B, complete): 429 events from `bz_FindRipples`, channel 46 (0-based; Ripple tag 47), thresholds [2 5] SD, durations [50 150] ms, 120-180 Hz, stored `stdev` 202112.11 | `Zugaro_ripple_detector(low_threshold=2, high_threshold=5, minimum_inter_ripple_interval=0.05, maximum_duration=0.15, minimum_duration=0, speed_threshold=np.inf)` on column 46 filtered as the source did | **Done (2026-10-03, `results/MS10/findings.md`).** The source is petersenpeter/buzcode `bz_FindRipples` at bc3fc91 (cheby2 order 4, 20 dB, filtfilt), not buzsakilab's butter order 3; the recomputed SD matches the stored one to 4.5e-12; all 429 released events recovered with identical bounds, plus 120 package-only fragments explained entirely by FMAToolbox's merge cap, which buzcode lacks (now documented in the detector's docstring) |
 | Maboudi 2018, `fig1.nel` with CRCNS hc-3 `gor01-6-7/2006-6-7_16-40-19` (2.17 GB archive) | the stored 1 kHz multiunit trace, 117 units, one unlabelled 1252 Hz LFP channel; hc-3's `.res/.clu`, `.eeg`, `.whl` | 457 MUA epochs (and 277 binned PBEs, a later inventory) | `maboudi_2018` | the stored trace already reproduces all 457 bounds (runs above the mean with a 3 SD peak, 80 ms to a maximum of 0.70-0.81 s); which hc-3 spike set rebuilds the trace (the 117 units give about 400 Hz of its 2420 Hz); the LFP channel by cross-correlation; the 1180-1250 s gap |
 
 Optional, if time allows: Petersen's databank MS22 (`Peter_MS22_180629_110319_concat`, DANDI
@@ -83,6 +91,30 @@ Not included, with the reason recorded in the README:
 - Databank event files the Wayback archive truncated (Tingley, Grosmark, Valero, Girardeau Rat08:
   30-104 MB originals), and McKenzie and Varga sessions, whose raw files are only on Globus.
 - Hand-annotated ripple datasets: deferred by the maintainer on 2026-10-02.
+- Girardeau's databank Rat09-20140402 (dropped 2026-10-03): `bz_FindRipples` again, as MS10; its
+  only new element is a noise veto the package does not implement, so it would add nothing about
+  `Zugaro_ripple_detector`'s faithfulness.
+
+## Original-code comparisons
+
+Added 2026-10-03 for the goal above. For each detector and packaged paper method whose original
+code is public, run that code and the package on the same inputs and compare the events with
+`match_events`, stage by stage where the source exposes intermediate values (filtered signal,
+normalized trace, thresholds). Inputs: simulated sessions from `simulate_session` and
+`simulate_network_session` (several seeds, with the edge cases a rule distinguishes: close events
+for merging, long events for ceilings, gaps, events at the record edges) and the MS10 LFP column
+already cached. A difference is classified as a documented departure (the docstring lists it), an
+undocumented departure (documentation fix), or a bug (its own PR with a regression test).
+
+The original MATLAB runs in GNU Octave (installed system-wide with Homebrew on 2026-10-03, by the
+maintainer's decision; not a package dependency). Where Octave cannot run a source (missing
+toolbox functions), a Python transcription of the pinned source, checked line by line in review,
+stands in, and the report says which was used. No CI test runs Octave; the comparison scripts
+record the Octave version and source commits, and their small results are committed.
+
+Order: first an inventory of every detector's and packaged method's original code (public or
+not, pinned commit, language, whether Octave runs it, what intermediate values it exposes); then
+one comparison per detector or method family, most-used first.
 
 ## Tasks
 
@@ -124,6 +156,13 @@ Not included, with the reason recorded in the README:
    results and explained differences; a small results CSV is committed (under 1 MB). Nothing is
    stated as agreement without the numbers behind it.
 
+8. **Original-code inventory.** `examples/reference_recordings/original_code.md`: for each of the
+   nine detectors and each packaged method family, the original code (repository and pinned
+   commit, or "not public" with what was searched), language, license, whether it runs in
+   Octave, and the intermediate values it exposes.
+9. **Original-code comparisons**, one per detector or family from the inventory, as described
+   under [Original-code comparisons](#original-code-comparisons).
+
 ## Validation
 
 | Check | What it establishes |
@@ -132,6 +171,7 @@ Not included, with the reason recorded in the README:
 | Huszár clock check: each released event's `ripple_raw` snippet against the raw recording at that event's times | The released table and the raw file share one clock and channel before events are compared. |
 | Smoke test: a 10-minute Carey slice and a slice of one Huszár session first | Runtime and memory measured before full sessions; extrapolated before the full run. |
 | Timestamps at the sources' own origins (Neuralynx microseconds, NWB seconds) | Tolerances scale with the timestamps; no rounding shifts a bound. |
+| Original-code comparison: the source's code (Octave or a reviewed transcription) and the package on the same simulated and real inputs, per stage where exposed | The package reproduces the source, or each difference is a documented departure, a documentation gap or a bug with its own fix. |
 | `fetch.py` checksum test on a small file | A changed or partial download fails instead of being used. |
 | Wayback length check: each archived event file's length against the original `Content-Length` the capture records | A truncated capture (the archive keeps the first 1 MiB) is refused, not parsed. |
 | Head match: the first rows of each databank session's DANDI raw and LFP arrays against the archived `.dat`/`.lfp` heads, and the DANDI column for the stored channel | The released channel index points at the same signal in the DANDI copy (DANDI drops or reorders channels in some sessions). |
