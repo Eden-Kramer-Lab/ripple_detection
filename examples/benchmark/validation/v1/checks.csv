@@ -1,0 +1,1162 @@
+check,kind,condition_id,applies,evidence_status,statistic,observed,lower,upper,n,note,passed
+ripple_event_rate,target,reference,True,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,,True
+ripple_peak_frequency,target,reference,True,supported,median_hz,181.75,172.0,192.0,2200,,True
+ripple_frequency_decline,target,reference,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,reference,True,supported,median_ms,43.99999999998272,40.0,60.0,1185,,True
+ripple_duration_sleep,target,reference,False,supported,mean_ms,54.67157665029983,27.0,41.0,1222,"reported, not gated here",False
+sharp_wave_duration,target,reference,True,supported,median_ms,56.66666666667197,40.0,100.0,2414,,True
+pyramidal_baseline_rate,target,reference,True,supported,median_hz,0.4439673720444216,0.3,1.4,1000,,True
+interneuron_baseline_rate,target,reference,True,supported,mean_hz,11.805174607033678,6.3,16.9,200,,True
+interneuron_ripple_gain,target,reference,True,supported,ratio,2.9322085104283437,2.5,3.8,6164,,True
+pyramidal_ripple_gain,target,reference,True,supported,ratio,8.328108516515368,5.0,10.0,3515,,True
+observed_participation,target,reference,True,supported,mean_fraction,0.11686108165429482,0.05,0.2,1886,,True
+observed_participation_largest,target,reference,True,supported,p95_fraction,0.24,0.2,0.45,1886,,True
+sharp_wave_ripple_power_correlation,target,reference,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,reference,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,,True
+sharp_wave_frequency_relation,target,reference,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,reference,True,supported,median_ms,91.60956887892357,85.0,114.0,314,,True
+noise_only_matched,rendering,reference,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,reference,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,reference,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,reference,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,reference,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,reference,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,reference,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,reference,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,reference,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,reference,True,mathematical,z,-0.28217764591918876,-4.0,4.0,863432,,True
+refractory_spiking,rendering,reference,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,ripple_snr=low,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,ripple_snr=low,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,ripple_snr=low,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,ripple_snr=low,False,supported,median_ms,19.99999999998181,40.0,60.0,598,"reported, not gated here",False
+ripple_duration_sleep,target,ripple_snr=low,False,supported,mean_ms,44.07079646017672,27.0,41.0,113,"reported, not gated here",False
+sharp_wave_duration,target,ripple_snr=low,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,ripple_snr=low,False,supported,median_hz,0.4439673720444216,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,ripple_snr=low,False,supported,mean_hz,11.805174607033678,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,ripple_snr=low,False,supported,ratio,2.9322085104283437,2.5,3.8,6164,"reported, not gated here",True
+pyramidal_ripple_gain,target,ripple_snr=low,False,supported,ratio,8.328108516515368,5.0,10.0,3515,"reported, not gated here",True
+observed_participation,target,ripple_snr=low,False,supported,mean_fraction,0.11686108165429482,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,ripple_snr=low,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,ripple_snr=low,False,supported,pearson_r,-0.0006772961456342061,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,ripple_snr=low,False,assumed,pearson_r,-0.0006772961456342061,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,ripple_snr=low,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,ripple_snr=low,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,ripple_snr=low,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,ripple_snr=low,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,ripple_snr=low,True,mathematical,relative_spread,2.884825879658013e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,ripple_snr=low,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,ripple_snr=low,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,ripple_snr=low,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,ripple_snr=low,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,ripple_snr=low,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,ripple_snr=low,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,ripple_snr=low,True,mathematical,z,-0.28217764591918876,-4.0,4.0,863432,,True
+refractory_spiking,rendering,ripple_snr=low,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,ripple_snr=high,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,ripple_snr=high,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,ripple_snr=high,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,ripple_snr=high,False,supported,median_ms,63.99999999996453,40.0,60.0,1284,"reported, not gated here",False
+ripple_duration_sleep,target,ripple_snr=high,False,supported,mean_ms,70.11417840375601,27.0,41.0,1775,"reported, not gated here",False
+sharp_wave_duration,target,ripple_snr=high,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,ripple_snr=high,False,supported,median_hz,0.4439673720444216,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,ripple_snr=high,False,supported,mean_hz,11.805174607033678,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,ripple_snr=high,False,supported,ratio,2.9322085104283437,2.5,3.8,6164,"reported, not gated here",True
+pyramidal_ripple_gain,target,ripple_snr=high,False,supported,ratio,8.328108516515368,5.0,10.0,3515,"reported, not gated here",True
+observed_participation,target,ripple_snr=high,False,supported,mean_fraction,0.11686108165429482,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,ripple_snr=high,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,ripple_snr=high,False,supported,pearson_r,-0.001579324916648217,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,ripple_snr=high,False,assumed,pearson_r,-0.001579324916648217,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,ripple_snr=high,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,ripple_snr=high,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,ripple_snr=high,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,ripple_snr=high,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,ripple_snr=high,True,mathematical,relative_spread,2.243353195187386e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,ripple_snr=high,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,ripple_snr=high,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,ripple_snr=high,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,ripple_snr=high,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,ripple_snr=high,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,ripple_snr=high,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,ripple_snr=high,True,mathematical,z,-0.28217764591918876,-4.0,4.0,863432,,True
+refractory_spiking,rendering,ripple_snr=high,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,participation=low,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,participation=low,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,participation=low,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,participation=low,False,supported,median_ms,43.99999999998272,40.0,60.0,1185,"reported, not gated here",True
+ripple_duration_sleep,target,participation=low,False,supported,mean_ms,54.67157665029983,27.0,41.0,1222,"reported, not gated here",False
+sharp_wave_duration,target,participation=low,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,participation=low,False,supported,median_hz,0.39586587958967734,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,participation=low,False,supported,mean_hz,11.809293604288591,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,participation=low,False,supported,ratio,2.9408983924012424,2.5,3.8,6185,"reported, not gated here",True
+pyramidal_ripple_gain,target,participation=low,False,supported,ratio,3.569238109808612,5.0,10.0,1502,"reported, not gated here",False
+observed_participation,target,participation=low,False,supported,mean_fraction,0.05447507953340403,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,participation=low,False,supported,p95_fraction,0.12,0.2,0.45,1886,"reported, not gated here",False
+sharp_wave_ripple_power_correlation,target,participation=low,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,participation=low,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,participation=low,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,participation=low,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,participation=low,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,participation=low,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,participation=low,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,participation=low,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,participation=low,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,participation=low,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,participation=low,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,participation=low,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,participation=low,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,participation=low,True,mathematical,z,-0.20900834587152764,-4.0,4.0,863500,,True
+refractory_spiking,rendering,participation=low,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,participation=high,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,participation=high,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,participation=high,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,participation=high,False,supported,median_ms,43.99999999998272,40.0,60.0,1185,"reported, not gated here",True
+ripple_duration_sleep,target,participation=high,False,supported,mean_ms,54.67157665029983,27.0,41.0,1222,"reported, not gated here",False
+sharp_wave_duration,target,participation=high,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,participation=high,False,supported,median_hz,0.4919718218519247,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,participation=high,False,supported,mean_hz,11.811798358150433,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,participation=high,False,supported,ratio,2.9503180997049876,2.5,3.8,6206,"reported, not gated here",True
+pyramidal_ripple_gain,target,participation=high,False,supported,ratio,14.12602036328331,5.0,10.0,5978,"reported, not gated here",False
+observed_participation,target,participation=high,False,supported,mean_fraction,0.18347826086956523,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,participation=high,False,supported,p95_fraction,0.34,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,participation=high,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,participation=high,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,participation=high,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,participation=high,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,participation=high,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,participation=high,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,participation=high,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,participation=high,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,participation=high,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,participation=high,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,participation=high,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,participation=high,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,participation=high,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,participation=high,True,mathematical,z,-0.21976853705500723,-4.0,4.0,863490,,True
+refractory_spiking,rendering,participation=high,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,n_units=30,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,n_units=30,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,n_units=30,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,n_units=30,False,supported,median_ms,43.99999999998272,40.0,60.0,1185,"reported, not gated here",True
+ripple_duration_sleep,target,n_units=30,False,supported,mean_ms,54.67157665029983,27.0,41.0,1222,"reported, not gated here",False
+sharp_wave_duration,target,n_units=30,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,n_units=30,False,supported,median_hz,0.45708202306399714,0.3,1.4,500,"reported, not gated here",True
+interneuron_baseline_rate,target,n_units=30,False,supported,mean_hz,11.964250732973262,6.3,16.9,100,"reported, not gated here",True
+interneuron_ripple_gain,target,n_units=30,False,supported,ratio,2.923647203262127,2.5,3.8,3115,"reported, not gated here",True
+pyramidal_ripple_gain,target,n_units=30,False,supported,ratio,8.317007120150729,5.0,10.0,1777,"reported, not gated here",True
+observed_participation,target,n_units=30,False,supported,mean_fraction,0.11397667020148462,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,n_units=30,False,supported,p95_fraction,0.28,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,n_units=30,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,n_units=30,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,n_units=30,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,n_units=30,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,n_units=30,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,n_units=30,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,n_units=30,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,n_units=30,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,n_units=30,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,n_units=30,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,n_units=30,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,n_units=30,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,n_units=30,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,n_units=30,True,mathematical,z,0.7088806148638375,-4.0,4.0,437537,,True
+refractory_spiking,rendering,n_units=30,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,n_units=120,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,n_units=120,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,n_units=120,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,n_units=120,False,supported,median_ms,43.99999999998272,40.0,60.0,1185,"reported, not gated here",True
+ripple_duration_sleep,target,n_units=120,False,supported,mean_ms,54.67157665029983,27.0,41.0,1222,"reported, not gated here",False
+sharp_wave_duration,target,n_units=120,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,n_units=120,False,supported,median_hz,0.43559791196779263,0.3,1.4,2000,"reported, not gated here",True
+interneuron_baseline_rate,target,n_units=120,False,supported,mean_hz,11.771342421514436,6.3,16.9,400,"reported, not gated here",True
+interneuron_ripple_gain,target,n_units=120,False,supported,ratio,2.9415790155452726,2.5,3.8,12330,"reported, not gated here",True
+pyramidal_ripple_gain,target,n_units=120,False,supported,ratio,8.669325301099922,5.0,10.0,7060,"reported, not gated here",True
+observed_participation,target,n_units=120,False,supported,mean_fraction,0.11488335100742313,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,n_units=120,False,supported,p95_fraction,0.23,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,n_units=120,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,n_units=120,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,n_units=120,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,n_units=120,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,n_units=120,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,n_units=120,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,n_units=120,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,n_units=120,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,n_units=120,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,n_units=120,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,n_units=120,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,n_units=120,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,n_units=120,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,n_units=120,True,mathematical,z,0.24769690903592637,-4.0,4.0,1720949,,True
+refractory_spiking,rendering,n_units=120,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,n_channels=1,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,n_channels=1,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,n_channels=1,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,n_channels=1,False,supported,median_ms,43.99999999998272,40.0,60.0,1185,"reported, not gated here",True
+ripple_duration_sleep,target,n_channels=1,False,supported,mean_ms,54.66285403050084,27.0,41.0,1224,"reported, not gated here",False
+sharp_wave_duration,target,n_channels=1,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,n_channels=1,False,supported,median_hz,0.4439673720444216,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,n_channels=1,False,supported,mean_hz,11.805174607033678,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,n_channels=1,False,supported,ratio,2.9322085104283437,2.5,3.8,6164,"reported, not gated here",True
+pyramidal_ripple_gain,target,n_channels=1,False,supported,ratio,8.328108516515368,5.0,10.0,3515,"reported, not gated here",True
+observed_participation,target,n_channels=1,False,supported,mean_fraction,0.11686108165429482,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,n_channels=1,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,n_channels=1,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,n_channels=1,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,n_channels=1,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,n_channels=1,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,n_channels=1,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,n_channels=1,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,n_channels=1,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,n_channels=1,True,mathematical,relative_error,4.28150447318032e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,n_channels=1,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,n_channels=1,False,mathematical,max_relative_residual,0.0,0.0,0.01,0,"not applicable: one channel, so none besides a ripple's anchor",False
+gamma_sizing,rendering,n_channels=1,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,n_channels=1,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,n_channels=1,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,n_channels=1,True,mathematical,z,-0.28217764591918876,-4.0,4.0,863432,,True
+refractory_spiking,rendering,n_channels=1,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,n_channels=16,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,n_channels=16,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,n_channels=16,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,n_channels=16,False,supported,median_ms,43.99999999998272,40.0,60.0,1185,"reported, not gated here",True
+ripple_duration_sleep,target,n_channels=16,False,supported,mean_ms,54.67157665029983,27.0,41.0,1222,"reported, not gated here",False
+sharp_wave_duration,target,n_channels=16,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,n_channels=16,False,supported,median_hz,0.4439673720444216,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,n_channels=16,False,supported,mean_hz,11.805174607033678,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,n_channels=16,False,supported,ratio,2.9322085104283437,2.5,3.8,6164,"reported, not gated here",True
+pyramidal_ripple_gain,target,n_channels=16,False,supported,ratio,8.328108516515368,5.0,10.0,3515,"reported, not gated here",True
+observed_participation,target,n_channels=16,False,supported,mean_fraction,0.11686108165429482,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,n_channels=16,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,n_channels=16,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,n_channels=16,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,n_channels=16,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,n_channels=16,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,n_channels=16,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,n_channels=16,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,n_channels=16,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,n_channels=16,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,n_channels=16,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,n_channels=16,True,mathematical,max_relative_residual,1.0650165617199166e-14,0.0,0.01,33000,,True
+gamma_sizing,rendering,n_channels=16,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,n_channels=16,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,n_channels=16,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,n_channels=16,True,mathematical,z,-0.28217764591918876,-4.0,4.0,863432,,True
+refractory_spiking,rendering,n_channels=16,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,shared_noise_fraction=0.2,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,shared_noise_fraction=0.2,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,shared_noise_fraction=0.2,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,shared_noise_fraction=0.2,False,supported,median_ms,43.99999999998272,40.0,60.0,1186,"reported, not gated here",True
+ripple_duration_sleep,target,shared_noise_fraction=0.2,False,supported,mean_ms,54.72904800651034,27.0,41.0,1229,"reported, not gated here",False
+sharp_wave_duration,target,shared_noise_fraction=0.2,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,shared_noise_fraction=0.2,False,supported,median_hz,0.4439673720444216,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,shared_noise_fraction=0.2,False,supported,mean_hz,11.805174607033678,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,shared_noise_fraction=0.2,False,supported,ratio,2.9322085104283437,2.5,3.8,6164,"reported, not gated here",True
+pyramidal_ripple_gain,target,shared_noise_fraction=0.2,False,supported,ratio,8.328108516515368,5.0,10.0,3515,"reported, not gated here",True
+observed_participation,target,shared_noise_fraction=0.2,False,supported,mean_fraction,0.11686108165429482,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,shared_noise_fraction=0.2,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,shared_noise_fraction=0.2,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,shared_noise_fraction=0.2,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,shared_noise_fraction=0.2,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,shared_noise_fraction=0.2,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,shared_noise_fraction=0.2,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,shared_noise_fraction=0.2,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,shared_noise_fraction=0.2,True,mathematical,relative_spread,1.8760009134958165e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,shared_noise_fraction=0.2,True,mathematical,relative_error,4.373833972781682e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,shared_noise_fraction=0.2,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,shared_noise_fraction=0.2,True,mathematical,max_relative_residual,9.847906297075797e-15,0.0,0.01,6600,,True
+gamma_sizing,rendering,shared_noise_fraction=0.2,True,mathematical,relative_error,1.4160197736590163e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,shared_noise_fraction=0.2,True,mathematical,absolute_error,0.007566429835436383,0.0,0.05,1200,,True
+model_metadata,rendering,shared_noise_fraction=0.2,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,shared_noise_fraction=0.2,True,mathematical,z,-0.28217764591918876,-4.0,4.0,863432,,True
+refractory_spiking,rendering,shared_noise_fraction=0.2,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,shared_noise_fraction=0.8,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,shared_noise_fraction=0.8,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,shared_noise_fraction=0.8,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,shared_noise_fraction=0.8,False,supported,median_ms,43.333333333322344,40.0,60.0,1191,"reported, not gated here",True
+ripple_duration_sleep,target,shared_noise_fraction=0.8,False,supported,mean_ms,55.43327841845146,27.0,41.0,1214,"reported, not gated here",False
+sharp_wave_duration,target,shared_noise_fraction=0.8,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,shared_noise_fraction=0.8,False,supported,median_hz,0.4439673720444216,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,shared_noise_fraction=0.8,False,supported,mean_hz,11.805174607033678,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,shared_noise_fraction=0.8,False,supported,ratio,2.9322085104283437,2.5,3.8,6164,"reported, not gated here",True
+pyramidal_ripple_gain,target,shared_noise_fraction=0.8,False,supported,ratio,8.328108516515368,5.0,10.0,3515,"reported, not gated here",True
+observed_participation,target,shared_noise_fraction=0.8,False,supported,mean_fraction,0.11686108165429482,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,shared_noise_fraction=0.8,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,shared_noise_fraction=0.8,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,shared_noise_fraction=0.8,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,shared_noise_fraction=0.8,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,shared_noise_fraction=0.8,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,shared_noise_fraction=0.8,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,shared_noise_fraction=0.8,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,shared_noise_fraction=0.8,True,mathematical,relative_spread,2.039790664007528e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,shared_noise_fraction=0.8,True,mathematical,relative_error,4.076998727509107e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,shared_noise_fraction=0.8,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,shared_noise_fraction=0.8,True,mathematical,max_relative_residual,9.766490627805625e-15,0.0,0.01,6600,,True
+gamma_sizing,rendering,shared_noise_fraction=0.8,True,mathematical,relative_error,1.243235123737918e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,shared_noise_fraction=0.8,True,mathematical,absolute_error,0.007802151595500393,0.0,0.05,1200,,True
+model_metadata,rendering,shared_noise_fraction=0.8,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,shared_noise_fraction=0.8,True,mathematical,z,-0.28217764591918876,-4.0,4.0,863432,,True
+refractory_spiking,rendering,shared_noise_fraction=0.8,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,noise_type=brown,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,noise_type=brown,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,noise_type=brown,False,supported,median_hz,1.7864649388483542,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,noise_type=brown,False,supported,median_ms,37.33333333333633,40.0,60.0,1106,"reported, not gated here",False
+ripple_duration_sleep,target,noise_type=brown,False,supported,mean_ms,57.138610182088875,27.0,41.0,897,"reported, not gated here",False
+sharp_wave_duration,target,noise_type=brown,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,noise_type=brown,False,supported,median_hz,0.4439673720444216,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,noise_type=brown,False,supported,mean_hz,11.805174607033678,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,noise_type=brown,False,supported,ratio,2.9322085104283437,2.5,3.8,6164,"reported, not gated here",True
+pyramidal_ripple_gain,target,noise_type=brown,False,supported,ratio,8.328108516515368,5.0,10.0,3515,"reported, not gated here",True
+observed_participation,target,noise_type=brown,False,supported,mean_fraction,0.11686108165429482,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,noise_type=brown,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,noise_type=brown,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,noise_type=brown,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,noise_type=brown,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,noise_type=brown,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,noise_type=brown,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,noise_type=brown,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,noise_type=brown,True,mathematical,relative_spread,2.340362267796106e-13,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,noise_type=brown,True,mathematical,relative_error,0.00033472271317247504,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,noise_type=brown,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,noise_type=brown,True,mathematical,max_relative_residual,9.810334623838277e-13,0.0,0.01,6600,,True
+gamma_sizing,rendering,noise_type=brown,True,mathematical,relative_error,0.00012930997814675216,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,noise_type=brown,True,mathematical,absolute_error,0.0075412262781571265,0.0,0.05,1200,,True
+model_metadata,rendering,noise_type=brown,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,noise_type=brown,True,mathematical,z,-0.28217764591918876,-4.0,4.0,863432,,True
+refractory_spiking,rendering,noise_type=brown,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,event_rate=0.15,False,supported,rate_per_s,0.12070309131771892,0.13,0.4,988,"reported, not gated here",False
+ripple_peak_frequency,target,event_rate=0.15,False,supported,median_hz,183.0,172.0,192.0,1155,"reported, not gated here",True
+ripple_frequency_decline,target,event_rate=0.15,False,supported,median_hz,1.7733767418005755,10.0,25.0,1155,"reported, not gated here",False
+ripple_duration,target,event_rate=0.15,False,supported,median_ms,42.66666666666197,40.0,60.0,636,"reported, not gated here",True
+ripple_duration_sleep,target,event_rate=0.15,False,supported,mean_ms,54.31959287531957,27.0,41.0,655,"reported, not gated here",False
+sharp_wave_duration,target,event_rate=0.15,False,supported,median_ms,56.66666666667197,40.0,100.0,1257,"reported, not gated here",True
+pyramidal_baseline_rate,target,event_rate=0.15,False,supported,median_hz,0.40823980894310996,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,event_rate=0.15,False,supported,mean_hz,11.658416813429007,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,event_rate=0.15,False,supported,ratio,3.0214225626153106,2.5,3.8,3340,"reported, not gated here",True
+pyramidal_ripple_gain,target,event_rate=0.15,False,supported,ratio,8.945051963442669,5.0,10.0,1981,"reported, not gated here",True
+observed_participation,target,event_rate=0.15,False,supported,mean_fraction,0.11921052631578948,0.05,0.2,988,"reported, not gated here",True
+observed_participation_largest,target,event_rate=0.15,False,supported,p95_fraction,0.24,0.2,0.45,988,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,event_rate=0.15,False,supported,pearson_r,0.04386277169574131,0.3,1.0,795,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,event_rate=0.15,False,assumed,pearson_r,0.04386277169574131,-0.1,0.1,795,"reported, not gated here",True
+sharp_wave_frequency_relation,target,event_rate=0.15,False,supported,spearman_r,-0.024852268566825382,0.05,1.0,795,"reported, not gated here",False
+doublet_spacing,target,event_rate=0.15,False,supported,median_ms,88.5792906109728,85.0,114.0,167,"reported, not gated here",True
+noise_only_matched,rendering,event_rate=0.15,True,mathematical,max_abs_difference,0.0,0.0,0.0,16535873,,True
+sharp_wave_truth_crossings,rendering,event_rate=0.15,True,mathematical,max_error_samples,0.9998782428782819,0.0,1.0,7542,,True
+ripple_sizing,rendering,event_rate=0.15,True,mathematical,relative_spread,2.5562343412260044e-15,0.0,1e-06,1155,,True
+ripple_nominal_snr,rendering,event_rate=0.15,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,1155,,True
+spatial_profile_draws,rendering,event_rate=0.15,True,mathematical,violations,0.0,0.0,0.0,1155,,True
+channel_profile_rendering,rendering,event_rate=0.15,True,mathematical,max_relative_residual,9.745515380120416e-15,0.0,0.01,3465,,True
+gamma_sizing,rendering,event_rate=0.15,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,event_rate=0.15,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,event_rate=0.15,True,mathematical,violations,0.0,0.0,0.0,4747,,True
+interneuron_rate_realization,rendering,event_rate=0.15,True,mathematical,z,0.046989492014506806,-4.0,4.0,900458,,True
+refractory_spiking,rendering,event_rate=0.15,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,event_rate=0.6,False,supported,rate_per_s,0.418184900385174,0.13,0.4,3423,"reported, not gated here",False
+ripple_peak_frequency,target,event_rate=0.6,False,supported,median_hz,183.25,172.0,192.0,3981,"reported, not gated here",True
+ripple_frequency_decline,target,event_rate=0.6,False,supported,median_hz,1.7802501352428806,10.0,25.0,3981,"reported, not gated here",False
+ripple_duration,target,event_rate=0.6,False,supported,median_ms,42.66666666666197,40.0,60.0,2121,"reported, not gated here",True
+ripple_duration_sleep,target,event_rate=0.6,False,supported,mean_ms,54.95644283121591,27.0,41.0,2204,"reported, not gated here",False
+sharp_wave_duration,target,event_rate=0.6,False,supported,median_ms,56.66666666667197,40.0,100.0,4412,"reported, not gated here",True
+pyramidal_baseline_rate,target,event_rate=0.6,False,supported,median_hz,0.5072351263154414,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,event_rate=0.6,False,supported,mean_hz,12.0688464543697,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,event_rate=0.6,False,supported,ratio,2.915078293017852,2.5,3.8,10998,"reported, not gated here",True
+pyramidal_ripple_gain,target,event_rate=0.6,False,supported,ratio,8.7158673326608,5.0,10.0,6616,"reported, not gated here",True
+observed_participation,target,event_rate=0.6,False,supported,mean_fraction,0.11641250365176746,0.05,0.2,3423,"reported, not gated here",True
+observed_participation_largest,target,event_rate=0.6,False,supported,p95_fraction,0.24,0.2,0.45,3423,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,event_rate=0.6,False,supported,pearson_r,0.005964061878670638,0.3,1.0,2723,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,event_rate=0.6,False,assumed,pearson_r,0.005964061878670638,-0.1,0.1,2723,"reported, not gated here",True
+sharp_wave_frequency_relation,target,event_rate=0.6,False,supported,spearman_r,0.03210682894894752,0.05,1.0,2723,"reported, not gated here",False
+doublet_spacing,target,event_rate=0.6,False,supported,median_ms,88.36243544854483,85.0,114.0,558,"reported, not gated here",True
+noise_only_matched,rendering,event_rate=0.6,True,mathematical,max_abs_difference,0.0,0.0,0.0,14600757,,True
+sharp_wave_truth_crossings,rendering,event_rate=0.6,True,mathematical,max_error_samples,0.9999958003833456,0.0,1.0,26472,,True
+ripple_sizing,rendering,event_rate=0.6,True,mathematical,relative_spread,2.7402503177993185e-15,0.0,1e-06,3981,,True
+ripple_nominal_snr,rendering,event_rate=0.6,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,3981,,True
+spatial_profile_draws,rendering,event_rate=0.6,True,mathematical,violations,0.0,0.0,0.0,3981,,True
+channel_profile_rendering,rendering,event_rate=0.6,True,mathematical,max_relative_residual,1.1165411329060701e-14,0.0,0.01,11943,,True
+gamma_sizing,rendering,event_rate=0.6,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,event_rate=0.6,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,event_rate=0.6,True,mathematical,violations,0.0,0.0,0.0,13545,,True
+interneuron_rate_realization,rendering,event_rate=0.6,True,mathematical,z,0.025027576232130862,-4.0,4.0,803067,,True
+refractory_spiking,rendering,event_rate=0.6,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,type_mix=swr_only,False,supported,rate_per_s,0.2822106689715898,0.13,0.4,2310,"reported, not gated here",True
+ripple_peak_frequency,target,type_mix=swr_only,False,supported,median_hz,182.0,172.0,192.0,2310,"reported, not gated here",True
+ripple_frequency_decline,target,type_mix=swr_only,False,supported,median_hz,1.7740988043443906,10.0,25.0,2310,"reported, not gated here",False
+ripple_duration,target,type_mix=swr_only,False,supported,median_ms,43.99999999998272,40.0,60.0,2124,"reported, not gated here",True
+ripple_duration_sleep,target,type_mix=swr_only,False,supported,mean_ms,53.55913978494708,27.0,41.0,1550,"reported, not gated here",False
+sharp_wave_duration,target,type_mix=swr_only,False,supported,median_ms,56.66666666667197,40.0,100.0,2310,"reported, not gated here",True
+pyramidal_baseline_rate,target,type_mix=swr_only,False,supported,median_hz,0.4572370195309567,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,type_mix=swr_only,False,supported,mean_hz,11.832602406340188,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,type_mix=swr_only,False,supported,ratio,3.002421894309721,2.5,3.8,7967,"reported, not gated here",True
+pyramidal_ripple_gain,target,type_mix=swr_only,False,supported,ratio,9.482516829534198,5.0,10.0,5061,"reported, not gated here",True
+observed_participation,target,type_mix=swr_only,False,supported,mean_fraction,0.1460865800865801,0.05,0.2,2310,"reported, not gated here",True
+observed_participation_largest,target,type_mix=swr_only,False,supported,p95_fraction,0.26,0.2,0.45,2310,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,type_mix=swr_only,False,supported,pearson_r,-0.004398134932331186,0.3,1.0,2310,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,type_mix=swr_only,False,assumed,pearson_r,-0.004398134932331186,-0.1,0.1,2310,"reported, not gated here",True
+sharp_wave_frequency_relation,target,type_mix=swr_only,False,supported,spearman_r,0.029245039002579104,0.05,1.0,2310,"reported, not gated here",False
+doublet_spacing,target,type_mix=swr_only,False,supported,median_ms,,85.0,114.0,0,"reported, not gated here",False
+noise_only_matched,rendering,type_mix=swr_only,True,mathematical,max_abs_difference,0.0,0.0,0.0,15830315,,True
+sharp_wave_truth_crossings,rendering,type_mix=swr_only,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,13860,,True
+ripple_sizing,rendering,type_mix=swr_only,True,mathematical,relative_spread,1.928878644742548e-15,0.0,1e-06,2310,,True
+ripple_nominal_snr,rendering,type_mix=swr_only,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2310,,True
+spatial_profile_draws,rendering,type_mix=swr_only,True,mathematical,violations,0.0,0.0,0.0,2310,,True
+channel_profile_rendering,rendering,type_mix=swr_only,True,mathematical,max_relative_residual,5.2620204054691034e-15,0.0,0.01,6930,,True
+gamma_sizing,rendering,type_mix=swr_only,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,type_mix=swr_only,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,type_mix=swr_only,True,mathematical,violations,0.0,0.0,0.0,8180,,True
+interneuron_rate_realization,rendering,type_mix=swr_only,True,mathematical,z,-0.9352833816948939,-4.0,4.0,849619,,True
+refractory_spiking,rendering,type_mix=swr_only,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,type_mix=hard,False,supported,rate_per_s,0.19754746828011285,0.13,0.4,1617,"reported, not gated here",True
+ripple_peak_frequency,target,type_mix=hard,False,supported,median_hz,182.0,172.0,192.0,2037,"reported, not gated here",True
+ripple_frequency_decline,target,type_mix=hard,False,supported,median_hz,1.7517259282390683,10.0,25.0,2037,"reported, not gated here",False
+ripple_duration,target,type_mix=hard,False,supported,median_ms,41.99999999991633,40.0,60.0,541,"reported, not gated here",True
+ripple_duration_sleep,target,type_mix=hard,False,supported,mean_ms,56.24497535077664,27.0,41.0,879,"reported, not gated here",False
+sharp_wave_duration,target,type_mix=hard,False,supported,median_ms,57.33333333333235,40.0,100.0,2365,"reported, not gated here",True
+pyramidal_baseline_rate,target,type_mix=hard,False,supported,median_hz,0.4297646077415363,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,type_mix=hard,False,supported,mean_hz,11.7902409951263,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,type_mix=hard,False,supported,ratio,2.981320497898389,2.5,3.8,4528,"reported, not gated here",True
+pyramidal_ripple_gain,target,type_mix=hard,False,supported,ratio,7.503630474236153,5.0,10.0,2283,"reported, not gated here",True
+observed_participation,target,type_mix=hard,False,supported,mean_fraction,0.08492269635126777,0.05,0.2,1617,"reported, not gated here",True
+observed_participation_largest,target,type_mix=hard,False,supported,p95_fraction,0.22,0.2,0.45,1617,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,type_mix=hard,False,supported,pearson_r,0.030682630396687637,0.3,1.0,901,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,type_mix=hard,False,assumed,pearson_r,0.030682630396687637,-0.1,0.1,901,"reported, not gated here",True
+sharp_wave_frequency_relation,target,type_mix=hard,False,supported,spearman_r,-0.008673732807351278,0.05,1.0,901,"reported, not gated here",False
+doublet_spacing,target,type_mix=hard,False,supported,median_ms,88.74430049692705,85.0,114.0,420,"reported, not gated here",True
+noise_only_matched,rendering,type_mix=hard,True,mathematical,max_abs_difference,0.0,0.0,0.0,15834401,,True
+sharp_wave_truth_crossings,rendering,type_mix=hard,True,mathematical,max_error_samples,0.9997762352599298,0.0,1.0,14190,,True
+ripple_sizing,rendering,type_mix=hard,True,mathematical,relative_spread,2.8046098993423894e-15,0.0,1e-06,2037,,True
+ripple_nominal_snr,rendering,type_mix=hard,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2037,,True
+spatial_profile_draws,rendering,type_mix=hard,True,mathematical,violations,0.0,0.0,0.0,2037,,True
+channel_profile_rendering,rendering,type_mix=hard,True,mathematical,max_relative_residual,1.1417095976983351e-14,0.0,0.01,6111,,True
+gamma_sizing,rendering,type_mix=hard,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,type_mix=hard,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,type_mix=hard,True,mathematical,violations,0.0,0.0,0.0,7634,,True
+interneuron_rate_realization,rendering,type_mix=hard,True,mathematical,z,0.7096700663081847,-4.0,4.0,873024,,True
+refractory_spiking,rendering,type_mix=hard,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,burst_lag=0.0,False,supported,rate_per_s,0.23053313088718178,0.13,0.4,1887,"reported, not gated here",True
+ripple_peak_frequency,target,burst_lag=0.0,False,supported,median_hz,181.75,172.0,192.0,2201,"reported, not gated here",True
+ripple_frequency_decline,target,burst_lag=0.0,False,supported,median_hz,1.7927917483095541,10.0,25.0,2201,"reported, not gated here",False
+ripple_duration,target,burst_lag=0.0,False,supported,median_ms,43.99999999998272,40.0,60.0,1194,"reported, not gated here",True
+ripple_duration_sleep,target,burst_lag=0.0,False,supported,mean_ms,54.65468409586126,27.0,41.0,1224,"reported, not gated here",False
+sharp_wave_duration,target,burst_lag=0.0,False,supported,median_ms,56.66666666667197,40.0,100.0,2415,"reported, not gated here",True
+pyramidal_baseline_rate,target,burst_lag=0.0,False,supported,median_hz,0.4496306605288513,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,burst_lag=0.0,False,supported,mean_hz,11.80781426596638,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,burst_lag=0.0,False,supported,ratio,2.8925479272344967,2.5,3.8,6082,"reported, not gated here",True
+pyramidal_ripple_gain,target,burst_lag=0.0,False,supported,ratio,9.075313515879305,5.0,10.0,3830,"reported, not gated here",True
+observed_participation,target,burst_lag=0.0,False,supported,mean_fraction,0.12023317435082141,0.05,0.2,1887,"reported, not gated here",True
+observed_participation_largest,target,burst_lag=0.0,False,supported,p95_fraction,0.26,0.2,0.45,1887,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,burst_lag=0.0,False,supported,pearson_r,0.0011923894467769265,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,burst_lag=0.0,False,assumed,pearson_r,0.0011923894467769265,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,burst_lag=0.0,False,supported,spearman_r,0.030632315974912918,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,burst_lag=0.0,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,burst_lag=0.0,True,mathematical,max_abs_difference,0.0,0.0,0.0,15821935,,True
+sharp_wave_truth_crossings,rendering,burst_lag=0.0,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14490,,True
+ripple_sizing,rendering,burst_lag=0.0,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2201,,True
+ripple_nominal_snr,rendering,burst_lag=0.0,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2201,,True
+spatial_profile_draws,rendering,burst_lag=0.0,True,mathematical,violations,0.0,0.0,0.0,2201,,True
+channel_profile_rendering,rendering,burst_lag=0.0,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6603,,True
+gamma_sizing,rendering,burst_lag=0.0,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,burst_lag=0.0,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,burst_lag=0.0,True,mathematical,violations,0.0,0.0,0.0,7961,,True
+interneuron_rate_realization,rendering,burst_lag=0.0,True,mathematical,z,-0.32917744699449725,-4.0,4.0,863402,,True
+refractory_spiking,rendering,burst_lag=0.0,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,burst_lag=0.03,False,supported,rate_per_s,0.22980011616258025,0.13,0.4,1881,"reported, not gated here",True
+ripple_peak_frequency,target,burst_lag=0.03,False,supported,median_hz,181.75,172.0,192.0,2195,"reported, not gated here",True
+ripple_frequency_decline,target,burst_lag=0.03,False,supported,median_hz,1.7860975241652852,10.0,25.0,2195,"reported, not gated here",False
+ripple_duration,target,burst_lag=0.03,False,supported,median_ms,43.33333333334188,40.0,60.0,1182,"reported, not gated here",True
+ripple_duration_sleep,target,burst_lag=0.03,False,supported,mean_ms,54.76872427983594,27.0,41.0,1215,"reported, not gated here",False
+sharp_wave_duration,target,burst_lag=0.03,False,supported,median_ms,56.66666666667197,40.0,100.0,2409,"reported, not gated here",True
+pyramidal_baseline_rate,target,burst_lag=0.03,False,supported,median_hz,0.4424351222290594,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,burst_lag=0.03,False,supported,mean_hz,11.802909060696077,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,burst_lag=0.03,False,supported,ratio,2.9500399950629945,2.5,3.8,6188,"reported, not gated here",True
+pyramidal_ripple_gain,target,burst_lag=0.03,False,supported,ratio,6.715530692815635,5.0,10.0,2827,"reported, not gated here",True
+observed_participation,target,burst_lag=0.03,False,supported,mean_fraction,0.09690590111642744,0.05,0.2,1881,"reported, not gated here",True
+observed_participation_largest,target,burst_lag=0.03,False,supported,p95_fraction,0.22,0.2,0.45,1881,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,burst_lag=0.03,False,supported,pearson_r,-0.00376564595013738,0.3,1.0,1512,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,burst_lag=0.03,False,assumed,pearson_r,-0.00376564595013738,-0.1,0.1,1512,"reported, not gated here",True
+sharp_wave_frequency_relation,target,burst_lag=0.03,False,supported,spearman_r,0.03180140330484819,0.05,1.0,1512,"reported, not gated here",False
+doublet_spacing,target,burst_lag=0.03,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,burst_lag=0.03,True,mathematical,max_abs_difference,0.0,0.0,0.0,15808904,,True
+sharp_wave_truth_crossings,rendering,burst_lag=0.03,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14454,,True
+ripple_sizing,rendering,burst_lag=0.03,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2195,,True
+ripple_nominal_snr,rendering,burst_lag=0.03,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2195,,True
+spatial_profile_draws,rendering,burst_lag=0.03,True,mathematical,violations,0.0,0.0,0.0,2195,,True
+channel_profile_rendering,rendering,burst_lag=0.03,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6585,,True
+gamma_sizing,rendering,burst_lag=0.03,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,burst_lag=0.03,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,burst_lag=0.03,True,mathematical,violations,0.0,0.0,0.0,7943,,True
+interneuron_rate_realization,rendering,burst_lag=0.03,True,mathematical,z,-0.3157702529617142,-4.0,4.0,863592,,True
+refractory_spiking,rendering,burst_lag=0.03,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,ripple_chirp=none,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,ripple_chirp=none,False,supported,median_hz,189.25,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,ripple_chirp=none,False,supported,median_hz,-0.002322163477600725,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,ripple_chirp=none,False,supported,median_ms,43.333333333336554,40.0,60.0,1175,"reported, not gated here",True
+ripple_duration_sleep,target,ripple_chirp=none,False,supported,mean_ms,54.60915689558935,27.0,41.0,1194,"reported, not gated here",False
+sharp_wave_duration,target,ripple_chirp=none,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,ripple_chirp=none,False,supported,median_hz,0.4439673720444216,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,ripple_chirp=none,False,supported,mean_hz,11.805174607033678,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,ripple_chirp=none,False,supported,ratio,2.9322085104283437,2.5,3.8,6164,"reported, not gated here",True
+pyramidal_ripple_gain,target,ripple_chirp=none,False,supported,ratio,8.328108516515368,5.0,10.0,3515,"reported, not gated here",True
+observed_participation,target,ripple_chirp=none,False,supported,mean_fraction,0.11686108165429482,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,ripple_chirp=none,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,ripple_chirp=none,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,ripple_chirp=none,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,ripple_chirp=none,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,ripple_chirp=none,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,ripple_chirp=none,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,ripple_chirp=none,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,ripple_chirp=none,True,mathematical,relative_spread,2.6161587392210477e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,ripple_chirp=none,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,ripple_chirp=none,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,ripple_chirp=none,True,mathematical,max_relative_residual,1.0685014839398466e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,ripple_chirp=none,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,ripple_chirp=none,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,ripple_chirp=none,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,ripple_chirp=none,True,mathematical,z,-0.28217764591918876,-4.0,4.0,863432,,True
+refractory_spiking,rendering,ripple_chirp=none,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,spike_leakage_rate=0,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,spike_leakage_rate=0,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,spike_leakage_rate=0,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,spike_leakage_rate=0,False,supported,median_ms,43.99999999998272,40.0,60.0,1185,"reported, not gated here",True
+ripple_duration_sleep,target,spike_leakage_rate=0,False,supported,mean_ms,54.62956901254745,27.0,41.0,1222,"reported, not gated here",False
+sharp_wave_duration,target,spike_leakage_rate=0,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,spike_leakage_rate=0,False,supported,median_hz,0.4381545216556971,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,spike_leakage_rate=0,False,supported,mean_hz,11.80554834146283,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,spike_leakage_rate=0,False,supported,ratio,2.9476336765902706,2.5,3.8,6197,"reported, not gated here",True
+pyramidal_ripple_gain,target,spike_leakage_rate=0,False,supported,ratio,8.405314868385762,5.0,10.0,3487,"reported, not gated here",True
+observed_participation,target,spike_leakage_rate=0,False,supported,mean_fraction,0.1164899257688229,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,spike_leakage_rate=0,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,spike_leakage_rate=0,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,spike_leakage_rate=0,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,spike_leakage_rate=0,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,spike_leakage_rate=0,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,spike_leakage_rate=0,True,mathematical,max_abs_difference,0.0,0.0,0.0,15841029,,True
+sharp_wave_truth_crossings,rendering,spike_leakage_rate=0,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,spike_leakage_rate=0,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,spike_leakage_rate=0,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,spike_leakage_rate=0,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,spike_leakage_rate=0,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,spike_leakage_rate=0,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,spike_leakage_rate=0,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,spike_leakage_rate=0,True,mathematical,violations,0.0,0.0,0.0,7675,,True
+interneuron_rate_realization,rendering,spike_leakage_rate=0,True,mathematical,z,-0.3316745253631948,-4.0,4.0,863386,,True
+refractory_spiking,rendering,spike_leakage_rate=0,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,spike_leakage_rate=6,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,spike_leakage_rate=6,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,spike_leakage_rate=6,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,spike_leakage_rate=6,False,supported,median_ms,43.99999999998272,40.0,60.0,1183,"reported, not gated here",True
+ripple_duration_sleep,target,spike_leakage_rate=6,False,supported,mean_ms,54.80414620840126,27.0,41.0,1222,"reported, not gated here",False
+sharp_wave_duration,target,spike_leakage_rate=6,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,spike_leakage_rate=6,False,supported,median_hz,0.4590258314057214,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,spike_leakage_rate=6,False,supported,mean_hz,11.805325926243198,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,spike_leakage_rate=6,False,supported,ratio,2.9620404291533062,2.5,3.8,6227,"reported, not gated here",True
+pyramidal_ripple_gain,target,spike_leakage_rate=6,False,supported,ratio,8.181997260956146,5.0,10.0,3563,"reported, not gated here",True
+observed_participation,target,spike_leakage_rate=6,False,supported,mean_fraction,0.11729586426299048,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,spike_leakage_rate=6,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,spike_leakage_rate=6,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,spike_leakage_rate=6,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,spike_leakage_rate=6,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,spike_leakage_rate=6,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,spike_leakage_rate=6,True,mathematical,max_abs_difference,0.0,0.0,0.0,15778239,,True
+sharp_wave_truth_crossings,rendering,spike_leakage_rate=6,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,spike_leakage_rate=6,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,spike_leakage_rate=6,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,spike_leakage_rate=6,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,spike_leakage_rate=6,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,spike_leakage_rate=6,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,spike_leakage_rate=6,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,spike_leakage_rate=6,True,mathematical,violations,0.0,0.0,0.0,8507,,True
+interneuron_rate_realization,rendering,spike_leakage_rate=6,True,mathematical,z,-0.2660373591439694,-4.0,4.0,863447,,True
+refractory_spiking,rendering,spike_leakage_rate=6,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,emg_rate=0,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,emg_rate=0,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,emg_rate=0,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,emg_rate=0,False,supported,median_ms,43.666666666695164,40.0,60.0,1184,"reported, not gated here",True
+ripple_duration_sleep,target,emg_rate=0,False,supported,mean_ms,53.86732456140321,27.0,41.0,1216,"reported, not gated here",False
+sharp_wave_duration,target,emg_rate=0,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,emg_rate=0,False,supported,median_hz,0.441681452802679,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,emg_rate=0,False,supported,mean_hz,11.805255293462274,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,emg_rate=0,False,supported,ratio,2.952872389522457,2.5,3.8,6208,"reported, not gated here",True
+pyramidal_ripple_gain,target,emg_rate=0,False,supported,ratio,8.325243694507789,5.0,10.0,3513,"reported, not gated here",True
+observed_participation,target,emg_rate=0,False,supported,mean_fraction,0.11690349946977732,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,emg_rate=0,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,emg_rate=0,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,emg_rate=0,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,emg_rate=0,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,emg_rate=0,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,emg_rate=0,True,mathematical,max_abs_difference,0.0,0.0,0.0,16032198,,True
+sharp_wave_truth_crossings,rendering,emg_rate=0,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,emg_rate=0,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,emg_rate=0,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,emg_rate=0,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,emg_rate=0,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,emg_rate=0,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,emg_rate=0,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,emg_rate=0,True,mathematical,violations,0.0,0.0,0.0,7740,,True
+interneuron_rate_realization,rendering,emg_rate=0,True,mathematical,z,-0.3176862768246714,-4.0,4.0,863399,,True
+refractory_spiking,rendering,emg_rate=0,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,emg_rate=3,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,emg_rate=3,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,emg_rate=3,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,emg_rate=3,False,supported,median_ms,43.99999999998272,40.0,60.0,1184,"reported, not gated here",True
+ripple_duration_sleep,target,emg_rate=3,False,supported,mean_ms,55.39651416121967,27.0,41.0,1224,"reported, not gated here",False
+sharp_wave_duration,target,emg_rate=3,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,emg_rate=3,False,supported,median_hz,0.44563416030674097,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,emg_rate=3,False,supported,mean_hz,11.805535548731713,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,emg_rate=3,False,supported,ratio,2.9233430571331187,2.5,3.8,6146,"reported, not gated here",True
+pyramidal_ripple_gain,target,emg_rate=3,False,supported,ratio,8.37086815027342,5.0,10.0,3532,"reported, not gated here",True
+observed_participation,target,emg_rate=3,False,supported,mean_fraction,0.11644750795334041,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,emg_rate=3,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,emg_rate=3,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,emg_rate=3,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,emg_rate=3,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,emg_rate=3,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,emg_rate=3,True,mathematical,max_abs_difference,0.0,0.0,0.0,15439282,,True
+sharp_wave_truth_crossings,rendering,emg_rate=3,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,emg_rate=3,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,emg_rate=3,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,emg_rate=3,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,emg_rate=3,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,emg_rate=3,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,emg_rate=3,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,emg_rate=3,True,mathematical,violations,0.0,0.0,0.0,8346,,True
+interneuron_rate_realization,rendering,emg_rate=3,True,mathematical,z,-0.3112301621145836,-4.0,4.0,863405,,True
+refractory_spiking,rendering,emg_rate=3,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,fast_gamma_rate=0,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,fast_gamma_rate=0,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,fast_gamma_rate=0,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,fast_gamma_rate=0,False,supported,median_ms,43.99999999998272,40.0,60.0,1185,"reported, not gated here",True
+ripple_duration_sleep,target,fast_gamma_rate=0,False,supported,mean_ms,54.7043098745223,27.0,41.0,1222,"reported, not gated here",False
+sharp_wave_duration,target,fast_gamma_rate=0,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,fast_gamma_rate=0,False,supported,median_hz,0.44588792822010886,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,fast_gamma_rate=0,False,supported,mean_hz,11.805636291487257,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,fast_gamma_rate=0,False,supported,ratio,2.9264323883499874,2.5,3.8,6152,"reported, not gated here",True
+pyramidal_ripple_gain,target,fast_gamma_rate=0,False,supported,ratio,8.40032306180667,5.0,10.0,3544,"reported, not gated here",True
+observed_participation,target,fast_gamma_rate=0,False,supported,mean_fraction,0.11652173913043479,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,fast_gamma_rate=0,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,fast_gamma_rate=0,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,fast_gamma_rate=0,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,fast_gamma_rate=0,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,fast_gamma_rate=0,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,fast_gamma_rate=0,True,mathematical,max_abs_difference,0.0,0.0,0.0,15952016,,True
+sharp_wave_truth_crossings,rendering,fast_gamma_rate=0,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,fast_gamma_rate=0,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,fast_gamma_rate=0,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,fast_gamma_rate=0,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,fast_gamma_rate=0,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,fast_gamma_rate=0,False,mathematical,relative_error,0.0,0.0,0.05,0,not applicable: no gamma bursts are drawn,False
+noise_modulation_amplitude,rendering,fast_gamma_rate=0,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,fast_gamma_rate=0,True,mathematical,violations,0.0,0.0,0.0,7594,,True
+interneuron_rate_realization,rendering,fast_gamma_rate=0,True,mathematical,z,-0.3628790797952856,-4.0,4.0,863357,,True
+refractory_spiking,rendering,fast_gamma_rate=0,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,fast_gamma_rate=6,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,fast_gamma_rate=6,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,fast_gamma_rate=6,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,fast_gamma_rate=6,False,supported,median_ms,43.99999999998272,40.0,60.0,1185,"reported, not gated here",True
+ripple_duration_sleep,target,fast_gamma_rate=6,False,supported,mean_ms,54.781139275006474,27.0,41.0,1223,"reported, not gated here",False
+sharp_wave_duration,target,fast_gamma_rate=6,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,fast_gamma_rate=6,False,supported,median_hz,0.4427465411532727,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,fast_gamma_rate=6,False,supported,mean_hz,11.805327208155429,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,fast_gamma_rate=6,False,supported,ratio,2.9425441599020115,2.5,3.8,6186,"reported, not gated here",True
+pyramidal_ripple_gain,target,fast_gamma_rate=6,False,supported,ratio,8.282222786282182,5.0,10.0,3495,"reported, not gated here",True
+observed_participation,target,fast_gamma_rate=6,False,supported,mean_fraction,0.11665959703075293,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,fast_gamma_rate=6,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,fast_gamma_rate=6,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,fast_gamma_rate=6,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,fast_gamma_rate=6,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,fast_gamma_rate=6,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,fast_gamma_rate=6,True,mathematical,max_abs_difference,0.0,0.0,0.0,15545829,,True
+sharp_wave_truth_crossings,rendering,fast_gamma_rate=6,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,fast_gamma_rate=6,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,fast_gamma_rate=6,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,fast_gamma_rate=6,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,fast_gamma_rate=6,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,fast_gamma_rate=6,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,1134,,True
+noise_modulation_amplitude,rendering,fast_gamma_rate=6,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,fast_gamma_rate=6,True,mathematical,violations,0.0,0.0,0.0,8728,,True
+interneuron_rate_realization,rendering,fast_gamma_rate=6,True,mathematical,z,-0.2552771679604898,-4.0,4.0,863457,,True
+refractory_spiking,rendering,fast_gamma_rate=6,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,theta_burst_rate=0,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,theta_burst_rate=0,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,theta_burst_rate=0,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,theta_burst_rate=0,False,supported,median_ms,43.99999999998272,40.0,60.0,1185,"reported, not gated here",True
+ripple_duration_sleep,target,theta_burst_rate=0,False,supported,mean_ms,54.701092896174536,27.0,41.0,1220,"reported, not gated here",False
+sharp_wave_duration,target,theta_burst_rate=0,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,theta_burst_rate=0,False,supported,median_hz,0.44214685582467506,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,theta_burst_rate=0,False,supported,mean_hz,11.80790573449156,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,theta_burst_rate=0,False,supported,ratio,2.9369491698402808,2.5,3.8,6175,"reported, not gated here",True
+pyramidal_ripple_gain,target,theta_burst_rate=0,False,supported,ratio,8.565028801073755,5.0,10.0,3617,"reported, not gated here",True
+observed_participation,target,theta_burst_rate=0,False,supported,mean_fraction,0.11704135737009544,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,theta_burst_rate=0,False,supported,p95_fraction,0.255,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,theta_burst_rate=0,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,theta_burst_rate=0,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,theta_burst_rate=0,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,theta_burst_rate=0,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,theta_burst_rate=0,True,mathematical,max_abs_difference,0.0,0.0,0.0,16115944,,True
+sharp_wave_truth_crossings,rendering,theta_burst_rate=0,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,theta_burst_rate=0,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,theta_burst_rate=0,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,theta_burst_rate=0,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,theta_burst_rate=0,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,theta_burst_rate=0,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,theta_burst_rate=0,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,theta_burst_rate=0,True,mathematical,violations,0.0,0.0,0.0,7573,,True
+interneuron_rate_realization,rendering,theta_burst_rate=0,True,mathematical,z,-0.1465992370073461,-4.0,4.0,863558,,True
+refractory_spiking,rendering,theta_burst_rate=0,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,theta_burst_rate=18,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,theta_burst_rate=18,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,theta_burst_rate=18,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,theta_burst_rate=18,False,supported,median_ms,43.99999999998272,40.0,60.0,1184,"reported, not gated here",True
+ripple_duration_sleep,target,theta_burst_rate=18,False,supported,mean_ms,54.65081967213082,27.0,41.0,1220,"reported, not gated here",False
+sharp_wave_duration,target,theta_burst_rate=18,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,theta_burst_rate=18,False,supported,median_hz,0.44360062489807234,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,theta_burst_rate=18,False,supported,mean_hz,11.81027877843852,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,theta_burst_rate=18,False,supported,ratio,2.941961482139494,2.5,3.8,6185,"reported, not gated here",True
+pyramidal_ripple_gain,target,theta_burst_rate=18,False,supported,ratio,8.484302408829201,5.0,10.0,3580,"reported, not gated here",True
+observed_participation,target,theta_burst_rate=18,False,supported,mean_fraction,0.11692470837751856,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,theta_burst_rate=18,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,theta_burst_rate=18,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,theta_burst_rate=18,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,theta_burst_rate=18,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,theta_burst_rate=18,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,theta_burst_rate=18,True,mathematical,max_abs_difference,0.0,0.0,0.0,15287684,,True
+sharp_wave_truth_crossings,rendering,theta_burst_rate=18,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,theta_burst_rate=18,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,theta_burst_rate=18,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,theta_burst_rate=18,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,theta_burst_rate=18,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,theta_burst_rate=18,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,theta_burst_rate=18,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,theta_burst_rate=18,True,mathematical,violations,0.0,0.0,0.0,8718,,True
+interneuron_rate_realization,rendering,theta_burst_rate=18,True,mathematical,z,-0.7599301344656819,-4.0,4.0,862988,,True
+refractory_spiking,rendering,theta_burst_rate=18,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,slow_amplitude=0,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,slow_amplitude=0,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,slow_amplitude=0,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,slow_amplitude=0,False,supported,median_ms,43.99999999998272,40.0,60.0,1185,"reported, not gated here",True
+ripple_duration_sleep,target,slow_amplitude=0,False,supported,mean_ms,54.67157665029983,27.0,41.0,1222,"reported, not gated here",False
+sharp_wave_duration,target,slow_amplitude=0,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,slow_amplitude=0,False,supported,median_hz,0.4439673720444216,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,slow_amplitude=0,False,supported,mean_hz,11.805174607033678,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,slow_amplitude=0,False,supported,ratio,2.9322085104283437,2.5,3.8,6164,"reported, not gated here",True
+pyramidal_ripple_gain,target,slow_amplitude=0,False,supported,ratio,8.328108516515368,5.0,10.0,3515,"reported, not gated here",True
+observed_participation,target,slow_amplitude=0,False,supported,mean_fraction,0.11686108165429482,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,slow_amplitude=0,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,slow_amplitude=0,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,slow_amplitude=0,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,slow_amplitude=0,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,slow_amplitude=0,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,slow_amplitude=0,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,slow_amplitude=0,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,slow_amplitude=0,True,mathematical,relative_spread,1.040584403416298e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,slow_amplitude=0,True,mathematical,relative_error,2.0872192862952943e-14,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,slow_amplitude=0,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,slow_amplitude=0,True,mathematical,max_relative_residual,1.907928793327336e-15,0.0,0.01,6600,,True
+gamma_sizing,rendering,slow_amplitude=0,True,mathematical,relative_error,2.220446049250313e-16,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,slow_amplitude=0,True,mathematical,absolute_error,0.007714195066098278,0.0,0.05,1200,,True
+model_metadata,rendering,slow_amplitude=0,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,slow_amplitude=0,True,mathematical,z,-0.28217764591918876,-4.0,4.0,863432,,True
+refractory_spiking,rendering,slow_amplitude=0,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,slow_amplitude=8,False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,slow_amplitude=8,False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,slow_amplitude=8,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,slow_amplitude=8,False,supported,median_ms,43.99999999998272,40.0,60.0,1185,"reported, not gated here",True
+ripple_duration_sleep,target,slow_amplitude=8,False,supported,mean_ms,54.67157665029983,27.0,41.0,1222,"reported, not gated here",False
+sharp_wave_duration,target,slow_amplitude=8,False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,slow_amplitude=8,False,supported,median_hz,0.4439673720444216,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,slow_amplitude=8,False,supported,mean_hz,11.805174607033678,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,slow_amplitude=8,False,supported,ratio,2.9322085104283437,2.5,3.8,6164,"reported, not gated here",True
+pyramidal_ripple_gain,target,slow_amplitude=8,False,supported,ratio,8.328108516515368,5.0,10.0,3515,"reported, not gated here",True
+observed_participation,target,slow_amplitude=8,False,supported,mean_fraction,0.11686108165429482,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,slow_amplitude=8,False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,slow_amplitude=8,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,slow_amplitude=8,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,slow_amplitude=8,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,slow_amplitude=8,False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,slow_amplitude=8,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,slow_amplitude=8,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,slow_amplitude=8,True,mathematical,relative_spread,4.637346691660386e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,slow_amplitude=8,True,mathematical,relative_error,1.4982537754892888e-07,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,slow_amplitude=8,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,slow_amplitude=8,True,mathematical,max_relative_residual,1.8461801597426012e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,slow_amplitude=8,True,mathematical,relative_error,3.3707463553689365e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,slow_amplitude=8,True,mathematical,absolute_error,0.007714201393651258,0.0,0.05,1200,,True
+model_metadata,rendering,slow_amplitude=8,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,slow_amplitude=8,True,mathematical,z,-0.28217764591918876,-4.0,4.0,863432,,True
+refractory_spiking,rendering,slow_amplitude=8,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,strength_correlation=coupled,True,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,,True
+ripple_peak_frequency,target,strength_correlation=coupled,True,supported,median_hz,182.25,172.0,192.0,2200,,True
+ripple_frequency_decline,target,strength_correlation=coupled,False,supported,median_hz,1.7882995704465259,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,strength_correlation=coupled,True,supported,median_ms,43.333333333350765,40.0,60.0,1188,,True
+ripple_duration_sleep,target,strength_correlation=coupled,False,supported,mean_ms,53.828372217751784,27.0,41.0,1243,"reported, not gated here",False
+sharp_wave_duration,target,strength_correlation=coupled,True,supported,median_ms,56.66666666667197,40.0,100.0,2414,,True
+pyramidal_baseline_rate,target,strength_correlation=coupled,True,supported,median_hz,0.4453774994182541,0.3,1.4,1000,,True
+interneuron_baseline_rate,target,strength_correlation=coupled,True,supported,mean_hz,11.804443973170983,6.3,16.9,200,,True
+interneuron_ripple_gain,target,strength_correlation=coupled,True,supported,ratio,2.9335103347124187,2.5,3.8,6169,,True
+pyramidal_ripple_gain,target,strength_correlation=coupled,True,supported,ratio,8.423574362336229,5.0,10.0,3555,,True
+observed_participation,target,strength_correlation=coupled,True,supported,mean_fraction,0.11689289501590669,0.05,0.2,1886,,True
+observed_participation_largest,target,strength_correlation=coupled,True,supported,p95_fraction,0.24,0.2,0.45,1886,,True
+sharp_wave_ripple_power_correlation,target,strength_correlation=coupled,True,supported,pearson_r,0.558160350636079,0.3,1.0,1516,,True
+sharp_wave_ripple_power_correlation_control,target,strength_correlation=coupled,False,assumed,pearson_r,0.558160350636079,-0.1,0.1,1516,"reported, not gated here",False
+sharp_wave_frequency_relation,target,strength_correlation=coupled,True,supported,spearman_r,0.5682761561055653,0.05,1.0,1516,,True
+doublet_spacing,target,strength_correlation=coupled,True,supported,median_ms,91.60956887892357,85.0,114.0,314,,True
+noise_only_matched,rendering,strength_correlation=coupled,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,strength_correlation=coupled,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,strength_correlation=coupled,True,mathematical,relative_spread,2.1431984941583865e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,strength_correlation=coupled,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,strength_correlation=coupled,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,strength_correlation=coupled,True,mathematical,max_relative_residual,9.475422594648622e-15,0.0,0.01,6600,,True
+gamma_sizing,rendering,strength_correlation=coupled,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,strength_correlation=coupled,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,strength_correlation=coupled,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,strength_correlation=coupled,True,mathematical,z,-0.27894958856414487,-4.0,4.0,863435,,True
+refractory_spiking,rendering,strength_correlation=coupled,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,spatial_profile=local,True,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,,True
+ripple_peak_frequency,target,spatial_profile=local,True,supported,median_hz,181.75,172.0,192.0,2200,,True
+ripple_frequency_decline,target,spatial_profile=local,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,spatial_profile=local,False,supported,median_ms,36.66666666666707,40.0,60.0,577,"reported, not gated here",False
+ripple_duration_sleep,target,spatial_profile=local,False,supported,mean_ms,53.51489361702202,27.0,41.0,470,"reported, not gated here",False
+sharp_wave_duration,target,spatial_profile=local,True,supported,median_ms,56.66666666667197,40.0,100.0,2414,,True
+pyramidal_baseline_rate,target,spatial_profile=local,True,supported,median_hz,0.4439673720444216,0.3,1.4,1000,,True
+interneuron_baseline_rate,target,spatial_profile=local,True,supported,mean_hz,11.805174607033678,6.3,16.9,200,,True
+interneuron_ripple_gain,target,spatial_profile=local,True,supported,ratio,2.9322085104283437,2.5,3.8,6164,,True
+pyramidal_ripple_gain,target,spatial_profile=local,True,supported,ratio,8.328108516515368,5.0,10.0,3515,,True
+observed_participation,target,spatial_profile=local,True,supported,mean_fraction,0.11686108165429482,0.05,0.2,1886,,True
+observed_participation_largest,target,spatial_profile=local,True,supported,p95_fraction,0.24,0.2,0.45,1886,,True
+sharp_wave_ripple_power_correlation,target,spatial_profile=local,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,spatial_profile=local,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,,True
+sharp_wave_frequency_relation,target,spatial_profile=local,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,spatial_profile=local,True,supported,median_ms,91.60956887892357,85.0,114.0,314,,True
+noise_only_matched,rendering,spatial_profile=local,True,mathematical,max_abs_difference,0.0,0.0,0.0,15800131,,True
+sharp_wave_truth_crossings,rendering,spatial_profile=local,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,spatial_profile=local,True,mathematical,relative_spread,2.06514996063717e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,spatial_profile=local,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,spatial_profile=local,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,spatial_profile=local,True,mathematical,max_relative_residual,0.00017211808308094498,0.0,0.01,2200,,True
+gamma_sizing,rendering,spatial_profile=local,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,spatial_profile=local,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,spatial_profile=local,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,spatial_profile=local,True,mathematical,z,-0.28217764591918876,-4.0,4.0,863432,,True
+refractory_spiking,rendering,spatial_profile=local,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,noise_modulation=varying,True,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,,True
+ripple_peak_frequency,target,noise_modulation=varying,True,supported,median_hz,181.75,172.0,192.0,2200,,True
+ripple_frequency_decline,target,noise_modulation=varying,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,noise_modulation=varying,False,supported,median_ms,39.33333333327482,40.0,60.0,1093,"reported, not gated here",False
+ripple_duration_sleep,target,noise_modulation=varying,False,supported,mean_ms,55.211505922166516,27.0,41.0,788,"reported, not gated here",False
+sharp_wave_duration,target,noise_modulation=varying,True,supported,median_ms,56.66666666667197,40.0,100.0,2414,,True
+pyramidal_baseline_rate,target,noise_modulation=varying,True,supported,median_hz,0.4439673720444216,0.3,1.4,1000,,True
+interneuron_baseline_rate,target,noise_modulation=varying,True,supported,mean_hz,11.805174607033678,6.3,16.9,200,,True
+interneuron_ripple_gain,target,noise_modulation=varying,True,supported,ratio,2.9322085104283437,2.5,3.8,6164,,True
+pyramidal_ripple_gain,target,noise_modulation=varying,True,supported,ratio,8.328108516515368,5.0,10.0,3515,,True
+observed_participation,target,noise_modulation=varying,True,supported,mean_fraction,0.11686108165429482,0.05,0.2,1886,,True
+observed_participation_largest,target,noise_modulation=varying,True,supported,p95_fraction,0.24,0.2,0.45,1886,,True
+sharp_wave_ripple_power_correlation,target,noise_modulation=varying,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,noise_modulation=varying,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,,True
+sharp_wave_frequency_relation,target,noise_modulation=varying,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,noise_modulation=varying,True,supported,median_ms,91.60956887892357,85.0,114.0,314,,True
+noise_only_matched,rendering,noise_modulation=varying,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,noise_modulation=varying,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,noise_modulation=varying,True,mathematical,relative_spread,2.7402503177993185e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,noise_modulation=varying,True,mathematical,relative_error,0.0021995911989936,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,noise_modulation=varying,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,noise_modulation=varying,True,mathematical,max_relative_residual,9.416608814756386e-15,0.0,0.01,6600,,True
+gamma_sizing,rendering,noise_modulation=varying,True,mathematical,relative_error,0.004395076630880235,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,noise_modulation=varying,True,mathematical,absolute_error,0.006095574019992778,0.0,0.05,1200,,True
+model_metadata,rendering,noise_modulation=varying,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,noise_modulation=varying,True,mathematical,z,-0.28217764591918876,-4.0,4.0,863432,,True
+refractory_spiking,rendering,noise_modulation=varying,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,fast_gamma_band=nearby,True,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,,True
+ripple_peak_frequency,target,fast_gamma_band=nearby,True,supported,median_hz,181.75,172.0,192.0,2200,,True
+ripple_frequency_decline,target,fast_gamma_band=nearby,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,fast_gamma_band=nearby,True,supported,median_ms,43.99999999998272,40.0,60.0,1185,,True
+ripple_duration_sleep,target,fast_gamma_band=nearby,False,supported,mean_ms,54.68411011174683,27.0,41.0,1223,"reported, not gated here",False
+sharp_wave_duration,target,fast_gamma_band=nearby,True,supported,median_ms,56.66666666667197,40.0,100.0,2414,,True
+pyramidal_baseline_rate,target,fast_gamma_band=nearby,True,supported,median_hz,0.4439673720444216,0.3,1.4,1000,,True
+interneuron_baseline_rate,target,fast_gamma_band=nearby,True,supported,mean_hz,11.805174607033678,6.3,16.9,200,,True
+interneuron_ripple_gain,target,fast_gamma_band=nearby,True,supported,ratio,2.9322085104283437,2.5,3.8,6164,,True
+pyramidal_ripple_gain,target,fast_gamma_band=nearby,True,supported,ratio,8.328108516515368,5.0,10.0,3515,,True
+observed_participation,target,fast_gamma_band=nearby,True,supported,mean_fraction,0.11686108165429482,0.05,0.2,1886,,True
+observed_participation_largest,target,fast_gamma_band=nearby,True,supported,p95_fraction,0.24,0.2,0.45,1886,,True
+sharp_wave_ripple_power_correlation,target,fast_gamma_band=nearby,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,fast_gamma_band=nearby,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,,True
+sharp_wave_frequency_relation,target,fast_gamma_band=nearby,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,fast_gamma_band=nearby,True,supported,median_ms,91.60956887892357,85.0,114.0,314,,True
+noise_only_matched,rendering,fast_gamma_band=nearby,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,fast_gamma_band=nearby,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,fast_gamma_band=nearby,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,fast_gamma_band=nearby,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,fast_gamma_band=nearby,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,fast_gamma_band=nearby,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,fast_gamma_band=nearby,True,mathematical,relative_error,4.932734076756873e-08,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,fast_gamma_band=nearby,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,fast_gamma_band=nearby,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,fast_gamma_band=nearby,True,mathematical,z,-0.28217764591918876,-4.0,4.0,863432,,True
+refractory_spiking,rendering,fast_gamma_band=nearby,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,spike_model=refractory,True,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,,True
+ripple_peak_frequency,target,spike_model=refractory,True,supported,median_hz,181.75,172.0,192.0,2200,,True
+ripple_frequency_decline,target,spike_model=refractory,False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,spike_model=refractory,True,supported,median_ms,43.99999999998272,40.0,60.0,1185,,True
+ripple_duration_sleep,target,spike_model=refractory,False,supported,mean_ms,54.67157665029983,27.0,41.0,1222,"reported, not gated here",False
+sharp_wave_duration,target,spike_model=refractory,True,supported,median_ms,56.66666666667197,40.0,100.0,2414,,True
+pyramidal_baseline_rate,target,spike_model=refractory,True,supported,median_hz,0.4397011669685348,0.3,1.4,1000,,True
+interneuron_baseline_rate,target,spike_model=refractory,True,supported,mean_hz,11.565732659463999,6.3,16.9,200,,True
+interneuron_ripple_gain,target,spike_model=refractory,True,supported,ratio,2.9089889965847604,2.5,3.8,5998,,True
+pyramidal_ripple_gain,target,spike_model=refractory,True,supported,ratio,8.262683770805221,5.0,10.0,3458,,True
+observed_participation,target,spike_model=refractory,True,supported,mean_fraction,0.1169777306468717,0.05,0.2,1886,,True
+observed_participation_largest,target,spike_model=refractory,True,supported,p95_fraction,0.24,0.2,0.45,1886,,True
+sharp_wave_ripple_power_correlation,target,spike_model=refractory,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,spike_model=refractory,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,,True
+sharp_wave_frequency_relation,target,spike_model=refractory,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,spike_model=refractory,True,supported,median_ms,91.60956887892357,85.0,114.0,314,,True
+noise_only_matched,rendering,spike_model=refractory,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,spike_model=refractory,True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,spike_model=refractory,True,mathematical,relative_spread,2.447294394749876e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,spike_model=refractory,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,spike_model=refractory,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,spike_model=refractory,True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,spike_model=refractory,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,spike_model=refractory,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,spike_model=refractory,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,spike_model=refractory,True,mathematical,z,-0.4344079263344801,-4.0,4.0,846635,,True
+refractory_spiking,rendering,spike_model=refractory,True,mathematical,violations,0.0,0.0,0.0,1673190,,True
+ripple_event_rate,target,envelope_power=quartic,True,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,,True
+ripple_peak_frequency,target,envelope_power=quartic,True,supported,median_hz,182.25,172.0,192.0,2200,,True
+ripple_frequency_decline,target,envelope_power=quartic,False,supported,median_hz,1.75816317979411,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,envelope_power=quartic,False,supported,median_ms,45.33333333333189,40.0,60.0,1187,"reported, not gated here",True
+ripple_duration_sleep,target,envelope_power=quartic,False,supported,mean_ms,54.706708268329436,27.0,41.0,1282,"reported, not gated here",False
+sharp_wave_duration,target,envelope_power=quartic,True,supported,median_ms,41.999999999994486,40.0,100.0,2414,,True
+pyramidal_baseline_rate,target,envelope_power=quartic,True,supported,median_hz,0.43726064979085844,0.3,1.4,1000,,True
+interneuron_baseline_rate,target,envelope_power=quartic,True,supported,mean_hz,11.786882637831518,6.3,16.9,200,,True
+interneuron_ripple_gain,target,envelope_power=quartic,True,supported,ratio,2.923630068072957,2.5,3.8,6149,,True
+pyramidal_ripple_gain,target,envelope_power=quartic,True,supported,ratio,8.86088804242061,5.0,10.0,3731,,True
+observed_participation,target,envelope_power=quartic,True,supported,mean_fraction,0.11668080593849418,0.05,0.2,1886,,True
+observed_participation_largest,target,envelope_power=quartic,True,supported,p95_fraction,0.26,0.2,0.45,1886,,True
+sharp_wave_ripple_power_correlation,target,envelope_power=quartic,False,supported,pearson_r,-0.0014202793846629378,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,envelope_power=quartic,False,assumed,pearson_r,-0.0014202793846629378,-0.1,0.1,1516,,True
+sharp_wave_frequency_relation,target,envelope_power=quartic,False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,envelope_power=quartic,True,supported,median_ms,91.60956887892357,85.0,114.0,314,,True
+noise_only_matched,rendering,envelope_power=quartic,True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,envelope_power=quartic,True,mathematical,max_error_samples,0.9998819079998215,0.0,1.0,14484,,True
+ripple_sizing,rendering,envelope_power=quartic,True,mathematical,relative_spread,2.5294618318147555e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,envelope_power=quartic,True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,envelope_power=quartic,True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,envelope_power=quartic,True,mathematical,max_relative_residual,7.219076157677726e-15,0.0,0.01,6600,,True
+gamma_sizing,rendering,envelope_power=quartic,True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,envelope_power=quartic,True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,envelope_power=quartic,True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,envelope_power=quartic,True,mathematical,z,0.10303719844938007,-4.0,4.0,863790,,True
+refractory_spiking,rendering,envelope_power=quartic,False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,"ripple_snr=low,participation=low",False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,"ripple_snr=low,participation=low",False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,"ripple_snr=low,participation=low",False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,"ripple_snr=low,participation=low",False,supported,median_ms,19.99999999998181,40.0,60.0,598,"reported, not gated here",False
+ripple_duration_sleep,target,"ripple_snr=low,participation=low",False,supported,mean_ms,44.07079646017672,27.0,41.0,113,"reported, not gated here",False
+sharp_wave_duration,target,"ripple_snr=low,participation=low",False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,"ripple_snr=low,participation=low",False,supported,median_hz,0.39586587958967734,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,"ripple_snr=low,participation=low",False,supported,mean_hz,11.809293604288591,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,"ripple_snr=low,participation=low",False,supported,ratio,2.9408983924012424,2.5,3.8,6185,"reported, not gated here",True
+pyramidal_ripple_gain,target,"ripple_snr=low,participation=low",False,supported,ratio,3.569238109808612,5.0,10.0,1502,"reported, not gated here",False
+observed_participation,target,"ripple_snr=low,participation=low",False,supported,mean_fraction,0.05447507953340403,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,"ripple_snr=low,participation=low",False,supported,p95_fraction,0.12,0.2,0.45,1886,"reported, not gated here",False
+sharp_wave_ripple_power_correlation,target,"ripple_snr=low,participation=low",False,supported,pearson_r,-0.0006772961456342061,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,"ripple_snr=low,participation=low",False,assumed,pearson_r,-0.0006772961456342061,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,"ripple_snr=low,participation=low",False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,"ripple_snr=low,participation=low",False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,"ripple_snr=low,participation=low",True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,"ripple_snr=low,participation=low",True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,"ripple_snr=low,participation=low",True,mathematical,relative_spread,2.884825879658013e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,"ripple_snr=low,participation=low",True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,"ripple_snr=low,participation=low",True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,"ripple_snr=low,participation=low",True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,"ripple_snr=low,participation=low",True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,"ripple_snr=low,participation=low",True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,"ripple_snr=low,participation=low",True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,"ripple_snr=low,participation=low",True,mathematical,z,-0.20900834587152764,-4.0,4.0,863500,,True
+refractory_spiking,rendering,"ripple_snr=low,participation=low",False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,"ripple_snr=low,participation=high",False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,"ripple_snr=low,participation=high",False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,"ripple_snr=low,participation=high",False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,"ripple_snr=low,participation=high",False,supported,median_ms,19.99999999998181,40.0,60.0,598,"reported, not gated here",False
+ripple_duration_sleep,target,"ripple_snr=low,participation=high",False,supported,mean_ms,44.07079646017672,27.0,41.0,113,"reported, not gated here",False
+sharp_wave_duration,target,"ripple_snr=low,participation=high",False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,"ripple_snr=low,participation=high",False,supported,median_hz,0.4919718218519247,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,"ripple_snr=low,participation=high",False,supported,mean_hz,11.811798358150433,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,"ripple_snr=low,participation=high",False,supported,ratio,2.9503180997049876,2.5,3.8,6206,"reported, not gated here",True
+pyramidal_ripple_gain,target,"ripple_snr=low,participation=high",False,supported,ratio,14.12602036328331,5.0,10.0,5978,"reported, not gated here",False
+observed_participation,target,"ripple_snr=low,participation=high",False,supported,mean_fraction,0.18347826086956523,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,"ripple_snr=low,participation=high",False,supported,p95_fraction,0.34,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,"ripple_snr=low,participation=high",False,supported,pearson_r,-0.0006772961456342061,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,"ripple_snr=low,participation=high",False,assumed,pearson_r,-0.0006772961456342061,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,"ripple_snr=low,participation=high",False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,"ripple_snr=low,participation=high",False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,"ripple_snr=low,participation=high",True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,"ripple_snr=low,participation=high",True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,"ripple_snr=low,participation=high",True,mathematical,relative_spread,2.884825879658013e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,"ripple_snr=low,participation=high",True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,"ripple_snr=low,participation=high",True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,"ripple_snr=low,participation=high",True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,"ripple_snr=low,participation=high",True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,"ripple_snr=low,participation=high",True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,"ripple_snr=low,participation=high",True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,"ripple_snr=low,participation=high",True,mathematical,z,-0.21976853705500723,-4.0,4.0,863490,,True
+refractory_spiking,rendering,"ripple_snr=low,participation=high",False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,"ripple_snr=high,participation=low",False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,"ripple_snr=high,participation=low",False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,"ripple_snr=high,participation=low",False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,"ripple_snr=high,participation=low",False,supported,median_ms,63.99999999996453,40.0,60.0,1284,"reported, not gated here",False
+ripple_duration_sleep,target,"ripple_snr=high,participation=low",False,supported,mean_ms,70.11417840375601,27.0,41.0,1775,"reported, not gated here",False
+sharp_wave_duration,target,"ripple_snr=high,participation=low",False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,"ripple_snr=high,participation=low",False,supported,median_hz,0.39586587958967734,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,"ripple_snr=high,participation=low",False,supported,mean_hz,11.809293604288591,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,"ripple_snr=high,participation=low",False,supported,ratio,2.9408983924012424,2.5,3.8,6185,"reported, not gated here",True
+pyramidal_ripple_gain,target,"ripple_snr=high,participation=low",False,supported,ratio,3.569238109808612,5.0,10.0,1502,"reported, not gated here",False
+observed_participation,target,"ripple_snr=high,participation=low",False,supported,mean_fraction,0.05447507953340403,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,"ripple_snr=high,participation=low",False,supported,p95_fraction,0.12,0.2,0.45,1886,"reported, not gated here",False
+sharp_wave_ripple_power_correlation,target,"ripple_snr=high,participation=low",False,supported,pearson_r,-0.001579324916648217,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,"ripple_snr=high,participation=low",False,assumed,pearson_r,-0.001579324916648217,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,"ripple_snr=high,participation=low",False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,"ripple_snr=high,participation=low",False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,"ripple_snr=high,participation=low",True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,"ripple_snr=high,participation=low",True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,"ripple_snr=high,participation=low",True,mathematical,relative_spread,2.243353195187386e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,"ripple_snr=high,participation=low",True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,"ripple_snr=high,participation=low",True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,"ripple_snr=high,participation=low",True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,"ripple_snr=high,participation=low",True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,"ripple_snr=high,participation=low",True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,"ripple_snr=high,participation=low",True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,"ripple_snr=high,participation=low",True,mathematical,z,-0.20900834587152764,-4.0,4.0,863500,,True
+refractory_spiking,rendering,"ripple_snr=high,participation=low",False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,"ripple_snr=high,participation=high",False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,"ripple_snr=high,participation=high",False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,"ripple_snr=high,participation=high",False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,"ripple_snr=high,participation=high",False,supported,median_ms,63.99999999996453,40.0,60.0,1284,"reported, not gated here",False
+ripple_duration_sleep,target,"ripple_snr=high,participation=high",False,supported,mean_ms,70.11417840375601,27.0,41.0,1775,"reported, not gated here",False
+sharp_wave_duration,target,"ripple_snr=high,participation=high",False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,"ripple_snr=high,participation=high",False,supported,median_hz,0.4919718218519247,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,"ripple_snr=high,participation=high",False,supported,mean_hz,11.811798358150433,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,"ripple_snr=high,participation=high",False,supported,ratio,2.9503180997049876,2.5,3.8,6206,"reported, not gated here",True
+pyramidal_ripple_gain,target,"ripple_snr=high,participation=high",False,supported,ratio,14.12602036328331,5.0,10.0,5978,"reported, not gated here",False
+observed_participation,target,"ripple_snr=high,participation=high",False,supported,mean_fraction,0.18347826086956523,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,"ripple_snr=high,participation=high",False,supported,p95_fraction,0.34,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,"ripple_snr=high,participation=high",False,supported,pearson_r,-0.001579324916648217,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,"ripple_snr=high,participation=high",False,assumed,pearson_r,-0.001579324916648217,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,"ripple_snr=high,participation=high",False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,"ripple_snr=high,participation=high",False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,"ripple_snr=high,participation=high",True,mathematical,max_abs_difference,0.0,0.0,0.0,15819533,,True
+sharp_wave_truth_crossings,rendering,"ripple_snr=high,participation=high",True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,"ripple_snr=high,participation=high",True,mathematical,relative_spread,2.243353195187386e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,"ripple_snr=high,participation=high",True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,"ripple_snr=high,participation=high",True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,"ripple_snr=high,participation=high",True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,"ripple_snr=high,participation=high",True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,"ripple_snr=high,participation=high",True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,"ripple_snr=high,participation=high",True,mathematical,violations,0.0,0.0,0.0,7958,,True
+interneuron_rate_realization,rendering,"ripple_snr=high,participation=high",True,mathematical,z,-0.21976853705500723,-4.0,4.0,863490,,True
+refractory_spiking,rendering,"ripple_snr=high,participation=high",False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,"ripple_snr=low,spike_leakage_rate=0",False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,"ripple_snr=low,spike_leakage_rate=0",False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,"ripple_snr=low,spike_leakage_rate=0",False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,"ripple_snr=low,spike_leakage_rate=0",False,supported,median_ms,19.99999999998181,40.0,60.0,599,"reported, not gated here",False
+ripple_duration_sleep,target,"ripple_snr=low,spike_leakage_rate=0",False,supported,mean_ms,42.76190476190444,27.0,41.0,112,"reported, not gated here",False
+sharp_wave_duration,target,"ripple_snr=low,spike_leakage_rate=0",False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,"ripple_snr=low,spike_leakage_rate=0",False,supported,median_hz,0.4381545216556971,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,"ripple_snr=low,spike_leakage_rate=0",False,supported,mean_hz,11.80554834146283,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,"ripple_snr=low,spike_leakage_rate=0",False,supported,ratio,2.9476336765902706,2.5,3.8,6197,"reported, not gated here",True
+pyramidal_ripple_gain,target,"ripple_snr=low,spike_leakage_rate=0",False,supported,ratio,8.405314868385762,5.0,10.0,3487,"reported, not gated here",True
+observed_participation,target,"ripple_snr=low,spike_leakage_rate=0",False,supported,mean_fraction,0.1164899257688229,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,"ripple_snr=low,spike_leakage_rate=0",False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,"ripple_snr=low,spike_leakage_rate=0",False,supported,pearson_r,-0.0006772961456342061,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,"ripple_snr=low,spike_leakage_rate=0",False,assumed,pearson_r,-0.0006772961456342061,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,"ripple_snr=low,spike_leakage_rate=0",False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,"ripple_snr=low,spike_leakage_rate=0",False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,"ripple_snr=low,spike_leakage_rate=0",True,mathematical,max_abs_difference,0.0,0.0,0.0,15841029,,True
+sharp_wave_truth_crossings,rendering,"ripple_snr=low,spike_leakage_rate=0",True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,"ripple_snr=low,spike_leakage_rate=0",True,mathematical,relative_spread,2.884825879658013e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,"ripple_snr=low,spike_leakage_rate=0",True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,"ripple_snr=low,spike_leakage_rate=0",True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,"ripple_snr=low,spike_leakage_rate=0",True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,"ripple_snr=low,spike_leakage_rate=0",True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,"ripple_snr=low,spike_leakage_rate=0",True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,"ripple_snr=low,spike_leakage_rate=0",True,mathematical,violations,0.0,0.0,0.0,7675,,True
+interneuron_rate_realization,rendering,"ripple_snr=low,spike_leakage_rate=0",True,mathematical,z,-0.3316745253631948,-4.0,4.0,863386,,True
+refractory_spiking,rendering,"ripple_snr=low,spike_leakage_rate=0",False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,"ripple_snr=low,spike_leakage_rate=6",False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,"ripple_snr=low,spike_leakage_rate=6",False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,"ripple_snr=low,spike_leakage_rate=6",False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,"ripple_snr=low,spike_leakage_rate=6",False,supported,median_ms,19.99999999998181,40.0,60.0,599,"reported, not gated here",False
+ripple_duration_sleep,target,"ripple_snr=low,spike_leakage_rate=6",False,supported,mean_ms,45.3565217391304,27.0,41.0,115,"reported, not gated here",False
+sharp_wave_duration,target,"ripple_snr=low,spike_leakage_rate=6",False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,"ripple_snr=low,spike_leakage_rate=6",False,supported,median_hz,0.4590258314057214,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,"ripple_snr=low,spike_leakage_rate=6",False,supported,mean_hz,11.805325926243198,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,"ripple_snr=low,spike_leakage_rate=6",False,supported,ratio,2.9620404291533062,2.5,3.8,6227,"reported, not gated here",True
+pyramidal_ripple_gain,target,"ripple_snr=low,spike_leakage_rate=6",False,supported,ratio,8.181997260956146,5.0,10.0,3563,"reported, not gated here",True
+observed_participation,target,"ripple_snr=low,spike_leakage_rate=6",False,supported,mean_fraction,0.11729586426299048,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,"ripple_snr=low,spike_leakage_rate=6",False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,"ripple_snr=low,spike_leakage_rate=6",False,supported,pearson_r,-0.0006772961456342061,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,"ripple_snr=low,spike_leakage_rate=6",False,assumed,pearson_r,-0.0006772961456342061,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,"ripple_snr=low,spike_leakage_rate=6",False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,"ripple_snr=low,spike_leakage_rate=6",False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,"ripple_snr=low,spike_leakage_rate=6",True,mathematical,max_abs_difference,0.0,0.0,0.0,15778239,,True
+sharp_wave_truth_crossings,rendering,"ripple_snr=low,spike_leakage_rate=6",True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,"ripple_snr=low,spike_leakage_rate=6",True,mathematical,relative_spread,2.884825879658013e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,"ripple_snr=low,spike_leakage_rate=6",True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,"ripple_snr=low,spike_leakage_rate=6",True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,"ripple_snr=low,spike_leakage_rate=6",True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,"ripple_snr=low,spike_leakage_rate=6",True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,"ripple_snr=low,spike_leakage_rate=6",True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,"ripple_snr=low,spike_leakage_rate=6",True,mathematical,violations,0.0,0.0,0.0,8507,,True
+interneuron_rate_realization,rendering,"ripple_snr=low,spike_leakage_rate=6",True,mathematical,z,-0.2660373591439694,-4.0,4.0,863447,,True
+refractory_spiking,rendering,"ripple_snr=low,spike_leakage_rate=6",False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,"ripple_snr=high,spike_leakage_rate=0",False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,"ripple_snr=high,spike_leakage_rate=0",False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,"ripple_snr=high,spike_leakage_rate=0",False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,"ripple_snr=high,spike_leakage_rate=0",False,supported,median_ms,63.99999999996453,40.0,60.0,1284,"reported, not gated here",False
+ripple_duration_sleep,target,"ripple_snr=high,spike_leakage_rate=0",False,supported,mean_ms,70.19530516431931,27.0,41.0,1775,"reported, not gated here",False
+sharp_wave_duration,target,"ripple_snr=high,spike_leakage_rate=0",False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,"ripple_snr=high,spike_leakage_rate=0",False,supported,median_hz,0.4381545216556971,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,"ripple_snr=high,spike_leakage_rate=0",False,supported,mean_hz,11.80554834146283,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,"ripple_snr=high,spike_leakage_rate=0",False,supported,ratio,2.9476336765902706,2.5,3.8,6197,"reported, not gated here",True
+pyramidal_ripple_gain,target,"ripple_snr=high,spike_leakage_rate=0",False,supported,ratio,8.405314868385762,5.0,10.0,3487,"reported, not gated here",True
+observed_participation,target,"ripple_snr=high,spike_leakage_rate=0",False,supported,mean_fraction,0.1164899257688229,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,"ripple_snr=high,spike_leakage_rate=0",False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,"ripple_snr=high,spike_leakage_rate=0",False,supported,pearson_r,-0.001579324916648217,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,"ripple_snr=high,spike_leakage_rate=0",False,assumed,pearson_r,-0.001579324916648217,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,"ripple_snr=high,spike_leakage_rate=0",False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,"ripple_snr=high,spike_leakage_rate=0",False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,"ripple_snr=high,spike_leakage_rate=0",True,mathematical,max_abs_difference,0.0,0.0,0.0,15841029,,True
+sharp_wave_truth_crossings,rendering,"ripple_snr=high,spike_leakage_rate=0",True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,"ripple_snr=high,spike_leakage_rate=0",True,mathematical,relative_spread,2.243353195187386e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,"ripple_snr=high,spike_leakage_rate=0",True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,"ripple_snr=high,spike_leakage_rate=0",True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,"ripple_snr=high,spike_leakage_rate=0",True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,"ripple_snr=high,spike_leakage_rate=0",True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,"ripple_snr=high,spike_leakage_rate=0",True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,"ripple_snr=high,spike_leakage_rate=0",True,mathematical,violations,0.0,0.0,0.0,7675,,True
+interneuron_rate_realization,rendering,"ripple_snr=high,spike_leakage_rate=0",True,mathematical,z,-0.3316745253631948,-4.0,4.0,863386,,True
+refractory_spiking,rendering,"ripple_snr=high,spike_leakage_rate=0",False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False
+ripple_event_rate,target,"ripple_snr=high,spike_leakage_rate=6",False,supported,rate_per_s,0.23041096176641485,0.13,0.4,1886,"reported, not gated here",True
+ripple_peak_frequency,target,"ripple_snr=high,spike_leakage_rate=6",False,supported,median_hz,181.75,172.0,192.0,2200,"reported, not gated here",True
+ripple_frequency_decline,target,"ripple_snr=high,spike_leakage_rate=6",False,supported,median_hz,1.7864649388454552,10.0,25.0,2200,"reported, not gated here",False
+ripple_duration,target,"ripple_snr=high,spike_leakage_rate=6",False,supported,median_ms,63.666666666676974,40.0,60.0,1284,"reported, not gated here",False
+ripple_duration_sleep,target,"ripple_snr=high,spike_leakage_rate=6",False,supported,mean_ms,70.20619718309868,27.0,41.0,1775,"reported, not gated here",False
+sharp_wave_duration,target,"ripple_snr=high,spike_leakage_rate=6",False,supported,median_ms,56.66666666667197,40.0,100.0,2414,"reported, not gated here",True
+pyramidal_baseline_rate,target,"ripple_snr=high,spike_leakage_rate=6",False,supported,median_hz,0.4590258314057214,0.3,1.4,1000,"reported, not gated here",True
+interneuron_baseline_rate,target,"ripple_snr=high,spike_leakage_rate=6",False,supported,mean_hz,11.805325926243198,6.3,16.9,200,"reported, not gated here",True
+interneuron_ripple_gain,target,"ripple_snr=high,spike_leakage_rate=6",False,supported,ratio,2.9620404291533062,2.5,3.8,6227,"reported, not gated here",True
+pyramidal_ripple_gain,target,"ripple_snr=high,spike_leakage_rate=6",False,supported,ratio,8.181997260956146,5.0,10.0,3563,"reported, not gated here",True
+observed_participation,target,"ripple_snr=high,spike_leakage_rate=6",False,supported,mean_fraction,0.11729586426299048,0.05,0.2,1886,"reported, not gated here",True
+observed_participation_largest,target,"ripple_snr=high,spike_leakage_rate=6",False,supported,p95_fraction,0.24,0.2,0.45,1886,"reported, not gated here",True
+sharp_wave_ripple_power_correlation,target,"ripple_snr=high,spike_leakage_rate=6",False,supported,pearson_r,-0.001579324916648217,0.3,1.0,1516,"reported, not gated here",False
+sharp_wave_ripple_power_correlation_control,target,"ripple_snr=high,spike_leakage_rate=6",False,assumed,pearson_r,-0.001579324916648217,-0.1,0.1,1516,"reported, not gated here",True
+sharp_wave_frequency_relation,target,"ripple_snr=high,spike_leakage_rate=6",False,supported,spearman_r,0.029149937429010397,0.05,1.0,1516,"reported, not gated here",False
+doublet_spacing,target,"ripple_snr=high,spike_leakage_rate=6",False,supported,median_ms,91.60956887892357,85.0,114.0,314,"reported, not gated here",True
+noise_only_matched,rendering,"ripple_snr=high,spike_leakage_rate=6",True,mathematical,max_abs_difference,0.0,0.0,0.0,15778239,,True
+sharp_wave_truth_crossings,rendering,"ripple_snr=high,spike_leakage_rate=6",True,mathematical,max_error_samples,0.9999899183258378,0.0,1.0,14484,,True
+ripple_sizing,rendering,"ripple_snr=high,spike_leakage_rate=6",True,mathematical,relative_spread,2.243353195187386e-15,0.0,1e-06,2200,,True
+ripple_nominal_snr,rendering,"ripple_snr=high,spike_leakage_rate=6",True,mathematical,relative_error,4.281506837955362e-08,0.0,0.05,2200,,True
+spatial_profile_draws,rendering,"ripple_snr=high,spike_leakage_rate=6",True,mathematical,violations,0.0,0.0,0.0,2200,,True
+channel_profile_rendering,rendering,"ripple_snr=high,spike_leakage_rate=6",True,mathematical,max_relative_residual,1.0587638705204571e-14,0.0,0.01,6600,,True
+gamma_sizing,rendering,"ripple_snr=high,spike_leakage_rate=6",True,mathematical,relative_error,1.3857890013291296e-07,0.0,0.05,364,,True
+noise_modulation_amplitude,rendering,"ripple_snr=high,spike_leakage_rate=6",True,mathematical,absolute_error,0.007714197272936878,0.0,0.05,1200,,True
+model_metadata,rendering,"ripple_snr=high,spike_leakage_rate=6",True,mathematical,violations,0.0,0.0,0.0,8507,,True
+interneuron_rate_realization,rendering,"ripple_snr=high,spike_leakage_rate=6",True,mathematical,z,-0.2660373591439694,-4.0,4.0,863447,,True
+refractory_spiking,rendering,"ripple_snr=high,spike_leakage_rate=6",False,mathematical,violations,,0.0,0.0,0,not applicable: the spike model has no refractory period,False

@@ -1,0 +1,3533 @@
+"""Attribute the literature methods' disagreement to the components of their rules.
+
+Methods differ in many components at once: the signal they threshold, its
+smoothing, the period normalizing it, the threshold and bound, duration limits,
+merging, the speed rule, a cell count, a state and a coincident partner event.
+This module expresses methods as experimental compositions of those components,
+built from the package's public primitives, and measures how much each matters:
+one factor at a time from a reference configuration, Sobol indices over the
+space the represented methods span, and Shapley decompositions of the
+difference between two configurations.
+
+Usage, from the repository root (see README.md, "Attribution")::
+
+    uv run python examples/benchmark/attribution.py --run-name NAME \
+        --family spikes|lfp [--analysis oat|sobol|shapley|all] [--workers N] \
+        [--smoke] [--sobol-n 128|256] [--below-minimum] [--run-directory PATH] \
+        [--results-directory PATH]
+
+It reads a finished run's reference condition (``conditions.csv``'s saved
+parameters and ``conditions/reference/``), simulates its first ``K`` sessions
+again and checks each against what the run saved before anything runs.
+
+Templates. A template (``SpikeTemplate``, ``LfpTemplate``) is one flat, frozen
+set of factor values; ``compile`` turns it into a ``Pipeline`` (a
+``ThresholdCore`` and post steps, each a ``Step``) and ``run_pipeline`` runs
+that on a session's ``SessionContext``. ``TEMPLATES`` maps a configuration of
+``recipe_configs.RECIPES`` to the template written after reading its method's
+body, with the source of each value; ``FIXED_POINTS`` gives every other
+configuration and why it has none. A template stands for its method only when
+``in_space`` finds identical events from both on the sessions checked (and
+some event among them, since equal empty results verify nothing): a gap of
+missing samples cutting a sharp-wave ripple, a Unix clock origin and the ``K``
+reference sessions. The configuration's public call
+(``recipe_configs.run_recipe``) stays the only source of its events in every
+other analysis; a template never replaces it.
+
+Families. ``spikes`` (a population rate on 1 ms bins) and ``lfp`` (the mean
+ripple-band envelope of the first channels, or its square), each analysed
+separately, since their factors differ. ``factor_space`` gives each factor's
+range (continuous: the least and largest value among the family's represented
+methods) or levels (categorical: the distinct values, in configuration order;
+integer: every whole number between the least and largest); a factor with one
+value is not varied. ``reference_template`` sets each factor to its median
+(integers rounded down) or mode (ties to the first in configuration order).
+
+Outputs ``Y``, each the mean over the ``K`` sessions (``Y_NAMES``): ``f1``,
+against the family's expression (``burst`` for spikes, ``ripple`` for the LFP)
+at 10 % of the peak, any overlap; ``f1_network``; ``events_per_minute``;
+``onset_error_25``, the median signed onset error of the matched pairs against
+the windows at 25 % (mean over the sessions with a pair); ``jaccard_reference``,
+matched events over the union against the reference configuration's (1 when
+both are empty).
+
+Analyses (``--analysis``): ``oat`` (``one_at_a_time``), ``sobol`` (``sobol``, at
+``--sobol-n`` rows, ``SOBOL_N`` or 128) and ``shapley`` (``shapley_pairs``). A
+family with fewer than ``MINIMUM_IN_SPACE`` represented methods (identical
+templates once) runs no Sobol or Shapley analysis: the command stops and says
+so, unless ``--below-minimum`` is given, when it runs them and every output of
+the family carries ``family_caveat``'s label (a ``caveat`` column, and the figures' titles).
+``--smoke`` evaluates a slice of the Sobol design (``SMOKE_ROWS`` rows of each
+matrix) on one session and prints the cost of each analysis, writing nothing.
+
+Outputs: ``output/<run_name>/attribution/<family>_<analysis>.csv.gz`` (one row
+per configuration and ``Y``: its factors, the ``Y``, the mean and each
+session's value) and ``results/<run_name>/attribution/``:
+``<family>_in_space.csv`` (the family's templates, every one verified, since the
+command stops otherwise, and every fixed point with its reason),
+``<family>_sensitivity.csv`` (``sensitivity``: whether the verification
+sessions tell each template value from its perturbations),
+``<family>_fixed_points.csv`` (every configuration without a template, with its
+public-call ``Y``s against the family's expression and reference),
+``<family>_factor_space.csv``, ``<family>_reference.csv``,
+``<family>_oat.csv`` (each level's change in each ``Y``, with a 95 % paired
+bootstrap interval over the sessions), ``<family>_sobol.csv`` (first-order and
+total indices with 95 % bootstrap intervals over the rows) and
+``<family>_shapley.csv`` (each pair's Shapley values and Monte Carlo standard
+errors), with figures of the last two.
+"""
+
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import functools
+import itertools
+import json
+import math
+import os
+import sys
+import time as wall_clock
+from collections import Counter, OrderedDict
+from collections.abc import (
+    Callable,
+    Collection,
+    Hashable,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from pathlib import Path
+from typing import Any, Protocol, TypeVar
+
+import numpy as np
+import pandas as pd
+from analyze import (
+    FLOAT_FORMAT,
+    _png,
+    percentile_intervals,
+    resample_weights,
+    write_result,
+)
+from conditions import parameters_from_json, session_seed, simulate_parameters
+from numpy.typing import ArrayLike, DTypeLike
+from recipe_configs import (
+    _POLICY,
+    RECIPES,
+    RecipeConfig,
+    external_ripples,
+    rest_intervals,
+)
+from run import (
+    _REPORT_IDENTITY,
+    OUTPUT,
+    RIPPLE_CHANNEL_COLUMNS,
+    _integer_counts,
+    _recipe_call,
+    _write_table,
+    load_truth,
+    read_table,
+)
+from scipy.stats import qmc
+from validate_simulator import peak_rss_bytes, require_ready_report
+
+import ripple_detection as rd
+from ripple_detection.core import FloatArray, nearest_sample_index
+from ripple_detection.literature_methods import (
+    PopulationTrace,
+    Recording,
+    bounds,
+    population_trace,
+)
+
+HERE = Path(__file__).resolve().parent
+REPOSITORY = HERE.parent.parent
+RESULTS = HERE / "results"
+
+Params = tuple[tuple[str, Any], ...]
+# A pipeline stage's computation: its events, shape (n_events, 2).
+Stage = Callable[[], FloatArray]
+
+FAMILIES = ("spikes", "lfp")
+# The expression each family's F1 is scored against.
+FAMILY_EXPRESSION = {"spikes": "burst", "lfp": "ripple"}
+REFERENCE_CONDITION = "reference"
+# The reference sessions every Y averages: replicates 0 to K - 1.
+K = 5
+# Configurations whose public-call events on each regenerated reference
+# session must equal those the run saved (one per family), catching any drift
+# in rendering the truth tables would not show.
+SAVED_EVENT_CHECKS = ("bendor_2012", "pfeiffer_2015")
+# The spikes family's population grid, in seconds.
+BIN_WIDTH = 0.001
+Y_NAMES = ("f1", "f1_network", "events_per_minute", "onset_error_25", "jaccard_reference")
+# Fewer represented methods than this and a family runs no Sobol or Shapley.
+MINIMUM_IN_SPACE = 8
+SOBOL_N = 256
+# The rows of each Sobol sample matrix the command offers.
+SOBOL_N_CHOICES = (128, 256)
+SOBOL_SEED = 0
+N_SOBOL_RESAMPLES = 1000
+OAT_POINTS = 5
+# The factors a continuous template value is multiplied by to test verification.
+PERTURBATION = (0.9, 1.1)
+SHAPLEY_EXACT_UP_TO = 8
+SHAPLEY_PERMUTATIONS = 128
+N_LOWEST_PAIRS = 10
+# The smoke test times the first this many rows of every Sobol sample matrix.
+SMOKE_ROWS = 2
+# The short session the edge cases are cut from, and the seconds of missing
+# samples its gap case puts in the middle of a sharp-wave ripple.
+EDGE_DURATION = 60.0
+GAP_WIDTH = 0.02
+UNIX_ORIGIN = 1_700_000_000.0
+# The input policy's inputs a session context's recording holds.
+CONTEXT_INPUTS = ("lfps", "sharp_wave_lfp", "multiunit", "speed", "place_cells", "pyramidal")
+# Configurations per task of evaluate_many, at most.
+CHUNK_SIZE = 64
+# Pipeline stages' events kept per session, and traces (large arrays) per session.
+EVENT_CACHE_SIZE = 4096
+TRACE_CACHE_SIZE = 8
+
+
+# Pipelines
+
+
+@dataclasses.dataclass(frozen=True)
+class Step:
+    """One named operation of a pipeline with its parameters.
+
+    Attributes
+    ----------
+    operation : str
+        A signal operation (``"rate"``, ``"mean_envelope"``, ``"square"``) in a
+        core's ``signal``, or a post step (``"active_units"``, ``"inside"``,
+        ``"overlap"``, ``"contains_time"``) in a pipeline's ``steps``.
+    parameters : tuple of (str, object) pairs
+        Keyword arguments of the operation, each value hashable.
+    """
+
+    operation: str
+    parameters: Params = ()
+
+
+@dataclasses.dataclass(frozen=True)
+class ThresholdCore:
+    """The thresholding at the heart of a pipeline, ``detect_events_from_trace``'s.
+
+    Attributes
+    ----------
+    signal : tuple of Step
+        The trace: ``rate`` (units, smoothing_sigma: a ``population_trace`` on
+        ``BIN_WIDTH`` bins), or ``mean_envelope`` (band, channels:
+        ``Recording.mean_envelope``) followed by ``square`` or not.
+    restrict_to : str or None
+        Intervals (``"rest"``) outside which the trace is missing, so detection
+        and its statistics are inside them only; None, none.
+    normalization_period : str
+        The samples the z-score statistics come from (``NORMALIZATION``).
+    smoothing_sigma : float
+        Gaussian SD in seconds applied by the detection (the LFP trace); 0.0, none.
+    threshold, bound_threshold : float
+        In SD.
+    minimum_event_duration : float
+        Seconds, the whole event; 0.0, none.
+    maximum_duration : float or None
+        Seconds; None, none.
+    speed_rule : {"endpoints", "all", "restrict"}
+        ``detect_events_from_trace``'s: speed at or below ``speed_threshold``
+        at both ends of an event, at every sample of it, or detection only
+        where it is (the other samples missing).
+    speed_threshold : float
+        cm/s; ``np.inf`` turns the speed rule off.
+    close_event_threshold : float
+        Events closer than this many seconds are merged; 0.0, none.
+    """
+
+    signal: tuple[Step, ...]
+    restrict_to: str | None
+    normalization_period: str
+    smoothing_sigma: float
+    threshold: float
+    bound_threshold: float
+    minimum_event_duration: float
+    maximum_duration: float | None
+    speed_rule: str
+    speed_threshold: float
+    close_event_threshold: float
+
+
+@dataclasses.dataclass(frozen=True)
+class Pipeline:
+    """A threshold core and the post steps applied to its events, in order.
+
+    Attributes
+    ----------
+    core : ThresholdCore
+    steps : tuple of Step
+    """
+
+    core: ThresholdCore
+    steps: tuple[Step, ...] = ()
+
+
+# Templates
+
+
+def _factor(kind: str, absent: Any = dataclasses.MISSING) -> Any:
+    """A template field of a factor of ``kind``, defaulting to ``absent``, the
+    value when a method does not use the factor's step, if it has one."""
+    return dataclasses.field(default=absent, metadata={"kind": kind})
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class SpikeTemplate:
+    """A configuration of the ``spikes`` family: one field per factor.
+
+    A factor with a default is a step a method may not use; the default is the
+    step's absence. Each field's ``metadata["kind"]`` is its factor's kind:
+    ``"continuous"``, ``"integer"`` or ``"categorical"``.
+
+    Attributes
+    ----------
+    units : {"all", "place", "pyramidal"}
+        The units the population rate pools, and whose activity
+        ``minimum_active_units`` counts.
+    smoothing_sigma : float
+        Gaussian SD of the rate, in seconds, on 1 ms bins.
+    normalization_period : str
+        A key of ``NORMALIZATION``.
+    threshold : float
+        In SD.
+    bound_fraction : float
+        The bound as a fraction of the threshold: events extend to where the
+        trace falls below ``bound_fraction * threshold`` SD; 0.0, the mean.
+        Between 0 and 1, so every combination of factors bounds at or below
+        its threshold.
+    minimum_event_duration : float
+        Seconds; 0.0, none.
+    maximum_duration : float or None
+        Seconds; None, none.
+    merge_gap : float
+        Seconds between bin edges below which events merge; 0.0, none.
+    speed : str
+        A key of ``SPEED``: the speed rule and its threshold together.
+    minimum_active_units : int
+        0, none.
+    state : str
+        A key of ``STATES``.
+    coincidence : str
+        A key of ``COINCIDENCES``.
+    """
+
+    units: str = _factor("categorical")
+    smoothing_sigma: float = _factor("continuous")
+    normalization_period: str = _factor("categorical", "session")
+    threshold: float = _factor("continuous")
+    bound_fraction: float = _factor("categorical", 0.0)
+    minimum_event_duration: float = _factor("continuous", 0.0)
+    maximum_duration: float | None = _factor("categorical", None)
+    merge_gap: float = _factor("continuous", 0.0)
+    speed: str = _factor("categorical", "none")
+    minimum_active_units: int = _factor("integer", 0)
+    state: str = _factor("categorical", "none")
+    coincidence: str = _factor("categorical", "none")
+
+    def __post_init__(self) -> None:
+        _lists_to_tuples(self)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class LfpTemplate:
+    """A configuration of the ``lfp`` family: one field per factor, as
+    ``SpikeTemplate``'s (the ripple band, every channel and the envelope when a
+    method does not say).
+
+    Attributes
+    ----------
+    band : pair of float
+        Hz.
+    channels : int or None
+        The first this many channels' envelopes are averaged; None, every one.
+    trace : {"amplitude", "squared"}
+        The mean envelope, or its square.
+    smoothing_sigma : float
+        Gaussian SD in seconds; 0.0, none.
+    normalization_period, threshold, bound_fraction, minimum_event_duration, \
+maximum_duration, merge_gap, speed, state, coincidence
+        As ``SpikeTemplate``'s.
+    """
+
+    band: tuple[float, float] = _factor("categorical", (150.0, 250.0))
+    channels: int | None = _factor("categorical", None)
+    trace: str = _factor("categorical", "amplitude")
+    smoothing_sigma: float = _factor("continuous", 0.0)
+    normalization_period: str = _factor("categorical", "session")
+    threshold: float = _factor("continuous")
+    bound_fraction: float = _factor("categorical", 0.0)
+    minimum_event_duration: float = _factor("continuous", 0.0)
+    maximum_duration: float | None = _factor("categorical", None)
+    merge_gap: float = _factor("continuous", 0.0)
+    speed: str = _factor("categorical", "none")
+    state: str = _factor("categorical", "none")
+    coincidence: str = _factor("categorical", "none")
+
+    def __post_init__(self) -> None:
+        _lists_to_tuples(self)
+
+
+def _lists_to_tuples(template: SpikeTemplate | LfpTemplate) -> None:
+    """A template's list values (a band read from JSON) as tuples, so its
+    pipeline hashes."""
+    for field in dataclasses.fields(template):
+        value = getattr(template, field.name)
+        if isinstance(value, list):
+            object.__setattr__(template, field.name, tuple(value))
+
+
+Template = SpikeTemplate | LfpTemplate
+TemplateT = TypeVar("TemplateT", SpikeTemplate, LfpTemplate)
+
+_NO_SPEED_RULE = ("endpoints", np.inf)
+# Speed levels: (speed_rule, speed_threshold). "<" is the next float below.
+SPEED: dict[str, tuple[str, float]] = {
+    "none": _NO_SPEED_RULE,
+    "endpoints<=5": ("endpoints", 5.0),
+    "endpoints<5": ("endpoints", float(np.nextafter(5.0, -np.inf))),
+    "endpoints<4": ("endpoints", float(np.nextafter(4.0, -np.inf))),
+    "all<=3": ("all", 3.0),
+    "all<=5": ("all", 5.0),
+    "restrict<5": ("restrict", float(np.nextafter(5.0, -np.inf))),
+}
+# Normalization levels: the input samples a period takes its statistics from
+# (None, every one); the statistics are always over valid (finite) samples of
+# the trace.
+NORMALIZATION: dict[str, Callable[[SessionContext], np.ndarray[Any, Any] | None]] = {
+    "session": lambda _context: None,
+    "speed<5": lambda context: np.asarray(context.recording.speed < 5.0, dtype=bool),
+    "speed<4": lambda context: np.asarray(context.recording.speed < 4.0, dtype=bool),
+    "rest": lambda context: context.recording.intervals_to_mask(context.rest),
+}
+# State levels: (restrict_to, post step), the partner whose intervals the trace
+# is restricted to, or a post step, or neither.
+STATES: dict[str, tuple[str | None, Step | None]] = {
+    "none": (None, None),
+    "restrict:rest": ("rest", None),
+    "inside:rest": (None, Step("inside", (("intervals", "rest"),))),
+    "overlap:running_30s": (None, Step("overlap", (("partner", "running_30s"),))),
+}
+# Coincidence levels: a whole post step with its partner.
+COINCIDENCES: dict[str, Step | None] = {
+    "none": None,
+    "overlap:long_swrs": Step("overlap", (("partner", "long_swrs"),)),
+    "overlap:muessig_2019_ripples": Step("overlap", (("partner", "muessig_2019_ripples"),)),
+    "peak_inside:external_ripples": Step(
+        "contains_time", (("partner", "external_ripple_peaks"),)
+    ),
+}
+
+
+def family_of(template: Template) -> str:
+    """``"spikes"`` or ``"lfp"``: the family of a template's signal.
+
+    Parameters
+    ----------
+    template : SpikeTemplate or LfpTemplate
+
+    Returns
+    -------
+    family : str
+    """
+    return "spikes" if isinstance(template, SpikeTemplate) else "lfp"
+
+
+def pipeline_family(pipeline: Pipeline) -> str:
+    """``"spikes"`` for a population-rate core, else ``"lfp"``.
+
+    Parameters
+    ----------
+    pipeline : Pipeline
+
+    Returns
+    -------
+    family : str
+    """
+    return "spikes" if pipeline.core.signal[0].operation == "rate" else "lfp"
+
+
+def compile(template: Template) -> Pipeline:
+    """The pipeline a template stands for, in one fixed order.
+
+    The core's signal (a 1 ms population rate of the template's units with its
+    smoothing, or the mean envelope and its square), the state's restriction
+    if the state is one, normalization, threshold, bound, duration limits,
+    the speed rule and merging; then the post steps: the active-unit count when
+    above 0, the state when it is an overlap or containment step, and the
+    coincidence step.
+
+    Parameters
+    ----------
+    template : SpikeTemplate or LfpTemplate
+
+    Returns
+    -------
+    pipeline : Pipeline
+
+    Raises
+    ------
+    ValueError
+        A level the tables (``SPEED``, ``NORMALIZATION``, ``STATES``,
+        ``COINCIDENCES``) do not define, or a trace other than ``"amplitude"``
+        and ``"squared"``.
+    TypeError
+        A factor value is not hashable, so the pipeline's events could not be
+        cached; the message names the template.
+    """
+    for table, value in (
+        (SPEED, template.speed),
+        (NORMALIZATION, template.normalization_period),
+        (STATES, template.state),
+        (COINCIDENCES, template.coincidence),
+    ):
+        if value not in table:
+            msg = f"{value!r} is not a level this module defines; see {sorted(table)}."
+            raise ValueError(msg)
+    if isinstance(template, SpikeTemplate):
+        signal: tuple[Step, ...] = (
+            Step(
+                "rate",
+                (("units", template.units), ("smoothing_sigma", template.smoothing_sigma)),
+            ),
+        )
+        smoothing = 0.0
+    else:
+        signal = (
+            Step("mean_envelope", (("band", template.band), ("channels", template.channels))),
+        )
+        if template.trace == "squared":
+            signal += (Step("square"),)
+        elif template.trace != "amplitude":
+            msg = f"trace must be 'amplitude' or 'squared'; got {template.trace!r}."
+            raise ValueError(msg)
+        smoothing = template.smoothing_sigma
+    speed_rule, speed_threshold = SPEED[template.speed]
+    restrict_to, state_step = STATES[template.state]
+    core = ThresholdCore(
+        signal=signal,
+        restrict_to=restrict_to,
+        normalization_period=template.normalization_period,
+        smoothing_sigma=smoothing,
+        threshold=template.threshold,
+        bound_threshold=template.bound_fraction * template.threshold,
+        minimum_event_duration=template.minimum_event_duration,
+        maximum_duration=template.maximum_duration,
+        speed_rule=speed_rule,
+        speed_threshold=speed_threshold,
+        close_event_threshold=template.merge_gap,
+    )
+    steps = []
+    if isinstance(template, SpikeTemplate) and template.minimum_active_units > 0:
+        steps.append(
+            Step(
+                "active_units",
+                (("units", template.units), ("minimum", template.minimum_active_units)),
+            )
+        )
+    post = (state_step, COINCIDENCES[template.coincidence])
+    steps.extend(step for step in post if step is not None)
+    pipeline = Pipeline(core, tuple(steps))
+    try:
+        hash(pipeline)
+    except TypeError as error:
+        msg = f"{template} is not hashable, so its events cannot be cached: {error}."
+        raise TypeError(msg) from error
+    return pipeline
+
+
+# Sessions
+
+
+class _Cache:
+    """A least-recently-used mapping holding at most ``size`` entries."""
+
+    def __init__(self, size: int) -> None:
+        self.size = size
+        self._entries: OrderedDict[Hashable, Any] = OrderedDict()
+
+    def get(self, key: Hashable, compute: Callable[[], Any]) -> Any:
+        if key in self._entries:
+            self._entries.move_to_end(key)
+            return self._entries[key]
+        value = compute()
+        self._entries[key] = value
+        if len(self._entries) > self.size:
+            self._entries.popitem(last=False)
+        return value
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    def __contains__(self, key: Hashable) -> bool:
+        return key in self._entries
+
+    def clear(self) -> None:
+        self._entries.clear()
+
+
+def _counted(session: rd.SimulatedSession) -> rd.SimulatedSession:
+    """The runner's integer copy of the spike counts where it holds them exactly
+    (``run._integer_counts``); counts with missing (NaN) samples stay float,
+    and a session counted already (a context's) is returned as it is."""
+    if session.multiunit.dtype == np.int16:
+        return session
+    with np.errstate(invalid="ignore"):
+        return _integer_counts(session)
+
+
+ArrayT = TypeVar("ArrayT", bound=np.ndarray[Any, Any] | None)
+
+
+def _read_only(values: ArrayT) -> ArrayT:
+    """``values`` made read-only; None as it is."""
+    if values is not None:
+        values.flags.writeable = False
+    return values
+
+
+class SessionContext:
+    """One session's inputs for running pipelines, and what they have computed.
+
+    The context owns its recording (``Recording.from_arrays`` of the input
+    policy's ``CONTEXT_INPUTS``: the session's LFPs, radiatum channel, spike
+    counts and speed, and the place and pyramidal selections), whose arrays it
+    makes read-only, so nothing cached from them can go stale. The binned
+    population rate is cached by its units, traces by the immutable parameters
+    that make them (at most ``TRACE_CACHE_SIZE``), the events of each stage of
+    a pipeline (its core, then each post step) by the core and the steps so far
+    (at most ``EVENT_CACHE_SIZE``), a partner's events by its name; ``release``
+    empties every cache. Nothing is attached to a recording the package or a
+    caller holds.
+
+    Parameters
+    ----------
+    session : SimulatedSession
+        A network session with unit types and running bouts.
+    label : str
+        Names the session in messages, such as ``"reference/0"``.
+
+    Attributes
+    ----------
+    session : SimulatedSession
+        With its spike counts as int16 when that holds them exactly.
+    label : str
+    recording : Recording
+    rest : ndarray, shape (n_intervals, 2)
+        ``recipe_configs.rest_intervals``: outside every running bout.
+    minutes : float
+        The session's length.
+    windows : dict of str to dict of float to ndarray
+        By expression and fraction (0.1, 0.25), the truth windows' bounds,
+        each shape (n_windows, 2).
+    n_runs : int
+        How many pipelines this context has run: those whose events it did not
+        hold (a pipeline sharing cached stages runs only the others).
+    """
+
+    def __init__(self, session: rd.SimulatedSession, label: str) -> None:
+        self.session = _counted(session)
+        self.label = label
+        self.recording: Recording = Recording.from_arrays(
+            session.time,
+            session.sampling_frequency,
+            **{name: _POLICY[name].get(self.session) for name in CONTEXT_INPUTS},
+        )
+        signals = self.recording.session
+        for values in (
+            signals.time,
+            signals.lfps,
+            signals.raw_lfp,
+            signals.sharp_wave_lfp,
+            signals.multiunit,
+            signals.speed,
+            self.recording.place_cells,
+            self.recording.pyramidal,
+        ):
+            _read_only(values)
+        self.rest: FloatArray = _read_only(rest_intervals(session))
+        self.minutes = len(session.time) / session.sampling_frequency / 60
+        self.windows = {
+            expression: {
+                fraction: _read_only(
+                    bounds(rd.truth_windows(session.events, fraction, expression))
+                )
+                for fraction in (0.1, 0.25)
+            }
+            for expression in ("network", *FAMILY_EXPRESSION.values())
+        }
+        self.n_runs = 0
+        self._rates: dict[str, PopulationTrace] = {}
+        self._traces = _Cache(TRACE_CACHE_SIZE)
+        self._events = _Cache(EVENT_CACHE_SIZE)
+        self._partners: dict[str, FloatArray] = {}
+
+    def release(self) -> None:
+        """Empty every cache: rates, traces, events and partners."""
+        self._rates.clear()
+        self._traces.clear()
+        self._events.clear()
+        self._partners.clear()
+
+    def units(self, name: str) -> np.ndarray[Any, Any] | None:
+        """The unit selection ``name`` names: None for ``"all"``."""
+        if name == "all":
+            return None
+        if name in ("place", "pyramidal"):
+            selection: np.ndarray[Any, Any] = getattr(
+                self.recording, "place_cells" if name == "place" else "pyramidal"
+            )
+            return selection
+        msg = f"units must be 'all', 'place' or 'pyramidal'; got {name!r}."
+        raise ValueError(msg)
+
+    def population(self, units: str, smoothing_sigma: float) -> PopulationTrace:
+        """``population_trace`` of ``units`` on ``BIN_WIDTH`` bins, smoothed, its
+        arrays read-only: the binned rate of the units (kept until ``release``)
+        smoothed as ``population_trace`` smooths it."""
+        if units not in self._rates:
+            rate = population_trace(
+                self.recording, bin_width=BIN_WIDTH, units=self.units(units)
+            )
+            for values in (
+                rate.time,
+                rate.data,
+                rate.speed,
+                rate.first_sample,
+                rate.last_sample,
+            ):
+                _read_only(values)
+            self._rates[units] = rate
+        rate = self._rates[units]
+        if not smoothing_sigma:
+            return rate
+        trace: PopulationTrace = self._traces.get(
+            ("rate", units, smoothing_sigma),
+            lambda: dataclasses.replace(rate, data=_read_only(rate.smooth(smoothing_sigma))),
+        )
+        return trace
+
+    def mean_envelope(self, band: tuple[float, float], channels: int | None) -> FloatArray:
+        """``Recording.mean_envelope(band, channels)``, read-only, shape (n_time,)."""
+        return self._traces.get(  # type: ignore[no-any-return]
+            ("mean_envelope", band, channels),
+            lambda: _read_only(self.recording.mean_envelope(band, channels)),
+        )
+
+    def normalization_mask(self, period: str) -> np.ndarray[Any, Any] | None:
+        """The input samples ``period`` takes statistics from (``NORMALIZATION``);
+        None, every one."""
+        if period not in NORMALIZATION:
+            msg = (
+                f"normalization_period must be one of {tuple(NORMALIZATION)}; got {period!r}."
+            )
+            raise ValueError(msg)
+        return NORMALIZATION[period](self)
+
+    def partner(self, name: str) -> FloatArray:
+        """A post step's partner: intervals, shape (n_intervals, 2), or times,
+        shape (n_times,), for ``contains_time``; read-only."""
+        if name not in self._partners:
+            self._partners[name] = _read_only(PARTNERS[name](self))
+        return self._partners[name]
+
+    def events(self, pipeline: Pipeline) -> FloatArray:
+        """``run_pipeline(pipeline, self)``, each of its stages run once while it
+        stays cached."""
+        if (pipeline.core, pipeline.steps) not in self._events:
+            self.n_runs += 1
+        return run_pipeline(pipeline, self)
+
+    def stage(self, core: ThresholdCore, steps: tuple[Step, ...], run: Stage) -> FloatArray:
+        """The events of ``core`` after the post steps ``steps``, ``run()`` once
+        while they stay cached, read-only."""
+        return self._events.get(  # type: ignore[no-any-return]
+            (core, steps), lambda: _read_only(run())
+        )
+
+
+def _long_swrs(context: SessionContext) -> FloatArray:
+    """liu_2023's SWRs: ``Long_sharp_wave_ripple_detector`` at its defaults on
+    the first channel and the radiatum, speed unknown (the method's recording
+    has none) and no speed rule."""
+    recording = context.recording
+    return bounds(
+        rd.Long_sharp_wave_ripple_detector(
+            recording.time,
+            recording.session.raw_lfp,
+            np.full(len(recording.time), np.nan),
+            recording.fs,
+            sharp_wave_lfp=recording.session.sharp_wave_lfp,
+            speed_threshold=np.inf,
+        )
+    )
+
+
+def _running_30s(context: SessionContext) -> FloatArray:
+    """Running (speed above 15 cm/s) widened by 30 s on each side, davidson_2009's
+    "within 30 s of running"."""
+    recording = context.recording
+    running = rd.state_intervals(recording.speed, recording.time, 15.0, comparison=">")
+    return np.asarray(running + np.array([-30.0, 30.0]), dtype=float)
+
+
+# Post steps' partners by name.
+PARTNERS: dict[str, Callable[[SessionContext], FloatArray]] = {
+    "rest": lambda context: context.rest,
+    "running_30s": _running_30s,
+    "long_swrs": _long_swrs,
+    "muessig_2019_ripples": lambda context: recipe_events(
+        _config("muessig_2019_ripples"), context.session
+    ),
+    "external_ripple_peaks": lambda context: external_ripples(context.session)[:, 2],
+}
+
+
+def _spike_events(core: ThresholdCore, context: SessionContext) -> FloatArray:
+    if len(core.signal) > 1:
+        msg = (
+            "A population-rate core takes no further signal step; got "
+            f"{[step.operation for step in core.signal[1:]]}."
+        )
+        raise ValueError(msg)
+    if core.smoothing_sigma != 0:
+        msg = (
+            "A population-rate core is smoothed by its rate step, not by the core's "
+            f"smoothing; got smoothing_sigma={core.smoothing_sigma}."
+        )
+        raise ValueError(msg)
+    parameters = dict(core.signal[0].parameters)
+    trace = context.population(parameters["units"], parameters["smoothing_sigma"])
+    if core.restrict_to is not None:
+        inside = trace.bins_inside(context.partner(core.restrict_to))
+        trace = dataclasses.replace(trace, data=np.where(inside, trace.data, np.nan))
+    options = _detection_options(core)
+    mask = context.normalization_mask(core.normalization_period)
+    if mask is not None:
+        options["normalization_mask"] = mask[
+            nearest_sample_index(context.recording.time, trace.time)
+        ]
+    return bounds(trace.detect(**options))
+
+
+def _lfp_events(core: ThresholdCore, context: SessionContext) -> FloatArray:
+    parameters = dict(core.signal[0].parameters)
+    values = context.mean_envelope(parameters["band"], parameters["channels"])
+    for step in core.signal[1:]:
+        if step.operation != "square":
+            msg = f"Unknown signal operation {step.operation!r}."
+            raise ValueError(msg)
+        values = values**2
+    recording = context.recording
+    if core.restrict_to is not None:
+        inside = recording.intervals_to_mask(context.partner(core.restrict_to))
+        values = np.where(inside, values, np.nan)
+    options = _detection_options(core)
+    if core.smoothing_sigma > 0:
+        options["smoothing_sigma"] = core.smoothing_sigma
+    mask = context.normalization_mask(core.normalization_period)
+    if mask is not None:
+        options["normalization_mask"] = mask
+    return bounds(
+        rd.detect_events_from_trace(
+            recording.time, values, recording.speed, recording.fs, **options
+        )
+    )
+
+
+def _detection_options(core: ThresholdCore) -> dict[str, Any]:
+    """``detect_events_from_trace`` keywords of a core, its signal aside: one
+    sample above the threshold is enough (every represented method's rule)."""
+    options: dict[str, Any] = {
+        "threshold": core.threshold,
+        "bound_threshold": core.bound_threshold,
+        "minimum_duration": 0.0,
+        "maximum_duration": core.maximum_duration,
+        "speed_rule": core.speed_rule,
+        "speed_threshold": core.speed_threshold,
+    }
+    if core.minimum_event_duration > 0:
+        options["minimum_event_duration"] = core.minimum_event_duration
+    if core.close_event_threshold > 0:
+        options["close_event_threshold"] = core.close_event_threshold
+        options["close_event_rule"] = "merge"
+    return options
+
+
+def _post_step(step: Step, events: FloatArray, context: SessionContext) -> FloatArray:
+    parameters = dict(step.parameters)
+    recording = context.recording
+    if step.operation == "active_units":
+        # the counts need only the samples inside the events
+        inside = recording.intervals_to_mask(events)
+        kept = rd.require_active_units(
+            events,
+            recording.multiunit[inside],
+            recording.time[inside],
+            minimum_active_units=parameters["minimum"],
+            units=context.units(parameters["units"]),
+        )
+    elif step.operation == "inside":
+        kept = rd.require_inside(events, context.partner(parameters["intervals"]))
+    elif step.operation == "overlap":
+        kept = rd.require_overlap(events, context.partner(parameters["partner"]))
+    elif step.operation == "contains_time":
+        kept = rd.require_times_inside(events, context.partner(parameters["partner"]))
+    else:
+        msg = f"Unknown post step {step.operation!r}."
+        raise ValueError(msg)
+    return bounds(kept)
+
+
+def run_pipeline(pipeline: Pipeline, context: SessionContext) -> FloatArray:
+    """The events of a pipeline on one session.
+
+    Its core's events, then those after each post step in turn: stages the
+    context caches (``SessionContext.stage``), so pipelines sharing a core, or
+    a core and their first post steps, run those once.
+
+    Parameters
+    ----------
+    pipeline : Pipeline
+    context : SessionContext
+
+    Returns
+    -------
+    events : ndarray, shape (n_events, 2)
+        Closed ``[start_time, end_time]`` bounds on recorded timestamps, in
+        time order.
+
+    Raises
+    ------
+    ValueError
+        An operation this module does not define, or what the package's
+        functions raise.
+    """
+    core, steps = pipeline.core, pipeline.steps
+    operation = core.signal[0].operation
+    if operation == "rate":
+        core_events = _spike_events
+    elif operation == "mean_envelope":
+        core_events = _lfp_events
+    else:
+        msg = f"Unknown signal operation {operation!r}."
+        raise ValueError(msg)
+    events = context.stage(core, (), functools.partial(core_events, core, context))
+    for k, step in enumerate(steps, start=1):
+        run = functools.partial(_post_step, step, events, context)
+        events = context.stage(core, steps[:k], run)
+    return events
+
+
+# Which configurations have a template
+
+
+_REST_SLEEP = (
+    "sleep_intervals are the input policy's rest (the samples outside the running "
+    "bouts), so rec.sleep returns rest"
+)
+
+# Every template, by configuration, each written after reading the method's
+# body in ripple_detection.literature_methods: the source of each value, and
+# the benchmark's input policy where it supplies one. Every population method
+# thresholds a trace on 1 ms bins with minimum_duration=0.0 (_detect_population,
+# _detect_population_in, or population_trace(...).detect for krause_2022_hse);
+# every value not listed is the method's absence of that step.
+TEMPLATES: dict[str, tuple[Template, str]] = {
+    "yang_2024": (
+        SpikeTemplate(
+            units="pyramidal",
+            smoothing_sigma=0.015,
+            normalization_period="rest",
+            threshold=3.0,
+            minimum_event_duration=0.05,
+            maximum_duration=0.5,
+            minimum_active_units=5,
+            state="inside:rest",
+            coincidence="peak_inside:external_ripples",
+        ),
+        (
+            "_population_with_ripple_peak: pyramidal, 15 ms, statistics over sleep, 3 SD, "
+            "50-500 ms, >= 5 pyramidal cells, an external ripple peak inside, inside the "
+            f"eligible behavior_intervals. {_REST_SLEEP}; behavior_intervals are rest; the "
+            "external ripples are the policy's Zugaro stand-in, peaks in its third column"
+        ),
+    ),
+    "liu_2023": (
+        SpikeTemplate(
+            units="pyramidal",
+            smoothing_sigma=0.010,
+            threshold=2.0,
+            minimum_event_duration=0.1,
+            maximum_duration=0.5,
+            coincidence="overlap:long_swrs",
+        ),
+        (
+            "liu_2023: pyramidal bursts, 10 ms, 2 SD, 100-500 ms, overlapping a "
+            "Long_sharp_wave_ripple_detector SWR at its defaults (speed unknown, no rule)"
+        ),
+    ),
+    "igata_2021": (
+        SpikeTemplate(
+            units="all",
+            smoothing_sigma=0.015,
+            normalization_period="speed<5",
+            threshold=2.0,
+            minimum_event_duration=0.05,
+            maximum_duration=2.0,
+            minimum_active_units=5,
+        ),
+        (
+            "igata_2021: every unit, 15 ms, statistics over speed < 5, 2 SD, 50 ms-2 s, "
+            ">= 5 active units of every unit, no speed rule"
+        ),
+    ),
+    "farooq_2019_neuron": (
+        SpikeTemplate(
+            units="pyramidal",
+            smoothing_sigma=0.015,
+            threshold=2.0,
+            bound_fraction=1.0,
+            minimum_event_duration=0.1,
+            maximum_duration=0.8,
+            minimum_active_units=5,
+            state="restrict:rest",
+        ),
+        (
+            "_farooq: _detect_population_in(sleep), the smoothed trace missing outside "
+            "sleep bins; pyramidal, 15 ms, 2 SD with bounds at 2 SD, 100-800 ms, >= 5 "
+            f"pyramidal cells. {_REST_SLEEP}"
+        ),
+    ),
+    "chenani_2019": (
+        SpikeTemplate(
+            units="place",
+            smoothing_sigma=0.030,
+            threshold=3.0,
+            bound_fraction=1 / 3,
+            minimum_active_units=5,
+            state="inside:rest",
+        ),
+        (
+            "chenani_2019: place cells, 30 ms, 3 SD with bounds at 1 SD, >= 5 place cells; "
+            "run_method keeps events inside behavior_intervals, the policy's rest"
+        ),
+    ),
+    "muessig_2019": (
+        SpikeTemplate(
+            units="pyramidal",
+            smoothing_sigma=0.010,
+            threshold=3.0,
+            bound_fraction=1.0,
+            minimum_event_duration=0.1,
+            maximum_duration=0.75,
+            state="inside:rest",
+            coincidence="overlap:muessig_2019_ripples",
+        ),
+        (
+            "muessig_2019 (trial rest, no sample speed veto: speed rule off): pyramidal, "
+            "10 ms, 3 SD with bounds at 3 SD, 100-750 ms, overlapping muessig_2019_ripples "
+            f"(its configured public call), inside rec.sleep. {_REST_SLEEP}"
+        ),
+    ),
+    "drieu_2018": (
+        SpikeTemplate(
+            units="place",
+            smoothing_sigma=0.010,
+            threshold=3.0,
+            maximum_duration=0.5,
+            state="restrict:rest",
+        ),
+        (
+            "_drieu_events with sleep_intervals supplied: _detect_population_in(sleep), "
+            f"place cells, 10 ms, 3 SD, at most 500 ms; detection stage. {_REST_SLEEP}"
+        ),
+    ),
+    "olafsdottir_2017": (
+        SpikeTemplate(
+            units="place",
+            smoothing_sigma=0.005,
+            threshold=3.0,
+            minimum_event_duration=0.04,
+            speed="all<=3",
+            state="inside:rest",
+        ),
+        (
+            "olafsdottir_2017 (analysis arm): place cells, 5 ms, 3 SD, >= 40 ms, every "
+            "event speed <= 3 (speed_rule all); run_method keeps events inside "
+            "behavior_intervals, the policy's rest"
+        ),
+    ),
+    "grosmark_2016": (
+        SpikeTemplate(
+            units="pyramidal",
+            smoothing_sigma=0.015,
+            normalization_period="rest",
+            threshold=3.0,
+            minimum_event_duration=0.05,
+            maximum_duration=0.5,
+            minimum_active_units=5,
+            state="inside:rest",
+            coincidence="peak_inside:external_ripples",
+        ),
+        ("grosmark_2016 (detection stage) is _population_with_ripple_peak, as yang_2024"),
+    ),
+    "silva_2015": (
+        SpikeTemplate(
+            units="pyramidal",
+            smoothing_sigma=0.010,
+            threshold=3.0,
+            minimum_event_duration=0.1,
+            maximum_duration=0.5,
+            speed="restrict<5",
+        ),
+        (
+            "silva_2015: pyramidal, 10 ms, 3 SD, 100-500 ms, detected only while speed < 5 "
+            "(speed_rule restrict)"
+        ),
+    ),
+    "bendor_2012": (
+        SpikeTemplate(
+            units="all",
+            smoothing_sigma=0.015,
+            threshold=4.0,
+            bound_fraction=0.5,
+            minimum_event_duration=0.05,
+            merge_gap=0.05,
+        ),
+        (
+            "bendor_2012: every unit, 15 ms, 4 SD with bounds at 2 SD, merged < 50 ms "
+            "apart, >= 50 ms"
+        ),
+    ),
+    "davidson_2009": (
+        SpikeTemplate(
+            units="all",
+            smoothing_sigma=0.015,
+            normalization_period="speed<5",
+            threshold=3.0,
+            speed="endpoints<5",
+            state="overlap:running_30s",
+        ),
+        (
+            "davidson_2009: every unit, 15 ms, statistics over speed < 5, 3 SD, speed < 5 "
+            "at both ends, overlapping running (> 15 cm/s) widened by 30 s"
+        ),
+    ),
+    "widloski_2025_bursts": (
+        SpikeTemplate(
+            units="all",
+            smoothing_sigma=0.08,
+            normalization_period="speed<5",
+            threshold=3.0,
+            minimum_event_duration=0.05,
+        ),
+        (
+            "widloski_2025_bursts: every unit, 80 ms, statistics over speed < 5, 3 SD, "
+            ">= 50 ms, no speed rule"
+        ),
+    ),
+    "krause_2022_hse": (
+        SpikeTemplate(units="all", smoothing_sigma=0.02, threshold=3.0, speed="all<=5"),
+        (
+            "krause_2022_hse (interpretation text, no baseline_intervals: statistics over "
+            "the whole recording): every unit, 20 ms, 3 SD, every event speed <= 5"
+        ),
+    ),
+    "gillespie_2021_mua": (
+        SpikeTemplate(
+            units="all",
+            smoothing_sigma=0.015,
+            normalization_period="speed<4",
+            threshold=3.0,
+            speed="endpoints<4",
+        ),
+        (
+            "gillespie_2021_mua: every unit, 15 ms, statistics over speed < 4, 3 SD, speed "
+            "< 4 at both ends"
+        ),
+    ),
+    "pfeiffer_2015": (
+        LfpTemplate(
+            smoothing_sigma=0.0125,
+            normalization_period="speed<5",
+            threshold=3.0,
+            minimum_event_duration=0.05,
+            maximum_duration=2.0,
+            speed="endpoints<=5",
+        ),
+        (
+            "_pfeiffer_2015_swrs: mean 150-250 Hz envelope of every channel, 12.5 ms, "
+            "statistics over speed < 5, 3 SD, 50 ms-2 s, speed <= 5 at both ends"
+        ),
+    ),
+    "berners_lee_2021": (
+        LfpTemplate(
+            channels=3,
+            smoothing_sigma=0.0125,
+            normalization_period="speed<5",
+            threshold=2.0,
+            minimum_event_duration=0.05,
+            maximum_duration=2.0,
+            speed="endpoints<=5",
+        ),
+        (
+            "_pfeiffer_2015_swrs(threshold=2.0, channels=3): as pfeiffer_2015 at 2 SD on "
+            "the first three channels"
+        ),
+    ),
+    "ambrose_2016": (
+        LfpTemplate(smoothing_sigma=0.0125, threshold=3.0, speed="restrict<5"),
+        (
+            "ambrose_2016: mean 150-250 Hz envelope of every channel, 12.5 ms, 3 SD, "
+            "detected only while speed < 5 (speed_rule restrict, so the statistics are "
+            "the slow samples')"
+        ),
+    ),
+    "pfeiffer_2013_ripples": (
+        LfpTemplate(
+            smoothing_sigma=0.0125,
+            normalization_period="speed<5",
+            threshold=3.0,
+            speed="restrict<5",
+        ),
+        (
+            "pfeiffer_2013_ripples: mean 150-250 Hz envelope of every channel, 12.5 ms, "
+            "statistics over speed < 5, 3 SD, detected only while speed < 5"
+        ),
+    ),
+}
+
+_KARLSSON = (
+    "Karlsson_ripple_detector: each channel detected separately and overlapping events "
+    "combined, a whole detector rather than a template core"
+)
+_SILENCE = (
+    "silence-bounded population windows (detect_silence_bounded_events), not a "
+    "thresholded trace"
+)
+_TIROLE = (
+    "Tirole's finite 41-point kernel applied forward and backward, threshold anchors "
+    "with fallback bounds, a speed median sampled every 10 ms and a resampled ripple "
+    "gate"
+)
+_MALLORY = "peaks bounded by mean crossings merged by retained peak (custom peak merging)"
+_MICHON = "5 ms bins, 3 s median detrending and a ripple partner on a detrended envelope"
+_TEN_MS = "a population trace on 10 ms bins; the template's grid is 1 ms"
+_FRACTION = (
+    "an active-fraction rule (a share of the selected cells), which the template's "
+    "cell count does not express"
+)
+_PARTICIPATION_UNITS = (
+    "participation counted over the place cells while the trace pools pyramidal "
+    "cells; the template counts its trace's own units"
+)
+_PEAKS = "local peaks each with its own window, not a thresholded interval"
+_RECTIFIED = "the rectified filtered LFP with raw thresholds, not an envelope's z-score"
+_RECTIFIED_SLEEP = (
+    "the rectified filtered LFP (100-400 Hz) z-scored over sleep, not an envelope; "
+    "crossings 20 ms apart or less joined"
+)
+
+# Every configuration without a template, and why.
+FIXED_POINTS: dict[str, str] = {
+    "mallory_2025": _MALLORY,
+    "widloski_2025": "a minimum time above threshold (15 ms); the template needs one sample",
+    "huelin_gorriz_2023": _TIROLE,
+    "harvey_2023_code": "Long_sharp_wave_ripple_detector (k-means on sharp-wave and "
+    "ripple power) then a pyramidal spiking veto near the peak",
+    "harvey_2023_text": "difference-of-Gaussians band with statistics from a clipped "
+    "trace, and a radiatum sharp wave detected on another trace",
+    "tirole_2022": _TIROLE,
+    "bush_2022": "a rate on the input samples rather than 1 ms bins, an inclusive "
+    "40 ms merge after detection, an active-fraction rule and a median speed rule",
+    "berners_lee_2022": "a finite 100-point kernel with zero-padded convolution, "
+    "statistics over stopped bins and bounds just above the mean",
+    "krause_2022": "SWRs trimmed on per-event 3 ms bins",
+    "mou_2022": "10 ms bins and min-max scaling of the population trace",
+    "denovellis_2021": "the historical 101-tap filter on squared, summed channels, "
+    "rooted after smoothing, and a 15 ms minimum above threshold",
+    "gillespie_2021": "Kay_ripple_detector: the root of summed squared envelopes, a "
+    "whole detector rather than a template core",
+    "michon_2021": _MICHON,
+    "gridchyn_2020": "adaptive feedback threshold on causal 20 ms counts",
+    "kaefer_2020": "240 ms FFT windows every 20 ms",
+    "bhattarai_2020": _SILENCE,
+    "stella_2019": "Morlet wavelet RMS per electrode, the maximum over electrodes",
+    "xu_2019": "onsets trimmed to the first spike, with active-fraction and spike-count rules",
+    "farooq_2019_science": _PARTICIPATION_UNITS,
+    "michon_2019": _MICHON,
+    "liu_2019": _SILENCE,
+    "shin_2019": _KARLSSON,
+    "carey_2019": "Carey_candidate_detector: a joint spectral-ripple and multiunit score",
+    "maboudi_2018": "a finite 121-point Gaussian kernel with zero padding and a mean "
+    "speed rule",
+    "olafsdottir_2017.trajectory": _FRACTION,
+    "wu_2017": _TEN_MS,
+    "yamamoto_2017": f"{_TEN_MS}, with a ripple partner of a squared single-channel envelope",
+    "tang_2017": _KARLSSON,
+    "jadhav_2016": f"{_KARLSSON}; SWRs within 1 s of the previous start dropped",
+    "olafsdottir_2015": _SILENCE,
+    "olafsdottir_2015.bayesian_candidates": _SILENCE,
+    "wu_2014": _TEN_MS,
+    "wikenheiser_2013": "150 ms windows around every sample above 1 SD, joined",
+    "pfeiffer_2013": "bounds trimmed to 20 ms spike windows, an active-fraction rule "
+    "and duration limits after trimming",
+    "carr_2012": _KARLSSON,
+    "gupta_2010": "a log-transformed envelope; the template thresholds the envelope "
+    "or its square",
+    "karlsson_2009": _KARLSSON,
+    "diba_2007": _SILENCE,
+    "ji_2007": "10 ms bins of counts thresholded at a histogram minimum",
+    "foster_2006": _SILENCE,
+    "lee_2002": f"{_SILENCE}, with each cell's bursts collapsed",
+    "nadasdy_1999": "boxcar RMS of the filtered channels, summed",
+    "kudrimoti_1999": "a minimum time above threshold (25 ms); the template needs one sample",
+    "harvey_2023_no_radiatum": "Zugaro_ripple_detector then a pyramidal spiking veto "
+    "near the peak",
+    "mallory_2025_ripples": _MALLORY,
+    "igata_2021_ripples": "one inventory per channel",
+    "wu_2014_ripples": _PEAKS,
+    "davidson_2009_ripples": _PEAKS,
+    "ji_2007_ripples": f"{_RECTIFIED}, merged before a peak is required",
+    "lee_2002_ripples": _RECTIFIED_SLEEP,
+    "foster_2006_ripples": f"lee_2002_ripples' rule: {_RECTIFIED_SLEEP}",
+    "denovellis_2021_mua": "2 ms bins and a 15 ms minimum above threshold",
+    "maboudi_2018_open_field": "pfeiffer_2013's rule: bounds trimmed to 20 ms spike "
+    "windows and an active-fraction rule",
+    "muessig_2019_ripples": _PEAKS,
+    "bhattarai_2020_ripples": "a 50 ms boxcar of the squared filtered signal, merged "
+    "after a duration rule",
+    "farooq_2019_science_awake": _PARTICIPATION_UNITS,
+    "liu_2019_awake": _SILENCE,
+}
+
+
+# Every configuration by id, whichever of them an analysis takes (RECIPES).
+_BY_ID = {config.config_id: config for config in RECIPES}
+
+
+def _config(config_id: str) -> RecipeConfig:
+    if config_id not in _BY_ID:
+        msg = f"No configuration {config_id!r} in recipe_configs.RECIPES."
+        raise KeyError(msg)
+    return _BY_ID[config_id]
+
+
+def template_of(config: RecipeConfig) -> Template:
+    """The template written for a configuration.
+
+    Parameters
+    ----------
+    config : RecipeConfig
+
+    Returns
+    -------
+    template : SpikeTemplate or LfpTemplate
+
+    Raises
+    ------
+    ValueError
+        The configuration is a fixed point; the message gives the reason.
+    KeyError
+        Neither a template nor a fixed point names the configuration.
+    """
+    if config.config_id in TEMPLATES:
+        return TEMPLATES[config.config_id][0]
+    if config.config_id in FIXED_POINTS:
+        msg = f"{config.config_id} has no template: {FIXED_POINTS[config.config_id]}."
+        raise ValueError(msg)
+    msg = f"{config.config_id} is neither in TEMPLATES nor in FIXED_POINTS."
+    raise KeyError(msg)
+
+
+def recipe_events(config: RecipeConfig, session: rd.SimulatedSession) -> FloatArray:
+    """A configuration's public-call events on a session, as the runner makes them.
+
+    Parameters
+    ----------
+    config : RecipeConfig
+    session : SimulatedSession
+
+    Returns
+    -------
+    events : ndarray, shape (n_events, 2)
+        ``bounds`` of ``run_recipe`` on ``make_recording`` of the session's
+        integer counts, with the policy's ``behavior_intervals``.
+    """
+    return bounds(_public_call(config, session)())
+
+
+def _public_call(
+    config: RecipeConfig, session: rd.SimulatedSession
+) -> Callable[[], pd.DataFrame]:
+    """A configuration's public call on a session, its inputs built by the
+    runner's ``_recipe_call`` (an error building them raises here, as in the
+    runner, never as the method's)."""
+    return _recipe_call(config, session, lambda: _counted(session))()
+
+
+@dataclasses.dataclass(frozen=True)
+class Verification:
+    """Whether a configuration's template gives its public call's events.
+
+    Attributes
+    ----------
+    config_id : str
+    family : str
+        The template's family, or ``""`` for a fixed point.
+    in_space : bool
+    reason : str
+        Why not, empty when in the space.
+    n_events : int
+        Events of the public call over the sessions checked, up to the first
+        on which the two differ.
+    """
+
+    config_id: str
+    family: str
+    in_space: bool
+    reason: str
+    n_events: int
+
+
+class Visitor(Protocol):
+    """What the verification pass takes: a table built one session at a time."""
+
+    def visit(self, context: SessionContext) -> None:
+        """Take one session's part."""
+
+
+def _visit(contexts: Iterable[SessionContext], visitors: Sequence[Visitor]) -> None:
+    """Each visitor visits each context in turn, which is then released."""
+    for context in contexts:
+        for visitor in visitors:
+            visitor.visit(context)
+        context.release()
+
+
+class _Verification:
+    """``verify_all``'s comparison, built one session at a time."""
+
+    def __init__(self, recipes: Sequence[RecipeConfig]) -> None:
+        self.recipes = list(recipes)
+        self.found = {
+            config.config_id: Verification(
+                config.config_id,
+                "" if config.config_id in FIXED_POINTS else family_of(template_of(config)),
+                config.config_id not in FIXED_POINTS,
+                FIXED_POINTS.get(config.config_id, ""),
+                0,
+            )
+            for config in self.recipes
+        }
+
+    def visit(self, context: SessionContext) -> None:
+        for config in self.recipes:
+            verification = self.found[config.config_id]
+            if not verification.in_space:
+                continue
+            expected = recipe_events(config, context.session)
+            events = context.events(compile(template_of(config)))
+            n_events = verification.n_events + len(expected)
+            if not np.array_equal(expected, events):
+                reason = (
+                    f"events differ on {context.label}: {len(events)} from the template, "
+                    f"{len(expected)} from the public call"
+                )
+                verification = dataclasses.replace(
+                    verification, in_space=False, reason=reason, n_events=n_events
+                )
+            else:
+                verification = dataclasses.replace(verification, n_events=n_events)
+            self.found[config.config_id] = verification
+
+    def table(self) -> pd.DataFrame:
+        rows = []
+        for config in self.recipes:
+            verification = self.found[config.config_id]
+            if verification.in_space and verification.n_events == 0:
+                verification = dataclasses.replace(
+                    verification,
+                    in_space=False,
+                    reason="no event on the sessions checked, so equality verifies nothing",
+                )
+            rows.append(dataclasses.asdict(verification))
+        return pd.DataFrame(
+            rows, columns=[field.name for field in dataclasses.fields(Verification)]
+        )
+
+
+def verify_all(
+    recipes: Sequence[RecipeConfig], contexts: Iterable[SessionContext]
+) -> pd.DataFrame:
+    """Compare each configuration's template events with its public call's.
+
+    Parameters
+    ----------
+    recipes : sequence of RecipeConfig
+    contexts : iterable of SessionContext
+        Every session to check on, taken one at a time and released after.
+
+    Returns
+    -------
+    table : pandas.DataFrame
+        One row per configuration, in order, with ``Verification``'s fields.
+        A configuration is in the space when it has a template, the two give
+        identical bounds, in the same order, on every session, and the public
+        call found an event on some session (equal empty results verify
+        nothing).
+    """
+    verification = _Verification(recipes)
+    _visit(contexts, [verification])
+    return verification.table()
+
+
+def in_space(config: RecipeConfig, contexts: Iterable[SessionContext]) -> bool:
+    """Whether a configuration's template stands for it on these sessions.
+
+    Parameters
+    ----------
+    config : RecipeConfig
+    contexts : iterable of SessionContext
+        The edge cases and reference sessions to check on.
+
+    Returns
+    -------
+    in_space : bool
+        As ``verify_all`` decides it.
+    """
+    return bool(verify_all([config], contexts)["in_space"].iloc[0])
+
+
+def perturbations(template: Template, space: Mapping[str, Factor]) -> list[tuple[str, Any]]:
+    """The changes of one template value each that verification should notice.
+
+    Parameters
+    ----------
+    template : SpikeTemplate or LfpTemplate
+    space : mapping of str to Factor
+        The family's ``factor_space`` by factor name.
+
+    Returns
+    -------
+    changes : list of (str, object)
+        In field order, each ``(factor, value)``: a continuous value times
+        each of ``PERTURBATION``, an integer one less and one more, a
+        categorical value every other level of its factor in ``space``. A
+        value at its step's absence (the field's default) is not changed.
+    """
+    changes: list[tuple[str, Any]] = []
+    for field in dataclasses.fields(template):
+        value = getattr(template, field.name)
+        if field.default is not dataclasses.MISSING and value == field.default:
+            continue
+        kind = field.metadata["kind"]
+        if kind == "continuous":
+            changes += [(field.name, value * factor) for factor in PERTURBATION]
+        elif kind == "integer":
+            changes += [(field.name, value - 1), (field.name, value + 1)]
+        elif field.name in space:
+            levels = space[field.name].levels
+            changes += [(field.name, level) for level in levels if level != value]
+    return changes
+
+
+class _Sensitivity:
+    """``sensitivity``'s table, built one session at a time."""
+
+    def __init__(self, recipes: Sequence[RecipeConfig], family: str) -> None:
+        space = {factor.name: factor for factor in factor_space(recipes, family)}
+        self.cases = []
+        for config_id, template in family_templates(recipes, family).items():
+            right = compile(template)
+            for name, value in perturbations(template, space):
+                changed = compile(dataclasses.replace(template, **{name: value}))
+                self.cases.append(
+                    (config_id, name, getattr(template, name), value, changed, right)
+                )
+        self.first: dict[int, str] = {}
+
+    def visit(self, context: SessionContext) -> None:
+        for i, (*_, changed, right) in enumerate(self.cases):
+            if i not in self.first and not np.array_equal(
+                context.events(changed), context.events(right)
+            ):
+                self.first[i] = context.label
+
+    def table(self) -> pd.DataFrame:
+        table = pd.DataFrame(
+            [
+                {
+                    "config_id": config_id,
+                    "factor": name,
+                    "value": _as_text(value),
+                    "perturbed": _as_text(perturbed),
+                    "told_apart": i in self.first,
+                    "session": self.first.get(i, ""),
+                }
+                for i, (config_id, name, value, perturbed, _, _) in enumerate(self.cases)
+            ],
+            columns=["config_id", "factor", "value", "perturbed", "told_apart", "session"],
+        )
+        exercised = table.groupby(["config_id", "factor"])["told_apart"].transform("any")
+        return table.assign(exercised=exercised.astype(bool))
+
+
+def sensitivity(
+    recipes: Sequence[RecipeConfig], contexts: Iterable[SessionContext], family: str
+) -> pd.DataFrame:
+    """Whether the verification sessions tell each template from its perturbations.
+
+    A template value that no perturbation changes the events of, on every
+    session verification uses, is not pinned by those sessions: another
+    value would have verified as well.
+
+    Parameters
+    ----------
+    recipes : sequence of RecipeConfig
+        Those with a template in ``family`` are perturbed, in their order,
+        within ``factor_space(recipes, family)``.
+    contexts : iterable of SessionContext
+        The sessions verification uses, taken one at a time and released
+        after.
+    family : {"spikes", "lfp"}
+
+    Returns
+    -------
+    table : pandas.DataFrame
+        One row per template and ``perturbations`` change: ``config_id``,
+        ``factor``, ``value`` (the template's) and ``perturbed`` (tuples and
+        None as JSON), ``told_apart`` (the events differ on some session),
+        ``session`` (the first such, ``""`` for none) and ``exercised``
+        (some change of that factor of that template is told apart).
+    """
+    perturbed = _Sensitivity(recipes, family)
+    _visit(contexts, [perturbed])
+    return perturbed.table()
+
+
+# Reference sessions
+
+
+def reference_parameters(run_directory: str | os.PathLike[str]) -> dict[str, dict[str, Any]]:
+    """The reference condition's parameters as the run saved them.
+
+    Parameters
+    ----------
+    run_directory : str or path-like
+
+    Returns
+    -------
+    parameters : dict of str to dict
+        ``parameters_from_json`` of ``conditions.csv``'s reference ``params``:
+        the resolved values, after overrides such as a shorter ``duration_s``.
+
+    Raises
+    ------
+    ValueError
+        The run has no reference row, or its parameters are incomplete.
+    """
+    table = read_table(Path(run_directory) / "conditions.csv")
+    rows = table[table["condition_id"] == REFERENCE_CONDITION]
+    if len(rows) != 1:
+        msg = f"{run_directory} has {len(rows)} reference rows in conditions.csv, not 1."
+        raise ValueError(msg)
+    return parameters_from_json(str(rows["params"].iloc[0]))
+
+
+def check_report(
+    run_directory: str | os.PathLike[str], parameters: Mapping[str, Mapping[str, Any]]
+) -> None:
+    """Check the run's simulator validation report, as the runner did before running.
+
+    ``require_ready_report`` on the report ``run_spec.json`` names (a path
+    from the repository root), for the reference parameters, and its hash and
+    fingerprints must be those the run recorded.
+
+    Parameters
+    ----------
+    run_directory : str or path-like
+    parameters : mapping
+        The reference condition's saved parameters.
+
+    Raises
+    ------
+    ValueError
+        The report is not ready for these parameters, or its hash, simulation
+        fingerprint or target-table hash differs from the run's.
+    """
+    saved = json.loads((Path(run_directory) / "run_spec.json").read_text())
+    recorded = saved["validation_report"]
+    report = require_ready_report(
+        REPOSITORY / recorded["path"], {REFERENCE_CONDITION: parameters}
+    )
+    differing = [
+        key for key in _REPORT_IDENTITY if key != "path" and report[key] != recorded[key]
+    ]
+    if differing:
+        msg = (
+            f"The validation report differs from the one {run_directory} ran with at: "
+            f"{', '.join(differing)}."
+        )
+        raise ValueError(msg)
+
+
+def reference_session(
+    run_directory: str | os.PathLike[str],
+    replicate: int,
+    parameters: Mapping[str, Mapping[str, Any]] | None = None,
+) -> rd.SimulatedSession:
+    """Replicate ``replicate`` of the run's reference condition, simulated again.
+
+    Parameters
+    ----------
+    run_directory : str or path-like
+    replicate : int
+    parameters : mapping, optional
+        The saved reference parameters; default ``reference_parameters``.
+
+    Returns
+    -------
+    session : SimulatedSession
+        ``simulate_parameters(parameters, replicate)``, checked against what
+        the run saved for it (``check_regenerated``).
+
+    Raises
+    ------
+    ValueError
+        As ``check_regenerated``.
+    """
+    if parameters is None:
+        parameters = reference_parameters(run_directory)
+    session = simulate_parameters(parameters, replicate)
+    check_regenerated(run_directory, replicate, session)
+    return session
+
+
+def check_regenerated(
+    run_directory: str | os.PathLike[str], replicate: int, session: rd.SimulatedSession
+) -> None:
+    """Check a session simulated again against the run's replicate ``replicate``.
+
+    Against what the run saved for it: the seed and duration in
+    ``sessions.csv.gz``, the latent event and non-event tables in
+    ``truth.csv.gz``, the ripple channels in ``ripple_channels.csv.gz``, value
+    for value, and the public-call events of ``SAVED_EVENT_CHECKS`` against its
+    ``events.csv.gz``, bound for bound (so the signals, not only the truth, are
+    the run's).
+
+    Parameters
+    ----------
+    run_directory : str or path-like
+    replicate : int
+    session : SimulatedSession
+
+    Raises
+    ------
+    ValueError
+        The run holds no such session or ran no ``SAVED_EVENT_CHECKS`` call
+        on it, or any of those differ: the session is not the run's.
+    """
+    directory = Path(run_directory) / "conditions" / REFERENCE_CONDITION
+    session_id = f"{REFERENCE_CONDITION}/{replicate}"
+    rows = read_table(directory / "sessions.csv.gz")
+    row = rows[rows["session_id"] == session_id]
+    if len(row) != 1:
+        msg = f"{directory} holds no session {session_id}."
+        raise ValueError(msg)
+    duration = len(session.time) / session.sampling_frequency
+    problems = []
+    if int(row["seed"].iloc[0]) != session_seed(replicate):
+        problems.append(f"seed {row['seed'].iloc[0]}, not {session_seed(replicate)}")
+    if float(row["duration_s"].iloc[0]) != duration:
+        problems.append(f"duration {row['duration_s'].iloc[0]} s, not {duration} s")
+    truth = load_truth(directory / "truth.csv.gz").get(session_id)
+    if truth is None:
+        problems.append("no truth rows")
+    else:
+        for saved, table in zip(truth, (session.events, session.non_events), strict=True):
+            if not _same_frame(saved, table[list(saved.columns)].astype(saved.dtypes)):
+                problems.append(f"its {'non-' if table is session.non_events else ''}events")
+    channels = read_table(
+        directory / "ripple_channels.csv.gz",
+        keep=lambda frame: frame["session_id"] == session_id,
+    )
+    columns = list(RIPPLE_CHANNEL_COLUMNS[1:])
+    simulated = session.ripple_channels[columns]
+    if not _same_frame(channels[columns].astype(simulated.dtypes), simulated):
+        problems.append("its ripple channels")
+    ran = read_table(
+        directory / "methods.csv", keep=lambda frame: frame["session_id"] == session_id
+    )
+    saved = read_table(
+        directory / "events.csv.gz", keep=lambda frame: frame["session_id"] == session_id
+    )
+    for config_id in SAVED_EVENT_CHECKS:
+        method = f"recipe:{config_id}"
+        if not (ran["method"] == method).any():
+            problems.append(f"no {method} call (the run's methods.csv)")
+            continue
+        rows = saved[saved["method"] == method].sort_values("event_index")
+        expected = rows[["start_time", "end_time"]].to_numpy(dtype=float)
+        if not np.array_equal(recipe_events(_config(config_id), session), expected):
+            problems.append(f"its {method} events")
+    if problems:
+        msg = (
+            f"The simulated {session_id} is not the run's: {'; '.join(problems)} differ "
+            f"from {directory}."
+        )
+        raise ValueError(msg)
+
+
+def _same_frame(first: pd.DataFrame, second: pd.DataFrame) -> bool:
+    """Equal columns and values, NaN equal to NaN, the index aside."""
+    first, second = first.reset_index(drop=True), second.reset_index(drop=True)
+    return list(first.columns) == list(second.columns) and bool(first.equals(second))
+
+
+def reference_contexts(
+    run_directory: str | os.PathLike[str],
+    replicates: Iterable[int] = range(K),
+    *,
+    checked: bool = True,
+) -> Iterable[SessionContext]:
+    """A context per reference session, built one at a time.
+
+    Parameters
+    ----------
+    run_directory : str or path-like
+    replicates : iterable of int, optional
+        Default ``0`` to ``K - 1``.
+    checked : bool, optional
+        Whether each session is checked against the run (``check_regenerated``).
+        The command checks each once, in its verification pass; the workers
+        evaluating configurations only simulate them again.
+
+    Yields
+    ------
+    context : SessionContext
+        Of the session simulated again, labelled ``"reference/<replicate>"``.
+    """
+    parameters = reference_parameters(run_directory)
+    for replicate in replicates:
+        session = simulate_parameters(parameters, replicate)
+        if checked:
+            check_regenerated(run_directory, replicate, session)
+        context = SessionContext(session, f"{REFERENCE_CONDITION}/{replicate}")
+        del session  # the context keeps an integer copy of the counts
+        yield context
+
+
+def gap_interval(session: rd.SimulatedSession) -> tuple[float, float]:
+    """Where the gap edge case removes samples: inside a real event.
+
+    Parameters
+    ----------
+    session : SimulatedSession
+
+    Returns
+    -------
+    start, end : float
+        The middle ``GAP_WIDTH`` seconds of the first sharp-wave ripple (its
+        network truth window at 10 % of the peak) that lies at rest, so that
+        events of both families, rest-restricted ones included, are cut by
+        it; samples at or after ``start`` and before ``end`` go missing.
+
+    Raises
+    ------
+    ValueError
+        The session has no sharp-wave ripple at rest.
+    """
+    windows = rd.truth_windows(session.events, 0.1, "network")
+    swrs = bounds(windows[windows["type"] == "swr"])
+    at_rest = rd.require_inside(swrs, rest_intervals(session))
+    if not len(at_rest):
+        msg = "The session has no sharp-wave ripple at rest to put the gap in."
+        raise ValueError(msg)
+    middle = float(at_rest[0].sum()) / 2
+    return middle - GAP_WIDTH / 2, middle + GAP_WIDTH / 2
+
+
+def edge_sessions(
+    parameters: Mapping[str, Mapping[str, Any]], duration: float = EDGE_DURATION
+) -> dict[str, rd.SimulatedSession]:
+    """Short sessions for the edge cases of ``verify_all``.
+
+    Parameters
+    ----------
+    parameters : mapping
+        Simulation parameters, such as the run's reference ones; the session
+        is ``duration`` seconds of replicate 0 of them.
+    duration : float, optional
+        Seconds.
+
+    Returns
+    -------
+    sessions : dict of str to SimulatedSession
+        ``"gap"``: every LFP channel, the radiatum and the spike counts missing
+        (NaN) over ``gap_interval``, which splits every block and cuts the
+        events of both families there; ``"unix_origin"``: its timestamps and
+        running bouts moved to start at ``UNIX_ORIGIN``.
+    """
+    changed = {section: dict(values) for section, values in parameters.items()}
+    changed["session"]["duration_s"] = duration
+    session = simulate_parameters(changed, 0)
+    start, end = gap_interval(session)
+    missing = (session.time >= start) & (session.time < end)
+
+    def cut(values: FloatArray, dtype: DTypeLike) -> FloatArray:
+        # a copy as ``dtype`` with the gap's samples missing
+        copied = values.astype(dtype)
+        copied[missing] = np.nan
+        return copied
+
+    gap = dataclasses.replace(
+        session,
+        lfps=cut(session.lfps, session.lfps.dtype),
+        sharp_wave_lfp=cut(session.sharp_wave_lfp, session.sharp_wave_lfp.dtype),
+        multiunit=cut(session.multiunit, float),
+    )
+    moved = dataclasses.replace(
+        session,
+        time=session.time + UNIX_ORIGIN,
+        running_intervals=session.running_intervals + UNIX_ORIGIN,
+    )
+    return {"gap": gap, "unix_origin": moved}
+
+
+# Factor space
+
+
+@dataclasses.dataclass(frozen=True)
+class Factor:
+    """One factor of a family's space.
+
+    Attributes
+    ----------
+    name : str
+        A template field.
+    kind : {"continuous", "integer", "categorical"}
+    levels : tuple
+        Continuous: ``(low, high)``. Integer: every whole number from the
+        least to the largest value. Categorical: the distinct values, in
+        configuration order.
+    """
+
+    name: str
+    kind: str
+    levels: tuple[Any, ...]
+
+    def value(self, u: float) -> Any:
+        """The factor's value at a uniform ``u`` in [0, 1).
+
+        Parameters
+        ----------
+        u : float
+
+        Returns
+        -------
+        value
+            ``low + u (high - low)`` for a continuous factor, else
+            ``levels[min(int(u * n), n - 1)]`` of its ``n`` levels.
+        """
+        if self.kind == "continuous":
+            low, high = self.levels
+            return float(low + u * (high - low))
+        n = len(self.levels)
+        return self.levels[min(int(u * n), n - 1)]
+
+    def points(self) -> tuple[Any, ...]:
+        """The values one factor at a time visits.
+
+        Returns
+        -------
+        values : tuple
+            ``OAT_POINTS`` evenly spaced values over a continuous range; every
+            level otherwise.
+        """
+        if self.kind == "continuous":
+            low, high = self.levels
+            return tuple(float(v) for v in np.linspace(float(low), float(high), OAT_POINTS))
+        return self.levels
+
+
+def family_templates(recipes: Sequence[RecipeConfig], family: str) -> dict[str, Template]:
+    """The templates written for configurations of ``recipes`` in a family.
+
+    Written, not verified: ``verify_all`` decides which of them stand for
+    their methods on a run's sessions.
+
+    Parameters
+    ----------
+    recipes : sequence of RecipeConfig
+    family : {"spikes", "lfp"}
+
+    Returns
+    -------
+    templates : dict of str to template
+        By configuration id, in configuration order.
+    """
+    if family not in FAMILIES:
+        msg = f"family must be one of {FAMILIES}; got {family!r}."
+        raise ValueError(msg)
+    written = (
+        (config.config_id, TEMPLATES[config.config_id][0])
+        for config in recipes
+        if config.config_id in TEMPLATES
+    )
+    return {
+        config_id: template for config_id, template in written if family_of(template) == family
+    }
+
+
+def distinct_templates(templates: Mapping[str, Template]) -> dict[str, Template]:
+    """``templates`` with each template once: of identical ones, the first.
+
+    Two methods with one template (``grosmark_2016`` is ``yang_2024``'s rule)
+    are one point of the space: they count once for the stop rule, the
+    factor space, the reference configuration and the Shapley pairs, though
+    both are verified and listed.
+
+    Parameters
+    ----------
+    templates : mapping of str to template
+        Such as ``family_templates``', by configuration id.
+
+    Returns
+    -------
+    templates : dict of str to template
+        In the order given.
+    """
+    first: dict[Template, str] = {}
+    for config_id, template in templates.items():
+        first.setdefault(template, config_id)
+    return {config_id: template for template, config_id in first.items()}
+
+
+def factor_space(recipes: Sequence[RecipeConfig], family: str) -> tuple[Factor, ...]:
+    """The factors a family's represented configurations vary, with their ranges.
+
+    Parameters
+    ----------
+    recipes : sequence of RecipeConfig
+        Usually ``RECIPES``; those with a template in ``family`` count.
+    family : {"spikes", "lfp"}
+
+    Returns
+    -------
+    factors : tuple of Factor
+        In the template's field order; a field with a single value among the
+        templates is left out, since no configuration varies it.
+    """
+    templates = list(distinct_templates(family_templates(recipes, family)).values())
+    if not templates:
+        return ()
+    factors = []
+    for field in dataclasses.fields(templates[0]):
+        values = [getattr(template, field.name) for template in templates]
+        distinct = tuple(dict.fromkeys(values))
+        if len(distinct) < 2:
+            continue
+        kind = field.metadata["kind"]
+        if kind == "continuous":
+            levels: tuple[Any, ...] = (float(min(values)), float(max(values)))
+        elif kind == "integer":
+            levels = tuple(range(min(values), max(values) + 1))
+        else:
+            levels = distinct
+        factors.append(Factor(field.name, kind, levels))
+    return tuple(factors)
+
+
+def reference_template(family: str, templates: Sequence[TemplateT] | None = None) -> TemplateT:
+    """The family's reference configuration: each factor's median or mode.
+
+    Parameters
+    ----------
+    family : {"spikes", "lfp"}
+    templates : sequence of templates, optional
+        Default the family's templates of ``RECIPES``, in configuration order.
+        Identical templates count once.
+
+    Returns
+    -------
+    template
+        A continuous factor at the median, an integer one at the median rounded
+        down, a categorical one at its most frequent value, ties going to the
+        value that comes first.
+    """
+    chosen = (
+        list(dict.fromkeys(templates))
+        if templates is not None
+        else list(distinct_templates(family_templates(RECIPES, family)).values())
+    )
+    if not chosen:
+        msg = f"The {family} family has no template to take a reference from."
+        raise ValueError(msg)
+    values: dict[str, Any] = {}
+    for field in dataclasses.fields(chosen[0]):
+        column = [getattr(template, field.name) for template in chosen]
+        kind = field.metadata["kind"]
+        if kind == "continuous":
+            values[field.name] = float(np.median(column))
+        elif kind == "integer":
+            values[field.name] = int(np.floor(np.median(column)))
+        else:
+            # ties go to the value counted first
+            values[field.name] = Counter(column).most_common(1)[0][0]
+    return type(chosen[0])(**values)  # type: ignore[return-value]
+
+
+# Outputs
+
+
+def _mean(values: Sequence[float]) -> float:
+    """The mean of the finite values, NaN when there are none."""
+    finite = [value for value in values if np.isfinite(value)]
+    return float(np.mean(finite)) if finite else float("nan")
+
+
+def jaccard(first: FloatArray, second: FloatArray) -> float:
+    """Matched events over the union of two inventories.
+
+    Parameters
+    ----------
+    first, second : ndarray, shape (n_events, 2)
+
+    Returns
+    -------
+    jaccard : float
+        ``n_matched / (n_first + n_second - n_matched)`` after ``match_events``
+        at any overlap; 1.0 when both are empty (they agree).
+    """
+    if len(first) + len(second) == 0:
+        return 1.0
+    matched = len(rd.match_events(first, second).pairs)
+    return matched / (len(first) + len(second) - matched)
+
+
+def session_outputs(
+    events: FloatArray, reference_events: FloatArray, context: SessionContext, family: str
+) -> dict[str, float]:
+    """The ``Y``s of one configuration's events on one session.
+
+    Parameters
+    ----------
+    events, reference_events : ndarray, shape (n_events, 2)
+        The configuration's events and the reference configuration's.
+    context : SessionContext
+    family : {"spikes", "lfp"}
+
+    Returns
+    -------
+    outputs : dict of str to float
+        By ``Y_NAMES``; ``onset_error_25`` NaN without a matched pair.
+    """
+    truth = context.windows[FAMILY_EXPRESSION[family]]
+    matching = rd.match_events(truth[0.1], events)
+    onset = matching.boundary_errors(truth[0.25])["onset_error"].to_numpy(dtype=float)
+    return {
+        "f1": float(matching.f1),
+        "f1_network": float(rd.match_events(context.windows["network"][0.1], events).f1),
+        "events_per_minute": len(events) / context.minutes,
+        "onset_error_25": float(np.median(onset)) if len(onset) else float("nan"),
+        "jaccard_reference": jaccard(events, reference_events),
+    }
+
+
+def evaluate_session(
+    pipeline: Pipeline, context: SessionContext, reference: Pipeline
+) -> dict[str, float]:
+    """The ``Y``s of a pipeline on one session, its events and the reference's
+    memoized by the context.
+
+    Parameters
+    ----------
+    pipeline, reference : Pipeline
+    context : SessionContext
+
+    Returns
+    -------
+    outputs : dict of str to float
+    """
+    return session_outputs(
+        context.events(pipeline), context.events(reference), context, pipeline_family(pipeline)
+    )
+
+
+def evaluate_config(
+    pipeline: Pipeline, contexts: Sequence[SessionContext], reference: Pipeline
+) -> dict[str, float]:
+    """The ``Y``s of a pipeline, each averaged over the sessions.
+
+    ``evaluate_session`` on each session, whose context caches the events, so
+    a configuration repeated while they stay cached runs no detection again.
+
+    Parameters
+    ----------
+    pipeline : Pipeline
+    contexts : sequence of SessionContext
+        The ``K`` reference sessions.
+    reference : Pipeline
+        What ``jaccard_reference`` compares with.
+
+    Returns
+    -------
+    outputs : dict of str to float
+        By ``Y_NAMES``: the mean over the sessions, ``onset_error_25`` over
+        those with a matched pair.
+    """
+    per_session = [evaluate_session(pipeline, context, reference) for context in contexts]
+    return {name: _mean([outputs[name] for outputs in per_session]) for name in Y_NAMES}
+
+
+# Evaluating many configurations, one session at a time
+
+_WORKER_CONTEXT: dict[tuple[str, int], SessionContext] = {}
+
+
+def _worker_context(run_directory: str, replicate: int) -> SessionContext:
+    """This process's context of a reference session, the only one it holds."""
+    key = (run_directory, replicate)
+    if key not in _WORKER_CONTEXT:
+        _release_worker_context()
+        contexts = reference_contexts(run_directory, [replicate], checked=False)
+        _WORKER_CONTEXT[key] = next(iter(contexts))
+    return _WORKER_CONTEXT[key]
+
+
+def _evaluate_chunk(
+    run_directory: str,
+    replicate: int,
+    indices: Sequence[int],
+    pipelines: Sequence[Pipeline],
+    references: Sequence[Pipeline],
+) -> list[dict[str, float]]:
+    """The ``Y``s of a chunk of configurations, those at ``indices``, on one
+    session; a failure names the configuration, its chunk, the session and
+    its pipeline."""
+    context = _worker_context(run_directory, replicate)
+    rows: list[dict[str, float]] = []
+    try:
+        for pipeline, reference in zip(pipelines, references, strict=True):
+            rows.append(evaluate_session(pipeline, context, reference))
+    except Exception as error:
+        msg = (
+            f"configuration {indices[len(rows)]} (of a chunk of {len(indices)}) on "
+            f"{context.label} raised {type(error).__name__}: {error}\n"
+            f"Its pipeline: {pipelines[len(rows)]!r}"
+        )
+        raise RuntimeError(msg) from error
+    return rows
+
+
+def evaluate_many(
+    pipelines: Sequence[Pipeline],
+    references: Sequence[Pipeline],
+    run_directory: str | os.PathLike[str],
+    *,
+    workers: int = 1,
+    chunk_size: int | None = None,
+) -> list[dict[str, list[float]]]:
+    """Every pipeline's ``Y``s on each reference session.
+
+    The pipelines are evaluated in ``evaluation_order``, in chunks, so those
+    sharing a trace or a core meet a session's caches together; the outputs
+    are in the order given.
+
+    Parameters
+    ----------
+    pipelines, references : sequence of Pipeline
+        Each pipeline with what its ``jaccard_reference`` compares with.
+    run_directory : str or path-like
+        The run whose reference sessions each process simulates again without
+        checking them against it: the caller checks them first
+        (``reference_contexts``), as the command's verification pass does.
+    workers : int, optional
+        Processes (``ProcessPoolExecutor``); each holds one session at a time,
+        taking a chunk of configurations of one session.
+    chunk_size : int, optional
+        Configurations per task; default the pipelines on the ``K`` sessions
+        shared evenly over the workers, at most ``CHUNK_SIZE``, so each
+        worker has a task.
+
+    Returns
+    -------
+    outputs : list of dict of str to list of float
+        Per pipeline, by ``Y_NAMES``, the value on each of the ``K`` sessions.
+
+    Raises
+    ------
+    RuntimeError
+        The first configuration to fail, named with its chunk, session and
+        pipeline; no queued chunk starts after it, and this process's session
+        is released.
+    """
+    directory = str(run_directory)
+    if chunk_size is None:
+        chunk_size = min(CHUNK_SIZE, max(1, math.ceil(len(pipelines) * K / workers)))
+    order = evaluation_order(pipelines)
+    chunks = [order[start : start + chunk_size] for start in range(0, len(order), chunk_size)]
+    tasks = [(replicate, chunk) for replicate in range(K) for chunk in range(len(chunks))]
+    found: dict[tuple[int, int], list[dict[str, float]]] = {}
+
+    def arguments(task: tuple[int, int]) -> tuple[Any, ...]:
+        replicate, chunk = task
+        indices = chunks[chunk]
+        return (
+            directory,
+            replicate,
+            indices,
+            [pipelines[i] for i in indices],
+            [references[i] for i in indices],
+        )
+
+    if workers == 1:
+        try:
+            for task in tasks:
+                found[task] = _evaluate_chunk(*arguments(task))
+        finally:
+            _release_worker_context()
+    else:
+        pool = ProcessPoolExecutor(max_workers=workers)
+        try:
+            futures = {pool.submit(_evaluate_chunk, *arguments(task)): task for task in tasks}
+            for future in as_completed(futures):
+                found[futures[future]] = future.result()
+        except BaseException:
+            # stop at the first failure: no queued chunk starts, and the error
+            # is raised without waiting for the running ones
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        pool.shutdown()
+    outputs: list[dict[str, list[float]]] = [{name: [] for name in Y_NAMES} for _ in pipelines]
+    for (_, chunk), rows in sorted(found.items()):
+        for index, row in zip(chunks[chunk], rows, strict=True):
+            for name in Y_NAMES:
+                outputs[index][name].append(row[name])
+    return outputs
+
+
+def evaluation_order(pipelines: Sequence[Pipeline]) -> list[int]:
+    """The pipelines' positions grouped by their trace, then by their core.
+
+    Parameters
+    ----------
+    pipelines : sequence of Pipeline
+
+    Returns
+    -------
+    order : list of int
+        Every position once: those whose core has the same ``signal``
+        together, and within them those with the same core, each group in the
+        order it first appears.
+    """
+    groups: dict[tuple[Step, ...], dict[ThresholdCore, list[int]]] = {}
+    for position, pipeline in enumerate(pipelines):
+        groups.setdefault(pipeline.core.signal, {}).setdefault(pipeline.core, []).append(
+            position
+        )
+    return [
+        position
+        for cores in groups.values()
+        for members in cores.values()
+        for position in members
+    ]
+
+
+def _release_worker_context() -> None:
+    for context in _WORKER_CONTEXT.values():
+        context.release()
+    _WORKER_CONTEXT.clear()
+
+
+# Sobol indices and Shapley values
+
+
+def sobol_indices(
+    y_a: FloatArray, y_b: FloatArray, y_ab: FloatArray
+) -> tuple[FloatArray, FloatArray]:
+    """First-order (Saltelli et al. 2010) and total (Jansen 1999) indices.
+
+    Parameters
+    ----------
+    y_a, y_b : ndarray, shape (n,)
+        The output at the rows of the two sample matrices.
+    y_ab : ndarray, shape (d, n)
+        Row ``i``: the output at ``A`` with column ``i`` taken from ``B``.
+
+    Returns
+    -------
+    first, total : ndarray, shape (d,)
+
+    Notes
+    -----
+    The first-order product is of outputs centred on the mean of every
+    finite output (``A``, ``B`` and ``AB`` together, as SALib centres them),
+    so adding a constant to every output changes neither index; uncentred,
+    the first-order estimate moves with the outputs' origin. The total index
+    is a difference of outputs and needs no centring.
+    """
+    variance = np.var(np.concatenate([y_a, y_b]), ddof=1)
+    everything = np.concatenate([y_a, y_b, y_ab.ravel()])
+    finite = everything[np.isfinite(everything)]
+    centre = finite.mean() if finite.size else np.nan
+    first = np.mean((y_b - centre) * (y_ab - y_a), axis=1) / variance
+    total = 0.5 * np.mean((y_a - y_ab) ** 2, axis=1) / variance
+    return first, total
+
+
+def sobol_intervals(
+    y_a: FloatArray,
+    y_b: FloatArray,
+    y_ab: FloatArray,
+    *,
+    n_resamples: int = N_SOBOL_RESAMPLES,
+    seed: int = 0,
+    level: float = 0.95,
+) -> pd.DataFrame:
+    """``sobol_indices`` with percentile intervals from resampling the rows.
+
+    Parameters
+    ----------
+    y_a, y_b : ndarray, shape (n,)
+    y_ab : ndarray, shape (d, n)
+    n_resamples : int, optional
+    seed : int, optional
+    level : float, optional
+
+    Returns
+    -------
+    table : pandas.DataFrame
+        One row per factor position: ``first``, ``first_low``,
+        ``first_high``, ``total``, ``total_low``, ``total_high``, then
+        ``finite_rows`` (the rows whose three outputs are all finite),
+        ``first_finite_draws`` and ``total_finite_draws`` (the resamples
+        giving a finite index, those the interval is taken over). An index
+        is NaN when an output is missing or none varies, and then so is its
+        interval.
+    """
+    rng = np.random.default_rng(seed)
+    draws_first, draws_total = [], []
+    # an output that does not vary, or is missing, has no index: NaN
+    with np.errstate(divide="ignore", invalid="ignore"):
+        first, total = sobol_indices(y_a, y_b, y_ab)
+        for _ in range(n_resamples):
+            rows = rng.integers(len(y_a), size=len(y_a))
+            drawn_first, drawn_total = sobol_indices(y_a[rows], y_b[rows], y_ab[:, rows])
+            draws_first.append(drawn_first)
+            draws_total.append(drawn_total)
+    # each interval over the finite draws only
+    first_bounds, total_bounds = (
+        np.array(percentile_intervals(np.where(np.isfinite(draws), draws, np.nan), level))
+        for draws in (np.array(draws_first), np.array(draws_total))
+    )
+    first_bounds[:, np.isnan(first)] = np.nan
+    total_bounds[:, np.isnan(total)] = np.nan
+    finite_rows = (np.isfinite(y_a) & np.isfinite(y_b) & np.isfinite(y_ab)).sum(axis=1)
+    return pd.DataFrame(
+        {
+            "first": first,
+            "first_low": first_bounds[0],
+            "first_high": first_bounds[1],
+            "total": total,
+            "total_low": total_bounds[0],
+            "total_high": total_bounds[1],
+            "finite_rows": finite_rows,
+            "first_finite_draws": np.isfinite(draws_first).sum(axis=0),
+            "total_finite_draws": np.isfinite(draws_total).sum(axis=0),
+        }
+    )
+
+
+def shapley(
+    value: Callable[[frozenset[Any]], float],
+    factors: Iterable[Any],
+    *,
+    exact_up_to: int = SHAPLEY_EXACT_UP_TO,
+    n_permutations: int = SHAPLEY_PERMUTATIONS,
+    seed: int = 0,
+) -> tuple[dict[Any, float], dict[Any, float]]:
+    """Shapley values of ``value`` over ``factors``.
+
+    Parameters
+    ----------
+    value : callable
+        ``value(frozenset) -> float``, memoized by the caller.
+    factors : iterable
+    exact_up_to : int, optional
+        Exact over subsets for this many factors or fewer (standard errors
+        0); Monte Carlo over permutations beyond.
+    n_permutations : int, optional
+    seed : int, optional
+
+    Returns
+    -------
+    phi, error : dict
+        By factor: its Shapley value and its Monte Carlo standard error.
+    """
+    factors = tuple(factors)
+    n = len(factors)
+    if n <= exact_up_to:
+        phi = dict.fromkeys(factors, 0.0)
+        for i in factors:
+            others = [f for f in factors if f != i]
+            for k in range(n):
+                weight = math.factorial(k) * math.factorial(n - k - 1) / math.factorial(n)
+                for subset in itertools.combinations(others, k):
+                    s = frozenset(subset)
+                    phi[i] += weight * (value(s | {i}) - value(s))
+        return phi, dict.fromkeys(factors, 0.0)
+    rng = np.random.default_rng(seed)
+    contributions: dict[Any, list[float]] = {i: [] for i in factors}
+    for _ in range(n_permutations):
+        s = frozenset()
+        for i in rng.permutation(factors):
+            contributions[i].append(value(s | {i}) - value(s))
+            s = s | {i}
+    phi = {i: float(np.mean(c)) for i, c in contributions.items()}
+    error = {
+        i: float(np.std(c, ddof=1) / np.sqrt(n_permutations)) for i, c in contributions.items()
+    }
+    return phi, error
+
+
+def shapley_subsets(
+    factors: Sequence[Any],
+    *,
+    exact_up_to: int = SHAPLEY_EXACT_UP_TO,
+    n_permutations: int = SHAPLEY_PERMUTATIONS,
+    seed: int = 0,
+) -> list[frozenset[Any]]:
+    """Every subset ``shapley`` will ask the value of, without asking.
+
+    Parameters
+    ----------
+    factors : sequence
+    exact_up_to, n_permutations, seed
+        As ``shapley``'s.
+
+    Returns
+    -------
+    subsets : list of frozenset
+        Distinct, in the order first needed: every subset for the exact
+        path, else every prefix of the permutations ``shapley`` draws with
+        the same seed.
+    """
+    factors = tuple(factors)
+    if len(factors) <= exact_up_to:
+        return [
+            frozenset(subset)
+            for k in range(len(factors) + 1)
+            for subset in itertools.combinations(factors, k)
+        ]
+    rng = np.random.default_rng(seed)
+    found: dict[frozenset[Any], None] = {frozenset(): None}
+    for _ in range(n_permutations):
+        s: frozenset[Any] = frozenset()
+        for i in rng.permutation(factors):
+            s = s | {i}
+            found[s] = None
+    return list(found)
+
+
+# Analyses
+
+
+def _key_columns(template: Template) -> dict[str, Any]:
+    """A template's factors as output columns, tuples and None as text."""
+    return {
+        field.name: _as_text(getattr(template, field.name))
+        for field in dataclasses.fields(template)
+    }
+
+
+def _as_text(value: Any) -> Any:
+    if value is None or isinstance(value, tuple):
+        return json.dumps(value)
+    return value
+
+
+def _rows(
+    analysis: str,
+    keys: Sequence[Mapping[str, Any]],
+    templates: Sequence[Template],
+    outputs: Sequence[Mapping[str, Sequence[float]]],
+) -> pd.DataFrame:
+    """One row per configuration and ``Y``: the keys, factors, mean and each
+    session's value."""
+    rows = []
+    for key, template, found in zip(keys, templates, outputs, strict=True):
+        for name in Y_NAMES:
+            values = list(found[name])
+            rows.append(
+                {
+                    "analysis": analysis,
+                    **key,
+                    **_key_columns(template),
+                    "y": name,
+                    "value": _mean(values),
+                    **{f"replicate_{k}": value for k, value in enumerate(values)},
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _evaluate(
+    analysis: str,
+    keys: Sequence[Mapping[str, Any]],
+    templates: Sequence[Template],
+    references: Sequence[Template],
+    run_directory: str | os.PathLike[str],
+    workers: int,
+) -> tuple[pd.DataFrame, list[dict[str, list[float]]]]:
+    """An analysis's configurations on the reference sessions (``evaluate_many``),
+    each against its reference: ``_rows``' table and the outputs."""
+    compiled = {template: compile(template) for template in dict.fromkeys(references)}
+    outputs = evaluate_many(
+        [compile(template) for template in templates],
+        [compiled[template] for template in references],
+        run_directory,
+        workers=workers,
+    )
+    return _rows(analysis, keys, templates, outputs), outputs
+
+
+def one_at_a_time(
+    family: str, run_directory: str | os.PathLike[str], *, workers: int = 1
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Each factor at each of its values, every other at the reference.
+
+    Parameters
+    ----------
+    family : {"spikes", "lfp"}
+    run_directory : str or path-like
+    workers : int, optional
+
+    Returns
+    -------
+    rows : pandas.DataFrame
+        ``_rows``' output: ``analysis``, ``factor``, ``level``, the factors,
+        ``y``, ``value`` and each session's value; the reference's own rows
+        have ``factor`` ``"reference"``.
+    changes : pandas.DataFrame
+        One row per factor, level and ``Y``: ``factor``, ``level``, ``y``,
+        ``reference`` (its mean), ``value`` (the mean at the level),
+        ``change`` (the mean over the sessions of the level's value minus the
+        reference's on the same session, where both are finite; not
+        ``value`` minus ``reference`` when a session is missing from one)
+        with ``low`` and ``high``, a 95 % ``paired_bootstrap`` interval over
+        the sessions, and ``n_sessions``, the sessions it rests on (no
+        interval from one).
+    """
+    reference = reference_template(family)
+    keys: list[dict[str, Any]] = [{"factor": "reference", "level": ""}]
+    templates: list[Template] = [reference]
+    for factor in factor_space(RECIPES, family):
+        for level in factor.points():
+            keys.append({"factor": factor.name, "level": _as_text(level)})
+            templates.append(dataclasses.replace(reference, **{factor.name: level}))
+    rows, outputs = _evaluate(
+        "oat", keys, templates, [reference] * len(templates), run_directory, workers
+    )
+    changes = [
+        {
+            **key,
+            "y": name,
+            "reference": _mean(outputs[0][name]),
+            "value": _mean(found[name]),
+            **session_interval(np.subtract(found[name], outputs[0][name])),
+        }
+        for key, found in zip(keys[1:], outputs[1:], strict=True)
+        for name in Y_NAMES
+    ]
+    return rows, pd.DataFrame(changes)
+
+
+def session_interval(values: ArrayLike, level: float = 0.95) -> dict[str, float]:
+    """The mean of per-session values with a paired bootstrap interval.
+
+    ``paired_bootstrap`` over the sessions (``analyze.N_RESAMPLES`` draws, its
+    seed), the statistic the mean of the finite values, computed draw for draw
+    from ``resample_weights``, the counts of each session in each draw.
+
+    Parameters
+    ----------
+    values : array_like, shape (n_sessions,)
+        NaN where a session has no value.
+    level : float, optional
+
+    Returns
+    -------
+    interval : dict of str to float
+        ``change`` (the mean of the finite values), ``low`` and ``high``,
+        and ``n_sessions``, the sessions with a finite value; the interval
+        is NaN with fewer than two, since one session has no spread to
+        resample.
+    """
+    values = np.asarray(values, dtype=float)
+    finite = np.isfinite(values)
+    n_sessions = int(finite.sum())
+    low = high = float("nan")
+    if n_sessions > 1:
+        weights = resample_weights(len(values)) * finite
+        totals = weights.sum(axis=1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            draws = (weights @ np.where(finite, values, 0.0)) / totals
+        (low,), (high,) = percentile_intervals(draws[:, np.newaxis], level)
+    return {
+        "change": _mean(values.tolist()),
+        "low": float(low),
+        "high": float(high),
+        "n_sessions": n_sessions,
+    }
+
+
+def sobol_design(
+    factors: Sequence[Factor], reference: TemplateT, n: int, seed: int = SOBOL_SEED
+) -> tuple[list[TemplateT], list[TemplateT], list[list[TemplateT]]]:
+    """The configurations of a Sobol analysis.
+
+    Parameters
+    ----------
+    factors : sequence of Factor
+        ``d`` factors.
+    reference : template
+        The values of the factors not varied.
+    n : int
+        Rows of each sample matrix.
+    seed : int, optional
+
+    Returns
+    -------
+    a, b : list of template
+        The rows of ``A`` and ``B``, the two halves of one scrambled Sobol
+        sample of ``2 d`` columns (``scipy.stats.qmc.Sobol``), mapped by
+        ``Factor.value``.
+    ab : list of list of template
+        ``ab[i]``: the rows of ``A`` with column ``i`` from ``B``.
+    """
+    d = len(factors)
+    sample = qmc.Sobol(d=2 * d, scramble=True, seed=seed).random(n)
+    a_rows, b_rows = sample[:, :d], sample[:, d:]
+
+    def configuration(row: FloatArray) -> TemplateT:
+        return dataclasses.replace(
+            reference,
+            **{
+                factor.name: factor.value(float(u))
+                for factor, u in zip(factors, row, strict=True)
+            },
+        )
+
+    ab = []
+    for i in range(d):
+        mixed = a_rows.copy()
+        mixed[:, i] = b_rows[:, i]
+        ab.append([configuration(row) for row in mixed])
+    return (
+        [configuration(row) for row in a_rows],
+        [configuration(row) for row in b_rows],
+        ab,
+    )
+
+
+def sobol(
+    family: str,
+    run_directory: str | os.PathLike[str],
+    *,
+    n: int = SOBOL_N,
+    workers: int = 1,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """First-order and total Sobol indices of every ``Y`` over the family's space.
+
+    Parameters
+    ----------
+    family : {"spikes", "lfp"}
+    run_directory : str or path-like
+    n : int, optional
+        Rows of each sample matrix: ``n (d + 2)`` configurations.
+    workers : int, optional
+
+    Returns
+    -------
+    rows : pandas.DataFrame
+        ``_rows``' output: ``matrix`` (``"A"``, ``"B"`` or ``"AB"``),
+        ``column`` (the factor from ``B``, ``AB`` only), ``row``, then the
+        factors, ``y``, ``value`` and each session's, and ``sobol_n``, ``n``.
+    indices : pandas.DataFrame
+        One row per ``Y`` and factor: ``y``, ``factor``, then
+        ``sobol_intervals``' columns and ``sobol_n``.
+    """
+    factors = factor_space(RECIPES, family)
+    reference = reference_template(family)
+    a, b, ab = sobol_design(factors, reference, n)
+    keys: list[dict[str, Any]] = [{"matrix": "A", "column": "", "row": r} for r in range(n)]
+    keys += [{"matrix": "B", "column": "", "row": r} for r in range(n)]
+    templates: list[Template] = [*a, *b]
+    for factor, mixed in zip(factors, ab, strict=True):
+        keys += [{"matrix": "AB", "column": factor.name, "row": r} for r in range(n)]
+        templates += mixed
+    rows, outputs = _evaluate(
+        "sobol", keys, templates, [reference] * len(templates), run_directory, workers
+    )
+    tables = []
+    d = len(factors)
+    for name in Y_NAMES:
+        y = np.array([_mean(found[name]) for found in outputs])
+        table = sobol_intervals(y[:n], y[n : 2 * n], y[2 * n :].reshape(d, n))
+        tables.append(table.assign(y=name, factor=[f.name for f in factors]))
+    indices = pd.concat(tables, ignore_index=True)
+    columns = ["y", "factor", *[c for c in indices.columns if c not in ("y", "factor")]]
+    return rows.assign(sobol_n=n), indices[columns].assign(sobol_n=n)
+
+
+def _differing(first: Template, second: Template) -> tuple[str, ...]:
+    return tuple(
+        field.name
+        for field in dataclasses.fields(first)
+        if getattr(first, field.name) != getattr(second, field.name)
+    )
+
+
+class _Agreement:
+    """``pair_agreement``'s means, built one session at a time."""
+
+    def __init__(self, templates: Mapping[str, Template]) -> None:
+        self.pipelines = {
+            config_id: compile(template) for config_id, template in templates.items()
+        }
+        self.jaccards: dict[tuple[str, str], list[float]] = {
+            pair: [] for pair in itertools.combinations(self.pipelines, 2)
+        }
+
+    def visit(self, context: SessionContext) -> None:
+        for (a, b), values in self.jaccards.items():
+            values.append(
+                jaccard(context.events(self.pipelines[a]), context.events(self.pipelines[b]))
+            )
+
+    def table(self) -> dict[tuple[str, str], float]:
+        return {pair: _mean(values) for pair, values in self.jaccards.items()}
+
+
+def pair_agreement(
+    templates: Mapping[str, Template], contexts: Iterable[SessionContext]
+) -> dict[tuple[str, str], float]:
+    """The mean Jaccard of every pair of templates' events over the sessions.
+
+    Parameters
+    ----------
+    templates : mapping of str to template
+        By configuration id, such as ``distinct_templates``'.
+    contexts : iterable of SessionContext
+        The ``K`` reference sessions, taken one at a time and released after.
+
+    Returns
+    -------
+    agreement : dict of (str, str) to float
+        By ``(a, b)``, ``a`` before ``b`` in ``templates``: the mean over the
+        sessions of ``jaccard`` of their events, ``jaccard_reference`` of
+        ``a`` against ``b``.
+    """
+    agreement = _Agreement(templates)
+    _visit(contexts, [agreement])
+    return agreement.table()
+
+
+def shapley_pair_list(
+    family: str, agreement: Mapping[tuple[str, str], float]
+) -> list[tuple[str, str]]:
+    """The pairs decomposed: each represented template (``distinct_templates``)
+    against the family's reference, then the ``N_LOWEST_PAIRS`` pairs of them
+    with the lowest mean Jaccard on the reference sessions.
+
+    Parameters
+    ----------
+    family : {"spikes", "lfp"}
+    agreement : mapping of (str, str) to float
+        ``pair_agreement`` of the family's represented templates.
+
+    Returns
+    -------
+    pairs : list of (str, str)
+        ``(a, b)`` by configuration id, ``"reference"`` for the reference.
+    """
+    ids = distinct_templates(family_templates(RECIPES, family))
+    lowest = sorted((value, a, b) for (a, b), value in agreement.items())
+    pairs = [(config_id, REFERENCE_CONDITION) for config_id in ids]
+    return pairs + [(a, b) for _, a, b in lowest[:N_LOWEST_PAIRS]]
+
+
+def shapley_pairs(
+    family: str,
+    run_directory: str | os.PathLike[str],
+    agreement: Mapping[tuple[str, str], float],
+    *,
+    workers: int = 1,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Shapley decompositions of the difference between pairs of configurations.
+
+    For a pair ``(a, b)`` differing in the factors ``D``, ``v(S)`` is a ``Y``
+    of ``a`` with the factors in ``S`` taken from ``b``, ``b`` its reference:
+    ``jaccard_reference`` (so ``v(empty) = J(a, b)`` and ``v(D) = 1``) and ``f1``.
+
+    Parameters
+    ----------
+    family : {"spikes", "lfp"}
+    run_directory : str or path-like
+    agreement : mapping of (str, str) to float
+        ``pair_agreement`` of the family's represented templates, from which
+        ``shapley_pair_list`` takes the pairs.
+    workers : int, optional
+
+    Returns
+    -------
+    rows : pandas.DataFrame
+        ``_rows``' output: ``pair`` (``"a|b"``), ``subset`` (the factors from
+        ``b``, comma-separated), the factors, ``y``, ``value`` and each
+        session's.
+    values : pandas.DataFrame
+        One row per pair, ``Y`` and factor: ``pair``, ``a``, ``b``, ``y``,
+        ``factor``, ``phi``, ``error`` (Monte Carlo standard error, 0 when
+        exact), ``v_empty``, ``v_all``.
+    """
+    reference = reference_template(family)
+    templates = {**family_templates(RECIPES, family), REFERENCE_CONDITION: reference}
+    pairs = shapley_pair_list(family, agreement)
+    keys: list[dict[str, Any]] = []
+    configurations: list[Template] = []
+    references: list[Template] = []
+    for a, b in pairs:
+        first, second = templates[a], templates[b]
+        for subset in shapley_subsets(_differing(first, second)):
+            keys.append({"pair": f"{a}|{b}", "subset": ",".join(sorted(subset))})
+            configurations.append(
+                dataclasses.replace(first, **{name: getattr(second, name) for name in subset})
+            )
+            references.append(second)
+    rows, outputs = _evaluate(
+        "shapley", keys, configurations, references, run_directory, workers
+    )
+    found = {
+        (key["pair"], key["subset"]): output for key, output in zip(keys, outputs, strict=True)
+    }
+    values: list[dict[str, Any]] = []
+    for a, b in pairs:
+        differing = _differing(templates[a], templates[b])
+        for name in ("jaccard_reference", "f1"):
+
+            def value(subset: frozenset[str], pair: str = f"{a}|{b}", y: str = name) -> float:
+                return _mean(found[pair, ",".join(sorted(subset))][y])
+
+            phi, error = shapley(value, differing)
+            ends = {"v_empty": value(frozenset()), "v_all": value(frozenset(differing))}
+            values.extend(
+                {
+                    "pair": f"{a}|{b}",
+                    "a": a,
+                    "b": b,
+                    "y": name,
+                    "factor": factor,
+                    "phi": phi[factor],
+                    "error": error[factor],
+                    **ends,
+                }
+                for factor in differing
+            )
+    return rows, pd.DataFrame(values)
+
+
+def recorded_failures(run_directory: str | os.PathLike[str]) -> set[tuple[str, str]]:
+    """The configurations' public calls the run recorded failing on its
+    reference sessions.
+
+    Parameters
+    ----------
+    run_directory : str or path-like
+
+    Returns
+    -------
+    failures : set of (str, str)
+        ``(config_id, session_id)`` of each ``recipe:`` row of the reference
+        condition's ``failures.csv``.
+    """
+    table = read_table(
+        Path(run_directory) / "conditions" / REFERENCE_CONDITION / "failures.csv"
+    )
+    recipes = table[table["method"].str.startswith("recipe:")]
+    return {
+        (method.removeprefix("recipe:"), session_id)
+        for method, session_id in zip(recipes["method"], recipes["session_id"], strict=True)
+    }
+
+
+def fixed_point_outputs(
+    recipes: Sequence[RecipeConfig],
+    contexts: Iterable[SessionContext],
+    families: Sequence[str] = FAMILIES,
+    recorded: Collection[tuple[str, str]] = (),
+) -> pd.DataFrame:
+    """Every configuration without a template, its reason and its public-call ``Y``s.
+
+    Parameters
+    ----------
+    recipes : sequence of RecipeConfig
+    contexts : iterable of SessionContext
+        The ``K`` reference sessions, taken one at a time and released after.
+    families : sequence of {"spikes", "lfp"}, optional
+        The families whose expression and reference the ``Y``s are against.
+    recorded : collection of (str, str), optional
+        ``recorded_failures``: the (configuration, session) calls the run
+        recorded failing, the only ones allowed to fail here.
+
+    Returns
+    -------
+    table : pandas.DataFrame
+        One row per fixed point and family: ``config_id``, ``family``,
+        ``reason``, then each of ``Y_NAMES`` (the mean over the sessions)
+        against that family's expression and reference configuration. A
+        configuration whose call raises on a session, as the run recorded,
+        keeps its row, the error in ``error`` (and on standard error) and its
+        ``Y``s missing.
+
+    Raises
+    ------
+    RuntimeError
+        A call raised where the run recorded no failure: the sessions or the
+        method are not those the run had.
+    Exception
+        Whatever building a call's inputs raises.
+    """
+    fixed = _FixedPoints(recipes, families, recorded)
+    _visit(contexts, [fixed])
+    return fixed.table()
+
+
+class _FixedPoints:
+    """``fixed_point_outputs``' table, built one session at a time; a failure
+    the run did not record is raised by ``table``."""
+
+    def __init__(
+        self,
+        recipes: Sequence[RecipeConfig],
+        families: Sequence[str],
+        recorded: Collection[tuple[str, str]],
+    ) -> None:
+        self.fixed = [config for config in recipes if config.config_id in FIXED_POINTS]
+        self.references = {family: compile(reference_template(family)) for family in families}
+        self.recorded = recorded
+        self.per_session: dict[tuple[str, str], list[dict[str, float]]] = {}
+        self.errors: dict[str, str] = {}
+        # the first failure the run did not record: the message and the error
+        self.unrecorded: tuple[str, Exception] | None = None
+
+    def visit(self, context: SessionContext) -> None:
+        if self.unrecorded is not None:
+            return
+        for config in self.fixed:
+            if config.config_id in self.errors:
+                continue
+            call = _public_call(config, context.session)
+            try:
+                events = bounds(call())
+            except Exception as error:  # a failure the run recorded is data
+                text = f"{type(error).__name__}: {error}"[:200]
+                if (config.config_id, context.label) not in self.recorded:
+                    msg = (
+                        f"{config.config_id} raised on {context.label} ({text}), but the "
+                        "run recorded no such failure."
+                    )
+                    self.unrecorded = (msg, error)
+                    return
+                print(
+                    f"{config.config_id} failed on {context.label}, as the run recorded: "
+                    f"{text}",
+                    file=sys.stderr,
+                )
+                self.errors[config.config_id] = text
+                continue
+            for family, reference in self.references.items():
+                self.per_session.setdefault((config.config_id, family), []).append(
+                    session_outputs(events, context.events(reference), context, family)
+                )
+
+    def table(self) -> pd.DataFrame:
+        if self.unrecorded is not None:
+            msg, error = self.unrecorded
+            raise RuntimeError(msg) from error
+        rows = []
+        for config in self.fixed:
+            for family in self.references:
+                found = self.per_session.get((config.config_id, family), [])
+                failed = config.config_id in self.errors
+                rows.append(
+                    {
+                        "config_id": config.config_id,
+                        "family": family,
+                        "reason": FIXED_POINTS[config.config_id],
+                        **{
+                            name: float("nan")
+                            if failed
+                            else _mean([outputs[name] for outputs in found])
+                            for name in Y_NAMES
+                        },
+                        "error": self.errors.get(config.config_id, ""),
+                    }
+                )
+        return pd.DataFrame(rows)
+
+
+# Figures
+
+
+def plot_sobol(indices: pd.DataFrame, family: str, *, caveat: str = "") -> Any:
+    """Bars of first-order and total indices with their intervals, a panel per ``Y``;
+    a missing index is marked "NaN" where its bar would be.
+
+    Parameters
+    ----------
+    indices : pandas.DataFrame
+        ``sobol``'s second table.
+    family : str
+    caveat : str, optional
+        ``family_caveat``'s, under the title.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
+    import matplotlib.pyplot as plt
+
+    names = list(dict.fromkeys(indices["y"]))
+    figure, axes = plt.subplots(
+        len(names), 1, figsize=(7, 2.2 * len(names)), sharex=True, squeeze=False
+    )
+    for axis, name in zip(axes[:, 0], names, strict=True):
+        table = indices[indices["y"] == name]
+        x = np.arange(len(table))
+        for offset, kind, color in ((-0.2, "first", "#0072B2"), (0.2, "total", "#E69F00")):
+            values = table[kind].to_numpy(dtype=float)
+            errors = np.abs(table[[f"{kind}_low", f"{kind}_high"]].to_numpy(float).T - values)
+            axis.bar(x + offset, values, 0.4, yerr=errors, color=color, label=kind)
+            for missing in x[np.isnan(values)]:
+                axis.text(missing + offset, 0, "NaN", rotation=90, ha="center", va="bottom")
+        axis.set_ylabel(name)
+        axis.axhline(0, color="black", linewidth=0.5)
+    axes[-1, 0].set_xticks(np.arange(len(table)), table["factor"], rotation=45, ha="right")
+    axes[0, 0].legend(frameon=False)
+    axes[0, 0].set_title(f"Sobol indices, {family}" + (f"\n{caveat}" if caveat else ""))
+    figure.tight_layout()
+    return figure
+
+
+def plot_shapley(values: pd.DataFrame, pair: str, y: str, *, caveat: str = "") -> Any:
+    """A waterfall of one pair's Shapley values for one ``Y``, with standard errors.
+
+    Parameters
+    ----------
+    values : pandas.DataFrame
+        ``shapley_pairs``' second table.
+    pair : str
+    y : str
+    caveat : str, optional
+        ``family_caveat``'s, under the title.
+
+    Returns
+    -------
+    figure : matplotlib.figure.Figure
+    """
+    import matplotlib.pyplot as plt
+
+    table = values[(values["pair"] == pair) & (values["y"] == y)]
+    start = float(table["v_empty"].iloc[0])
+    phi = table["phi"].to_numpy(dtype=float)
+    bottoms = start + np.r_[0.0, np.cumsum(phi)[:-1]]
+    figure, axis = plt.subplots(figsize=(6, 3))
+    colors = np.where(phi >= 0, "#009E73", "#D55E00")
+    axis.bar(np.arange(len(phi)), phi, bottom=bottoms, color=colors, yerr=table["error"])
+    axis.axhline(start, color="grey", linewidth=0.5)
+    axis.axhline(float(table["v_all"].iloc[0]), color="black", linewidth=0.5)
+    axis.set_xticks(np.arange(len(phi)), table["factor"], rotation=45, ha="right")
+    axis.set_ylabel(y)
+    axis.set_title(pair + (f"\n{caveat}" if caveat else ""))
+    figure.tight_layout()
+    return figure
+
+
+# Command line
+
+
+@dataclasses.dataclass(frozen=True)
+class FamilyOutput:
+    """Where the command writes a family's outputs, each named with the family
+    first and every table with its ``caveat`` column.
+
+    Attributes
+    ----------
+    family : str
+    caveat : str
+        ``family_caveat``'s; the figures take it in their titles.
+    results : pathlib.Path
+        The results directory: tables as ``<family>_<name>.csv``, figures as
+        ``<family>_<name>.png``.
+    rows : pathlib.Path
+        Each configuration's rows, ``<family>_<name>.csv.gz``.
+    """
+
+    family: str
+    caveat: str
+    results: Path
+    rows: Path
+
+    def table(self, name: str, frame: pd.DataFrame) -> None:
+        """Write a results table as the analyses write theirs
+        (``analyze.FLOAT_FORMAT``, refused over ``analyze.SIZE_LIMIT``)."""
+        frame = frame.assign(caveat=self.caveat)
+        content = frame.to_csv(index=False, float_format=FLOAT_FORMAT).encode()
+        write_result(self.results / f"{self.family}_{name}.csv", content)
+
+    def raw(self, name: str, frame: pd.DataFrame) -> None:
+        """Write an analysis's rows, one per configuration and ``Y``."""
+        _write_table(
+            frame.assign(caveat=self.caveat), self.rows / f"{self.family}_{name}.csv.gz"
+        )
+
+    def figure(self, name: str, figure: Any) -> None:
+        """Write a figure as the analyses write theirs (``analyze._png``), and
+        close it."""
+        write_result(self.results / f"{self.family}_{name}.png", _png(figure))
+
+
+def _free_cores() -> float:
+    """Cores not busy by the one-minute load average."""
+    load = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
+    return max(1.0, (os.cpu_count() or 1) - load)
+
+
+def smoke(
+    family: str, run_directory: str | os.PathLike[str], *, workers: int
+) -> dict[str, Any]:
+    """Time a slice of the Sobol design on one reference session.
+
+    The run's validation report is checked first (``check_report``), as
+    before every analysis. The configurations are the first ``SMOKE_ROWS``
+    rows of every sample matrix of the design at ``SOBOL_N``, evaluated as
+    ``evaluate_many`` evaluates them: in ``evaluation_order``, on one
+    session's caches.
+
+    Parameters
+    ----------
+    family : {"spikes", "lfp"}
+    run_directory : str or path-like
+    workers : int
+        For the extrapolation.
+
+    Returns
+    -------
+    report : dict
+        ``seconds_per_configuration``, ``context_seconds`` (simulating and
+        checking the session), ``peak_rss_bytes``, ``d``, the
+        configurations and hours of each analysis at ``workers``.
+    """
+    check_report(run_directory, reference_parameters(run_directory))
+    started = wall_clock.perf_counter()
+    context = next(iter(reference_contexts(run_directory, [0])))
+    context_seconds = wall_clock.perf_counter() - started
+    factors = factor_space(RECIPES, family)
+    reference = reference_template(family)
+    a, b, ab = sobol_design(factors, reference, SOBOL_N)
+    pipelines = [
+        compile(template) for matrix in (a, b, *ab) for template in matrix[:SMOKE_ROWS]
+    ]
+    base = compile(reference)
+    context.events(base)
+    begun = wall_clock.perf_counter()
+    for position in evaluation_order(pipelines):
+        evaluate_session(pipelines[position], context, base)
+    seconds = (wall_clock.perf_counter() - begun) / len(pipelines)
+    d = len(factors)
+    templates = distinct_templates(family_templates(RECIPES, family))
+
+    def n_subsets(size: int) -> int:
+        # the configurations shapley_pairs evaluates for a pair differing in
+        # ``size`` factors
+        return len(shapley_subsets(tuple(range(size))))
+
+    pairwise = len(templates) * (len(templates) - 1) // 2
+    largest = max(
+        (len(_differing(x, y)) for x, y in itertools.combinations(templates.values(), 2)),
+        default=0,
+    )
+    counts = {
+        "oat": 1 + sum(len(factor.points()) for factor in factors),
+        **{f"sobol_{n}": n * (d + 2) for n in SOBOL_N_CHOICES},
+        "shapley_reference_pairs": sum(
+            n_subsets(len(_differing(written, reference))) for written in templates.values()
+        ),
+        "shapley_lowest_pairs_at_most": min(N_LOWEST_PAIRS, pairwise) * n_subsets(largest),
+    }
+
+    def hours(configurations: int) -> float:
+        return configurations * K * seconds / workers / 3600
+
+    return {
+        "family": family,
+        "free_cores": _free_cores(),
+        "n_in_space": len(templates),
+        "d": d,
+        "configurations_timed": len(pipelines),
+        "seconds_per_configuration": seconds,
+        "context_seconds": context_seconds,
+        "peak_rss_bytes": peak_rss_bytes(),
+        "workers": workers,
+        "configurations": counts,
+        "hours": {name: hours(count) for name, count in counts.items()},
+    }
+
+
+def verify_family(
+    family: str,
+    run_directory: str | os.PathLike[str],
+    *,
+    also: Sequence[Visitor] = (),
+    on_reference: Sequence[Visitor] = (),
+) -> pd.DataFrame:
+    """``verify_all`` on the edge sessions and the ``K`` reference sessions.
+
+    One pass over the sessions, each simulated and checked once: other tables
+    built from them are built in the same pass.
+
+    Parameters
+    ----------
+    family : {"spikes", "lfp"}
+        The family whose templates are checked; every fixed point is listed.
+    run_directory : str or path-like
+    also : sequence of Visitor, optional
+        Visit every session after the verification.
+    on_reference : sequence of Visitor, optional
+        Visit the reference sessions after those.
+
+    Returns
+    -------
+    table : pandas.DataFrame
+        ``verify_all``'s, after ``check_report``.
+    """
+    check_report(run_directory, reference_parameters(run_directory))
+    templates = family_templates(RECIPES, family)
+    verification = _Verification(
+        [
+            config
+            for config in RECIPES
+            if config.config_id in FIXED_POINTS or config.config_id in templates
+        ]
+    )
+    reference = f"{REFERENCE_CONDITION}/"
+    for context in verification_contexts(run_directory):
+        on_context = [verification, *also]
+        if context.label.startswith(reference):
+            on_context += on_reference
+        _visit([context], on_context)
+    return verification.table()
+
+
+def verification_contexts(run_directory: str | os.PathLike[str]) -> Iterator[SessionContext]:
+    """The sessions templates are verified on, one at a time.
+
+    Parameters
+    ----------
+    run_directory : str or path-like
+
+    Yields
+    ------
+    context : SessionContext
+        ``edge_sessions`` of the run's reference parameters, labelled
+        ``"edge/<name>"``, then ``reference_contexts``.
+    """
+    for name, session in edge_sessions(reference_parameters(run_directory)).items():
+        yield SessionContext(session, f"edge/{name}")
+    yield from reference_contexts(run_directory)
+
+
+def family_caveat(n_distinct: int, *, below_minimum: bool) -> str:
+    """What every output of a family with too few represented methods says.
+
+    Parameters
+    ----------
+    n_distinct : int
+        The family's represented methods, identical templates once.
+    below_minimum : bool
+        Whether the maintainer chose to run Sobol and Shapley regardless.
+
+    Returns
+    -------
+    caveat : str
+        Empty at ``MINIMUM_IN_SPACE`` methods or more.
+    """
+    if n_distinct >= MINIMUM_IN_SPACE:
+        return ""
+    caveat = f"rests on {n_distinct} methods, below the design's {MINIMUM_IN_SPACE}"
+    return f"{caveat}; the maintainer chose to run it" if below_minimum else caveat
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    """The command line; see the module docstring."""
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument(
+        "--run-name", required=True, help="the finished run whose reference condition is read"
+    )
+    parser.add_argument(
+        "--family", required=True, choices=FAMILIES, help="the family of templates analysed"
+    )
+    parser.add_argument(
+        "--analysis",
+        default="all",
+        choices=("oat", "sobol", "shapley", "all"),
+        help="one factor at a time, Sobol indices, Shapley pairs, or all three in turn",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=max(1, (os.cpu_count() or 2) - 1),
+        help="processes evaluating configurations (default: the cores less one)",
+    )
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="time a few configurations on one session and print each analysis's cost",
+    )
+    parser.add_argument(
+        "--sobol-n",
+        type=int,
+        choices=SOBOL_N_CHOICES,
+        default=SOBOL_N,
+        help=f"rows of each Sobol sample matrix (default {SOBOL_N}; 128 when the smoke "
+        "test puts 256 past four hours)",
+    )
+    parser.add_argument(
+        "--below-minimum",
+        action="store_true",
+        help=(
+            f"run Sobol and Shapley on a family with fewer than {MINIMUM_IN_SPACE} "
+            "represented methods, every output of the family labelled so"
+        ),
+    )
+    parser.add_argument(
+        "--run-directory",
+        help="the run's directory (default: examples/benchmark/output/<run-name>)",
+    )
+    parser.add_argument(
+        "--results-directory",
+        help="where to write (default: examples/benchmark/results/<run-name>/attribution)",
+    )
+    args = parser.parse_args(argv)
+    if args.workers < 1:
+        parser.error("--workers must be at least 1.")
+    run_directory = Path(args.run_directory or OUTPUT / args.run_name)
+    results = Path(args.results_directory or RESULTS / args.run_name / "attribution")
+    if args.smoke:
+        print(json.dumps(smoke(args.family, run_directory, workers=args.workers), indent=2))
+        return
+    templates = family_templates(RECIPES, args.family)
+    n_distinct = len(distinct_templates(templates))
+    caveat = family_caveat(n_distinct, below_minimum=args.below_minimum)
+    refused = bool(caveat) and not args.below_minimum
+    refusal = (
+        f"The {args.family} family has {n_distinct} represented methods, fewer than "
+        f"{MINIMUM_IN_SPACE}: no Sobol or Shapley analysis is run (--below-minimum "
+        "runs them, labelled)."
+    )
+    if args.analysis in ("sobol", "shapley") and refused:
+        raise SystemExit(refusal)
+    if caveat:
+        print(f"The {args.family} family {caveat}.", file=sys.stderr)
+    analyses = ("oat", "sobol", "shapley") if args.analysis == "all" else (args.analysis,)
+    # the sensitivity, the fixed points and the pairs' agreement are built in
+    # the verification's pass over the sessions
+    perturbed = _Sensitivity(RECIPES, args.family)
+    fixed = _FixedPoints(RECIPES, (args.family,), recorded_failures(run_directory))
+    agreement = _Agreement(distinct_templates(templates))
+    wanted: list[Visitor] = [fixed]
+    if "shapley" in analyses and not refused:
+        wanted.append(agreement)
+    verification = verify_family(
+        args.family, run_directory, also=[perturbed], on_reference=wanted
+    )
+    found = set(
+        verification.loc[
+            verification["in_space"] & (verification["family"] == args.family), "config_id"
+        ]
+    )
+    if found != set(templates):
+        failed = verification[verification["config_id"].isin(set(templates) - found)]
+        msg = "Templates not verified on the run's sessions:\n" + "\n".join(
+            f"- {row.config_id}: {row.reason}" for row in failed.itertuples()
+        )
+        raise SystemExit(msg)
+    out = FamilyOutput(args.family, caveat, results, run_directory / "attribution")
+    out.rows.mkdir(parents=True, exist_ok=True)
+    out.results.mkdir(parents=True, exist_ok=True)
+    out.table("in_space", verification)
+    sensitive = perturbed.table()
+    out.table("sensitivity", sensitive)
+    blind = sensitive.loc[~sensitive["exercised"]].drop_duplicates(["config_id", "factor"])
+    print(
+        f"{args.family}: {len(blind)} template values no perturbation changes on the "
+        f"verification sessions: {blind['factor'].value_counts().to_dict()}",
+        file=sys.stderr,
+    )
+    space = factor_space(RECIPES, args.family)
+    out.table(
+        "factor_space",
+        pd.DataFrame(
+            [
+                {"factor": f.name, "kind": f.kind, "levels": json.dumps(list(f.levels))}
+                for f in space
+            ]
+        ),
+    )
+    out.table("reference", pd.DataFrame([_key_columns(reference_template(args.family))]))
+    out.table("fixed_points", fixed.table())
+    for analysis in analyses:
+        if analysis != "oat" and refused:
+            raise SystemExit(refusal)
+        started = wall_clock.perf_counter()
+        if analysis == "oat":
+            rows, summary = one_at_a_time(args.family, run_directory, workers=args.workers)
+        elif analysis == "sobol":
+            rows, summary = sobol(
+                args.family, run_directory, n=args.sobol_n, workers=args.workers
+            )
+            out.figure("sobol", plot_sobol(summary, args.family, caveat=caveat))
+        else:
+            rows, summary = shapley_pairs(
+                args.family, run_directory, agreement.table(), workers=args.workers
+            )
+            for pair in dict.fromkeys(summary["pair"]):
+                slug = pair.replace("|", "__").replace(".", "-")
+                out.figure(
+                    f"shapley_{slug}",
+                    plot_shapley(summary, pair, "jaccard_reference", caveat=caveat),
+                )
+        out.raw(analysis, rows)
+        out.table(analysis, summary)
+        print(
+            f"{args.family} {analysis}: {len(rows) // len(Y_NAMES)} configurations, "
+            f"{wall_clock.perf_counter() - started:.0f} s",
+            file=sys.stderr,
+        )
+
+
+if __name__ == "__main__":
+    main()

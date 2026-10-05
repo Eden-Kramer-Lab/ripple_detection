@@ -191,6 +191,16 @@ def Zugaro_ripple_detector(
     are discarded. Csicsvari et al. 1999 [4]_ describe the summed rms-power
     thresholding this rule descends from.
 
+    The merge follows FMAToolbox: neighbors are merged only while the merged
+    event stays under ``maximum_duration``. buzcode's and neurocode's copies
+    merge on the gap alone and then discard events over the ceiling, so a
+    chain of close events they drop as one over-long event is kept here as
+    its separate pieces. To reproduce their rule, pass
+    ``maximum_duration=None`` and keep the events whose ``duration`` is at
+    most the ceiling. On one Buzsáki-lab session with buzcode's ``[50 150]``
+    ms durations, the capped merge gave 549 events against buzcode's 429; the
+    uncapped merge and ceiling gave exactly its 429.
+
     The same two-threshold rule appears independently in the van der Meer lab's
     ``getSWR`` (vandermeerlab, ``code-matlab/tasks/Replay_Analysis/getSWR.m``):
     140-200 Hz, the Hilbert envelope rather than the squared signal, boundaries
@@ -252,8 +262,9 @@ def Zugaro_ripple_detector(
         buzcode; neurocode's copy uses 2.5).
     minimum_inter_ripple_interval : float, optional
         Events separated by less than this are merged, provided the merged
-        event stays under ``maximum_duration``. Default is 0.030 s
-        (FMAToolbox; neurocode uses 0.050).
+        event stays under ``maximum_duration`` (FMAToolbox's rule; buzcode
+        and neurocode merge without that proviso, see above). Default is
+        0.030 s (FMAToolbox; neurocode uses 0.050).
     minimum_duration, maximum_duration : float, optional
         Events shorter or longer than these are discarded. Defaults are
         0.020 and 0.100 s (FMAToolbox; neurocode uses 0.025 and 0.500).

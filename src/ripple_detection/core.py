@@ -32,6 +32,9 @@ BoolArray = NDArray[np.bool_]
 IntArray = NDArray[np.integer]
 """A NumPy array of integers, usually sample indices."""
 
+StrArray = NDArray[np.str_]
+"""A NumPy array of strings, such as labels."""
+
 DEFAULT_RIPPLE_BAND = (150.0, 250.0)
 """Default passband in Hz, the most common choice in the replay literature."""
 
@@ -815,14 +818,23 @@ def _event_bounds(events: ArrayLike | pd.DataFrame) -> FloatArray:
     Raises
     ------
     ValueError
-        If an array is not ``(n_events, 2)``.
+        If an array is not ``(n_events, 2)`` (no events may also be an empty
+        list, shape ``(0,)``), or a DataFrame lacks ``start_time`` or
+        ``end_time``.
 
     """
     if isinstance(events, pd.DataFrame):
+        missing = [c for c in ("start_time", "end_time") if c not in events.columns]
+        if missing:
+            msg = (
+                f"Events as a DataFrame need 'start_time' and 'end_time' columns; missing "
+                f"{', '.join(map(repr, missing))}, has {list(events.columns)}."
+            )
+            raise ValueError(msg)
         bounds = events[["start_time", "end_time"]].to_numpy(dtype=float)
         return np.asarray(bounds, dtype=float).reshape(-1, 2)
     bounds = np.asarray(events, dtype=float)
-    if bounds.size == 0:
+    if bounds.shape == (0,):
         return np.empty((0, 2))
     if bounds.ndim != 2 or bounds.shape[1] != 2:
         msg = (
@@ -2124,17 +2136,8 @@ def _overlaps(
     to within about 1e-11 s, so an overlap measured from a session-clock
     origin rounds that far from its nominal value."""
     _check_non_negative(minimum_overlap=minimum_overlap)
-    events = _event_bounds(event_times)
-    reference = _event_bounds(reference_event_times)
-    for name, bounds in (("event_times", events), ("reference_event_times", reference)):
-        bad = ~np.isfinite(bounds).all(axis=1) | (bounds[:, 1] < bounds[:, 0])
-        if bad.any():
-            row = int(np.flatnonzero(bad)[0])
-            msg = (
-                f"{name} row {row} is {bounds[row].tolist()}: every start and end must be "
-                "finite, with the start no later than the end."
-            )
-            raise ValueError(msg)
+    events = _checked_bounds(event_times, "event_times")
+    reference = _checked_bounds(reference_event_times, "reference_event_times")
     if not (len(events) and len(reference)):
         return events, np.zeros(len(events), dtype=bool)
     # a zero-length reference has no duration to overlap
@@ -2545,15 +2548,7 @@ def _bound_tolerance(*arrays: FloatArray) -> float:
 def _checked_intervals(intervals: ArrayLike | pd.DataFrame, name: str) -> FloatArray:
     """``[start, end]`` rows that are finite, each start no later than its
     end, sorted by start and disjoint: each start after the previous end."""
-    bounds = _event_bounds(intervals)
-    bad = ~np.isfinite(bounds).all(axis=1) | (bounds[:, 1] < bounds[:, 0])
-    if bad.any():
-        row = int(np.flatnonzero(bad)[0])
-        msg = (
-            f"{name} row {row} is {bounds[row].tolist()}: every start and end must be "
-            "finite, with the start no later than the end."
-        )
-        raise ValueError(msg)
+    bounds = _checked_bounds(intervals, name)
     if np.any(np.diff(bounds[:, 0]) < 0):
         msg = f"{name} must be sorted by start time: {name}[np.argsort({name}[:, 0])]."
         raise ValueError(msg)
@@ -2690,7 +2685,8 @@ def _inside_mask(events: FloatArray, intervals: FloatArray) -> BoolArray:
 
 
 def _checked_bounds(event_times: ArrayLike | pd.DataFrame, name: str) -> FloatArray:
-    """Event bounds that are finite, each start no later than its end."""
+    """Event bounds that are finite, each start no later than its end; else
+    ``ValueError`` naming `name` and the first row that is not."""
     events = _event_bounds(event_times)
     bad = ~np.isfinite(events).all(axis=1) | (events[:, 1] < events[:, 0])
     if bad.any():

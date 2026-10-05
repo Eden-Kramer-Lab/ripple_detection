@@ -9,6 +9,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import pytest
+from _synthetic import _non_event_tables, _one_non_event_table
 
 import ripple_detection as rd
 from ripple_detection import (
@@ -605,6 +606,17 @@ class TestTimeOrigin:
         )
 
     @pytest.mark.parametrize("origin", ORIGINS)
+    def test_best_ripple_channel(self, origin, moving_session):
+        """Time only splits the recording, so the scores are identical."""
+        time = moving_session.time
+        channel, scores = rd.best_ripple_channel(moving_session.lfps, FS, time=time)
+        shifted_channel, shifted_scores = rd.best_ripple_channel(
+            moving_session.lfps, FS, time=time + origin
+        )
+        assert shifted_channel == channel
+        np.testing.assert_array_equal(shifted_scores, scores)
+
+    @pytest.mark.parametrize("origin", ORIGINS)
     def test_spiking_state_and_score(self, origin, moving_session, base):
         _, _, events = base
         time, shifted = moving_session.time, moving_session.time + origin
@@ -688,6 +700,269 @@ class TestTimeOrigin:
         )
         atol = np.abs(np.gradient(at_zero, time)).max() * 8 * np.spacing(origin)
         np.testing.assert_allclose(shifted, at_zero, rtol=0, atol=atol)
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_simulated_network_events(self, origin):
+        """Latent events follow the running bouts, not the clock: the table
+        and its truth windows move by the origin, and the rendered session
+        agrees to its slope times the timestamps' rounding (theta and delta
+        are whole cycles at these origins); the spikes are the same."""
+        time = simulate_time(int(30 * FS), FS)
+        running = np.asarray(RUNNING)
+        at_zero = rd.draw_network_events(
+            time, event_rate=1.0, running_intervals=running, rng=0
+        )
+        shifted = rd.draw_network_events(
+            time + origin, event_rate=1.0, running_intervals=running + origin, rng=0
+        )
+        assert len(at_zero) > 0
+        assert_times_shifted(shifted.center_time, at_zero.center_time, origin)
+        pd.testing.assert_frame_equal(
+            shifted.drop(columns="center_time"), at_zero.drop(columns="center_time")
+        )
+        for expression in (None, "network"):
+            windows = rd.truth_windows(at_zero, 0.25, expression=expression)
+            moved = rd.truth_windows(shifted, 0.25, expression=expression)
+            for column in ("start_time", "end_time", "peak_time"):
+                assert_times_shifted(moved[column], windows[column], origin)
+            labels = [c for c in windows if not c.endswith("_time")]
+            pd.testing.assert_frame_equal(moved[labels], windows[labels])
+
+        # the rate is given: far from zero the median timestamp step no longer
+        # gives 1500 Hz exactly, and the SNR sizing filters at the rate
+        session = rd.simulate_network_session(
+            time, at_zero, running_intervals=running, rng=1, sampling_frequency=FS
+        )
+        moved_session = rd.simulate_network_session(
+            time + origin, shifted, running_intervals=running + origin, rng=1,
+            sampling_frequency=FS,
+        )  # fmt: skip
+        for name in ("lfps", "sharp_wave_lfp", "speed"):
+            signal = getattr(session, name)
+            atol = np.abs(np.gradient(signal, time, axis=0)).max() * 8 * np.spacing(origin)
+            np.testing.assert_allclose(getattr(moved_session, name), signal, rtol=0, atol=atol)
+        np.testing.assert_array_equal(moved_session.multiunit, session.multiunit)
+        pd.testing.assert_frame_equal(moved_session.ripple_channels, session.ripple_channels)
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_simulated_non_events(self, origin):
+        """Non-events follow the running bouts, not the clock: the table and
+        its truth windows move by the origin; rendered, the LFP agrees to its
+        slope times the timestamps' rounding and the spikes, leaked ones
+        included, are the same. (A leaked spike within the timestamps'
+        rounding of where its sample changes can move by one; none of this
+        draw's spikes is.)"""
+        time = simulate_time(int(30 * FS), FS)
+        running = np.asarray(RUNNING)
+        rates = {"spike_leakage": 20.0, "emg": 10.0, "fast_gamma": 20.0, "theta_burst": 60.0}
+        at_zero = rd.draw_non_events(time, rates=rates, running_intervals=running, rng=0)
+        shifted = rd.draw_non_events(
+            time + origin, rates=rates, running_intervals=running + origin, rng=0
+        )
+        assert set(at_zero.non_event_type) == set(rd.NON_EVENT_TYPES)
+        assert_times_shifted(shifted.center_time, at_zero.center_time, origin)
+        pd.testing.assert_frame_equal(
+            shifted.drop(columns="center_time"), at_zero.drop(columns="center_time")
+        )
+        windows = rd.truth_windows(at_zero, 0.25)
+        moved = rd.truth_windows(shifted, 0.25)
+        for column in ("start_time", "end_time", "peak_time"):
+            assert_times_shifted(moved[column], windows[column], origin)
+
+        events = rd.draw_network_events(time, event_rate=0.0)
+        session = rd.simulate_network_session(
+            time, events, non_events=at_zero, running_intervals=running, rng=1,
+            sampling_frequency=FS,
+        )  # fmt: skip
+        moved_session = rd.simulate_network_session(
+            time + origin, events, non_events=shifted, running_intervals=running + origin,
+            rng=1, sampling_frequency=FS,
+        )  # fmt: skip
+        for name in ("lfps", "sharp_wave_lfp"):
+            signal = getattr(session, name)
+            atol = np.abs(np.gradient(signal, time, axis=0)).max() * 8 * np.spacing(origin)
+            np.testing.assert_allclose(getattr(moved_session, name), signal, rtol=0, atol=atol)
+        np.testing.assert_array_equal(moved_session.multiunit, session.multiunit)
+
+    def test_draws_check_the_rate_given(self):
+        """Far from zero the timestamps' step gives 1500.1 Hz, a Nyquist
+        frequency of 750.05 Hz: a frequency of 750.03 Hz draws on it, but not
+        at the rate given, which the renderer then uses. A rate the step
+        disagrees with raises."""
+        time = simulate_time(int(30 * FS), FS) + 1.7e9
+        rd.draw_network_events(time, ripple_frequency=(160.0, 750.03), rng=0)
+        with pytest.raises(ValueError, match="ripple_frequency"):
+            rd.draw_network_events(
+                time, ripple_frequency=(160.0, 750.03), rng=0, sampling_frequency=FS
+            )
+        high = {"fast_gamma_frequency": (60.0, 750.03), "fast_gamma_band": (60.0, 100.0)}
+        with pytest.raises(ValueError, match="fast_gamma_frequency"):
+            rd.draw_non_events(time, rng=0, sampling_frequency=FS, **high)
+        for draw in (rd.draw_network_events, rd.draw_non_events):
+            with pytest.raises(ValueError, match="disagrees with time's step"):
+                draw(time, rng=0, sampling_frequency=1000.0)
+            # the rate only enters the checks: the table is the same
+            pd.testing.assert_frame_equal(
+                draw(time, rng=0, sampling_frequency=FS), draw(time, rng=0)
+            )
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_leaked_spikes_halfway_between_samples(self, origin):
+        """Leaked spikes that fall halfway between samples, and one just short
+        of halfway, take the nearest sample, a tie the later one, at any
+        origin: three 3 ms apart about 3 s (the first and last halfway), two a
+        sample apart about 4 s (both halfway, not collapsed onto one), two
+        two samples apart about 5 s plus half a sample (a centre the clock
+        rounds far from zero), and three a sample apart 0.45 of a sample past
+        2 s."""
+        time = simulate_time(int(6 * FS), FS)
+        bursts = [
+            (3.0, 3, 0.003),
+            (4.0, 2, 1 / FS),
+            (5.0 + 0.5 / FS, 2, 2 / FS),
+            (2.0 + 0.45 / FS, 3, 1 / FS),
+        ]  # (centre, spikes, interval)
+        rows = _non_event_tables(
+            *(
+                _one_non_event_table(
+                    "spike_leakage", center_time=center, n_spikes=n_spikes, isi=isi,
+                    rise_sigma=(n_spikes - 1) * isi / 6, decay_sigma=(n_spikes - 1) * isi / 6,
+                    channel=0, n_units=1,
+                )
+                for center, n_spikes, isi in bursts
+            )
+        )  # fmt: skip
+        events = rd.draw_network_events(time, event_rate=0.0)
+        options = {"rng": 1, "sampling_frequency": FS, "noise_amplitude": 0.0}
+        at_zero = rd.simulate_network_session(time, events, non_events=rows, **options)
+        moved = rows.assign(center_time=rows.center_time + origin)
+        shifted = rd.simulate_network_session(
+            time + origin, events, non_events=moved, **options
+        )
+        plain = rd.simulate_network_session(time, events, **options)
+        leaked = np.flatnonzero((at_zero.multiunit - plain.multiunit).sum(axis=1))
+        np.testing.assert_array_equal(
+            leaked, [2999, 3000, 3001, 4496, 4500, 4505, 6000, 6001, 7500, 7502]
+        )
+        np.testing.assert_array_equal(shifted.multiunit, at_zero.multiunit)
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    @pytest.mark.parametrize("spike_model", ["poisson", "refractory"])
+    def test_simulated_network_spikes_at_a_given_rate(self, origin, spike_model):
+        """With the rate given, spikes come from it, not from the timestamps'
+        spacing, which rounds far from zero: the same counts at any origin."""
+        time = simulate_time(int(60 * FS), FS)
+        events = rd.draw_network_events(time, event_rate=0.0)
+        options = {
+            "unit_counts": {"interneuron": 10}, "spike_model": spike_model, "rng": 1,
+            "sampling_frequency": FS,
+        }  # fmt: skip
+        at_zero = rd.simulate_network_session(time, events, **options)
+        shifted = rd.simulate_network_session(time + origin, events, **options)
+        assert at_zero.multiunit.sum() > 0
+        np.testing.assert_array_equal(shifted.multiunit, at_zero.multiunit)
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_evaluation(self, origin, moving_session, base):
+        """Matching, comparison, consensus and labels on a moved clock: the
+        same pairs, errors to the timestamps' rounding, overlap ratios to
+        that rounding over the shortest length, and a minimum IoU and a tie
+        between two windows' overlaps measured from the data, so they land
+        exactly on their boundaries."""
+        _, kay, events = base
+        time, shifted = moving_session.time, moving_session.time + origin
+        windows = moving_session.ripple_windows
+        moved_kay = kay.assign(
+            start_time=kay.start_time + origin,
+            end_time=kay.end_time + origin,
+            peak_time=kay.peak_time + origin,
+        )
+        # every event two samples later at the start and one earlier at the
+        # end, read off each clock's own samples
+        index = np.searchsorted(time, events)
+        inner = np.clip(index + np.array([2, -1]), 0, len(time) - 1)
+        shortest = min(np.diff(windows).min(), np.diff(events).min())
+        time_atol = 8 * np.spacing(origin)
+        ratio_atol = 4 * time_atol / shortest
+
+        def assert_matchings_shifted(moved, at_zero):
+            pd.testing.assert_frame_equal(
+                moved.pairs[["reference_index", "detected_index"]],
+                at_zero.pairs[["reference_index", "detected_index"]],
+            )
+            for column in ("iou", "coverage", "temporal_precision"):
+                np.testing.assert_allclose(
+                    moved.pairs[column], at_zero.pairs[column], rtol=0, atol=ratio_atol
+                )
+            for column in ("onset_error", "offset_error", "peak_error"):
+                np.testing.assert_allclose(
+                    moved.pairs[column], at_zero.pairs[column], rtol=0, atol=time_atol
+                )
+            np.testing.assert_array_equal(moved.reference_overlaps, at_zero.reference_overlaps)
+            np.testing.assert_array_equal(moved.detected_overlaps, at_zero.detected_overlaps)
+
+        at_zero = rd.match_events(windows, kay)
+        moved = rd.match_events(windows + origin, moved_kay)
+        assert len(at_zero.pairs) >= 4
+        assert_matchings_shifted(moved, at_zero)
+        narrower = windows + np.array([0.005, -0.005])
+        np.testing.assert_allclose(
+            moved.boundary_errors(narrower + origin),
+            at_zero.boundary_errors(narrower),
+            rtol=0,
+            atol=time_atol,
+        )
+
+        # an IoU the data gives, which must be exceeded: that pair drops at
+        # every origin, the pairs above it stay
+        minimum_iou = float(np.median(at_zero.pairs.iou))
+        strict = rd.match_events(windows, kay, minimum_iou=minimum_iou)
+        assert 0 < len(strict.pairs) < len(at_zero.pairs)
+        assert_matchings_shifted(
+            rd.match_events(windows + origin, moved_kay, minimum_iou=minimum_iou), strict
+        )
+
+        methods = {"kay": events, "inner": time[inner]}
+        moved_methods = {"kay": events + origin, "inner": shifted[inner]}
+        comparison = rd.compare_detectors(methods, truth=windows)
+        moved_comparison = rd.compare_detectors(moved_methods, truth=windows + origin)
+        counts = ["method_a", "method_b", "n_a", "n_b", "n_matched", "n_shared_truth"]
+        pd.testing.assert_frame_equal(moved_comparison[counts], comparison[counts])
+        assert comparison.onset_error_correlation.notna().all()
+        for column in comparison.columns.drop(counts):
+            atol = time_atol if "difference" in column else ratio_atol
+            np.testing.assert_allclose(
+                moved_comparison[column], comparison[column], rtol=0, atol=atol, err_msg=column
+            )
+        pd.testing.assert_frame_equal(
+            rd.consensus_counts(moved_methods, windows + origin),
+            rd.consensus_counts(methods, windows),
+        )
+
+        # per event, two abutting windows, from its start to its middle sample
+        # and on as far again, and an event reaching as far past each end, so
+        # it overlaps both by as many samples: a tie, to the earlier window
+        middle = (index[:, 0] + index[:, 1]) // 2
+        labels = np.array(["early", "late"] * len(events))
+
+        def labelled(clock):
+            first = np.column_stack([clock[index[:, 0]], clock[middle]])
+            second = np.column_stack([clock[middle], clock[2 * middle - index[:, 0]]])
+            bounds = np.stack([first, second], axis=1).reshape(-1, 2)
+            return pd.DataFrame(bounds, columns=["start_time", "end_time"]).assign(
+                label=labels
+            )
+
+        def straddling(clock):
+            return np.column_stack(
+                [clock[2 * index[:, 0] - middle], clock[2 * middle - index[:, 0]]]
+            )
+
+        at_zero_labels = rd.label_by_overlap(straddling(time), labelled(time))
+        assert (at_zero_labels == "early").all()
+        pd.testing.assert_series_equal(
+            rd.label_by_overlap(straddling(shifted), labelled(shifted)), at_zero_labels
+        )
 
 
 class TestRecordingEdges:

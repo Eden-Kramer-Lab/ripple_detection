@@ -1,0 +1,2 @@
+band,channels,trace,smoothing_sigma,normalization_period,threshold,bound_fraction,minimum_event_duration,maximum_duration,merge_gap,speed,state,coincidence,caveat
+"[150.0, 250.0]",null,amplitude,0.0125,speed<5,3,0,0.025,2,0,endpoints<=5,none,none,"rests on 4 methods, below the design's 8; the maintainer chose to run it"

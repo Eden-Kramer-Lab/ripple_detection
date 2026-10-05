@@ -1,0 +1,73 @@
+method,primary_expression,fp_target,source,kind,setting,recall,recall_low,recall_high,false_positives_per_minute,false_positives_per_minute_low,false_positives_per_minute_high,n_sessions
+Carey_candidate_detector,network,0.5,held_out,measured,4.0,0.738225,0.724319,0.75501,0.327328,0.204432,0.460335,10
+Carey_candidate_detector,network,0.5,operating_point,interpolated,,0.744405,0.730363,0.758575,,,,20
+Carey_candidate_detector,network,1,held_out,measured,4.0,0.738225,0.724319,0.75501,0.327328,0.204432,0.460335,10
+Carey_candidate_detector,network,1,operating_point,interpolated,,0.768917,0.759113,0.779498,,,,20
+Carey_candidate_detector,network,2,held_out,measured,3.5,0.778986,0.766696,0.794038,1.12519,0.879639,1.37037,10
+Carey_candidate_detector,network,2,operating_point,interpolated,,0.790707,0.782379,0.799518,,,,20
+Carey_candidate_detector,network,5,held_out,measured,3.0,0.817935,0.801231,0.836158,4.55191,3.83658,5.3363,10
+Carey_candidate_detector,network,5,operating_point,interpolated,,0.817183,0.806394,0.827763,,,,20
+Karlsson_ripple_detector,ripple,0.5,held_out,measured,8.0,0.094686,0.0810306,0.111111,0.429618,0.317008,0.542347,10
+Karlsson_ripple_detector,ripple,0.5,operating_point,interpolated,,0.221477,0.121513,0.345808,,,,20
+Karlsson_ripple_detector,ripple,1,held_out,measured,4.0,0.597101,0.58128,0.617438,0.889923,0.757033,1.0222,10
+Karlsson_ripple_detector,ripple,1,operating_point,interpolated,,0.633784,0.586237,0.676147,,,,20
+Karlsson_ripple_detector,ripple,2,held_out,measured,3.0,0.717874,0.696604,0.740021,1.37069,1.26848,1.50373,10
+Karlsson_ripple_detector,ripple,2,operating_point,interpolated,,0.744627,0.72837,0.761899,,,,20
+Karlsson_ripple_detector,ripple,5,held_out,measured,2.5,0.771981,0.747473,0.794678,3.1403,2.87363,3.42747,10
+Karlsson_ripple_detector,ripple,5,operating_point,interpolated,,0.792552,0.779287,0.806444,,,,20
+Kay_ripple_detector,ripple,0.5,held_out,measured,8.0,0.188406,0.159834,0.217783,0.531908,0.398777,0.685091,10
+Kay_ripple_detector,ripple,0.5,operating_point,,,,,,,,,20
+Kay_ripple_detector,ripple,1,held_out,measured,2.5,0.773913,0.746937,0.800995,0.92061,0.766201,1.07339,10
+Kay_ripple_detector,ripple,1,operating_point,interpolated,,0.784125,0.762342,0.80208,,,,20
+Kay_ripple_detector,ripple,2,held_out,measured,2.5,0.773913,0.746937,0.800995,0.92061,0.766201,1.07339,10
+Kay_ripple_detector,ripple,2,operating_point,interpolated,,0.818877,0.804858,0.832824,,,,20
+Kay_ripple_detector,ripple,5,held_out,measured,2.0,0.824155,0.80651,0.845145,2.28107,2.05801,2.50497,10
+Kay_ripple_detector,ripple,5,operating_point,interpolated,,0.847525,0.83827,0.858431,,,,20
+Long_sharp_wave_ripple_detector,ripple,0.5,held_out,measured,1.5,0.760386,0.744508,0.775187,0,0,0,10
+Long_sharp_wave_ripple_detector,ripple,0.5,operating_point,within budget,,0.765779,0.753532,0.777669,,,,20
+Long_sharp_wave_ripple_detector,ripple,1,held_out,measured,1.5,0.760386,0.744508,0.775187,0,0,0,10
+Long_sharp_wave_ripple_detector,ripple,1,operating_point,within budget,,0.765779,0.753532,0.777669,,,,20
+Long_sharp_wave_ripple_detector,ripple,2,held_out,measured,1.5,0.760386,0.744508,0.775187,0,0,0,10
+Long_sharp_wave_ripple_detector,ripple,2,operating_point,within budget,,0.765779,0.753532,0.777669,,,,20
+Long_sharp_wave_ripple_detector,ripple,5,held_out,measured,1.5,0.760386,0.744508,0.775187,0,0,0,10
+Long_sharp_wave_ripple_detector,ripple,5,operating_point,within budget,,0.765779,0.753532,0.777669,,,,20
+Roumis_ripple_detector,ripple,0.5,held_out,measured,8.0,0.199034,0.16824,0.230033,0.531908,0.398777,0.685091,10
+Roumis_ripple_detector,ripple,0.5,operating_point,,,,,,,,,20
+Roumis_ripple_detector,ripple,1,held_out,measured,2.5,0.771981,0.745282,0.797575,0.81832,0.65454,0.99186,10
+Roumis_ripple_detector,ripple,1,operating_point,interpolated,,0.786274,0.765966,0.804525,,,,20
+Roumis_ripple_detector,ripple,2,held_out,measured,2.5,0.771981,0.745282,0.797575,0.81832,0.65454,0.99186,10
+Roumis_ripple_detector,ripple,2,operating_point,interpolated,,0.819351,0.806172,0.833457,,,,20
+Roumis_ripple_detector,ripple,5,held_out,measured,2.0,0.822222,0.807071,0.839961,2.20946,1.92227,2.48498,10
+Roumis_ripple_detector,ripple,5,operating_point,interpolated,,0.84595,0.83682,0.857222,,,,20
+Shvartsman_ripple_detector,ripple,0.5,held_out,measured,8.0,0.0541063,0.0448594,0.0655738,0.398931,0.276176,0.521629,10
+Shvartsman_ripple_detector,ripple,0.5,operating_point,interpolated,,0.223732,0.117319,0.44016,,,,20
+Shvartsman_ripple_detector,ripple,1,held_out,measured,2.5,0.712077,0.689588,0.733013,0.705801,0.563179,0.85986,10
+Shvartsman_ripple_detector,ripple,1,operating_point,interpolated,,0.750714,0.733905,0.767799,,,,20
+Shvartsman_ripple_detector,ripple,2,held_out,measured,2.0,0.76715,0.749298,0.786145,1.29908,1.1665,1.45325,10
+Shvartsman_ripple_detector,ripple,2,operating_point,interpolated,,0.788271,0.776464,0.801122,,,,20
+Shvartsman_ripple_detector,ripple,5,held_out,measured,2.0,0.76715,0.749298,0.786145,1.29908,1.1665,1.45325,10
+Shvartsman_ripple_detector,ripple,5,operating_point,interpolated,,0.811894,0.801525,0.823584,,,,20
+Yu_ripple_detector,ripple,0.5,held_out,,,,,,,,,10
+Yu_ripple_detector,ripple,0.5,operating_point,,,,,,,,,20
+Yu_ripple_detector,ripple,1,held_out,,,,,,,,,10
+Yu_ripple_detector,ripple,1,operating_point,,,,,,,,,20
+Yu_ripple_detector,ripple,2,held_out,,,,,,,,,10
+Yu_ripple_detector,ripple,2,operating_point,,,,,,,,,20
+Yu_ripple_detector,ripple,5,held_out,measured,99.999,0.831884,0.813475,0.85327,4.21435,3.34587,5.17717,10
+Yu_ripple_detector,ripple,5,operating_point,interpolated,,0.842129,0.831149,0.855218,,,,20
+Zugaro_ripple_detector,ripple,0.5,held_out,,,,,,,,,10
+Zugaro_ripple_detector,ripple,0.5,operating_point,,,,,,,,,20
+Zugaro_ripple_detector,ripple,1,held_out,measured,6.0,0.615459,0.580155,0.649547,1.03313,0.756856,1.38041,10
+Zugaro_ripple_detector,ripple,1,operating_point,interpolated,,0.62666,0.372184,0.745799,,,,20
+Zugaro_ripple_detector,ripple,2,held_out,measured,2.5,0.783575,0.749472,0.810347,1.51389,1.21821,1.83934,10
+Zugaro_ripple_detector,ripple,2,operating_point,within budget,,0.781065,0.761314,0.799312,,,,20
+Zugaro_ripple_detector,ripple,5,held_out,measured,2.5,0.783575,0.749472,0.810347,1.51389,1.21821,1.83934,10
+Zugaro_ripple_detector,ripple,5,operating_point,within budget,,0.781065,0.761314,0.799312,,,,20
+multiunit_HSE_detector,burst,0.5,held_out,measured,5.0,0.502513,0.473942,0.534103,0.337557,0.225065,0.439928,10
+multiunit_HSE_detector,burst,0.5,operating_point,interpolated,,0.59303,0.514606,0.658358,,,,20
+multiunit_HSE_detector,burst,1,held_out,measured,4.0,0.664322,0.641657,0.688444,0.583053,0.460352,0.695807,10
+multiunit_HSE_detector,burst,1,operating_point,interpolated,,0.764939,0.736428,0.785793,,,,20
+multiunit_HSE_detector,burst,2,held_out,measured,3.5,0.748744,0.723105,0.775446,0.797862,0.613754,0.981921,10
+multiunit_HSE_detector,burst,2,operating_point,interpolated,,0.816028,0.799518,0.83115,,,,20
+multiunit_HSE_detector,burst,5,held_out,measured,3.0,0.811055,0.794924,0.829221,1.98443,1.72868,2.26144,10
+multiunit_HSE_detector,burst,5,operating_point,interpolated,,0.873194,0.861617,0.885163,,,,20

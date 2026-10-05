@@ -1,0 +1,2 @@
+units,smoothing_sigma,normalization_period,threshold,bound_fraction,minimum_event_duration,maximum_duration,merge_gap,speed,minimum_active_units,state,coincidence,caveat
+all,0.015,session,3,0,0.05,null,0,none,0,none,none,

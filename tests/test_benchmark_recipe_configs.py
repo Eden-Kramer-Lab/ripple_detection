@@ -1,0 +1,980 @@
+"""The benchmark's configurations of the packaged literature methods
+(examples/benchmark/recipe_configs.py), run on a short simulated network
+session through the installed API."""
+
+import dataclasses
+import gc
+import io
+import json
+import re
+import weakref
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+
+import ripple_detection as rd
+from ripple_detection import literature_methods
+from ripple_detection.literature_methods import bounds
+
+FS = 1500.0
+DURATION = 60.0
+RUNNING = np.array([[25.0, 35.0]])
+UNIT_COUNTS = {"place": 20, "pyramidal": 5, "interneuron": 5}
+UNIX_ORIGIN = 1_700_000_000.0
+EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
+
+# The keys of method_record, in order.
+METHOD_COLUMNS = [
+    "method",
+    "setting",
+    "doi",
+    "role",
+    "inventory",
+    "stage",
+    "primary_expression",
+    "resolved_options",
+    "input_policy",
+    "assumptions",
+    "interpretation",
+]
+
+# The expression each configuration is headlined against, reviewed per
+# method against what its implemented events require.
+PRIMARY_EXPRESSIONS = {
+    "mallory_2025": "burst",
+    "widloski_2025": "ripple",
+    "yang_2024": "network",
+    "huelin_gorriz_2023": "network",
+    "harvey_2023_code": "ripple",
+    "harvey_2023_text": "ripple",
+    "liu_2023": "network",
+    "tirole_2022": "network",
+    "bush_2022": "burst",
+    "berners_lee_2022": "burst",
+    "krause_2022": "network",
+    "mou_2022": "burst",
+    "berners_lee_2021": "ripple",
+    "denovellis_2021": "ripple",
+    "gillespie_2021": "ripple",
+    "michon_2021": "network",
+    "igata_2021": "burst",
+    "gridchyn_2020": "burst",
+    "kaefer_2020": "ripple",
+    "bhattarai_2020": "network",
+    "stella_2019": "ripple",
+    "xu_2019": "burst",
+    "farooq_2019_neuron": "burst",
+    "farooq_2019_science": "burst",
+    "chenani_2019": "burst",
+    "michon_2019": "network",
+    "liu_2019": "burst",
+    "shin_2019": "ripple",
+    "carey_2019": "network",
+    "muessig_2019": "network",
+    "drieu_2018": "burst",
+    "maboudi_2018": "burst",
+    "olafsdottir_2017": "burst",
+    "olafsdottir_2017.trajectory": "burst",
+    "wu_2017": "burst",
+    "yamamoto_2017": "network",
+    "tang_2017": "ripple",
+    "grosmark_2016": "network",
+    "ambrose_2016": "ripple",
+    "jadhav_2016": "ripple",
+    "silva_2015": "burst",
+    "olafsdottir_2015": "burst",
+    "olafsdottir_2015.bayesian_candidates": "burst",
+    "pfeiffer_2015": "ripple",
+    "wu_2014": "burst",
+    "wikenheiser_2013": "ripple",
+    "pfeiffer_2013": "burst",
+    "carr_2012": "ripple",
+    "bendor_2012": "burst",
+    "gupta_2010": "ripple",
+    "karlsson_2009": "ripple",
+    "davidson_2009": "burst",
+    "diba_2007": "burst",
+    "ji_2007": "burst",
+    "foster_2006": "burst",
+    "lee_2002": "burst",
+    "nadasdy_1999": "ripple",
+    "kudrimoti_1999": "ripple",
+    "harvey_2023_no_radiatum": "ripple",
+    "mallory_2025_ripples": "ripple",
+    "igata_2021_ripples": "ripple",
+    "wu_2014_ripples": "ripple",
+    "pfeiffer_2013_ripples": "ripple",
+    "davidson_2009_ripples": "ripple",
+    "ji_2007_ripples": "ripple",
+    "lee_2002_ripples": "ripple",
+    "foster_2006_ripples": "ripple",
+    "widloski_2025_bursts": "burst",
+    "krause_2022_hse": "burst",
+    "denovellis_2021_mua": "burst",
+    "gillespie_2021_mua": "burst",
+    "maboudi_2018_open_field": "burst",
+    "muessig_2019_ripples": "ripple",
+    "bhattarai_2020_ripples": "ripple",
+    "farooq_2019_science_awake": "burst",
+    "liu_2019_awake": "burst",
+}
+
+# Inputs that are observations of the session; any other input a recording is
+# given stands in for something the simulation lacks, and must be stated.
+OBSERVED = {"lfps", "sharp_wave_lfp", "multiunit", "speed"}
+
+# Configurations that exercise each stand-in: the external ripple inventory,
+# Carey's example ripples, and the unreported options at their demonstration
+# values, with rest as the sleep and baseline epochs.
+STAND_INS = (
+    "yang_2024",
+    "grosmark_2016",
+    "carey_2019",
+    "stella_2019",
+    "nadasdy_1999",
+    "kudrimoti_1999",
+    "wikenheiser_2013",
+)
+
+# One or more configurations per grid, input kind and expression, for the
+# checks too slow to run on every configuration.
+REPRESENTATIVE = (
+    "karlsson_2009",
+    "bendor_2012",
+    "yang_2024",
+    "carey_2019",
+    "krause_2022",
+    "kaefer_2020",
+    "gridchyn_2020",
+    "olafsdottir_2015",
+    "wikenheiser_2013",
+    "stella_2019",
+)
+
+
+@pytest.fixture(scope="module")
+def recipe_configs(benchmark_import):
+    return benchmark_import("recipe_configs")
+
+
+@pytest.fixture(scope="module")
+def session():
+    """One minute with a running bout: two stretches of rest, ripples strong
+    enough for every threshold rule, and units of every type."""
+    time = np.arange(int(DURATION * FS)) / FS
+    events = rd.draw_network_events(
+        time, running_intervals=RUNNING, ripple_snr=(6.0, 10.0), event_rate=0.5, rng=1
+    )
+    return rd.simulate_network_session(
+        time, events, running_intervals=RUNNING, unit_counts=UNIT_COUNTS, rng=2
+    )
+
+
+@pytest.fixture(scope="module")
+def configs(recipe_configs):
+    return {config.config_id: config for config in recipe_configs.RECIPES}
+
+
+@pytest.fixture(scope="module")
+def catalog():
+    return literature_methods.list_methods().set_index("name")
+
+
+def _call_inputs(module, session, config):
+    """The recording and eligible epochs the policy gives a call of ``config``."""
+    return module.make_recording(session, config), module.behavior_intervals(session, config)
+
+
+def _run(module, session, config):
+    return module.run_recipe(config, *_call_inputs(module, session, config))
+
+
+@pytest.fixture(scope="module")
+def results(recipe_configs, session):
+    return {
+        config.config_id: _run(recipe_configs, session, config)
+        for config in recipe_configs.RECIPES
+    }
+
+
+def _named(problems) -> set[str]:
+    """The input or option each ``check_method`` problem starts with."""
+    return {problem.split(":")[0].split(" - ")[0] for problem in problems}
+
+
+def _supplied(recording) -> set[str]:
+    """The ``Recording.from_arrays`` inputs a recording was given."""
+    signals = recording.session
+    given = {
+        "lfps": signals.lfps.shape[1] > 0,
+        "sharp_wave_lfp": np.isfinite(signals.sharp_wave_lfp).any(),
+        "multiunit": signals.multiunit.shape[1] > 0,
+        "speed": signals.speed is not None,
+        "place_cells": recording.place_cells.any(),
+        "pyramidal": recording.pyramidal.any(),
+        "templates": bool(recording.templates),
+        "sleep_intervals": recording.sleep_intervals is not None,
+        "baseline_intervals": recording.baseline_intervals is not None,
+        "reference_lfp": recording.reference_lfp is not None,
+        "example_ripples": recording.example_ripples is not None,
+        "external_ripples": recording.external_ripples is not None,
+    }
+    return {name for name, supplied in given.items() if supplied}
+
+
+def _assert_same_recording(recording, other):
+    for owner, other_owner in ((recording, other), (recording.session, other.session)):
+        for field in dataclasses.fields(owner):
+            if field.name == "session":
+                continue
+            first, second = getattr(owner, field.name), getattr(other_owner, field.name)
+            np.testing.assert_array_equal(first, second, err_msg=field.name)
+
+
+def test_configurations_and_exclusions_cover_the_catalog_once(recipe_configs, catalog):
+    configured = {config.method for config in recipe_configs.RECIPES}
+    excluded = set(recipe_configs.EXCLUSIONS)
+    assert not configured & excluded
+    assert configured | excluded == set(catalog.index)
+    assert all(reason.strip() for reason in recipe_configs.EXCLUSIONS.values())
+
+
+def test_config_ids_are_unique_and_variants_set_their_protocol(recipe_configs):
+    ids = [config.config_id for config in recipe_configs.RECIPES]
+    assert len(ids) == len(set(ids))
+    variants = {
+        config.config_id: dict(config.options)
+        for config in recipe_configs.RECIPES
+        if config.config_id != config.method
+    }
+    assert variants == {
+        "olafsdottir_2015.bayesian_candidates": {"minimum_active_units": 7},
+        "olafsdottir_2017.trajectory": {"analysis": "trajectory"},
+    }
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        (("Karlsson_2009", "Karlsson_2009", "ripple"), "config_id"),
+        (("karlsson_2009-x", "karlsson_2009", "ripple"), "config_id"),
+        (("kay", "karlsson_2009", "ripple"), "config_id"),
+        (("karlsson_2009x", "karlsson_2009", "ripple"), "config_id"),
+        (("karlsson_2009.", "karlsson_2009", "ripple"), "config_id"),
+        (("karlsson_2009..x", "karlsson_2009", "ripple"), "config_id"),
+        (("karlsson_2009.a.b", "karlsson_2009", "ripple"), "config_id"),
+        (("karlsson_2009", "karlsson_2009", "ripples"), "primary_expression"),
+    ],
+)
+def test_a_malformed_configuration_raises(recipe_configs, fields, message):
+    with pytest.raises(ValueError, match=message):
+        recipe_configs.RecipeConfig(*fields)
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ([("stage", "detection")], "tuple"),
+        ((("stage",),), "pairs"),
+        (((1, "detection"),), "pairs"),
+        ((("stage", "detection"), ("stage", "detection")), "stage.*more than once"),
+        ((("frequencies", [150.0, 250.0]),), "frequencies.*hashable"),
+        ((("rec", None),), "rec"),
+        ((("behavior_intervals", ((0.0, 1.0),)),), "behavior_intervals"),
+    ],
+)
+def test_malformed_options_raise(recipe_configs, options, message):
+    with pytest.raises(ValueError, match=message):
+        recipe_configs.RecipeConfig("mou_2022", "mou_2022", "burst", options)
+
+
+def test_every_configuration_is_hashable(recipe_configs):
+    assert len({hash(config) for config in recipe_configs.RECIPES}) == len(
+        recipe_configs.RECIPES
+    )
+
+
+def test_every_method_with_stages_runs_its_detection_stage(recipe_configs, catalog):
+    for config in recipe_configs.RECIPES:
+        options = dict(config.options)
+        if "decoding_candidates" in catalog.loc[config.method, "stages"]:
+            assert options.get("stage") == "detection", config.config_id
+        else:
+            assert "stage" not in options, config.config_id
+    # A stage given to configure is kept, not replaced.
+    config = recipe_configs.configure(
+        "harvey_2023_text", "ripple", ("stage", "decoding_candidates")
+    )
+    assert config.options == (("stage", "decoding_candidates"),)
+
+
+def test_every_configuration_can_run_and_is_the_direct_public_call(
+    recipe_configs, session, results
+):
+    for config in recipe_configs.RECIPES:
+        recording, eligible = _call_inputs(recipe_configs, session, config)
+        problems = recipe_configs.check_recipe(config, recording, eligible)
+        assert not problems, f"{config.config_id} cannot run under the policy: {problems}"
+        direct = getattr(literature_methods, config.method)(
+            recording, behavior_intervals=eligible, **dict(config.options)
+        )
+        found = results[config.config_id]
+        pd.testing.assert_frame_equal(found, direct, check_exact=True, obj=config.config_id)
+        assert found.attrs == direct.attrs, config.config_id
+
+
+def test_resolved_options_are_the_options_a_call_records(recipe_configs, results):
+    for config in recipe_configs.RECIPES:
+        assert (
+            recipe_configs.resolved_options(config)
+            == results[config.config_id].attrs["options"]
+        ), config.config_id
+
+
+def test_resolved_options_follow_the_packages_json_convention(recipe_configs, session):
+    # NumPy scalars become Python numbers and non-finite values None, as in
+    # a result's attrs["options"], whatever type the configuration holds.
+    config = recipe_configs.configure(
+        "olafsdottir_2015", "burst", ("minimum_active_units", np.int64(7))
+    )
+    resolved = recipe_configs.resolved_options(config)
+    recorded = _run(recipe_configs, session, config).attrs["options"]
+    assert resolved == recorded
+    assert type(resolved["minimum_active_units"]) is type(recorded["minimum_active_units"])
+    json.dumps(resolved, allow_nan=False)
+    unbounded = recipe_configs.configure(
+        "nadasdy_1999",
+        "ripple",
+        ("rms_window", np.float64(0.004)),
+        ("bound_threshold", -np.inf),
+    )
+    assert recipe_configs.resolved_options(unbounded) == {
+        "rms_window": 0.004,
+        "bound_threshold": None,
+    }
+    assert type(recipe_configs.resolved_options(unbounded)["rms_window"]) is float
+
+
+def test_every_configured_path_finds_events(results):
+    # Every stand-in (rest as sleep, baseline and eligible epochs, the zero
+    # reference, one place-cell template, the external and example ripple
+    # inventories, the demonstration values), every stage and protocol variant
+    # and every expression finds events on this session. muessig_2019 needs
+    # pyramidal bursts above 3 SD for 100 ms, longer than any simulated here.
+    assert {name for name, events in results.items() if events.empty} == {"muessig_2019"}
+
+
+def test_each_exclusion_is_what_check_method_reports(recipe_configs, session):
+    for method, reason in recipe_configs.EXCLUSIONS.items():
+        config = recipe_configs.configure(method, "ripple")
+        problems = recipe_configs.check_recipe(
+            config, *_call_inputs(recipe_configs, session, config)
+        )
+        if method == "olafsdottir_2016":
+            # Its required signals are present, but the recording is the
+            # wrong experimental session; check_method cannot infer scope.
+            assert problems == []
+            assert "rest-session recording" in reason
+            continue
+        # A reason starts with what it names ("rms_window, bound_threshold: ..."
+        # or "input sampled at 4800 Hz: ..."): exactly what check_method reports.
+        named = set(reason.split(": ", 1)[0].split(", "))
+        assert named == _named(problems), method
+
+
+def test_primary_expressions_are_the_reviewed_table(recipe_configs):
+    assert {
+        config.config_id: config.primary_expression for config in recipe_configs.RECIPES
+    } == PRIMARY_EXPRESSIONS
+
+
+def test_primary_expressions_have_the_inputs_their_expression_needs(recipe_configs):
+    for config in recipe_configs.RECIPES:
+        inputs = set(recipe_configs.policy_inputs(config))
+        ripple = bool(inputs & {"lfps", "external_ripples"})
+        burst = "multiunit" in inputs
+        expected = {
+            "ripple": ripple,
+            "burst": burst and not ripple,
+            "network": ripple and burst,
+        }[config.primary_expression]
+        assert expected, config.config_id
+
+
+def _unknown_method(module):
+    return module.RecipeConfig(
+        "not_a_method", "not_a_method", "ripple", input_policy=module.INPUT_POLICY
+    )
+
+
+def _option_not_taken(module):
+    return module.RecipeConfig(
+        "karlsson_2009", "karlsson_2009", "ripple", (("threshold", 2.0),)
+    )
+
+
+def _stale(configs):
+    """Changing the stage adds place_cells, whose stand-in the copied
+    assumptions do not state."""
+    return dataclasses.replace(
+        configs["grosmark_2016"], options=(("stage", "decoding_candidates"),)
+    )
+
+
+def _no_policy(module):
+    """A bare configuration names no input policy."""
+    return module.RecipeConfig("karlsson_2009", "karlsson_2009", "ripple")
+
+
+def _run_without_epochs(module, session, config):
+    return module.run_recipe(config, module.make_recording(session, config))
+
+
+# Each error path: a call of (module, session, configs), what it raises and
+# the message it matches.
+ERROR_PATHS = [
+    (
+        "unknown method: configure",
+        lambda m, s, c: m.configure("not_a_method", "ripple"),
+        KeyError,
+        "not_a_method",
+    ),
+    (
+        "unknown method: make_recording",
+        lambda m, s, c: m.make_recording(s, _unknown_method(m)),
+        KeyError,
+        "not_a_method",
+    ),
+    (
+        "unknown method: resolved_options",
+        lambda m, s, c: m.resolved_options(_unknown_method(m)),
+        KeyError,
+        "not_a_method",
+    ),
+    (
+        "unknown method: run_recipe",
+        lambda m, s, c: m.run_recipe(
+            _unknown_method(m), m.make_recording(s, c["bendor_2012"])
+        ),
+        KeyError,
+        "not_a_method",
+    ),
+    (
+        "missing option",
+        lambda m, s, c: _run_without_epochs(
+            m, s, m.configure("gridchyn_2020_ripples", "ripple")
+        ),
+        TypeError,
+        "rms_window",
+    ),
+    (
+        "option not taken: configure",
+        lambda m, s, c: m.configure("karlsson_2009", "ripple", ("threshold", 2.0)),
+        TypeError,
+        "threshold",
+    ),
+    (
+        "option not taken: policy_inputs",
+        lambda m, s, c: m.policy_inputs(_option_not_taken(m)),
+        TypeError,
+        "threshold",
+    ),
+    (
+        "option not taken: resolved_options",
+        lambda m, s, c: m.resolved_options(_option_not_taken(m)),
+        TypeError,
+        "threshold",
+    ),
+    (
+        "missing input: behavior_intervals",
+        lambda m, s, c: _run_without_epochs(m, s, c["chenani_2019"]),
+        ValueError,
+        "behavior_intervals",
+    ),
+    (
+        "missing input: lfps",
+        lambda m, s, c: m.run_recipe(
+            c["karlsson_2009"], m.make_recording(s, c["bendor_2012"])
+        ),
+        ValueError,
+        "lfps",
+    ),
+    (
+        "another input policy",
+        lambda m, s, c: m.make_recording(
+            s, dataclasses.replace(c["karlsson_2009"], input_policy="measured")
+        ),
+        ValueError,
+        "input policy",
+    ),
+    (
+        "stale assumptions: input_policy",
+        lambda m, s, c: m.input_policy(_stale(c)),
+        ValueError,
+        "assumptions",
+    ),
+    (
+        "stale assumptions: method_record",
+        lambda m, s, c: m.method_record(_stale(c)),
+        ValueError,
+        "assumptions",
+    ),
+    (
+        "stale assumptions: make_recording",
+        lambda m, s, c: m.make_recording(s, _stale(c)),
+        ValueError,
+        "assumptions",
+    ),
+    (
+        "no input policy: input_policy",
+        lambda m, s, c: m.input_policy(_no_policy(m)),
+        ValueError,
+        "input policy",
+    ),
+    (
+        "no input policy: method_record",
+        lambda m, s, c: m.method_record(_no_policy(m)),
+        ValueError,
+        "input policy",
+    ),
+    (
+        "no input policy: make_recording",
+        lambda m, s, c: m.make_recording(s, _no_policy(m)),
+        ValueError,
+        "input policy",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("call", "exception", "match"),
+    [row[1:] for row in ERROR_PATHS],
+    ids=[row[0] for row in ERROR_PATHS],
+)
+def test_error_paths_raise(recipe_configs, session, configs, call, exception, match):
+    with pytest.raises(exception, match=match):
+        call(recipe_configs, session, configs)
+
+
+def test_unit_selections_are_the_simulators_labels(recipe_configs, session, configs):
+    types = session.unit_types
+    assert set(types) == set(rd.UNIT_TYPES)
+    recording = recipe_configs.make_recording(session, configs["farooq_2019_science"])
+    np.testing.assert_array_equal(recording.place_cells, types == "place")
+    np.testing.assert_array_equal(recording.pyramidal, np.isin(types, ["place", "pyramidal"]))
+    templates = recipe_configs.make_recording(session, configs["olafsdottir_2015"]).templates
+    assert len(templates) == 1
+    np.testing.assert_array_equal(templates[0], types == "place")
+
+
+def test_rest_is_the_recorded_samples_outside_every_running_bout(recipe_configs, session):
+    rest = recipe_configs.rest_intervals(session)
+    in_rest = rd.intervals_to_mask(session.time, rest)
+    running = rd.intervals_to_mask(session.time, session.running_intervals)
+    assert (in_rest != running).all()
+    assert np.isin(rest, session.time).all()
+    assert np.all(rest[1:, 0] > rest[:-1, 1])
+    assert len(rest) == 2
+    still = dataclasses.replace(session, running_intervals=np.empty((0, 2)))
+    np.testing.assert_array_equal(
+        recipe_configs.rest_intervals(still), [[session.time[0], session.time[-1]]]
+    )
+
+
+def test_a_session_without_rest_raises_rather_than_passing_no_epochs(
+    recipe_configs, session, configs
+):
+    # Running throughout leaves no rest to stand in for sleep, baseline or
+    # eligible epochs; an empty stand-in would give zero events, not an error.
+    running = dataclasses.replace(
+        session, running_intervals=np.array([[session.time[0], session.time[-1]]])
+    )
+    for call in (
+        lambda: recipe_configs.rest_intervals(running),
+        lambda: recipe_configs.make_recording(running, configs["yang_2024"]),
+        lambda: recipe_configs.make_recording(running, configs["gridchyn_2020"]),
+        lambda: recipe_configs.behavior_intervals(running, configs["chenani_2019"]),
+    ):
+        with pytest.raises(ValueError, match="no rest"):
+            call()
+
+
+def test_a_recording_holds_exactly_the_declared_inputs(recipe_configs, session):
+    rest = recipe_configs.rest_intervals(session)
+    configs = [
+        *recipe_configs.RECIPES,
+        *(recipe_configs.configure(method, "ripple") for method in recipe_configs.EXCLUSIONS),
+    ]
+    for config in configs:
+        recording, eligible = _call_inputs(recipe_configs, session, config)
+        names, takes_behavior_intervals = recipe_configs.supplied_inputs(config)
+        assert _supplied(recording) == set(names), config.config_id
+        assert (eligible is not None) == takes_behavior_intervals, config.config_id
+        declared = set(recipe_configs.policy_inputs(config))
+        assert declared == set(names) | (
+            {"behavior_intervals"} if takes_behavior_intervals else set()
+        )
+        assert recording.fs == session.sampling_frequency
+        np.testing.assert_array_equal(recording.time, session.time)
+        for name, value in (
+            ("sleep_intervals", recording.sleep_intervals),
+            ("baseline_intervals", recording.baseline_intervals),
+            ("behavior_intervals", eligible),
+        ):
+            if name in declared:
+                np.testing.assert_array_equal(value, rest, err_msg=config.config_id)
+        if "reference_lfp" in declared:
+            assert not recording.reference_lfp.any()
+        if "lfps" in declared:
+            np.testing.assert_array_equal(recording.session.lfps, session.lfps)
+        if "multiunit" in declared:
+            np.testing.assert_array_equal(recording.multiunit, session.multiunit)
+
+
+@pytest.mark.parametrize(
+    ("method", "options", "inputs", "absent"),
+    [
+        # Krause's own SWRs need lfps and speed unless external ripples are
+        # supplied, and the policy supplies none it does not declare.
+        ("krause_2022", {}, {"lfps", "speed"}, {"external_ripples"}),
+        ("harvey_2023_text", {"stage": "detection"}, {"baseline_intervals"}, {"multiunit"}),
+        (
+            "harvey_2023_text",
+            {"stage": "decoding_candidates"},
+            {"multiunit", "place_cells"},
+            set(),
+        ),
+        ("wikenheiser_2013", {}, {"sleep_intervals"}, {"speed", "baseline_intervals"}),
+        ("wikenheiser_2013", {"branch": "run_lia"}, {"speed"}, {"sleep_intervals"}),
+        ("muessig_2019", {}, {"sleep_intervals"}, {"speed"}),
+        ("muessig_2019", {"sample_speed_veto": True}, {"speed"}, set()),
+    ],
+)
+def test_requirements_apply_under_their_own_conditions(
+    recipe_configs, method, options, inputs, absent
+):
+    config = recipe_configs.configure(method, "ripple", *options.items())
+    declared = set(recipe_configs.policy_inputs(config))
+    assert inputs <= declared
+    assert not absent & declared
+
+
+def test_unlabeled_units_are_not_selected(recipe_configs, session, configs):
+    unlabeled = dataclasses.replace(session, unit_types=np.empty(0, dtype="<U11"))
+    for name, missing in (
+        ("olafsdottir_2015", {"templates"}),
+        ("farooq_2019_science", {"pyramidal", "place_cells"}),
+    ):
+        config = configs[name]
+        recording, eligible = _call_inputs(recipe_configs, unlabeled, config)
+        assert not recording.place_cells.any()
+        assert not recording.pyramidal.any()
+        assert recording.templates == ()
+        problems = recipe_configs.check_recipe(config, recording, eligible)
+        assert _named(problems) == missing
+        with pytest.raises(ValueError, match=next(iter(missing))):
+            recipe_configs.run_recipe(config, recording, eligible)
+
+
+def test_the_policy_reads_no_truth(recipe_configs, session):
+    blind = dataclasses.replace(
+        session,
+        events=session.events.iloc[:0],
+        non_events=session.non_events.iloc[:0],
+        ripple_times=np.empty(0),
+        ripple_durations=np.empty(0),
+        ripple_frequencies=np.empty(0),
+        artifact_times=np.empty(0),
+        baseline_rates=np.empty(0),
+        ripple_channels=session.ripple_channels.iloc[:0],
+    )
+    for config in recipe_configs.RECIPES:
+        recording, eligible = _call_inputs(recipe_configs, session, config)
+        blind_recording, blind_eligible = _call_inputs(recipe_configs, blind, config)
+        _assert_same_recording(recording, blind_recording)
+        np.testing.assert_array_equal(eligible, blind_eligible, err_msg=config.config_id)
+
+
+def test_external_inventories_are_the_stated_detectors(recipe_configs, session, configs):
+    # The settings are pinned here, not read from the module: the package's
+    # Zugaro stand-in on channel 0 and the five largest default Kay events.
+    filtered = rd.filter_ripple_band(session.lfps, FS, band=(130.0, 200.0), time=session.time)
+    zugaro = rd.Zugaro_ripple_detector(
+        session.time,
+        filtered[:, :1],
+        session.speed,
+        FS,
+        low_threshold=2.0,
+        high_threshold=5.0,
+        maximum_duration=0.2,
+        speed_threshold=np.inf,
+    )
+    external = zugaro[["start_time", "end_time", "peak_time"]].to_numpy()
+    kay = rd.Kay_ripple_detector(
+        session.time,
+        rd.filter_ripple_band(session.lfps, FS, time=session.time),
+        session.speed,
+        FS,
+    )
+    examples = kay.nlargest(5, "max_zscore")[["start_time", "end_time"]].to_numpy()
+    assert len(external)
+    assert len(examples) == 5
+    for name, source, detector, expected in (
+        ("yang_2024", "external_ripples", "Zugaro_ripple_detector", external),
+        ("grosmark_2016", "external_ripples", "Zugaro_ripple_detector", external),
+        ("carey_2019", "example_ripples", "Kay_ripple_detector", examples),
+    ):
+        recording = recipe_configs.make_recording(session, configs[name])
+        np.testing.assert_array_equal(getattr(recording, source), expected, err_msg=name)
+        record = recipe_configs.method_record(configs[name])
+        assert any(
+            assumption.startswith(source) and detector in assumption
+            for assumption in json.loads(record["assumptions"])
+        )
+
+
+def test_input_policy_records_each_stand_in_detector(recipe_configs, configs):
+    # Pinned here, not read from the module: what the benchmark chooses. A
+    # non-finite option is its repr, since None is already a setting ("no
+    # limit", "no mask"); every setting left unchosen is recorded too.
+    chosen = {
+        "external_ripples": (
+            "yang_2024",
+            {
+                "detector": "Zugaro_ripple_detector",
+                "channel": 0,
+                "band": [130.0, 200.0],
+                "columns": ["start_time", "end_time", "peak_time"],
+            },
+            {
+                "low_threshold": 2.0,
+                "high_threshold": 5.0,
+                "maximum_duration": 0.2,
+                "speed_threshold": "inf",
+            },
+        ),
+        "example_ripples": (
+            "carey_2019",
+            {
+                "detector": "Kay_ripple_detector",
+                "band": [150.0, 250.0],
+                "n_examples": 5,
+                "rank_by": "max_zscore",
+            },
+            {},
+        ),
+    }
+    for source, (name, settings, options) in chosen.items():
+        policy = json.loads(recipe_configs.method_record(configs[name])["input_policy"])
+        recorded = policy["recording"][source]
+        assert {key: value for key, value in recorded.items() if key != "options"} == settings
+        parameters = rd.get_detector(settings["detector"]).parameters
+        assert set(recorded["options"]) == set(parameters), source
+        assert {key: recorded["options"][key] for key in options} == options, source
+
+
+@pytest.mark.parametrize(
+    ("settings", "stand_in", "detector", "channels", "selected"),
+    [
+        (
+            "EXTERNAL_RIPPLES",
+            "external_ripples",
+            "Kay_ripple_detector",
+            slice(0, 1),
+            lambda events: events[["start_time", "end_time", "peak_time"]].to_numpy(),
+        ),
+        (
+            "EXAMPLE_RIPPLES",
+            "example_ripples",
+            "Karlsson_ripple_detector",
+            slice(None),
+            lambda events: bounds(events.nlargest(5, "max_zscore")),
+        ),
+    ],
+)
+def test_the_recorded_detector_is_the_one_that_runs(
+    recipe_configs, session, monkeypatch, settings, stand_in, detector, channels, selected
+):
+    spec = getattr(recipe_configs, settings)
+    monkeypatch.setitem(spec, "detector", detector)
+    monkeypatch.setitem(spec, "options", {})
+    filtered = rd.filter_ripple_band(session.lfps, FS, band=spec["band"], time=session.time)
+    events = getattr(rd, detector)(session.time, filtered[:, channels], session.speed, FS)
+    found = getattr(recipe_configs, stand_in)(session)
+    np.testing.assert_array_equal(found, selected(events))
+
+
+def test_the_stand_ins_are_the_packages_simulation_proxies(
+    recipe_configs, session, configs, results
+):
+    # The package's simulation fallbacks run when a Recording wraps the
+    # SimulatedSession and the stand-in is not given: its assumed ripple
+    # detector, its Kay examples and its demonstration values.
+    rest = recipe_configs.rest_intervals(session)
+    simulated = literature_methods.Recording(
+        session,
+        place_cells=session.unit_types == "place",
+        pyramidal=np.isin(session.unit_types, ["place", "pyramidal"]),
+        sleep_intervals=rest,
+        baseline_intervals=rest,
+    )
+    for name in STAND_INS:
+        config = configs[name]
+        stage = {key: value for key, value in config.options if key == "stage"}
+        proxy = literature_methods.run_method(
+            config.method,
+            simulated,
+            behavior_intervals=recipe_configs.behavior_intervals(session, config),
+            **stage,
+        )
+        assert len(proxy), name
+        np.testing.assert_array_equal(bounds(proxy), bounds(results[name]), err_msg=name)
+
+
+def test_missing_lfp_samples_end_events_and_ripple_inventories(
+    recipe_configs, session, configs, results
+):
+    # 20 ms missing inside a ripple every method below finds (and the
+    # external inventory holds, 13.564-13.621 s) on the complete session.
+    missing = (session.time >= 13.58) & (session.time <= 13.60)
+    lfps = session.lfps.copy()
+    lfps[missing] = np.nan
+    gapped = dataclasses.replace(session, lfps=lfps, raw_lfp=lfps[:, 0].copy())
+    first, last = session.time[missing][[0, -1]]
+    before, after = session.time[np.flatnonzero(missing)[[0, -1]] + [-1, 1]]
+
+    def spanning(found):
+        return np.any((found[:, 0] <= last) & (found[:, 1] >= first))
+
+    for name in (
+        "karlsson_2009",
+        "gillespie_2021",
+        "stella_2019",
+        "nadasdy_1999",
+        "harvey_2023_no_radiatum",
+    ):
+        assert spanning(bounds(results[name])), name
+        events = _run(recipe_configs, gapped, configs[name])
+        assert not spanning(bounds(events)), name
+        if events.attrs["clipping_tracked"]:
+            ending, starting = events.end_time == before, events.start_time == after
+            assert ending.any() or starting.any(), name
+            assert events.clipped_end[ending].all(), name
+            assert events.clipped_start[starting].all(), name
+    assert spanning(recipe_configs.external_ripples(session)[:, :2])
+    assert not spanning(recipe_configs.external_ripples(gapped)[:, :2])
+    assert len(_run(recipe_configs, gapped, configs["yang_2024"]))
+
+
+def test_results_shift_with_the_clock_origin(recipe_configs, session, configs, results):
+    shifted = dataclasses.replace(
+        session,
+        time=session.time + UNIX_ORIGIN,
+        running_intervals=session.running_intervals + UNIX_ORIGIN,
+    )
+    # Timestamps near 1.7e9 s carry about 2.4e-7 s of rounding each.
+    tolerance = 16 * np.spacing(UNIX_ORIGIN + DURATION)
+    for name in REPRESENTATIVE:
+        events = _run(recipe_configs, shifted, configs[name])
+        expected = bounds(results[name])
+        assert len(events) == len(expected), name
+        np.testing.assert_allclose(
+            bounds(events) - UNIX_ORIGIN, expected, rtol=0, atol=tolerance, err_msg=name
+        )
+
+
+def test_a_discarded_recording_is_collected(recipe_configs, session, configs):
+    config = configs["yang_2024"]
+    recording, eligible = _call_inputs(recipe_configs, session, config)
+    events = recipe_configs.run_recipe(config, recording, eligible)
+    reference = weakref.ref(recording)
+    del recording
+    gc.collect()
+    assert reference() is None
+    assert len(events)
+
+
+def test_the_package_and_the_standalone_demo_import_no_benchmark_code():
+    demo = (EXAMPLES / "literature_recipes.py").read_text()
+    assert "benchmark" not in demo
+    assert "recipe_configs" not in demo
+    for path in Path(rd.__file__).parent.rglob("*.py"):
+        assert "recipe_configs" not in path.read_text(), path
+
+
+def test_method_records_are_flat_string_records(recipe_configs, catalog):
+    records = []
+    for config in recipe_configs.RECIPES:
+        record = recipe_configs.method_record(config)
+        assert list(record) == METHOD_COLUMNS
+        assert all(isinstance(value, str) for value in record.values())
+        assert record["method"] == f"recipe:{config.config_id}"
+        assert record["setting"] == "literature"
+        entry = catalog.loc[config.method]
+        for column in ("doi", "role", "inventory", "interpretation"):
+            assert record[column] == entry[column]
+        assert record["primary_expression"] == config.primary_expression
+        options = json.loads(record["resolved_options"])
+        assert options == recipe_configs.resolved_options(config)
+        assert record["stage"] == options.get("stage", "detection")
+        assert json.loads(record["assumptions"]) == list(config.assumptions)
+        policy = json.loads(record["input_policy"])
+        assert policy["name"] == recipe_configs.INPUT_POLICY
+        names, takes_behavior_intervals = recipe_configs.supplied_inputs(config)
+        assert set(policy["recording"]) == set(names)
+        assert (policy["behavior_intervals"] is not None) == takes_behavior_intervals
+        records.append(record)
+    table = pd.DataFrame(records)
+    buffer = io.StringIO()
+    table.to_csv(buffer, index=False)
+    buffer.seek(0)
+    pd.testing.assert_frame_equal(pd.read_csv(buffer, dtype=str, keep_default_na=False), table)
+
+
+def test_stand_in_inputs_are_the_inputs_not_observed(recipe_configs, configs):
+    for config in recipe_configs.RECIPES:
+        inputs = recipe_configs.policy_inputs(config)
+        assert recipe_configs.stand_in_inputs(config) == tuple(
+            name for name in inputs if name not in OBSERVED
+        ), config.config_id
+    assert recipe_configs.stand_in_inputs(configs["karlsson_2009"]) == ()
+    assert recipe_configs.stand_in_inputs(configs["liu_2019_awake"]) == (
+        "pyramidal",
+        "behavior_intervals",
+    )
+
+
+def test_a_configuration_is_found_by_its_method_name(recipe_configs):
+    for config in recipe_configs.RECIPES:
+        assert recipe_configs.config_for(f"recipe:{config.config_id}") is config
+    with pytest.raises(KeyError, match="recipe:not_configured is no configured recipe"):
+        recipe_configs.config_for("recipe:not_configured")
+    with pytest.raises(KeyError, match="karlsson_2009 is no configured recipe"):
+        recipe_configs.config_for("karlsson_2009")
+
+
+def test_assumptions_state_every_stand_in_and_unreported_value(recipe_configs, catalog):
+    for config in recipe_configs.RECIPES:
+        named = {re.match(r"[a-z_]+", text).group() for text in config.assumptions}
+        stand_ins = set(recipe_configs.policy_inputs(config)) - OBSERVED
+        unreported = {
+            requirement["input"]
+            for requirement in catalog.loc[config.method, "requirements"]
+            if requirement["kind"] == "option" and requirement["measured_only"]
+        }
+        assert named == stand_ins | unreported, config.config_id
+        options = dict(config.options)
+        for name in unreported:
+            assert f"{name}={options[name]!r}: unreported" in " ".join(config.assumptions)
+
+
+def test_the_readme_lists_every_exclusion(recipe_configs):
+    readme = (EXAMPLES / "benchmark" / "README.md").read_text()
+    section = readme.split("## Exclusions", 1)[1].split("\n## ", 1)[0]
+    items = re.findall(
+        r"^- `([a-z0-9_]+)`: (.*?)(?=^- `|\Z)", section, re.MULTILINE | re.DOTALL
+    )
+    listed = {name: " ".join(reason.split()) for name, reason in items}
+    assert listed == recipe_configs.EXCLUSIONS

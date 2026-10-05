@@ -1,11 +1,13 @@
-"""Synthetic inputs for the detector tests.
+"""Synthetic inputs for the detector and simulator tests.
 
 Plain functions, not fixtures, because each test asks for different events,
-channels and gains. All build at a given sampling rate on a Gaussian-noise
-background; ``bursts`` and ``events`` are given in samples.
+channels and gains. The detector inputs build at a given sampling rate on a
+Gaussian-noise background; ``bursts`` and ``events`` are given in samples.
+The non-event tables are hand-built rows for ``simulate_network_session``.
 """
 
 import numpy as np
+import pandas as pd
 
 
 def _synthetic_ripple_band(n_time, sampling_frequency, bursts, n_channels=3, seed=0):
@@ -68,3 +70,60 @@ def _synthetic_joint_inputs(
             prob[window] = base_rate * rate_gain
     multiunit = (rng.random((n_time, n_units)) < prob).astype(float)
     return lfps, multiunit
+
+
+NON_EVENT_COLUMNS = {
+    "non_event_id": "int64",
+    "non_event_type": "str",
+    "center_time": "float64",
+    "rise_sigma": "float64",
+    "decay_sigma": "float64",
+    "envelope_power": "int64",
+    "amplitude": "float64",
+    "frequency": "float64",
+    "snr_band_low": "float64",
+    "snr_band_high": "float64",
+    "channel": "int64",
+    "n_units": "int64",
+    "n_spikes": "int64",
+    "isi": "float64",
+}
+
+
+def _one_non_event_table(non_event_type, *, non_event_id=0, center_time=5.0, **overrides):
+    """One non-event built by hand, centred on ``center_time``: a leakage
+    burst of 2 units, 5 spikes 4 ms apart, peak 2, on channel 1; an EMG burst
+    of span 0.1 s and peak SD 1.5; a gamma burst of span 0.1 s at 80 Hz and
+    SNR 3 in 60-100 Hz; a theta burst of span 0.2 s over 5 units at gain 10.
+    ``overrides`` set columns."""
+    nan = np.nan
+    row = {
+        "non_event_id": non_event_id, "non_event_type": non_event_type,
+        "center_time": center_time, "envelope_power": 2, "frequency": nan,
+        "snr_band_low": nan, "snr_band_high": nan, "channel": -1, "n_units": 0,
+        "n_spikes": 0, "isi": nan,
+    }  # fmt: skip
+    row.update(
+        {
+            "spike_leakage": {
+                "rise_sigma": 4 * 0.004 / 6, "amplitude": 2.0, "channel": 1, "n_units": 2,
+                "n_spikes": 5, "isi": 0.004,
+            },
+            "emg": {"rise_sigma": 0.1 / 6, "amplitude": 1.5},
+            "fast_gamma": {
+                "rise_sigma": 0.1 / 6, "amplitude": 3.0, "frequency": 80.0,
+                "snr_band_low": 60.0, "snr_band_high": 100.0,
+            },
+            "theta_burst": {"rise_sigma": 0.2 / 6, "amplitude": 10.0, "n_units": 5},
+        }[non_event_type]
+    )  # fmt: skip
+    row["decay_sigma"] = row["rise_sigma"]
+    row.update(overrides)
+    return pd.DataFrame([row])[list(NON_EVENT_COLUMNS)]
+
+
+def _non_event_tables(*tables):
+    """Hand-built non-events as one table, numbered in order."""
+    return pd.concat(
+        [table.assign(non_event_id=i) for i, table in enumerate(tables)], ignore_index=True
+    )
