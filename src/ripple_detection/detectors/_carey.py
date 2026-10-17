@@ -31,6 +31,7 @@ from ripple_detection.detectors._blocks import (
     _contiguous_valid_blocks,
     _drop_short_blocks,
     _mask_invalid,
+    _normalization_mask_over_valid,
     _reject_flat_channels,
     _valid_blocks,
 )
@@ -488,6 +489,7 @@ def Carey_candidate_detector(
     maximum_duration: float | None = None,
     ripple_score: ArrayLike | None = None,
     threshold_method: CareyThresholdMethod = "zscore",
+    normalization_mask: ArrayLike | None = None,
 ) -> pd.DataFrame:
     """Detect candidate replay events from ripple power and multiunit activity jointly.
 
@@ -635,6 +637,15 @@ def Carey_candidate_detector(
         ``'zscore'`` (default, ``GenCandidateEvents``) z-scores it;
         ``'mean'`` rescales it to mean 0.5, as the original's ``precand`` did,
         so a threshold of 4 is eight times the mean.
+    normalization_mask : array_like of bool, shape (n_time,), optional
+        Samples the scaling statistics come from: the joint score's mean and
+        standard deviation (with ``threshold_method='mean'``, its mean) and,
+        with ``theta_lfp``, the theta envelope's. Every sample is still scored
+        and segmented, so a stretch masked out of the statistics, such as an
+        artifact, can still be a candidate; NaN the inputs there to leave it
+        out of the detection too. The ripple and multiunit scores' rescaling
+        to mean 1 is a positive factor the joint score's scaling removes, so
+        the mask does not enter it. Default None, every valid sample.
 
     Returns
     -------
@@ -737,6 +748,7 @@ def Carey_candidate_detector(
         theta_envelope = _theta_envelope(theta_signal, time, sampling_frequency, theta_band)
         signals.append(theta_envelope)
     is_valid, blocks = _valid_blocks(time, *signals, minimum_duration=minimum_duration)
+    mask = _normalization_mask_over_valid(n_time, is_valid, normalization_mask)
     _reject_flat_channels(
         filtered_lfps, blocks, "filtered_lfps" if ripple_score is None else "ripple_score"
     )
@@ -794,10 +806,18 @@ def Carey_candidate_detector(
 
     joint = np.sqrt(ripple * multiunit_score)
     if threshold_method == "zscore":
-        scaled = normalize_signal(joint)
+        scaled = normalize_signal(joint, normalization_mask=mask)
     else:
         # precand: rescmean(score, 0.5)
-        scaled = joint * (0.5 / np.nanmean(joint))
+        mean_joint = np.mean(joint[mask])
+        if not mean_joint > 0:
+            msg = (
+                "The joint score is zero at every sample its mean is taken over "
+                "(normalization_mask, or every valid sample), so it has no mean to "
+                "rescale by; select samples where both scores are positive."
+            )
+            raise ValueError(msg)
+        scaled = joint * (0.5 / mean_joint)
 
     # two-threshold segmentation (TSDtoIV2) within each block: runs above the
     # edge, kept if the peak is above
@@ -834,7 +854,9 @@ def Carey_candidate_detector(
             )
         ]
     if len(candidates) and theta_envelope is not None:
-        theta_z = normalize_signal(_mask_invalid(theta_envelope, is_valid))
+        theta_z = normalize_signal(
+            _mask_invalid(theta_envelope, is_valid), normalization_mask=mask
+        )
         candidates = candidates[
             _contained_in_intervals(candidates, _intervals(theta_z < theta_threshold))
         ]

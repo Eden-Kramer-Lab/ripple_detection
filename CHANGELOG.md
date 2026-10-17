@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Carey_candidate_detector` takes `normalization_mask`, as every other detector
+  but Long does. It selects the samples the joint score's scaling (z-score, or
+  mean with `threshold_method="mean"`) and the theta envelope's z-score come
+  from, so an artifact can be kept out of the statistics without being removed
+  from the detection.
+
 ### Fixed
 
 - `literature_methods.check_method` and `run_method` treated intervals supplied

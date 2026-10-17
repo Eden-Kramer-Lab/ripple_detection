@@ -2302,6 +2302,130 @@ class TestCareyCandidateDetector:
         )
         pd.testing.assert_frame_equal(flat, column)
 
+    ARTIFACT = slice(17_000, 19_000)
+
+    def _with_artifact(self, time):
+        """The joint inputs with a 2 s stretch of large ripple-band power and
+        dense spiking on every unit, which inflates the joint score's spread."""
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        lfps[self.ARTIFACT] += 200.0 * np.sin(2 * np.pi * 180.0 * time[self.ARTIFACT])[:, None]
+        rng = np.random.default_rng(1)
+        multiunit[self.ARTIFACT] = rng.random(multiunit[self.ARTIFACT].shape) < 0.2
+        return lfps, multiunit
+
+    @pytest.mark.parametrize(
+        ("threshold_method", "low_threshold", "high_threshold"),
+        [("zscore", 1.0, 3.0), ("mean", 4.0, 4.0)],
+    )
+    def test_normalization_mask_keeps_an_artifact_out_of_the_statistics(
+        self, time, stationary, threshold_method, low_threshold, high_threshold
+    ):
+        """Unmasked, the artifact scales the joint score so the events fall below
+        threshold; masked out of the statistics, they are found again, and the
+        artifact, still in the detection, is reported too."""
+        lfps, multiunit = self._with_artifact(time)
+        options = {
+            "threshold_method": threshold_method,
+            "low_threshold": low_threshold,
+            "high_threshold": high_threshold,
+        }
+        unmasked = Carey_candidate_detector(
+            time, lfps, multiunit, stationary, self.FS, **options
+        )
+        clean = np.ones(self.N_TIME, dtype=bool)
+        clean[self.ARTIFACT] = False
+        masked = Carey_candidate_detector(
+            time, lfps, multiunit, stationary, self.FS, normalization_mask=clean, **options
+        )
+        assert not any(self._hits(unmasked, time, self.EVENTS))
+        assert all(self._hits(masked, time, self.EVENTS))
+        assert self._hits(masked, time, [18_000]) == [True]
+
+    def test_normalization_mask_of_every_sample_changes_nothing(self, time, stationary):
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        theta_lfp = np.random.default_rng(5).normal(0.0, 1.0, self.N_TIME)
+        default = Carey_candidate_detector(
+            time, lfps, multiunit, stationary, self.FS, theta_lfp=theta_lfp
+        )
+        every = Carey_candidate_detector(
+            time,
+            lfps,
+            multiunit,
+            stationary,
+            self.FS,
+            theta_lfp=theta_lfp,
+            normalization_mask=np.ones(self.N_TIME, dtype=bool),
+        )
+        pd.testing.assert_frame_equal(default, every)
+
+    def test_normalization_mask_sets_the_theta_statistics(self, time, stationary):
+        """A large theta artifact inflates the theta envelope's spread, so the
+        elevated theta at the second event no longer excludes it; masked out of
+        the statistics, the exclusion holds again. The mask covers the theta
+        filter's transient, about 0.4 s, on each side of the artifact."""
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        theta_lfp = np.random.default_rng(5).normal(0.0, 1.0, self.N_TIME)
+        theta_lfp[6000:8000] += 15.0 * np.sin(2 * np.pi * 8.0 * time[6000:8000])
+        theta_lfp[self.ARTIFACT] += 300.0 * np.sin(2 * np.pi * 8.0 * time[self.ARTIFACT])
+        clean = np.ones(self.N_TIME, dtype=bool)
+        clean[16_500:19_500] = False
+        unmasked = Carey_candidate_detector(
+            time, lfps, multiunit, stationary, self.FS, theta_lfp=theta_lfp
+        )
+        masked = Carey_candidate_detector(
+            time,
+            lfps,
+            multiunit,
+            stationary,
+            self.FS,
+            theta_lfp=theta_lfp,
+            normalization_mask=clean,
+        )
+        assert self._hits(unmasked, time, self.EVENTS)[1]
+        assert not self._hits(masked, time, self.EVENTS)[1]
+        assert all(self._hits(masked, time, [self.EVENTS[0], *self.EVENTS[2:]]))
+
+    def test_a_normalization_mask_over_a_zero_joint_score_raises(self, time, stationary):
+        """With threshold_method='mean', a mask whose joint score is zero
+        everywhere has no mean to rescale by."""
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        quiet = np.zeros(self.N_TIME, dtype=bool)
+        quiet[19_000:19_100] = True
+        multiunit[18_500:] = 0.0
+        with pytest.raises(ValueError, match="joint score is zero at every sample"):
+            Carey_candidate_detector(
+                time,
+                lfps,
+                multiunit,
+                stationary,
+                self.FS,
+                threshold_method="mean",
+                normalization_mask=quiet,
+            )
+
+    def test_normalization_mask_validation(self, time, stationary):
+        lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
+        with pytest.raises(ValueError, match="must be boolean"):
+            Carey_candidate_detector(
+                time, lfps, multiunit, stationary, self.FS, normalization_mask=stationary
+            )
+        with pytest.raises(ValueError, match="normalization_mask length"):
+            Carey_candidate_detector(
+                time,
+                lfps,
+                multiunit,
+                stationary,
+                self.FS,
+                normalization_mask=np.ones(self.N_TIME - 1, dtype=bool),
+            )
+        lfps[:100] = np.nan
+        only_missing = np.zeros(self.N_TIME, dtype=bool)
+        only_missing[:100] = True
+        with pytest.raises(ValueError, match="selects no sample that is finite"):
+            Carey_candidate_detector(
+                time, lfps, multiunit, stationary, self.FS, normalization_mask=only_missing
+            )
+
     def test_output_columns(self, time, stationary):
         lfps, multiunit = _synthetic_joint_inputs(self.N_TIME, self.FS, self.EVENTS)
         events = Carey_candidate_detector(time, lfps, multiunit, stationary, self.FS)

@@ -909,8 +909,9 @@ Notes:
   Carey treats unknown speed as not low speed. `speed_threshold=np.inf` turns the criterion off,
   unknown speed included. The speed statistics skip unknown values.
 - Every detector normalizes over the whole recording unless `normalization_mask` restricts it
-  (Yu defaults to immobility); a baseline period is `(time >= start) & (time <= end)`. The Long
-  and Carey detectors do not take this argument.
+  (Yu defaults to immobility); a baseline period is `(time >= start) & (time <= end)`. On Carey
+  it sets the joint score's scaling and the theta envelope's z-score. The Long detector does not
+  take this argument.
 - **Thresholds are not comparable across detectors.** Kay's 2.0 is on √(smoothed Σ envelope²),
   whose distribution depends on the channel count; Karlsson's 3.0 is on one channel's envelope;
   Zugaro's 2 and 5 are on a squared sum, which has a heavier tail; Carey's 1 and 3 are on a
@@ -925,7 +926,7 @@ Notes:
   Shvartsman, HSE) replaces the mean and SD by the median and the scaled MAD, which large events
   do not inflate; Yu, Zugaro, Long and Carey z-score only. It is unsuitable for a sparse trace
   such as a low population rate, whose MAD can be zero. `normalization_mask` restricts the
-  statistics to a baseline period on every detector but Long and Carey.
+  statistics to a baseline period on every detector but Long.
 - **Smoothing** differs in where it is applied: Kay after summing the squared envelopes, Roumis on
   each channel's squared envelope, Karlsson, Shvartsman and Yu on each channel's envelope, Carey on
   the channel-mean envelope with a 10 ms kernel truncated at 3 SD (the others truncate at 8). Yu
