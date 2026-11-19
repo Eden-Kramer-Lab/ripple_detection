@@ -4897,8 +4897,8 @@ class TestUnfilteredInputWarns:
     follow the slow waves; every function that takes ripple-band LFP says so.
     A filter that works, however crude, stays silent."""
 
-    @staticmethod
     @pytest.fixture(scope="class")
+    @staticmethod
     def session():
         from ripple_detection.simulate import simulate_session, simulate_time
 
