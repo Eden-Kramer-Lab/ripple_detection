@@ -5,6 +5,7 @@ on the output of ``simulate_session``, and judged against the ground truth.
 """
 
 import warnings
+from dataclasses import replace
 
 import numpy as np
 import pandas as pd
@@ -449,6 +450,40 @@ def base(moving_session):
     return filtered, kay, events
 
 
+def _rounded_to_peak(signal, peak=20000):
+    """The signal as whole numbers reaching `peak`, far past the 181 at which a
+    squared ``int16`` envelope wraps; still floats, to compare with ``int16``."""
+    signal = np.asarray(signal, dtype=float)
+    return np.rint(signal * peak / np.abs(signal).max())
+
+
+class TestIntegerInput:
+    """Recordings are often ``int16``, and pipelines pass them on unconverted."""
+
+    @pytest.mark.parametrize("name", ALL_DETECTORS)
+    def test_int16_gives_the_float_events(self, name, session, filtered):
+        lfps = _rounded_to_peak(filtered)
+        raw_lfp = _rounded_to_peak(session.raw_lfp)
+        sharp_wave_lfp = _rounded_to_peak(session.sharp_wave_lfp)
+        as_float = replace(session, raw_lfp=raw_lfp, sharp_wave_lfp=sharp_wave_lfp)
+        as_int16 = replace(
+            session,
+            raw_lfp=raw_lfp.astype(np.int16),
+            sharp_wave_lfp=sharp_wave_lfp.astype(np.int16),
+        )
+
+        expected = run(name, as_float, lfps)
+        assert len(expected) > 0
+        pd.testing.assert_frame_equal(run(name, as_int16, lfps.astype(np.int16)), expected)
+
+    def test_kay_consensus_trace_does_not_wrap(self, filtered):
+        lfps = _rounded_to_peak(filtered)
+        np.testing.assert_array_equal(
+            rd.get_Kay_ripple_consensus_trace(lfps.astype(np.int16), FS),
+            rd.get_Kay_ripple_consensus_trace(lfps, FS),
+        )
+
+
 class TestTimeOrigin:
     """Every public function that reads timestamps gives, on a clock that
     starts a day or a Unix time in, what it gives from 0, moved by the
@@ -603,6 +638,17 @@ class TestTimeOrigin:
             rd.detect_events_from_trace(time, trace, moving_session.speed, FS),
             origin,
         )
+
+    @pytest.mark.parametrize("origin", ORIGINS)
+    def test_best_ripple_channel(self, origin, moving_session):
+        """Time only splits the recording, so the scores are identical."""
+        time = moving_session.time
+        channel, scores = rd.best_ripple_channel(moving_session.lfps, FS, time=time)
+        shifted_channel, shifted_scores = rd.best_ripple_channel(
+            moving_session.lfps, FS, time=time + origin
+        )
+        assert shifted_channel == channel
+        np.testing.assert_array_equal(shifted_scores, scores)
 
     @pytest.mark.parametrize("origin", ORIGINS)
     def test_spiking_state_and_score(self, origin, moving_session, base):

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `best_ripple_channel(lfps, sampling_frequency, time=...)` chooses one ripple
+  channel as buzcode's `bz_GetBestRippleChan` does: the channel whose 140-180 Hz
+  moving RMS has the highest mean over median. It returns the column and every
+  channel's score. At 1250 Hz it agrees with a transcription of the original to
+  1e-9. It differs from the original in three ways: the filter is designed for
+  the given rate (the original's is right only at 1250 Hz), no channel is
+  excluded by a level in ADC counts (only a dead, disconnected or railed one,
+  whose median RMS is negligible beside its own values), and missing samples and
+  gaps are handled block-wise as in the detectors.
 - `Carey_candidate_detector` takes `normalization_mask`, as every other detector
   but Long does. It selects the samples the joint score's scaling (z-score, or
   mean with `threshold_method="mean"`) and the theta envelope's z-score come
@@ -205,6 +214,11 @@ here is relative to 1.7.1.
 
 ### Fixed
 
+- **Breaking.** `Kay_ripple_detector` and `get_Kay_ripple_consensus_trace` kept
+  an integer input's dtype, so the envelope was truncated and, on `int16` LFP,
+  its square wrapped once a channel's envelope passed 181 stored units. The
+  strongest ripples were lost without an error. Both now convert to float.
+  Karlsson and Roumis were not affected.
 - **Breaking.** `exclude_close_events` compared each event with the candidate
   before it, not the last event kept, so it removed more than the first of a
   cluster.

@@ -106,12 +106,35 @@ the fourth column, so code that reads columns by position shifts.
 The changes that move results on the same recording, in rough order of how much.
 
 **Checking that the difference is expected.** On a recording without gaps, most
-of the difference is the minimum duration's sample count. Pass a minimum one
-sample longer, `minimum_duration=(round(0.015 * sampling_frequency) + 1) /
+of the difference is the minimum duration's sample count. 1.x required the time
+from a run's first sample to its last to reach the minimum, so pass
+`minimum_duration=(math.ceil(0.015 * sampling_frequency) + 1) /
 sampling_frequency` for 1.x's 15 ms, and every other argument as before: 1.x's
-events come back. On 300 s of simulated data at 1500 Hz this reproduced the 1.x
-events of Kay, Karlsson and the HSE detector exactly. Remaining differences come
-from gaps, NaN, speed or the filter rate, described below.
+events come back. On simulated data with time starting at zero, this reproduced
+the 1.x events exactly for Kay, Karlsson and Roumis at 1000 and 1500 Hz and for
+the HSE detector at 30, 500 and 1500 Hz. On Unix timestamps 1.x's result depends
+on the clock origin when the minimum is a whole number of samples, as 15 ms is at
+1000 Hz: there 1.x gave up to about 5 % fewer Karlsson events than this check,
+and 2.0 does not change with the origin. Remaining differences come from integer
+LFP, gaps, NaN, speed or the filter rate, described below.
+
+**Integer LFP no longer overflows in Kay.** 1.x's `Kay_ripple_detector` and
+`get_Kay_ripple_consensus_trace` kept an integer input's dtype: the envelope was
+truncated and, on `int16` data, its square wrapped once a channel's envelope
+passed 181 stored units. Recordings in NWB files are often `int16`, in microvolts
+or ADC counts. The strongest ripples went first: in a simulation with peaks up to
+400, 1.x found 9 of the 99 strongest, and with peaks up to 800 none of them; 2.0
+found all 99 at both. Float input was not affected, and neither were Karlsson and
+Roumis. To see whether your 1.x Kay events were, look at the envelope of the
+ripple-band LFP you passed:
+
+```python
+from ripple_detection.core import get_envelope
+
+print(get_envelope(filtered_lfps.astype(float)).max())
+```
+
+If the input was `int16` and this passes 181, expect many more events from 2.0.
 
 **The minimum duration counts samples.** A run qualifies when it holds at least
 `round(minimum_duration * rate)` samples, rounded half up from the median
@@ -132,6 +155,13 @@ samples at 1500 Hz for one missing count). A block too short for an event of
 `minimum_duration` is treated as missing with a warning that gives its sample
 ranges, and a detector with no block left raises. Data without gaps gives the
 same output.
+
+**Spike counts on video timestamps meet both rules above.** A 15 ms minimum at
+about 30 Hz is under half the 33 ms between samples, so it rounds down to the
+floor of one sample, where 1.x needed two: on simulated counts the HSE detector
+gave 225 events where 1.x gave 113. A dropped frame is a step of twice the median,
+so it ends a block: with 1 % of frames dropped, 29 of 228 events were clipped. Bin
+the counts on a uniform grid fine enough to resolve the minimum duration.
 
 **A NaN in speed is an unknown speed**, not a missing sample, so a tracking
 dropout no longer removes LFP samples or cuts a ripple in two. An event whose
