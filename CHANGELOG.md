@@ -205,6 +205,11 @@ here is relative to 1.7.1.
 
 ### Fixed
 
+- **Breaking.** `Kay_ripple_detector` and `get_Kay_ripple_consensus_trace` kept
+  an integer input's dtype, so the envelope was truncated and, on `int16` LFP,
+  its square wrapped once a channel's envelope passed 181 stored units. The
+  strongest ripples were lost without an error. Both now convert to float.
+  Karlsson and Roumis were not affected.
 - **Breaking.** `exclude_close_events` compared each event with the candidate
   before it, not the last event kept, so it removed more than the first of a
   cluster.
